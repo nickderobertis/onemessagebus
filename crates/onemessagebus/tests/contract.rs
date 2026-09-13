@@ -29,9 +29,22 @@ fn fixture(name: &str) -> String {
 }
 
 /// Every fixture a contract test drives: `envelope`, `filter` and `verbs` here
-/// and in the profile's `tests/contract.rs`, `read-sets` there alone. A fixture
-/// added to the document is added here beside the test that drives it.
-const DRIVEN_FIXTURES: &[&str] = &["envelope", "filter", "read-sets", "verbs"];
+/// and in the profile's `tests/contract.rs`; `read-sets`, the inbox's
+/// `spool-documents` and `carry-store`, and the note contract's `note`,
+/// `accepted` and `note-undelivered` there alone, since each names the agent
+/// profile's message. A fixture added to the document is added here beside the
+/// test that drives it.
+const DRIVEN_FIXTURES: &[&str] = &[
+    "accepted",
+    "carry-store",
+    "envelope",
+    "filter",
+    "note",
+    "note-undelivered",
+    "read-sets",
+    "spool-documents",
+    "verbs",
+];
 
 fn fixture_tag(line: &str) -> Option<&str> {
     line.trim()

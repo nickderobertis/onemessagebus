@@ -16,21 +16,31 @@
 //! The wire shape — one JSON object per line, `(ts, stream, seq)` merge order,
 //! per-stream `seq` gaps as loss detection — is stated in `docs/wire.md` and
 //! held by `docs/contract.md`.
+//!
+//! Beside the streams, an [`Inbox`] is a typed channel into a running process
+//! whose [`Sender`] learns what the receiver did with each message: in one
+//! process ([`InProcess`]), across processes through a directory ([`Spool`]),
+//! or carried to a receiver that is not running ([`Carry`]). The disposition a
+//! receiver answers with is the consumer's own type ([`Disposition`]); the
+//! inbox contract is stated in `docs/inbox.md`.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod bounds;
 mod capability;
+mod carry;
 mod clock;
 pub mod conformance;
 mod emit;
 mod envelope;
 mod filter;
+mod inbox;
 mod read;
 mod redact;
 mod schema;
 pub mod sdk_schema;
+mod spool;
 mod vocabulary;
 
 pub use bounds::{
@@ -40,16 +50,22 @@ pub use bounds::{
 pub use capability::{
     Capability, FlagKind, OptionBinding, StdoutShape, UncoveredFlag, CAPABILITIES,
 };
+pub use carry::{CarriedEntry, Carry, CARRY_SCHEMA_VERSION};
 pub use clock::now_rfc3339;
 pub use emit::{Emitter, EmitterError, Unrecorded};
 pub use envelope::{ArtifactRef, Envelope, Kind, Labels, NoDimensions, Source};
 pub use filter::{glob, Filter, FilterError, LabelMatch, Matcher};
+pub use inbox::{
+    Answered, BackendError, Carried, Closed, Delivered, Disposition, InProcess, Inbox,
+    InboxBackend, Sender, Undelivered,
+};
 pub use read::{Merge, Reader, Reading, Readings, Record, Refused, Torn};
 pub use redact::{Redactor, CREDENTIAL_PREFIXES, CREDENTIAL_WORDS, REDACTED};
 pub use schema::{
     CheckError, Message, Read, Registry, RegistryError, SchemaId, SchemaIdError, SchemaViolation,
     UnknownVersion,
 };
+pub use spool::{Spool, SPOOL_SCHEMA_VERSION, SPOOL_WAIT};
 pub use vocabulary::{Admits, Open, Reserved, Vocabulary, Wire};
 
 /// The README's sample, compiled by `cargo test --doc` so a sample naming an

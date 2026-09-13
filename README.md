@@ -20,8 +20,10 @@ Three artifacts:
   `onepipeline` write today, which the recorded streams under
   `crates/onemessagebus-agent/tests/recorded/` prove byte for byte.
 - **`onemessagebus`**, the binary — `schema list|check|gen|register` over the
-  registry and `events merge|emit` over streams, with `--profile agent` (the
-  default) or `--profile open`.
+  registry, `events merge|emit` over streams with `--profile agent` (the
+  default) or `--profile open`, and `deliver` and `inbox carried` over the inbox:
+  a typed channel into a running process whose sender learns what the receiver
+  did with each message.
 
 ## Install the command line
 

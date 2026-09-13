@@ -500,3 +500,241 @@ fn a_dimension_converts_from_a_phase() {
     );
     assert_eq!(Dimensions::from(None), Dimensions::none());
 }
+
+/// A document a spool holds, once something has written it.
+fn document_at(path: &std::path::Path) -> Value {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            return serde_json::from_str(&text).expect("a spool document is JSON");
+        }
+        assert!(
+            std::time::Instant::now() < until,
+            "{} was never written",
+            path.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+fn offer_id(n: u32) -> String {
+    format!("{:039}-1-{n:020}", 1)
+}
+
+#[test]
+fn the_documented_spool_documents_are_what_a_bound_spool_reads_and_writes() {
+    use onemessagebus::{Closed, Spool};
+    use onemessagebus_agent::note::{Accepted, Addressee, Note, NoteInbox, Party};
+    use std::time::Duration;
+
+    let documents: Value =
+        serde_json::from_str(&fixture("spool-documents")).expect("the documents are JSON");
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let spool_dir = dir.path().join("notes");
+    let inbox = NoteInbox::new();
+    let _spool = Spool::bind(&spool_dir, &inbox).expect("binds");
+    assert_eq!(
+        document_at(&spool_dir.join("spool.json")),
+        documents["spool.json"]
+    );
+
+    // An offer in the documented shape is taken, and its answer is written in the
+    // documented shape.
+    let offered = |n: u32, offer: &Value| {
+        let id = offer_id(n);
+        std::fs::write(
+            spool_dir.join(format!("{id}.offer.json")),
+            offer.to_string(),
+        )
+        .expect("offered");
+        spool_dir.join(format!("{id}.answer.json"))
+    };
+    let answer = offered(1, &documents["offer"]);
+    let taken = inbox
+        .take_within(Duration::from_secs(30))
+        .expect("the documented offer is taken");
+    assert_eq!(
+        taken.message(),
+        &Note::to(Addressee::Worker, "look again at the migration")
+    );
+    taken.answer(Accepted::Interrupted {
+        party: Party::Worker,
+    });
+    assert_eq!(document_at(&answer), documents["answer"]);
+
+    let mut blank = documents["offer"].clone();
+    blank["message"]["text"] = json!("   ");
+    let refused = document_at(&offered(2, &blank));
+    let mut expected = documents["answer-refused"].clone();
+    assert_eq!(
+        expected["answer"]["refused"]["reason"],
+        json!("<why the receiver could not read the offer>"),
+        "the refused answer's placeholder moved; update this substitution"
+    );
+    expected["answer"]["refused"]["reason"] = refused["answer"]["refused"]["reason"].clone();
+    assert!(refused["answer"]["refused"]["reason"].is_string());
+    assert_eq!(refused, expected);
+
+    let closing = offered(3, &documents["offer"]);
+    let held = inbox
+        .take_within(Duration::from_secs(30))
+        .expect("the third offer is taken");
+    inbox.close(Closed::new("the conversation ended"));
+    assert_eq!(document_at(&closing), documents["answer-closed"]);
+    assert_eq!(
+        document_at(&spool_dir.join("closed.json")),
+        documents["closed.json"]
+    );
+    drop(held);
+
+    // A sender writes the documented offer, and nothing else, while it waits.
+    let unserviced = dir.path().join("unserviced");
+    std::fs::create_dir(&unserviced).expect("made");
+    let sending = {
+        let unserviced = unserviced.clone();
+        std::thread::spawn(move || {
+            onemessagebus::Spool::connect_within::<Note, Accepted>(
+                &unserviced,
+                Duration::from_secs(5),
+            )
+            .send(Note::to(Addressee::Worker, "look again at the migration"))
+        })
+    };
+    let offer = loop {
+        let found = std::fs::read_dir(&unserviced)
+            .expect("a directory")
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| path.to_string_lossy().ends_with(".offer.json"));
+        if let Some(path) = found {
+            break path;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    assert_eq!(document_at(&offer), documents["offer"]);
+    std::fs::remove_file(&offer).expect("taken away from the sender");
+    assert!(
+        sending.join().expect("the sender finishes").is_err(),
+        "a sender whose offer vanished was answered"
+    );
+}
+
+#[test]
+fn inbox_md_names_every_file_a_spool_holds() {
+    let inbox_md = include_str!("../../../docs/inbox.md");
+    let start = inbox_md
+        .find("#### On disk")
+        .expect("docs/inbox.md has an `On disk` section");
+    let table: Vec<String> = inbox_md[start..]
+        .lines()
+        .skip_while(|line| !line.starts_with("| file"))
+        .skip(2)
+        .take_while(|line| line.starts_with("| `"))
+        .map(|row| {
+            row.split('`')
+                .nth(1)
+                .expect("a backticked file name")
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(
+        table,
+        [
+            "spool.json",
+            "receiver.lock",
+            "closed.json",
+            "<id>.offer.json",
+            "<id>.taken.json",
+            "<id>.answer.json",
+            "<id>.withdrawn",
+        ],
+        "docs/inbox.md's file table no longer names the files a spool holds"
+    );
+}
+
+#[test]
+fn the_documented_carry_store_is_what_the_carry_backend_writes() {
+    use onemessagebus::Carry;
+    use onemessagebus_agent::note::{Accepted, Addressee, Note, Notes};
+
+    let documented: Value =
+        serde_json::from_str(&fixture("carry-store")).expect("the store is JSON");
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let store = dir.path().join("carried.ndjson");
+    let carrier: Notes = Carry::sender(&store);
+    assert_eq!(
+        carrier.send(Note::to(
+            Addressee::Both,
+            "the ruling applies to both of you"
+        )),
+        Ok(Accepted::Queued)
+    );
+    let written = std::fs::read_to_string(&store).expect("the store");
+    let lines: Vec<Value> = written
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("a JSON line"))
+        .collect();
+    assert_eq!(lines.len(), 2, "{written}");
+    assert_eq!(lines[0], documented["header"]);
+    assert_eq!(
+        written.lines().next(),
+        Some(documented["header"].to_string().as_str()),
+        "the header is not written in the documented key order"
+    );
+    let mut record = documented["record"].clone();
+    assert_eq!(
+        record["ts"],
+        json!("<RFC 3339, millisecond precision, UTC>"),
+        "the record's placeholder moved; update this substitution"
+    );
+    record["ts"] = lines[1]["ts"].clone();
+    assert_eq!(lines[1], record);
+}
+
+#[test]
+fn the_documented_note_shapes_round_trip_through_the_note_types() {
+    use onemessagebus::{Closed, Message};
+    use onemessagebus_agent::note::{Accepted, Note, Undelivered};
+
+    let compact = |value: &Value| serde_json::to_string(value).expect("serializes");
+
+    let documented: Value = serde_json::from_str(&fixture("note")).expect("JSON");
+    let note: Note = serde_json::from_value(documented.clone()).expect("the documented note");
+    assert!(note.binds());
+    assert_eq!(
+        serde_json::to_string(&note).expect("serializes"),
+        compact(&documented)
+    );
+    assert_eq!(Note::SCHEMA.to_string(), "agent.note@1");
+
+    let accepted: Vec<Value> = serde_json::from_str(&fixture("accepted")).expect("JSON");
+    let mut kinds = std::collections::HashSet::new();
+    for wire in &accepted {
+        let value: Accepted = serde_json::from_value(wire.clone()).expect("an Accepted");
+        kinds.insert(std::mem::discriminant(&value));
+        assert_eq!(
+            serde_json::to_string(&value).expect("serializes"),
+            compact(wire)
+        );
+    }
+    assert_eq!(kinds.len(), 3, "the documented dispositions miss a variant");
+
+    let refusals: Vec<Value> = serde_json::from_str(&fixture("note-undelivered")).expect("JSON");
+    let mut kinds = std::collections::HashSet::new();
+    for wire in &refusals {
+        let refusal: Undelivered = serde_json::from_value(wire.clone()).expect("an Undelivered");
+        kinds.insert(std::mem::discriminant(&refusal));
+        assert_eq!(
+            serde_json::to_string(&refusal).expect("serializes"),
+            compact(wire)
+        );
+        // Carried in a close, it comes back as the refusal it was.
+        let closed = Closed::from(&refusal);
+        assert_eq!(closed.reason, compact(wire));
+        assert_eq!(
+            Undelivered::from(onemessagebus::Undelivered::Closed(closed)),
+            refusal
+        );
+    }
+    assert_eq!(kinds.len(), 3, "the documented refusals miss a variant");
+}

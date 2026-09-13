@@ -7,7 +7,8 @@
 //! `agent.reply-envelope`
 //! reads `[3, 2]` and writes 3; its shape is `onepipeline`'s reply, registered
 //! here as JSON Schema so the profile owns the wire shape while `onepipeline`
-//! keeps owning each command's meaning.
+//! keeps owning each command's meaning. `agent.note@1` is the note contract's
+//! message ([`Note`](crate::note::Note)).
 
 use onemessagebus::{Registry, SchemaId};
 use serde_json::Value;
@@ -85,5 +86,8 @@ pub fn registry() -> Registry {
     registry
         .register::<Labels>()
         .expect("the labels schema registers");
+    registry
+        .register::<crate::note::Note>()
+        .expect("the note schema registers");
     registry
 }

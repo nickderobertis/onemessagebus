@@ -2,7 +2,8 @@
 
 The approved contract for this repository, committed verbatim below. It is the
 one source of the wire envelope, the filter grammar, the schema registry rules,
-the emitter and reader rules, and the command line: the public types are written
+the emitter and reader rules, the inbox, the agent note contract, and the command
+line: the public types are written
 to match this text, and the contract tests — `crates/onemessagebus/tests/contract.rs`
 for the core and `crates/onemessagebus-agent/tests/contract.rs` for the profile —
 drive every fenced block below through those types so the two cannot drift. A
@@ -183,6 +184,136 @@ One NDJSON line per event, byte-identical to what `oneagentgraph`, `onevcs` and
   `crates/onemessagebus-agent/tests/recorded/` and round-trips through `Reader`
   and `serde_json::to_string` with no byte changed.
 
+### Contract I — the inbox
+
+A typed channel into a running process whose sender learns what the receiver
+did with the message. `docs/inbox.md` restates this section in the repository's
+own voice.
+
+- `trait Disposition: Serialize + DeserializeOwned + Send + 'static {}` — what a
+  receiver may answer a delivered message with: the consumer's own type, which
+  the core requires only to serialize, so a disposition crosses a spool or a
+  socket. `trait Carried: Disposition { fn carried() -> Self; }` is the
+  disposition a carried message's sender is answered with.
+- `Inbox<M: Message, D: Disposition>` is the receiving end and
+  `Sender<M: Message, D: Disposition>` the sending end (`Clone`).
+  `Sender::send(&self, message: M) -> Result<D, Undelivered>` blocks until the
+  receiver has taken the message **and** answered it, or the inbox is closed,
+  and never returns a fabricated disposition. `Inbox::take(&self) ->
+  Option<Delivered<M, D>>` is the next delivered message if one is waiting,
+  non-blocking; `Inbox::take_within(&self, timeout)` blocks up to `timeout` for
+  one; `Inbox::answered(&self) -> Vec<Answered<M, D>>` is every message answered
+  so far with its disposition, oldest first; `Inbox::close(&self, reason:
+  Closed)` gives every blocked sender, and every later one,
+  `Undelivered::Closed(reason)`. `Delivered::message(&self) -> &M` reads a taken
+  message and `Delivered::answer(self, disposition: D)` hands the disposition
+  back to the sender blocked in `send`. `enum Undelivered { Closed(Closed),
+  Backend(BackendError) }`; `struct Closed { pub reason: String }` is the
+  closer's words, carried to the sender verbatim.
+- **Backends**, each an implementation of the one `trait InboxBackend<M, D>` a
+  `Sender` is built over, so a consumer writes against `Sender`/`Inbox`
+  whichever backend carries the message: `InProcess` (one process);
+  `Spool` (a directory the receiver's process binds, where a sender in another
+  process writes one file per message, a courier thread on the receiver's side
+  moves each into the in-process inbox and writes the disposition back beside
+  it, and the sender's `send` blocks reading that answer — `Spool::address()` is
+  the path a consumer records for a sender elsewhere to find it); and `Carry`
+  (for a receiver that is not running now: `send` appends to a durable carry
+  store and answers `D::carried()`, and the receiver's next session drains the
+  store on open through `Inbox::adopt_carried()`).
+- The **routing** of a delivered message — which party of a conversation is
+  live, whether a decision is re-taken — is the consumer's, never the inbox's:
+  the inbox promises only that a message reaches `take` or the sender learns why
+  not, and that a disposition reaches exactly the sender that asked.
+- A sender never receives a disposition it was not answered with: no timeout
+  synthesizes a `D`. Three states are distinct. **Pending** — the receiver is
+  bound and has neither answered nor closed, however long that takes, and
+  `send` stays blocked. **Closed** — the receiver closed the inbox, before or
+  after the message arrived, and `send` returns `Undelivered::Closed` with the
+  closer's reason; the spool records the close, so a sender arriving later is
+  refused rather than left waiting. **Lost** — the answer cannot be had: the
+  answer document is present but unreadable, or the spool's bounded wait
+  (`SPOOL_WAIT`) elapses with the message never taken — and `send` returns
+  `Undelivered::Backend` naming the spool path and the file or the elapsed wait,
+  and withdraws the offered message so a receiver waking later does not deliver
+  what its sender was told was lost. The in-process backend has no bounded wait.
+
+The documents a spool holds, one per file (`<id>.offer.json`,
+`<id>.answer.json`, `spool.json`, `closed.json`), and a carry store's header and
+record lines:
+
+<!-- fixture: spool-documents -->
+```json
+{"spool.json": {"schema_version": 1, "schema": "agent.note@1"},
+ "offer": {"schema_version": 1, "schema": "agent.note@1", "message": {"addressee": "worker", "text": "look again at the migration"}},
+ "answer": {"schema_version": 1, "answer": {"disposition": {"interrupted": {"party": "worker"}}}},
+ "answer-closed": {"schema_version": 1, "answer": {"closed": {"reason": "the conversation ended"}}},
+ "answer-refused": {"schema_version": 1, "answer": {"refused": {"reason": "<why the receiver could not read the offer>"}}},
+ "closed.json": {"schema_version": 1, "reason": "the conversation ended"}}
+```
+
+<!-- fixture: carry-store -->
+```json
+{"header": {"schema_version": 1, "kind": "onemessagebus-carry-store"},
+ "record": {"ts": "<RFC 3339, millisecond precision, UTC>", "schema": "agent.note@1", "message": {"addressee": "both", "text": "the ruling applies to both of you"}}}
+```
+
+### Contract N — the agent note contract
+
+`onemessagebus_agent::note` declares, with the same names, the same serde shapes
+and the same refusals as `onejudge::note` at release 0.8.1: `Addressee::{Worker,
+Supervisor, Both}` (lowercase on the wire), `Party`, `Criterion` (the newtype and
+its refusals), `CriterionRefused`, `NoteText`, `Note` (`new`, `to`, `binding`,
+`binds`), `NoteRefused`, `DeliveredNote`, `Accepted::{Queued, Interrupted {
+party }, JudgedWith}`, `Undelivered` (the note contract's own variants, re-exported
+at the crate root as `NoteUndelivered`), `Criteria::{compose, rendered, bound}`,
+and `supervisor_block`. `Note: Message` with schema `agent.note@1`; `Accepted:
+Disposition`, with `Carried` answering `Accepted::Queued`. `type Notes =
+Sender<Note, Accepted>` and `type NoteInbox = Inbox<Note, Accepted>`, with
+`Notes::channel()` building the in-process pair. What a conversation does with a
+delivered note stays in `onejudge`.
+
+<!-- fixture: note -->
+```json
+{"addressee": "both", "text": "the bar moved", "criterion": "the flag defaults to off"}
+```
+
+<!-- fixture: accepted -->
+```json
+["queued", {"interrupted": {"party": "worker"}}, {"interrupted": {"party": "supervisor"}}, {"judged_with": {"completion_reason": "passed with the note in hand"}}]
+```
+
+<!-- fixture: note-undelivered -->
+```json
+[{"conversation_completed": {"completion_reason": "the work is done"}}, {"member_settled": {"outcome": "the conversation ended"}}, {"no_conversation": {"reason": "nothing ever read this channel"}}]
+```
+
+**Departures, ruled by the manager over the ask seam** and recorded here so the
+adopting nodes read them where they read the contract:
+
+1. `Notes::send` is the core's `Sender::send` through the alias, so it answers
+   `onemessagebus::Undelivered` rather than `note::Undelivered`: a crate cannot
+   add a method to the core's type. `note::Undelivered:
+   From<onemessagebus::Undelivered>` reads a note refusal carried in a close
+   (`Closed::from(&note::Undelivered)`) back into the same variant, a close in
+   anyone else's words into `MemberSettled`, and a backend failure into
+   `NoConversation`, so `onejudge` adapts with one `.map_err(Into::into)`.
+   `Notes::channel()` keeps its signature through the core's `Sender::channel()`.
+2. `NoteInbox::delivered()` is `note::NoteInboxExt::delivered`, re-exported by
+   `note::prelude`. It lists the notes answered `Interrupted` (reaching the party
+   named) and `JudgedWith` (reaching the supervisor); a `Queued` note has reached
+   no party yet.
+3. `onejudge`'s seven note shape tests moved verbatim. Its five channel tests
+   drive the phase machine that stays in `onejudge`, and the core's inbox tests
+   prove the inbox-level equivalents: a dropped inbox answers every blocked
+   sender, and a closed inbox stays closed with its first reason.
+4. `worker_block` is public, the one item beyond the list above, because
+   `onejudge`'s engine renders a worker's turn with it and a copy left there
+   drifts.
+5. `deliver` takes `--wait <SECONDS>` (default 30), a named option bound in
+   `CAPABILITIES`, so the lost state is observable through the binary;
+   `Spool::connect_within` is the library's way.
+
 ### Contract C — the command line and the capability manifest
 
 - `onemessagebus schema list` (no input; every registered id), `schema check
@@ -204,6 +335,18 @@ One NDJSON line per event, byte-identical to what `oneagentgraph`, `onevcs` and
   the same way on `emit` and on `merge`. **Payloads arrive on stdin or `--file`,
   never as a positional argument**: what the rule refuses is a payload the clap
   tree would read as a positional.
+- `onemessagebus deliver <address> [--message <M>] [--file <path>] [--wait
+  <seconds>]` sends one message to a spool address — the message read from
+  stdin, from `--file`, or given inline through the named `--message` option,
+  exactly one of the three, more than one given at once refused naming each
+  source given and nothing written — and prints the disposition, or the
+  `Undelivered` reason with a non-zero exit. `deliver` takes one positional, the
+  address, and a second positional is refused; `--message` is a named option
+  the payload rule does not forbid. `onemessagebus inbox carried <store>
+  [--format json|text]` lists a carry store in the order its messages were
+  carried, prints nothing for an empty store, and refuses a path that is no
+  carry store by name. Each is a `Capability` with a library entry
+  (`Spool::deliver`, `Carry::read`).
 - `crates/onemessagebus/src/capability.rs`: `CAPABILITIES: &[Capability {
   method, verb, options, output, bindings, library_entry }]`, one per verb,
   with `FlagKind` bindings as `oneharness-core` declares them; the binary
@@ -217,5 +360,5 @@ One NDJSON line per event, byte-identical to what `oneagentgraph`, `onevcs` and
 
 <!-- fixture: verbs -->
 ```json
-["schema list", "schema check", "schema gen", "schema register", "events merge", "events emit"]
+["schema list", "schema check", "schema gen", "schema register", "events merge", "events emit", "deliver", "inbox carried"]
 ```

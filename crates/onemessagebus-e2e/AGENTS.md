@@ -14,3 +14,7 @@ document it regenerates.
 A test about the repository's configuration rather than the binary (the release
 declaration, the toolchain pins) belongs in `crates/onemessagebus-repo`, so it
 does not pay for this suite.
+
+A journey that needs a receiver to die without closing runs this test binary
+as its child and kills that `Child` by the handle that started it — never a
+process found by name, which on a shared host is somebody else's.

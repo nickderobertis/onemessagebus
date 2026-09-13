@@ -129,5 +129,6 @@ with.
 The agent profile registers `agent.event-envelope` at `[2, 1]`,
 `agent.reply-envelope` at `[3, 2]` (the planner channel's reply shape,
 registered as JSON Schema so the profile owns the wire shape while the pipeline
-owns each command's meaning), and `agent.artifact-ref@1`, `agent.event-filter@1`
-and `agent.labels@1`.
+owns each command's meaning), `agent.artifact-ref@1`, `agent.event-filter@1`,
+`agent.labels@1`, and `agent.note@1` — the agent note contract's message, the
+first family carried over the inbox.

@@ -345,8 +345,13 @@ fn the_readme_lists_every_verb_and_only_the_binarys() {
     }
     let mut stated: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for span in ticked(&flat(&prose(doc))) {
-        let Some((family, verbs)) = span.split_once(' ') else {
-            continue;
+        // A verb with no family (`deliver`) is stated by its own name.
+        let (family, verbs) = match span.split_once(' ') {
+            Some(split) => split,
+            None if declared.get(&span) == Some(&BTreeSet::from([String::new()])) => {
+                (span.as_str(), "")
+            }
+            None => continue,
         };
         let is_list = verbs.chars().all(|c| c.is_ascii_lowercase() || c == '|');
         if declared.contains_key(family) && is_list {

@@ -1,7 +1,8 @@
 # The command line
 
-`onemessagebus` has two verb families: `schema`, over the registry, and
-`events`, over NDJSON streams. Every verb is a capability in
+`onemessagebus` has the `schema` verbs, over the registry; the `events` verbs,
+over NDJSON streams; and `deliver` and `inbox carried`, over the inbox
+(`docs/inbox.md`). Every verb is a capability in
 `onemessagebus::CAPABILITIES`, which is what the SDK clients are generated from
 and what the clap tree is held to, so a verb or flag here exists nowhere the
 manifest does not say.
@@ -19,7 +20,9 @@ cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebu
 - **Payloads arrive on stdin or `--file`, never as a positional argument.** The
   clap tree admits no positional a payload could be read as, so a payload passed
   as an argument is a usage error (exit 2) rather than a document nobody
-  validated. A verb that takes no payload takes none.
+  validated. A verb that takes no payload takes none. `deliver` also takes its
+  message through the named `--message` option, and takes it from exactly one
+  of the three.
 - **`--profile <name>` chooses the vocabulary on both `events` verbs, and it
   defaults to `agent`** — the profile this binary links. `open` is the other:
   any source word, any labels, no dimensions. The source words and each source's
@@ -36,7 +39,7 @@ cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebu
 | code | meaning |
 | --- | --- |
 | `0` | The verb did what it was asked. |
-| `1` | Well-formed input whose answer is no: a payload that violates its schema, a stream that could not be written. |
+| `1` | Well-formed input whose answer is no: a payload that violates its schema, a stream that could not be written, a message a spool's receiver did not answer. |
 | `2` | Input the verb refuses: a malformed id or filter, an unknown profile, an unsupported language, an unregistered id, a usage error. |
 
 Refusals go to stderr as `onemessagebus: <what is wrong>`; stdout carries
@@ -130,3 +133,47 @@ says its key admits (`--label round=2` is an integer under the agent profile).
 Before the envelope is stamped the emitter's rule is applied: credential-shaped
 values are redacted, and every top-level text value of the payload is bounded
 to 4096 bytes with `"truncated": true` stamped when one was cut.
+
+## `deliver`
+
+### `deliver <address> [--message JSON] [--file PATH] [--wait SECONDS]`
+
+Send one message to the spool at `<address>` — the directory a running
+receiver bound — and print, as one line of JSON, the disposition the receiver
+answered it with. The verb blocks until the receiver has taken the message and
+answered it, however long that takes.
+
+The message is JSON, from exactly one of three sources: stdin, the file in
+`--file`, or the named `--message` option. Giving none is refused, and so is
+giving more than one, naming each source given; either way nothing is written
+to the spool. `<address>` is the only positional, so a message passed as a
+second one is a usage error. When the spool's receiver declared a schema this
+build registers, the message is checked against it first, and one that does not
+conform exits 1 naming the JSON pointer, with nothing written.
+
+What became of the message:
+
+- **answered** — exit 0, the disposition on stdout.
+- **closed** — the receiver closed its inbox, before or after the message
+  arrived: exit 1, with the closer's reason.
+- **lost** — nothing took the message within `--wait` seconds (30 by default),
+  and it was withdrawn so no receiver delivers it later; or the receiver took it
+  and is no longer bound; or its answer document is not one: exit 1, naming the
+  spool and the file or the wait.
+
+A path that is no spool is refused with exit 2.
+
+```bash
+$ echo '{"addressee":"worker","text":"the reviewer asked for a smaller diff"}' | onemessagebus deliver run/notes
+{"interrupted":{"party":"worker"}}
+```
+
+## `inbox`
+
+### `inbox carried <store> [--format json|text]`
+
+List every message the carry store `<store>` holds, in the order they were
+carried, without draining it: JSON is one `{ts, schema, message}` per line, and
+text is `<ts> <schema> <message>` per line. An empty store prints nothing and
+exits 0. A path that is no carry store — nothing there, a directory, a file
+without a carry store's header line — is refused with exit 2, naming it.
