@@ -587,6 +587,11 @@ impl LocalTransport {
     }
 
     /// Append under a lock the caller already holds.
+    ///
+    /// The file is not opened for appending: healing a torn tail and taking back
+    /// a failed write both truncate through this handle, and Windows refuses
+    /// `set_len` on an append-only handle. The lock is held while the end is
+    /// sought and written, so it positions the record where an append flag would.
     fn append_locked(&self, queue: &QueueName, record: &[u8]) -> Result<Position, TransportError> {
         if record.is_empty() || record.iter().all(u8::is_ascii_whitespace) {
             return Err(TransportError::NotARecord {
@@ -603,8 +608,9 @@ impl LocalTransport {
         let path = self.records_path(queue);
         let mut file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
-            .append(true)
+            .write(true)
             .open(&path)
             .map_err(|failure| TransportError::io("open", &path, failure))?;
         self.heal(queue, &path, &mut file)?;
