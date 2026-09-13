@@ -354,3 +354,184 @@ fn schema_register_makes_an_id_answer_in_list_and_govern_check_in_a_later_invoca
     assert_eq!(nowhere.code, 2);
     assert!(nowhere.stderr.contains("--registry"), "{}", nowhere.stderr);
 }
+
+/// The committed declaration for `rich::Rich`'s schema, compiled here.
+mod generated_rich {
+    include!("../generated/rich.rs");
+}
+
+/// The renderer over every construct it covers: a schema registered from a
+/// file, rendered through the binary, held to the committed declaration, which
+/// compiles and regenerates the document the hand-written type emits.
+#[test]
+fn schema_gen_rust_covers_every_construct_the_renderer_declares() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let registry = dir.path().join("registry");
+    let document = schemars::schema_for!(crate::rich::Rich).to_value();
+    std::fs::write(dir.path().join("rich.json"), document.to_string()).expect("written");
+    let registry_arg = registry.to_str().expect("UTF-8");
+    let registered = run_in(
+        dir.path(),
+        &[
+            "schema",
+            "register",
+            "test.rich@1",
+            "--file",
+            "rich.json",
+            "--registry",
+            registry_arg,
+        ],
+        None,
+        &[],
+    );
+    assert_eq!(registered.code, 0, "{}", registered.stderr);
+    let printed = run_in(
+        dir.path(),
+        &[
+            "schema",
+            "gen",
+            "--lang",
+            "rust",
+            "test.rich@1",
+            "--registry",
+            registry_arg,
+        ],
+        None,
+        &[],
+    );
+    assert_eq!(printed.code, 0, "{}", printed.stderr);
+    let committed = include_str!("../generated/rich.rs");
+    assert_eq!(
+        printed.stdout, committed,
+        "tests/generated/rich.rs is not what the binary prints; regenerate it by registering \
+         rich::Rich's schema and running `onemessagebus schema gen --lang rust test.rich@1`"
+    );
+    let regenerated = schemars::schema_for!(generated_rich::Rich).to_value();
+    assert_eq!(
+        regenerated, document,
+        "the generated declaration does not regenerate the document"
+    );
+    let value: generated_rich::Rich = serde_json::from_value(json!({
+        "name": "n", "count": 1, "total": 2, "delta": -3, "ratio": 0.5, "enabled": true,
+        "tags": ["a"], "level": "low", "inner": { "id": "i", "more": 1 }, "extra": null,
+        "bag": { "k": [1] }, "counts": { "x": 9 }, "kebab-key": "k"
+    }))
+    .expect("the declaration reads a conforming document");
+    assert_eq!(value.level, generated_rich::Level::Low);
+    assert_eq!(value.label, "");
+    assert_eq!(value.inner.id, "i");
+}
+
+#[test]
+fn a_registry_directory_that_is_not_one_is_refused_naming_the_file() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let registry = dir.path().join("registry");
+    std::fs::create_dir(&registry).expect("created");
+    let registry_arg = registry.to_str().expect("UTF-8");
+    let env = [("ONEMESSAGEBUS_REGISTRY", registry_arg)];
+
+    // A document filed under a name that is not its id.
+    std::fs::write(
+        registry.join("agent.other@1.json"),
+        json!({ "id": "agent.finding@1", "schema": { "type": "object" } }).to_string(),
+    )
+    .expect("written");
+    let misnamed = run_in(dir.path(), &["schema", "list"], None, &env);
+    assert_eq!(misnamed.code, 2);
+    assert!(
+        misnamed.stderr.contains("agent.other@1.json"),
+        "{}",
+        misnamed.stderr
+    );
+    assert!(
+        misnamed.stderr.contains("named by its id"),
+        "{}",
+        misnamed.stderr
+    );
+    std::fs::remove_file(registry.join("agent.other@1.json")).expect("removed");
+
+    // A file that is not a registry document at all.
+    std::fs::write(registry.join("agent.broken@1.json"), "not json").expect("written");
+    let corrupt = run_in(dir.path(), &["schema", "list"], None, &env);
+    assert_eq!(corrupt.code, 2);
+    assert!(
+        corrupt.stderr.contains("agent.broken@1.json"),
+        "{}",
+        corrupt.stderr
+    );
+    assert!(
+        corrupt.stderr.contains("not a registry document"),
+        "{}",
+        corrupt.stderr
+    );
+    std::fs::remove_file(registry.join("agent.broken@1.json")).expect("removed");
+
+    // A schema file that is not JSON.
+    std::fs::write(dir.path().join("schema.txt"), "not json").expect("written");
+    let not_json = run_in(
+        dir.path(),
+        &[
+            "schema",
+            "register",
+            "agent.finding@1",
+            "--file",
+            "schema.txt",
+        ],
+        None,
+        &env,
+    );
+    assert_eq!(not_json.code, 2);
+    assert!(
+        not_json.stderr.contains("schema.txt"),
+        "{}",
+        not_json.stderr
+    );
+    assert!(
+        not_json.stderr.contains("not a JSON document"),
+        "{}",
+        not_json.stderr
+    );
+    let missing = run_in(
+        dir.path(),
+        &[
+            "schema",
+            "register",
+            "agent.finding@1",
+            "--file",
+            "absent.json",
+        ],
+        None,
+        &env,
+    );
+    assert_eq!(missing.code, 2);
+    assert!(missing.stderr.contains("absent.json"), "{}", missing.stderr);
+
+    // A registry path that is a file: nothing to list, nowhere to write.
+    let file = dir.path().join("registry.json");
+    std::fs::write(&file, "{}").expect("written");
+    std::fs::write(
+        dir.path().join("ok.json"),
+        json!({ "type": "object" }).to_string(),
+    )
+    .expect("written");
+    let onto_file = run_in(
+        dir.path(),
+        &[
+            "schema",
+            "register",
+            "agent.finding@1",
+            "--file",
+            "ok.json",
+            "--registry",
+            file.to_str().expect("UTF-8"),
+        ],
+        None,
+        &[],
+    );
+    assert_eq!(onto_file.code, 2);
+    assert!(
+        onto_file.stderr.contains("registry.json"),
+        "{}",
+        onto_file.stderr
+    );
+}

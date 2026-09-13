@@ -622,3 +622,98 @@ fn concurrent_emitters_leave_one_gapless_series() {
     seqs.sort_unstable();
     assert_eq!(seqs, (1..=per_writer * writers).collect::<Vec<u64>>());
 }
+
+#[test]
+fn events_emit_refuses_an_empty_kind_stream_or_label_key_and_renders_typed_labels() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let no_kind = emit_in(
+        dir.path(),
+        &["--kind", " ", "--stream", "s"],
+        Some("{}"),
+        &[],
+    );
+    assert_eq!(no_kind.code, 2);
+    assert!(no_kind.stderr.contains("--kind"), "{}", no_kind.stderr);
+    let no_stream = emit_in(
+        dir.path(),
+        &["--kind", "k", "--stream", ""],
+        Some("{}"),
+        &[],
+    );
+    assert_eq!(no_stream.code, 2);
+    assert!(
+        no_stream.stderr.contains("--stream"),
+        "{}",
+        no_stream.stderr
+    );
+    let no_key = emit_in(
+        dir.path(),
+        &["--kind", "k", "--stream", "s", "--label", "=v"],
+        Some("{}"),
+        &[],
+    );
+    assert_eq!(no_key.code, 2);
+    assert!(no_key.stderr.contains("names no key"), "{}", no_key.stderr);
+    assert!(
+        !dir.path().join("stream.ndjson").exists(),
+        "nothing was appended"
+    );
+
+    let text = emit_in(
+        dir.path(),
+        &[
+            "--kind", "k", "--stream", "s", "--label", "round=2", "--label", "node=svc",
+            "--format", "text",
+        ],
+        Some(r#"{"n":1}"#),
+        &[],
+    );
+    assert_eq!(text.code, 0, "{}", text.stderr);
+    assert!(
+        text.stdout.contains(" round=2 node=svc payload={\"n\":1}"),
+        "{}",
+        text.stdout
+    );
+}
+
+#[test]
+fn events_merge_renders_artifacts_and_reports_a_line_of_another_profile() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let golden = std::fs::read_to_string(fixture("golden/envelope-v2.json")).expect("golden");
+    let envelope: Value = serde_json::from_str(&golden).expect("JSON");
+    let stream = dir.path().join("with-artifacts.ndjson");
+    std::fs::write(
+        &stream,
+        format!(
+            "{}\n{{\"v\":1,\"ts\":\"2026-09-13T00:00:00.000Z\",\"stream\":\"x\",\"seq\":1,\"source\":\"billing\",\"kind\":\"k\"}}\n",
+            envelope
+        ),
+    )
+    .expect("written");
+    let merged = run(
+        &[
+            "events",
+            "merge",
+            stream.to_str().expect("UTF-8"),
+            "--format",
+            "text",
+        ],
+        None,
+    );
+    assert_eq!(merged.code, 0, "{}", merged.stderr);
+    assert_eq!(merged.stdout.lines().count(), 1, "{}", merged.stdout);
+    assert!(
+        merged
+            .stdout
+            .contains(" artifacts=[{\"id\":\"gate-log\",\"kind\":\"log\",\"bytes\":8192}]"),
+        "{}",
+        merged.stdout
+    );
+    assert!(merged.stdout.contains(" attempt=1"), "{}", merged.stdout);
+    assert!(
+        merged.stderr.contains("not an envelope"),
+        "{}",
+        merged.stderr
+    );
+    assert!(merged.stderr.contains("billing"), "{}", merged.stderr);
+}

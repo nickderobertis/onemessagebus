@@ -2,13 +2,12 @@
 //! stack shares, declared once here and re-exported by every consumer.
 //!
 //! The core knows the shape of an envelope and nothing about agents. This
-//! crate supplies the words: the three [`Source`](event::Source)s, the four
-//! [`Phase`](event::Phase)s, the six reserved [`Labels`](event::Labels), and
-//! the schema families the stack registers — the event envelope at its two
-//! versions and the reply envelope at its two. [`Agent`] is the
-//! [`Vocabulary`](onemessagebus::Vocabulary) those types make up, and
-//! [`event::Envelope`] is the core's envelope over it, serializing to the same
-//! bytes the stack's producers write today.
+//! crate supplies the words: the three [`Source`]s, the four [`Phase`]s, the
+//! six reserved [`Labels`], and the schema families the stack registers — the
+//! event envelope at its two versions and the reply envelope at its two.
+//! [`Agent`] is the [`Vocabulary`] those types make up, and [`Envelope`] is
+//! the core's envelope over it, serializing to the same bytes the stack's
+//! producers write today.
 //!
 //! The dependency runs one way: this crate depends on the core, and the core
 //! never on this crate.

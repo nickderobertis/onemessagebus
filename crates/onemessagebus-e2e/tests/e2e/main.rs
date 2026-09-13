@@ -6,5 +6,6 @@
 //! journeys share rather than a file each of them compiles its own copy of.
 
 mod events;
+mod rich;
 mod schema;
 mod support;

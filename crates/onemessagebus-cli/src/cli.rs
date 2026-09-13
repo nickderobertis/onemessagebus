@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use onemessagebus::sdk_schema::{self, Format, Lang, SchemaEntry};
+use onemessagebus::sdk_schema::{self, Lang, SchemaEntry};
 use onemessagebus::{
     Admits, CheckError, Emitter, Filter, Merge, Open, Redactor, SchemaId, Vocabulary,
 };
@@ -153,15 +153,6 @@ enum OutputFormat {
     Json,
     /// A deterministic rendering of the same content for a person.
     Text,
-}
-
-impl From<OutputFormat> for Format {
-    fn from(format: OutputFormat) -> Self {
-        match format {
-            OutputFormat::Json => Format::Json,
-            OutputFormat::Text => Format::Text,
-        }
-    }
 }
 
 /// `--lang`, as clap takes it.

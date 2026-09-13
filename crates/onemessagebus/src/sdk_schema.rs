@@ -376,16 +376,17 @@ mod rust {
         out: &mut String,
     ) -> Result<(), GenerateError> {
         doc(schema.get("description"), "", out);
-        if let Some(words) = schema.get("enum").and_then(Value::as_array) {
+        if let Some(variants) = words_of(schema) {
             let _ = writeln!(
                 out,
                 "#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]"
             );
             let _ = writeln!(out, "pub enum {name} {{");
-            for word in words {
+            for (word, description) in variants {
                 let word = word
                     .as_str()
                     .ok_or_else(|| unrenderable(id, name, "an enum value that is not a string"))?;
+                doc(description, "    ", out);
                 let _ = writeln!(out, "    #[serde(rename = \"{}\")]", escape(word));
                 let _ = writeln!(out, "    {},", pascal(word));
             }
@@ -460,6 +461,24 @@ mod rust {
         Ok(())
     }
 
+    /// The words of a closed string set, each with its description: schemars
+    /// spells an undocumented set as `enum` and a documented one as `oneOf`
+    /// string constants.
+    fn words_of(schema: &Value) -> Option<Vec<(&Value, Option<&Value>)>> {
+        if let Some(words) = schema.get("enum").and_then(Value::as_array) {
+            return Some(words.iter().map(|word| (word, None)).collect());
+        }
+        let branches = schema.get("oneOf")?.as_array()?;
+        let mut words = Vec::new();
+        for branch in branches {
+            if branch.get("type") != Some(&Value::String("string".to_owned())) {
+                return None;
+            }
+            words.push((branch.get("const")?, branch.get("description")));
+        }
+        Some(words)
+    }
+
     /// Whether a property schema admits null, and the schema of the value when
     /// it does not.
     fn nullable(schema: &Value) -> (bool, Value) {
@@ -489,7 +508,11 @@ mod rust {
     }
 
     fn type_of(id: &SchemaId, at: &str, schema: &Value) -> Result<String, GenerateError> {
-        if schema == &Value::Bool(true) {
+        // `true`, or an object saying nothing but a description: anything at all.
+        let says_nothing = schema
+            .as_object()
+            .is_some_and(|object| object.keys().all(|key| key == "description"));
+        if schema == &Value::Bool(true) || says_nothing {
             return Ok("serde_json::Value".to_owned());
         }
         if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {

@@ -345,15 +345,13 @@ impl<V: Vocabulary> Emitter<V> {
                 if !admitted {
                     return Ok(envelope);
                 }
-                let line = match line_of(&envelope) {
-                    Ok(line) => line,
-                    Err(failure) => return Err(self.failed(envelope, failure)),
-                };
-                let written = match writer.lock() {
-                    Ok(mut sink) => sink.write_all(line.as_bytes()).and_then(|()| sink.flush()),
-                    Err(_) => Err(std::io::Error::other("the sink's lock was poisoned")),
-                };
-                match written {
+                let line = line_of(&envelope);
+                // A poisoned lock is a sink some other writer panicked while
+                // holding; the sink itself is still there to write to.
+                let mut sink = writer
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                match sink.write_all(line.as_bytes()).and_then(|()| sink.flush()) {
                     Ok(()) => Ok(envelope),
                     Err(failure) => Err(self.failed(envelope, failure)),
                 }
@@ -378,10 +376,7 @@ impl<V: Vocabulary> Emitter<V> {
                 if !admitted {
                     return Ok(envelope);
                 }
-                let line = match line_of(&envelope) {
-                    Ok(line) => line,
-                    Err(failure) => return Err(self.failed(envelope, failure)),
-                };
+                let line = line_of(&envelope);
                 // One whole line in one call: an appending write is positioned
                 // atomically, and two writes per line is how two processes
                 // appending together interleave into a line neither wrote.
@@ -404,10 +399,13 @@ impl<V: Vocabulary> Emitter<V> {
 }
 
 /// One envelope as its line: the JSON and the newline that ends the record.
-fn line_of<V: Vocabulary>(envelope: &Envelope<V>) -> std::io::Result<String> {
-    let mut line = serde_json::to_string(envelope)?;
+///
+/// Infallible: an envelope is strings, integers, a map with string keys and a
+/// list, none of which JSON can refuse.
+fn line_of<V: Vocabulary>(envelope: &Envelope<V>) -> String {
+    let mut line = serde_json::to_string(envelope).expect("an envelope serializes to JSON");
     line.push('\n');
-    Ok(line)
+    line
 }
 
 /// The shared stream file, opened for appending and locked exclusively. The
