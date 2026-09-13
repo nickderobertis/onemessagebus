@@ -656,6 +656,55 @@ fn concurrent_emitters_leave_one_gapless_series() {
     assert_eq!(seqs, (1..=per_writer * writers).collect::<Vec<u64>>());
 }
 
+/// A writer killed mid-line leaves a torn tail: the next `events emit` cuts it
+/// away, says on stderr how many bytes it cut, where and from which file, and
+/// appends its envelope as a whole line numbered after the whole records only.
+#[test]
+fn events_emit_onto_a_torn_file_heals_the_tail_and_says_so() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let args = ["--kind", "tick", "--stream", "s-1", "--source", "vcs"];
+    for n in 1..=2 {
+        let emitted = emit_in(dir.path(), &args, Some(&json!({ "n": n }).to_string()), &[]);
+        assert_eq!(emitted.code, 0, "{}", emitted.stderr);
+        assert!(emitted.stderr.is_empty(), "{}", emitted.stderr);
+    }
+    let path = dir.path().join("stream.ndjson");
+    let whole = std::fs::read_to_string(&path).expect("the stream file");
+    let last = whole.lines().last().expect("a last line");
+    let tail = &last[..last.len() / 2];
+    std::fs::write(&path, format!("{whole}{tail}")).expect("the torn tail is written");
+
+    let healed = emit_in(dir.path(), &args, Some(r#"{"n":3}"#), &[]);
+    assert_eq!(healed.code, 0, "{}", healed.stderr);
+    assert!(
+        healed.stderr.contains(&format!(
+            "onemessagebus: healed a torn record of {} bytes at byte {} of stream.ndjson",
+            tail.len(),
+            whole.len()
+        )),
+        "{}",
+        healed.stderr
+    );
+    let after = std::fs::read_to_string(&path).expect("the stream file");
+    assert!(
+        after.starts_with(&whole),
+        "the whole records are kept byte for byte: {after}"
+    );
+    assert!(
+        after.ends_with('\n'),
+        "the new record is a whole line: {after}"
+    );
+    let written = lines_of(dir.path());
+    assert_eq!(written.len(), 3, "{after}");
+    assert_eq!(
+        written.iter().map(|e| e["seq"].clone()).collect::<Vec<_>>(),
+        [json!(1), json!(2), json!(3)],
+        "the torn tail is not a record, so the new envelope is the third"
+    );
+    assert_eq!(written[2]["payload"], json!({ "n": 3 }));
+    assert_eq!(healed.lines(), [written[2].clone()], "printed is written");
+}
+
 #[test]
 fn events_emit_refuses_an_empty_kind_stream_or_label_key_and_renders_typed_labels() {
     let dir = tempfile::tempdir().expect("a temp dir");

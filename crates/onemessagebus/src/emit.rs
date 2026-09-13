@@ -34,6 +34,21 @@ pub enum EmitterError {
         #[source]
         source: std::io::Error,
     },
+    /// The envelope would not serialize to JSON, so there was no line to
+    /// write. The core's own fields always serialize; this is a vocabulary's
+    /// `Serialize` impl refusing a value it was handed.
+    #[error("cannot record a {kind} event on stream {stream} at seq {seq}: it does not serialize to JSON: {source}")]
+    Serialize {
+        /// The stream the envelope belongs to.
+        stream: String,
+        /// The number the envelope was stamped with.
+        seq: u64,
+        /// The kind that was being recorded.
+        kind: Kind,
+        /// What the serializer said.
+        #[source]
+        source: serde_json::Error,
+    },
     /// The shared stream file could not be locked, so the envelope could not
     /// be numbered.
     #[error("cannot order a {kind} event in {path}: {source}")]
@@ -247,9 +262,10 @@ impl<V: Vocabulary> Emitter<V> {
     /// the filter did not admit it, as it would have been, carrying the number
     /// the next admitted envelope takes.
     ///
-    /// A sink that cannot be written to is reported on stderr rather than
-    /// returned: the envelope is the producer's own record of what it did, and
-    /// a failed write of that record must not become a failed command. A
+    /// A sink that cannot be written to, or an envelope the vocabulary's types
+    /// will not serialize, is reported on stderr rather than returned: the
+    /// envelope is the producer's own record of what it did, and a failed write
+    /// of that record must not become a failed command. A
     /// caller that wants the failure calls [`try_emit`](Self::try_emit).
     pub fn emit(&self, kind: impl Into<Kind>, payload: Map<String, Value>) -> Envelope<V> {
         self.emit_with(kind, payload, Vec::new())
@@ -345,7 +361,14 @@ impl<V: Vocabulary> Emitter<V> {
                 if !admitted {
                     return Ok(envelope);
                 }
-                let line = line_of(&envelope);
+                // Serialized before the lock is taken, so a refusal leaves the
+                // sink untouched and unheld. The number stays consumed, as it
+                // does when the write itself fails: the in-memory counter
+                // numbers what was attempted, and a consumer sees the gap.
+                let line = match line_of(&envelope) {
+                    Ok(line) => line,
+                    Err(failure) => return Err(self.unserializable(envelope, failure)),
+                };
                 // A poisoned lock is a sink some other writer panicked while
                 // holding; the sink itself is still there to write to.
                 let mut sink = writer
@@ -368,7 +391,7 @@ impl<V: Vocabulary> Emitter<V> {
                         return Err(Box::new(Unrecorded { envelope, error }));
                     }
                 };
-                let held = match recorded(&mut file) {
+                let held = match recorded(&mut file, path) {
                     Ok(held) => held,
                     Err(failure) => return Err(self.failed(envelope, failure)),
                 };
@@ -376,7 +399,14 @@ impl<V: Vocabulary> Emitter<V> {
                 if !admitted {
                     return Ok(envelope);
                 }
-                let line = line_of(&envelope);
+                // Returning drops `file`, which releases the lock; nothing was
+                // written, so the number is not consumed — the next envelope
+                // takes it, as it does after a failed write, because here the
+                // file is what numbers the series.
+                let line = match line_of(&envelope) {
+                    Ok(line) => line,
+                    Err(failure) => return Err(self.unserializable(envelope, failure)),
+                };
                 // One whole line in one call: an appending write is positioned
                 // atomically, and two writes per line is how two processes
                 // appending together interleave into a line neither wrote.
@@ -396,16 +426,32 @@ impl<V: Vocabulary> Emitter<V> {
         };
         Box::new(Unrecorded { envelope, error })
     }
+
+    fn unserializable(
+        &self,
+        envelope: Envelope<V>,
+        failure: serde_json::Error,
+    ) -> Box<Unrecorded<V>> {
+        let error = EmitterError::Serialize {
+            stream: self.stream.clone(),
+            seq: envelope.seq,
+            kind: envelope.kind.clone(),
+            source: failure,
+        };
+        Box::new(Unrecorded { envelope, error })
+    }
 }
 
 /// One envelope as its line: the JSON and the newline that ends the record.
 ///
-/// Infallible: an envelope is strings, integers, a map with string keys and a
-/// list, none of which JSON can refuse.
-fn line_of<V: Vocabulary>(envelope: &Envelope<V>) -> String {
-    let mut line = serde_json::to_string(envelope).expect("an envelope serializes to JSON");
+/// Whole or not at all: the line is built in memory before any byte reaches a
+/// sink, so a refusal leaves no partial record behind. The core's fields cannot
+/// be refused, but the vocabulary's source, dimensions and labels serialize
+/// through impls the consumer wrote.
+fn line_of<V: Vocabulary>(envelope: &Envelope<V>) -> serde_json::Result<String> {
+    let mut line = serde_json::to_string(envelope)?;
     line.push('\n');
-    line
+    Ok(line)
 }
 
 /// The shared stream file, opened for appending and locked exclusively. The
@@ -424,7 +470,7 @@ fn open_locked(path: &Path) -> std::io::Result<File> {
 /// How many whole records the file already holds, and — where a writer died
 /// mid-line — the torn tail healed away, so the next record starts on a line
 /// of its own rather than glued to half of somebody else's.
-fn recorded(file: &mut File) -> std::io::Result<u64> {
+fn recorded(file: &mut File, path: &Path) -> std::io::Result<u64> {
     let mut contents = Vec::new();
     file.seek(SeekFrom::Start(0))?;
     file.read_to_end(&mut contents)?;
@@ -437,8 +483,9 @@ fn recorded(file: &mut File) -> std::io::Result<u64> {
         file.set_len(keep as u64)?;
         file.seek(SeekFrom::End(0))?;
         eprintln!(
-            "onemessagebus: healed a torn record of {} bytes at byte {keep} of the stream file",
-            contents.len() - keep
+            "onemessagebus: healed a torn record of {} bytes at byte {keep} of {}",
+            contents.len() - keep,
+            path.display()
         );
     }
     Ok(whole)
