@@ -1,0 +1,69 @@
+# Automated releases from conventional commits, driven by release-plz.
+#
+# Flow:
+#   1. Commits land on `main` (pre-1.0: feat -> minor, fix/perf/refactor/build ->
+#      patch, `!`/BREAKING -> minor; chore/docs/ci/test/style do not release).
+#      release-plz only *sees* a commit that touched a crate's packaged files,
+#      so what releases is governed by `[package] include` in each crate's
+#      Cargo.toml. See AGENTS.md.
+#   2. The `release-pr` job opens/updates a PR that bumps the workspace version
+#      in Cargo.toml + Cargo.lock and writes the CHANGELOG section.
+#   3. Merging that PR makes the `release` job tag `vX.Y.Z` and cut a GitHub
+#      Release with the changelog notes. That Release (created with a PAT, not the
+#      default GITHUB_TOKEN) triggers release.yml, which builds and publishes the
+#      binaries, the wheels, and the npm packages.
+#
+# Both published crates inherit the one workspace version, so one release moves
+# both: the agent profile names the core at the version it was built against,
+# and a consumer pins the pair at one number.
+
+[workspace]
+# release-plz only versions, changelogs, tags, and cuts the GitHub Release — it
+# never runs `cargo publish`. crates.io publishing is a separate step: the
+# `publish-crate` job in release.yml, which self-activates when the
+# CARGO_REGISTRY_TOKEN secret is set. Keeping it out of release-plz decouples
+# versioning/tagging from the registry push.
+publish = false
+
+# API breaking-change detection: cargo-semver-checks compares the surface against
+# the last released version, and release-plz bumps on what it finds rather than on
+# the commit type alone — which cannot see a break the author did not mark.
+# release-plz.yml installs the tool beside release-plz; without it the check is
+# silently skipped.
+semver_check = true
+
+git_tag_name = "v{{ version }}"
+git_release_name = "v{{ version }}"
+
+# Keep-a-Changelog-style grouping. The version bump is computed from the
+# conventional-commit *type*, independent of these display groups.
+[changelog]
+commit_parsers = [
+  { message = "^feat", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^perf", group = "Performance" },
+  { message = "^refactor", group = "Changed" },
+  { message = "^docs", group = "Documentation" },
+  { message = "^test", skip = true },
+  { message = "^ci", skip = true },
+  { message = "^chore", skip = true },
+  { message = "^build", skip = true },
+  { message = "^style", skip = true },
+  { body = ".*", group = "Other" },
+]
+
+# The changelog lives at the repository root, where the release archive's
+# `include` in release.yml resolves it from, and where a reader arriving at the
+# repository looks. The core crate is the one whose Release fires release.yml;
+# the profile crate shares its version and tags beside it without a Release of
+# its own, since a Release is what builds the binaries, wheels and npm packages
+# — none of which it has.
+[[package]]
+name = "onemessagebus"
+changelog_path = "CHANGELOG.md"
+
+[[package]]
+name = "onemessagebus-agent"
+git_tag_name = "onemessagebus-agent-v{{ version }}"
+git_release_enable = false
+changelog_path = "CHANGELOG.md"

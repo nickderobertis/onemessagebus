@@ -1,0 +1,38 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "defaultBase": "main",
+  "cacheDirectory": ".nx/cache",
+  "namedInputs": {
+    "sharedGlobals": [
+      "{workspaceRoot}/nx.json",
+      "{workspaceRoot}/package.json",
+      "{workspaceRoot}/package-lock.json",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/rustfmt.toml",
+      "{workspaceRoot}/clippy.toml",
+      "{workspaceRoot}/justfile"
+    ],
+    "default": ["{projectRoot}/**/*", "sharedGlobals"],
+    "crateSource": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/Cargo.toml",
+      "{workspaceRoot}/Cargo.lock",
+      "{workspaceRoot}/docs/contract.md",
+      "sharedGlobals"
+    ],
+    "wholeWorkspace": ["{workspaceRoot}/**/*"]
+  },
+  "targetDefaults": {
+    "bootstrap": { "cache": false },
+    "format": { "cache": false },
+    "format-check": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
+    "lint": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
+    "doc": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
+    "build": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
+    "test": { "cache": false, "inputs": ["crateSource", "^crateSource"] },
+    "check": {
+      "cache": false,
+      "dependsOn": ["format-check", "lint", "test", "doc"]
+    }
+  }
+}

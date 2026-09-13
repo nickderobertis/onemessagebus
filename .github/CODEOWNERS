@@ -1,0 +1,24 @@
+# Who reviews what, routed by subtree so an instruction layer has ownership
+# beside it rather than only prose. One owner today; the routing is what a second
+# owner is added to, and what stops a change to the packaging or the workflows
+# from being reviewed as if it were a change to a crate.
+
+*                       @nickderobertis
+
+# The crates and their own instructions.
+/crates/               @nickderobertis
+/AGENTS.md             @nickderobertis
+/CLAUDE.md             @nickderobertis
+
+# The approved contract. A change here is a change to every consumer's
+# expectations.
+/docs/                 @nickderobertis
+
+# How this repository is built, released, and distributed.
+/.github/              @nickderobertis
+/scripts/              @nickderobertis
+/npm/                  @nickderobertis
+/justfile              @nickderobertis
+/nx.json               @nickderobertis
+/release-plz.toml      @nickderobertis
+/release-targets.toml  @nickderobertis

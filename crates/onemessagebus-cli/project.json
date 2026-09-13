@@ -1,0 +1,21 @@
+{
+  "name": "onemessagebus-cli",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "crates/onemessagebus-cli/src",
+  "tags": ["scope:cli", "lang:rust", "type:app"],
+  "implicitDependencies": ["onemessagebus", "onemessagebus-agent"],
+  "targets": {
+    "bootstrap": { "command": "just _crate-bootstrap" },
+    "format": { "command": "just _crate-format onemessagebus-cli" },
+    "format-check": { "command": "just _crate-fmt-check onemessagebus-cli" },
+    "lint": { "command": "just _crate-lint onemessagebus-cli" },
+    "build": { "command": "just _crate-build onemessagebus-cli" },
+    "test": { "command": "just _crate-test onemessagebus-cli" },
+    "doc": { "command": "just _crate-doc onemessagebus-cli" },
+    "check": {
+      "executor": "nx:noop",
+      "dependsOn": ["format-check", "lint", "test", "doc"]
+    }
+  }
+}

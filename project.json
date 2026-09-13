@@ -1,0 +1,26 @@
+{
+  "name": "workspace",
+  "$schema": "./node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "tags": ["scope:repo"],
+  "implicitDependencies": [
+    "onemessagebus",
+    "onemessagebus-agent",
+    "onemessagebus-cli",
+    "onemessagebus-e2e",
+    "onemessagebus-npm"
+  ],
+  "targets": {
+    "coverage": {
+      "command": "just _coverage",
+      "dependsOn": ["^test"],
+      "inputs": ["wholeWorkspace"],
+      "cache": false
+    },
+    "deps-check": {
+      "command": "just _deps-check",
+      "inputs": ["{workspaceRoot}/Cargo.toml", "{workspaceRoot}/Cargo.lock", "{workspaceRoot}/deny.toml", "{workspaceRoot}/crates/*/Cargo.toml"],
+      "cache": false
+    }
+  }
+}
