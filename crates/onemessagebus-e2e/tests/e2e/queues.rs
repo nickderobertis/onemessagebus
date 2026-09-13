@@ -1207,6 +1207,10 @@ fn a_send_that_fails_partway_leaves_the_file_on_its_last_record_boundary() {
         .env_remove("ONEMESSAGEBUS_REGISTRY")
         .env_remove("ONEMESSAGEBUS_CONFIG")
         .env_remove("ONEMESSAGEBUS_TRANSPORT_DIR")
+        // The same limit would truncate the profile an instrumented binary
+        // writes at exit, and one corrupt profile fails the whole coverage
+        // merge; this process's coverage is the one record not worth keeping.
+        .env("LLVM_PROFILE_FILE", "/dev/null")
         .current_dir(scratch.root())
         .output()
         .expect("the binary runs under a file size limit");
