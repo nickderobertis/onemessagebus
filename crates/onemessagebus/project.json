@@ -1,0 +1,21 @@
+{
+  "name": "onemessagebus",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "crates/onemessagebus/src",
+  "tags": ["scope:library", "lang:rust", "type:contract"],
+  "implicitDependencies": [],
+  "targets": {
+    "bootstrap": { "command": "just _crate-bootstrap" },
+    "format": { "command": "just _crate-format onemessagebus" },
+    "format-check": { "command": "just _crate-fmt-check onemessagebus" },
+    "lint": { "command": "just _crate-lint onemessagebus" },
+    "build": { "command": "just _crate-build onemessagebus" },
+    "test": { "command": "just _crate-test onemessagebus" },
+    "doc": { "command": "just _crate-doc onemessagebus" },
+    "check": {
+      "executor": "nx:noop",
+      "dependsOn": ["format-check", "lint", "test", "doc"]
+    }
+  }
+}

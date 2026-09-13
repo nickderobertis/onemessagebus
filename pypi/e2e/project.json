@@ -1,0 +1,28 @@
+{
+  "name": "onemessagebus-pypi-e2e",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "pypi/e2e",
+  "tags": ["scope:e2e", "lang:python", "type:e2e"],
+  "implicitDependencies": ["onemessagebus-pypi"],
+  "targets": {
+    "bootstrap": { "executor": "nx:noop" },
+    "format": { "executor": "nx:noop" },
+    "format-check": { "executor": "nx:noop" },
+    "lint": { "executor": "nx:noop" },
+    "test": {
+      "command": "just _wheel-test",
+      "dependsOn": [{ "projects": ["onemessagebus-pypi"], "target": "build" }],
+      "inputs": [
+        { "dependentTasksOutputFiles": "**/*.whl", "transitive": true },
+        "{workspaceRoot}/scripts/smoke-published.sh",
+        "sharedGlobals"
+      ]
+    },
+    "doc": { "executor": "nx:noop" },
+    "check": {
+      "executor": "nx:noop",
+      "dependsOn": ["format-check", "lint", "test"]
+    }
+  }
+}

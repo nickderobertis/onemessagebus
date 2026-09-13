@@ -1,0 +1,52 @@
+# PyPI packaging for the onemessagebus CLI.
+#
+# maturin's `bin` bindings wrap the prebuilt Rust binary in a per-platform wheel
+# (the ruff/uv pattern), so `pip install onemessagebus-cli` is a seconds-fast
+# binary install — the quickest trustworthy path on a CI image with no Rust
+# toolchain, or in a restricted-egress network where github.com is blocked but
+# PyPI is reachable. The distribution is `onemessagebus-cli`; the console command
+# it installs is `onemessagebus`, from the `[[bin]]` in
+# crates/onemessagebus-cli/Cargo.toml. The Python SDK package `onemessagebus` is
+# a separate distribution the SDK node adds.
+#
+# The version is deliberately NOT set here (`dynamic = ["version"]`): maturin
+# sources it from the crate manifest, which inherits the workspace version, so
+# release-plz stays the single version driver — the same rule
+# scripts/npm-build.mjs follows for the npm packages. Wheels are built and
+# published by .github/workflows/release.yml.
+
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "onemessagebus-cli"
+description = "A typed NDJSON message bus: schema registry verbs and stream verbs over the agent profile."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Nick DeRobertis" }]
+keywords = ["ndjson", "events", "message-bus", "schema", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Libraries",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/nickderobertis/onemessagebus"
+Repository = "https://github.com/nickderobertis/onemessagebus"
+
+[tool.maturin]
+# Package the compiled `onemessagebus` binary as a wheel entry point, not a
+# Python extension module. manifest-path names the binary crate explicitly: the
+# root manifest is a virtual workspace, so maturin has nothing to guess from
+# there.
+bindings = "bin"
+manifest-path = "crates/onemessagebus-cli/Cargo.toml"
+strip = true

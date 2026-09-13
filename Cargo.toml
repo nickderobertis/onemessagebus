@@ -1,0 +1,63 @@
+# The Cargo workspace: the core bus, the agent profile over it, the binary, the
+# journey crate that drives it, and the crate holding this repository's own
+# configuration to its sources. Shared metadata lives in
+# `[workspace.package]` and shared version requirements in
+# `[workspace.dependencies]`, so a member never pins its own copy of either.
+#
+# The version is inherited too: both published crates move together on one
+# release-plz release, and scripts/npm-build.mjs and maturin read it from here.
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+license = "MIT"
+authors = ["Nick DeRobertis"]
+repository = "https://github.com/nickderobertis/onemessagebus"
+homepage = "https://github.com/nickderobertis/onemessagebus"
+
+[workspace.dependencies]
+# The two crates of this workspace, as members name each other. The version
+# requirement is what `cargo publish` uploads — a bare path resolves to nothing
+# on crates.io — and release-plz keeps it in step with the workspace version.
+onemessagebus = { path = "crates/onemessagebus", version = "0.1.0" }
+onemessagebus-agent = { path = "crates/onemessagebus-agent", version = "0.1.0" }
+# Unpublished, so path-only: cargo strips a path-only dev-dependency when it
+# packages the crates that name it.
+onemessagebus-cli = { path = "crates/onemessagebus-cli" }
+
+clap = { version = "4.6", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+# `preserve_order` keeps JSON object keys in insertion order, so an envelope
+# read off a stream re-serializes in the order its producer wrote rather than in
+# whatever order a hash map happened to yield — the byte identity the recorded
+# streams are held to.
+serde_json = { version = "1", features = ["preserve_order"] }
+# Every wire type carries a JSON Schema, which is what the registry records for
+# a Rust message and what the SDK generators consume.
+schemars = { version = "1", features = ["preserve_order"] }
+# Validating a payload against a registered document. Default features off: the
+# resolvers fetch `$ref`s over HTTP and off the filesystem, and every schema
+# checked here is one the registry holds in memory.
+jsonschema = { version = "0.56", default-features = false }
+thiserror = "2"
+# The envelope's `ts` is RFC 3339 with millisecond precision in UTC. Calendar
+# arithmetic is not a thing to hand-roll into an event stream's ordering key.
+time = { version = "0.3", features = ["formatting", "macros"] }
+# A filter kept in a file beside a plan is YAML, of which the inline JSON form
+# is a subset. serde_norway is the maintained fork of the archived serde_yaml.
+serde_norway = "0.9"
+
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+toml_edit = "0.25"
+
+# A CLI binary: optimize for a small, fast-starting artifact.
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

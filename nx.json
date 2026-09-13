@@ -1,0 +1,54 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "defaultBase": "main",
+  "cacheDirectory": ".nx/cache",
+  "namedInputs": {
+    "sharedGlobals": [
+      "{workspaceRoot}/nx.json",
+      "{workspaceRoot}/package.json",
+      "{workspaceRoot}/package-lock.json",
+      "{workspaceRoot}/rust-toolchain.toml",
+      "{workspaceRoot}/rustfmt.toml",
+      "{workspaceRoot}/clippy.toml",
+      "{workspaceRoot}/justfile"
+    ],
+    "default": ["{projectRoot}/**/*", "sharedGlobals"],
+    "crateSource": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/Cargo.toml",
+      "{workspaceRoot}/Cargo.lock",
+      "{workspaceRoot}/docs/contract.md",
+      "sharedGlobals"
+    ],
+    "wholeWorkspace": ["{workspaceRoot}/**/*"]
+  },
+  "boundaries": {
+    "//": "Which project types may depend on which, by tag. Enforced by npm/test/project-boundaries.test.mjs over every project's implicitDependencies, which that test also holds to the Cargo dependency graph — so an edge is true rather than declared, and one drawn back from the contract to a consumer fails the gate.",
+    "allow": {
+      "type:contract": [],
+      "type:profile": ["type:contract"],
+      "type:app": ["type:contract", "type:profile"],
+      "type:e2e": ["type:contract", "type:profile", "type:app", "type:packaging"],
+      "type:packaging": ["type:app"],
+      "type:repo": [],
+      "type:workspace": ["type:contract", "type:profile", "type:app", "type:e2e", "type:packaging", "type:repo"]
+    }
+  },
+  "targetDefaults": {
+    "bootstrap": { "cache": false },
+    "format": { "cache": false },
+    "format-check": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
+    "lint": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
+    "doc": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
+    "build": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
+    "test": {
+      "cache": false,
+      "inputs": ["crateSource", "^crateSource"],
+      "outputs": ["{workspaceRoot}/target/llvm-cov-target/*.profraw"]
+    },
+    "check": {
+      "cache": false,
+      "dependsOn": ["format-check", "lint", "test", "doc"]
+    }
+  }
+}

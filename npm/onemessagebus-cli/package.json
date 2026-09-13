@@ -1,0 +1,29 @@
+{
+  "name": "onemessagebus-cli",
+  "version": "0.0.0-managed",
+  "description": "A typed NDJSON message bus: schema registry verbs and stream verbs over the agent profile.",
+  "keywords": [
+    "ndjson",
+    "events",
+    "message-bus",
+    "schema",
+    "cli"
+  ],
+  "homepage": "https://github.com/nickderobertis/onemessagebus",
+  "bugs": "https://github.com/nickderobertis/onemessagebus/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nickderobertis/onemessagebus.git"
+  },
+  "license": "MIT",
+  "author": "Nick DeRobertis",
+  "bin": {
+    "onemessagebus": "bin/onemessagebus.js"
+  },
+  "files": [
+    "bin/onemessagebus.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

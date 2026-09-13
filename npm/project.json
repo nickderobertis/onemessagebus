@@ -1,0 +1,43 @@
+{
+  "name": "onemessagebus-npm",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "npm/onemessagebus-cli",
+  "tags": ["scope:packaging", "lang:js", "type:packaging"],
+  "implicitDependencies": ["onemessagebus-cli", "onemessagebus-npm-launcher"],
+  "targets": {
+    "bootstrap": { "executor": "nx:noop" },
+    "format": {
+      "command": "node node_modules/@biomejs/biome/bin/biome format --write npm scripts"
+    },
+    "format-check": {
+      "command": "node node_modules/@biomejs/biome/bin/biome format npm scripts",
+      "inputs": ["default", "{workspaceRoot}/scripts/**/*.mjs", "{workspaceRoot}/biome.json"]
+    },
+    "lint": {
+      "command": "node node_modules/@biomejs/biome/bin/biome lint npm scripts",
+      "inputs": ["default", "{workspaceRoot}/scripts/**/*.mjs", "{workspaceRoot}/biome.json"]
+    },
+    "test": {
+      "command": "node --test npm/test/*.test.mjs",
+      "dependsOn": [{ "projects": ["onemessagebus-cli"], "target": "build" }],
+      "inputs": [
+        "{projectRoot}/**/*",
+        "^default",
+        "{workspaceRoot}/scripts/**/*",
+        "{workspaceRoot}/release-targets.toml",
+        "{workspaceRoot}/pyproject.toml",
+        "{workspaceRoot}/.github/workflows/release.yml",
+        "{workspaceRoot}/crates/**/*",
+        "{workspaceRoot}/Cargo.toml",
+        "{workspaceRoot}/Cargo.lock",
+        "sharedGlobals"
+      ]
+    },
+    "doc": { "executor": "nx:noop" },
+    "check": {
+      "executor": "nx:noop",
+      "dependsOn": ["format-check", "lint", "test"]
+    }
+  }
+}

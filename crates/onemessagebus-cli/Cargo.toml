@@ -1,0 +1,38 @@
+# The `onemessagebus` binary: the command line over the core and the agent
+# profile. Unpublished — shipped through the release archives, the PyPI wheel
+# (`onemessagebus-cli`) and the npm launcher (`onemessagebus-cli`), with
+# `cargo install --git` as the crates-free path — because a binary that links
+# the profile cannot live in the core (the profile depends on the core, and a
+# binary links only its own crate's dependencies), and the profile stays a
+# library every consumer can depend on without pulling clap.
+[package]
+name = "onemessagebus-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "The onemessagebus command line: schema registry verbs and NDJSON stream verbs over the agent profile."
+publish = false
+
+[lib]
+name = "onemessagebus_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "onemessagebus"
+path = "src/main.rs"
+
+[dependencies]
+onemessagebus = { workspace = true }
+onemessagebus-agent = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+schemars = { workspace = true }
+tempfile = { workspace = true }

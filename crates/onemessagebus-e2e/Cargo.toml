@@ -1,0 +1,37 @@
+# The compiled-binary journeys. Never published: a `publish = false` workspace
+# member holding only `tests/`, whose `test` target depends on the binary crate's
+# `build` so every journey drives a freshly built artifact.
+[package]
+name = "onemessagebus-e2e"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lib]
+# No library: this crate is its journeys and nothing else.
+path = "src/lib.rs"
+
+[dependencies]
+
+[dev-dependencies]
+onemessagebus = { workspace = true }
+onemessagebus-agent = { workspace = true }
+# The binary the journeys spawn, resolved by Cargo as `CARGO_BIN_EXE_onemessagebus`.
+onemessagebus-cli = { workspace = true }
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+tempfile = { workspace = true }
+
+# One test binary rather than one per file, so the fixture is a module the
+# journeys share rather than a file each of them compiles its own copy of.
+[[test]]
+name = "e2e"
+path = "tests/e2e/main.rs"

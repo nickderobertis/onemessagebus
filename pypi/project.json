@@ -1,0 +1,25 @@
+{
+  "name": "onemessagebus-pypi",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "pypi",
+  "tags": ["scope:packaging", "lang:python", "type:packaging"],
+  "implicitDependencies": ["onemessagebus-cli"],
+  "targets": {
+    "bootstrap": { "executor": "nx:noop" },
+    "build": {
+      "command": "just _wheel-build",
+      "inputs": ["{workspaceRoot}/pyproject.toml", "{workspaceRoot}/README.md", "^crateSource"],
+      "outputs": ["{workspaceRoot}/dist/wheels"]
+    },
+    "format": { "executor": "nx:noop" },
+    "format-check": { "executor": "nx:noop" },
+    "lint": { "executor": "nx:noop" },
+    "test": { "executor": "nx:noop" },
+    "doc": { "executor": "nx:noop" },
+    "check": {
+      "executor": "nx:noop",
+      "dependsOn": ["format-check", "lint", "test"]
+    }
+  }
+}

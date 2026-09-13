@@ -1,0 +1,274 @@
+name: CI
+
+# Pull requests run the affected tier; the release PR — the commit that ships —
+# gets the full sweep, once. A push to main runs nothing here, and nothing runs on
+# a schedule: every commit on main arrived through a gated pull request, and
+# gating it again would re-sweep a tree the merge already proved. The README's
+# install one-liner, which needs the code on the remote, is proven by
+# install-documented.yml.
+on:
+  pull_request:
+
+# Least privilege: most jobs only need to read the repo.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Which projects this pull request's diff can reach, derived once so every
+  # Rust-artifact job below can skip on a change that cannot touch a crate
+  # instead of paying the full matrix.
+  #
+  # `just affected-crate` fails closed: with no derivable merge base — a shallow
+  # clone, a missing base branch — it says the crate is affected and the matrices
+  # run. Affected selection is a speed optimisation, and one that can silently
+  # skip a check is a correctness hole.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      crate: ${{ steps.affected.outputs.crate }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `nx affected` needs the merge base, which a shallow checkout does not
+          # have.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # Install through crates.io, not the GitHub release-download path used by
+      # setup-just/install-action. That path can be down without blocking a gate.
+      - uses: ./.github/actions/setup-just
+      - name: Which projects the diff reaches
+        id: affected
+        run: echo "crate=$(just affected-crate)" >> "$GITHUB_OUTPUT"
+
+  # The gate on a clean checkout: bootstrap from scratch, then the deterministic
+  # gate (format, clippy, tests incl. e2e with the coverage threshold, docs).
+  # Affected projects on an ordinary pull request; every project on the release
+  # PR, because release-plz batches merges behind it and its commit is the one
+  # that ships.
+  #
+  # Linux-only because coverage is measured here; macOS/Windows prove the artifact
+  # via the `cross` job below.
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest,cargo-llvm-cov
+      - uses: ./.github/actions/setup-just
+      # onemessagebus-pypi's targets build the wheel with maturin through uvx and
+      # install it into a uv virtualenv.
+      - uses: astral-sh/setup-uv@v6
+      - name: Bootstrap
+        run: just bootstrap
+      - name: Quality gate (affected projects)
+        if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-plz-')
+        run: just check-affected
+      - name: Quality gate (every project)
+        if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-plz-')
+        run: just check
+      # A committed lockfile that `just bootstrap`/`just check` had to change is a
+      # stale generated file; fail rather than let it drift.
+      - name: Committed generated files are up to date
+        run: git diff --exit-code -- Cargo.lock package-lock.json
+
+  # Prove the artifact builds and its tests pass on macOS and Windows: what a
+  # platform can change. Formatting and lints are platform-independent and the
+  # gate job already ran them, so they are not repeated; coverage is measured
+  # on Linux alone.
+  cross:
+    needs: changes
+    if: needs.changes.outputs.crate == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - uses: ./.github/actions/setup-just
+      - name: Bootstrap
+        run: just bootstrap
+      - name: Tests (every crate and the npm packaging)
+        # llmlint: ignore[no_second_broader_sweep_over_an_already_gated_commit] not the same sweep twice: `gate` runs on ubuntu alone, and this is the only run of the suites on macOS and Windows, which the create-repo CI guidance requires for a cross-platform binary; formatting, lints and coverage are platform-independent and are not repeated here.
+        run: just test-uninstrumented
+
+  # The declared MSRV is a promise to consumers, so prove it rather than document
+  # it: a floor that only lives in Cargo.toml drifts the first time a dependency
+  # raises its own.
+  msrv:
+    needs: changes
+    if: needs.changes.outputs.crate == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the MSRV from Cargo.toml
+        id: msrv
+        run: |
+          version="$(sed -n 's/^rust-version *= *"\([^"]*\)".*/\1/p' Cargo.toml)"
+          [ -n "$version" ] || { echo "::error::Cargo.toml declares no rust-version"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/setup-just
+      # `just msrv` reads the same `rust-version` field, so the recipe and the job
+      # can never disagree about which floor was proven.
+      - run: just msrv
+
+  # Advisory + license audit and unused-dependency check. Its own Linux-only job:
+  # it needs a network advisory DB and must not be duplicated across the matrix.
+  deny:
+    needs: changes
+    if: needs.changes.outputs.crate == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-machete
+      - uses: ./.github/actions/setup-just
+      - run: just deps-check
+
+  # Prove the end-user install path on every platform: install the binary the
+  # documented way and smoke-test the real artifact with the same script the
+  # release verify jobs run against PyPI and npm. `cargo install --path` is the
+  # same code path as the documented `cargo install --git`, minus the fetch — so
+  # the path users take is exercised on every PR, not only after a release.
+  install:
+    needs: [changes, gate]
+    if: needs.changes.outputs.crate == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      # On a PR the change is not on the remote yet, so `--path` is the only way to
+      # install *this* revision.
+      - name: Install (this revision)
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: cargo install --path crates/onemessagebus-cli --locked
+      - name: Smoke-test the installed binary
+        run: |
+          version="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -n1)"
+          bash scripts/smoke-published.sh \
+            --expect-version "$version" \
+            --label "cargo install onemessagebus-cli $version on $RUNNER_OS/$RUNNER_ARCH"
+
+  # The PyPI path on every PR: build the wheel maturin will publish from this
+  # revision, install it, and smoke-test what it put on PATH.
+  wheel:
+    needs: changes
+    if: needs.changes.outputs.crate == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: ./.github/actions/setup-just
+      - uses: astral-sh/setup-uv@v6
+      # The repository's own wheel journey: onemessagebus-pypi builds the wheel
+      # with maturin, and onemessagebus-pypi-e2e installs it into a fresh
+      # virtualenv and smoke-tests what it put on PATH.
+      - name: Build, install and smoke-test the wheel
+        run: just nx run onemessagebus-pypi-e2e:test
+
+  # Lint the PR title: under squash-merge it becomes the release-driving commit.
+  pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The LLM-judge tier: a blocking PR check, separate from the deterministic
+  # `check` gate. It requires its harness credential and fails fast without it — a
+  # credential-less no-op would report unlinted files as clean. Fork PRs are gated
+  # by the repo's require-approval-for-fork-workflows setting.
+  llmlint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-just
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # oneharness.toml's primary harness. Without a harness binary on PATH,
+      # llmlint has nothing to drive and the job would fail with no findings —
+      # which reads like a clean run. Pinned rather than floating: an upstream
+      # release has taken this required check down before. Bump deliberately.
+      - name: Install the Codex harness
+        run: npm install -g @openai/codex@0.145.0
+      # oneharness only falls through to a harness it can actually spawn, so the
+      # secondary in the chain is a resilience claim the runner cannot honour
+      # unless `claude` is on PATH too. With it installed, an exhausted or broken
+      # codex degrades to claude-code instead of failing the check.
+      - name: Install the Claude Code harness (oneharness fallback)
+        run: npm install -g @anthropic-ai/claude-code@2.1.220
+      - name: Install llmlint toolchain
+        run: just setup-llmlint
+      - name: Validate llmlint config
+        run: just lint-llm-validate --diff-base origin/main
+      - name: Lint changed files
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::error::llmlint needs OPENAI_API_KEY for the Codex harness" >&2
+            exit 1
+          fi
+          # The fallback is only real if its credential arrived too: without it
+          # claude-code is rejected at auth and falls through, leaving the chain
+          # nowhere to degrade to — the same failure, but silent, because an
+          # installed-yet-uncredentialled harness looks fine.
+          if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "::error::llmlint needs CLAUDE_CODE_OAUTH_TOKEN for the claude-code fallback harness" >&2
+            exit 1
+          fi
+          just lint-llm-diff origin/main

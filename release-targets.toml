@@ -1,39 +1,48 @@
 # What this repository publishes, and the name each registry serves it under.
 #
-# This is the bootstrap declaration the repository was registered with, so that
-# consumers planned against it can name the targets before the first release exists.
-# The scaffold that stands the repository up replaces it with the full form — the
-# probe script, the `published_by` job names, and the tests that hold this file to
-# `onevcs`'s reader and to the real release configuration — without changing the
-# four target ids or their names.
+# The canonical release-target declaration (`onevcs`'s schema, version 3): one
+# `[[target]]` per artifact a consumer names in order to depend on it, with the
+# short `name` a host document waits on it by, and `probe` naming the script that
+# answers what a registry serves for one of them. `scripts/release-probe.sh`
+# answers exactly three ways — a version, nothing (no release yet), or not
+# answered — and `npm/test/release-targets.test.mjs` holds this file to the
+# release configuration in both directions, while
+# `crates/onemessagebus-repo/tests/release_declaration.rs` holds it to the schema
+# through `onevcs`'s own reader.
+#
+# The `onemessagebus` binary is built from the unpublished `onemessagebus-cli`
+# crate, which is not a target: nothing depends on it by name. It reaches
+# consumers as the PyPI wheel and the npm launcher below, and as
+# `cargo install --git`.
 schema_version = 3
+probe = "scripts/release-probe.sh"
 
 [[target]]
 id = "crate:onemessagebus"
 name = "crate"
-what = "The onemessagebus core library and the `onemessagebus` binary, as a Rust dependent takes them with `cargo add onemessagebus`."
-published_by = "release-plz on merge to main — the crate publication job, under Cargo.toml's [package] name."
+what = "The onemessagebus core library — the envelope, filter grammar, payload bounds, redaction, schema registry, emitter and reader, generic over a vocabulary — as a Rust dependent takes it with `cargo add onemessagebus`."
+published_by = "release.yml's `publish-crate` job, on the GitHub Release release-plz cuts, under crates/onemessagebus/Cargo.toml's [package] name."
 manifest = "crates/onemessagebus/Cargo.toml"
 
 [[target]]
 id = "crate:onemessagebus-agent"
 name = "agent-crate"
-what = "The agent profile over the core: roles, phases, the note contract, the planner-channel layout and the onejudge codec, as a Rust dependent takes it with `cargo add onemessagebus-agent`."
-published_by = "release-plz on merge to main — the crate publication job, under Cargo.toml's [package] name; both crates share the workspace version."
+what = "The agent profile over the core — the agent stack's sources, phases, labels, filter and registered schema families — as a Rust dependent takes it with `cargo add onemessagebus-agent`. Shares the workspace version with the core, so one release moves both."
+published_by = "release.yml's `publish-crate` job, after the core, under crates/onemessagebus-agent/Cargo.toml's [package] name."
 manifest = "crates/onemessagebus-agent/Cargo.toml"
 
 [[target]]
 id = "pypi:onemessagebus-cli"
 name = "pypi"
-what = "The standalone `onemessagebus` binary as wheels, installed with `pip install onemessagebus-cli`, and the Python SDK's runtime."
-published_by = "the release workflow's PyPI publication job, from pyproject.toml's [project] name."
+what = "The standalone `onemessagebus` binary as per-platform wheels, installed with `pip install onemessagebus-cli`."
+published_by = "release.yml's `publish-pypi` job, from the wheels `build-wheels` assembles with maturin from pyproject.toml's [project] name."
 manifest = "pyproject.toml"
 
 [[target]]
 id = "npm:onemessagebus-cli"
 name = "npm"
-what = "The `onemessagebus` binary as an npm launcher, installed with `npm install -g onemessagebus-cli`, and the TypeScript SDK's runtime."
-published_by = "the release workflow's npm publication job, from npm/onemessagebus-cli/package.json's name."
+what = "The `onemessagebus` binary as an npm launcher, installed with `npm install -g onemessagebus-cli`, resolving one of the per-platform packages it covers."
+published_by = "release.yml's `publish-npm` job, from the packages `build-npm` assembles with scripts/npm-build.mjs, under npm/onemessagebus-cli/package.json's name."
 manifest = "npm/onemessagebus-cli/package.json"
 covers = [
   "npm:onemessagebus-cli-linux-x64",

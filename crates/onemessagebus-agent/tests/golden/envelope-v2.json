@@ -1,0 +1,27 @@
+{
+  "v": 2,
+  "ts": "2026-09-09T04:00:00.000Z",
+  "stream": "onepipeline-7f3a",
+  "seq": 42,
+  "source": "pipeline",
+  "kind": "edit-committed",
+  "labels": {
+    "run_id": "run-1",
+    "node": "service",
+    "attempt": 1
+  },
+  "payload": {
+    "author": "planner",
+    "operation_kinds": [
+      "node-added",
+      "edge-added"
+    ]
+  },
+  "artifacts": [
+    {
+      "id": "gate-log",
+      "kind": "log",
+      "bytes": 8192
+    }
+  ]
+}

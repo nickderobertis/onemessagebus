@@ -1,0 +1,32 @@
+{
+  "name": "onemessagebus-npm-e2e",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "npm/e2e",
+  "tags": ["scope:e2e", "lang:js", "type:e2e"],
+  "implicitDependencies": ["onemessagebus-cli", "onemessagebus-npm", "onemessagebus-npm-launcher"],
+  "targets": {
+    "bootstrap": { "executor": "nx:noop" },
+    "format": {
+      "command": "node node_modules/@biomejs/biome/bin/biome format --write npm/e2e"
+    },
+    "format-check": {
+      "command": "node node_modules/@biomejs/biome/bin/biome format npm/e2e",
+      "inputs": ["default", "{workspaceRoot}/biome.json"]
+    },
+    "lint": {
+      "command": "node node_modules/@biomejs/biome/bin/biome lint npm/e2e",
+      "inputs": ["default", "{workspaceRoot}/biome.json"]
+    },
+    "test": {
+      "command": "node --test npm/e2e/*.test.mjs",
+      "dependsOn": [{ "projects": ["onemessagebus-cli"], "target": "build" }],
+      "inputs": ["{projectRoot}/**/*", "^crateSource", "{workspaceRoot}/scripts/npm-build.mjs"]
+    },
+    "doc": { "executor": "nx:noop" },
+    "check": {
+      "executor": "nx:noop",
+      "dependsOn": ["format-check", "lint", "test"]
+    }
+  }
+}

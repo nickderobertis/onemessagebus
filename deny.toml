@@ -1,0 +1,64 @@
+# cargo-deny policy. Strict by default: advisories, licenses, bans, and sources
+# all fail the check rather than warn. Any exception below is explicit and carries
+# a reason so the policy never silently accumulates debt. Run via `just deps-check`
+# and a dedicated CI job (it needs a network advisory DB), not the core `just
+# check` gate.
+
+[graph]
+all-features = true
+
+[advisories]
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Permissive licenses compatible with this MIT-licensed workspace. Adding a
+# dependency with a new license fails the check until it is reviewed and added.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+    # Reached through `jsonschema` -> `referencing` -> `fluent-uri` -> `borrow-or-share`:
+    # MIT with the attribution clause removed, which asks for less than CC0-1.0 above.
+    "MIT-0",
+]
+confidence-threshold = 0.9
+exceptions = []
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+# The one wildcard this workspace allows, and cargo-deny's own condition for it
+# is exactly the shape it has: the unpublished CLI crate is a path-only
+# dev-dependency of the journey crate, and a version on it would put a crate
+# that is never published into a manifest.
+allow-wildcard-paths = true
+allow = []
+# The library is a leaf. Neither published crate may depend on a sibling of the
+# stack: the bus is what those siblings adopt, and an edge back would make the
+# bus's release wait on theirs. The one crate allowed to name `onevcs` is the
+# unpublished `onemessagebus-repo`, whose release-declaration test hands
+# `release-targets.toml` to onevcs's canonical reader — the one implementation of
+# that schema — rather than restating its rules here.
+deny = [
+    { crate = "onejudge", reason = "the bus is a leaf: the stack adopts it, never the reverse" },
+    { crate = "oneagentgraph", reason = "the bus is a leaf: the stack adopts it, never the reverse" },
+    { crate = "onevcs", reason = "the bus is a leaf: the stack adopts it, never the reverse", wrappers = ["onemessagebus-repo"] },
+    { crate = "onepipeline", reason = "the bus is a leaf: the stack adopts it, never the reverse" },
+    { crate = "oneharness", reason = "the bus is a leaf: the stack adopts it, never the reverse" },
+    { crate = "oneharness-core", reason = "the bus is a leaf: the stack adopts it, never the reverse" },
+]
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
