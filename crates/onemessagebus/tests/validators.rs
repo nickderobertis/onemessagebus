@@ -320,6 +320,7 @@ fn every_validator_runs_the_first_refusal_wins_and_an_unjudged_one_makes_the_ver
         .with(fixed(refuse("first")))
         .with(fixed(refuse("second")));
     assert_eq!(validators.len(), 4);
+    assert_eq!(format!("{validators:?}"), "Validators { count: 4 }");
     assert_eq!(validators.judge(&message, &context), refuse("first"));
     assert_eq!(runs.load(Ordering::SeqCst), 4, "a validator was skipped");
 

@@ -127,6 +127,13 @@ fn an_ask_is_stamped_with_a_minted_correlation_nothing_else_carries() {
     assert_eq!((first.id(), second.id()), (0, 1));
     assert_eq!(first.asker(), Some(&asker("worker-1")));
     assert_ne!(first.position(), second.position());
+    let shown = format!("{first:?}");
+    assert!(
+        shown.contains(first.correlation().as_str())
+            && shown.contains("questions")
+            && shown.contains("id: 0"),
+        "a pending ask's debug form does not say which ask it is: {shown}"
+    );
     let logged = rig.lines("questions");
     assert_eq!(
         logged[0],
@@ -162,10 +169,23 @@ fn an_ask_is_stamped_with_a_minted_correlation_nothing_else_carries() {
         let refused = text.parse::<Correlation>().expect_err(text);
         assert!(refused.to_string().contains(names), "{text}: {refused}");
     }
-    for (text, names) in [("  ", "blank"), ("a\nb", "control character")] {
+    for (text, names) in [
+        ("  ", "blank"),
+        ("a\nb", "control character"),
+        (&"x".repeat(513), "longer than"),
+    ] {
         let refused = text.parse::<onemessagebus::Address>().expect_err(text);
         assert!(refused.to_string().contains(names), "{text:?}: {refused}");
     }
+    // An address read from a document is held to the same rules.
+    let read: onemessagebus::Address = serde_json::from_value(json!("build")).expect("an address");
+    assert_eq!(read.as_str(), "build");
+    let refused = serde_json::from_value::<onemessagebus::Address>(json!("a\nb"))
+        .expect_err("a control character");
+    assert!(
+        refused.to_string().contains("control character"),
+        "{refused}"
+    );
 }
 
 #[test]
@@ -533,6 +553,42 @@ fn a_reply_by_position_after_another_answered_an_abandoned_claim_is_appended_and
             .count(),
         1,
         "the question was answered more than once"
+    );
+}
+
+#[test]
+fn a_question_that_does_not_satisfy_its_own_schema_is_refused_and_nothing_is_appended() {
+    #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+    struct Titled {
+        kind: String,
+        #[schemars(length(min = 1))]
+        message: String,
+    }
+
+    impl Message for Titled {
+        const SCHEMA: SchemaId = SchemaId::literal("test", "titled-question", 1);
+    }
+
+    let rig = Rig::new();
+    let bus = rig.bus();
+    let refused = bus
+        .ask::<Titled, Ruling>(
+            &queue("questions"),
+            Titled {
+                kind: "planner-question".to_owned(),
+                message: String::new(),
+            },
+            AskOptions::default(),
+        )
+        .expect_err("an empty message does not satisfy the question's schema");
+    assert!(
+        matches!(refused, BusError::Queue(QueueError::Violation { .. })),
+        "{refused}"
+    );
+    assert!(refused.to_string().contains("message"), "{refused}");
+    assert!(
+        rig.lines("questions").is_empty(),
+        "a refused question was appended"
     );
 }
 
