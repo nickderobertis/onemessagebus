@@ -20,6 +20,7 @@ use crate::support::{run_in, Run};
 const DOUBLE: &str = "validators::scripted_validator";
 
 /// The subprocess fixture, whose ordinary invocation verifies it is not a child.
+/// A harness flag after the test name (nextest passes `--exact`) is not a script.
 // llmlint: ignore-block[e2e_not_mocked] This scripted command is the real external validator Contract V admits: the shipped binary launches it as a real subprocess and maps its exit 0, 1, or other status to pass, refuse, or unjudged. Nothing above that process boundary is doubled; the script varies the external command's observed response so the journeys cover every contract outcome.
 #[test]
 fn scripted_validator() {
@@ -28,6 +29,7 @@ fn scripted_validator() {
         .iter()
         .position(|argument| argument == DOUBLE)
         .and_then(|at| arguments.get(at + 1))
+        .filter(|argument| !argument.starts_with('-'))
     else {
         assert!(
             std::env::var_os(VALIDATE_QUEUE_ENV).is_none(),

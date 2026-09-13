@@ -26,7 +26,8 @@ const DOUBLE: &str = "scripted_validator";
 
 /// The scripted validator command. Its ordinary harness invocation checks that
 /// it was not accidentally given the validator environment; a validator child
-/// receives a script path and runs its `validate` or `fingerprint` role.
+/// receives a script path and runs its `validate` or `fingerprint` role. A
+/// harness flag after the test name (nextest passes `--exact`) is not a script.
 #[test]
 fn scripted_validator() {
     let arguments: Vec<String> = std::env::args().collect();
@@ -34,6 +35,7 @@ fn scripted_validator() {
         .iter()
         .position(|argument| argument == DOUBLE)
         .and_then(|at| arguments.get(at + 1))
+        .filter(|argument| !argument.starts_with('-'))
     else {
         assert!(
             std::env::var_os(VALIDATE_QUEUE_ENV).is_none(),
