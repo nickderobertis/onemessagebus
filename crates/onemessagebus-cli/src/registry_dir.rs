@@ -84,7 +84,26 @@ impl RegistryDir {
                         dir: dir.to_path_buf(),
                     })
                 }
-                Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => false,
+                // Windows answers a path beneath a file as not found, where Unix
+                // answers not a directory: the nearest ancestor that exists says
+                // which it is, so both platforms refuse it alike.
+                Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => {
+                    if let Some(file) = dir
+                        .ancestors()
+                        .skip(1)
+                        .find(|ancestor| ancestor.exists())
+                        .filter(|ancestor| !ancestor.is_dir())
+                    {
+                        return Err(RegistryDirError::Dir {
+                            dir: dir.to_path_buf(),
+                            source: std::io::Error::new(
+                                std::io::ErrorKind::NotADirectory,
+                                format!("{} is not a directory", file.display()),
+                            ),
+                        });
+                    }
+                    false
+                }
                 Err(source) => {
                     return Err(RegistryDirError::Dir {
                         dir: dir.to_path_buf(),
