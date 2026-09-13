@@ -1,0 +1,37 @@
+[package]
+name = "onemessagebus"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "A typed NDJSON message bus: one envelope, one filter grammar, payload bounds and redaction, a schema registry, and an emitter and reader over streams — generic over the vocabulary a consumer declares."
+readme = "README.md"
+keywords = ["ndjson", "events", "message-bus", "schema", "streams"]
+categories = ["development-tools", "encoding"]
+# What a consumer receives: the sources, the manifest, and the crate's readme.
+# release-plz decides this package changed by diffing its packaged files against
+# the last release, so a change to the suite deliberately does not cut a release
+# on its own.
+include = ["src/**/*.rs", "Cargo.toml", "README.md"]
+
+[lib]
+name = "onemessagebus"
+path = "src/lib.rs"
+
+# The core is a leaf: nothing here names a sibling of the stack or the agent
+# profile. deny.toml's `bans` refuse the edge, and `cargo metadata` shows the
+# profile depending on this crate and never the reverse.
+[dependencies]
+jsonschema = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_norway = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

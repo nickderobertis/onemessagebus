@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "commands": [
+    {
+      "op": "settle",
+      "id": "publish",
+      "outcome": "done",
+      "evidence": "the change merged while the dispatch was dying; the run recorded the death and never the merge"
+    },
+    {
+      "op": "settle",
+      "id": "announce",
+      "outcome": "failed",
+      "evidence": "the wait it was on can never clear, and nothing published"
+    }
+  ]
+}

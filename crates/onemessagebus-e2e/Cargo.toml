@@ -1,0 +1,40 @@
+# The compiled-binary journeys. Never published: a `publish = false` workspace
+# member holding only `tests/`, whose `test` target depends on the binary crate's
+# `build` so every journey drives a freshly built artifact.
+[package]
+name = "onemessagebus-e2e"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+# No library: this crate is its journeys and nothing else.
+path = "src/lib.rs"
+
+[dependencies]
+
+[dev-dependencies]
+onemessagebus = { workspace = true }
+onemessagebus-agent = { workspace = true }
+# The binary the journeys spawn, resolved by Cargo as `CARGO_BIN_EXE_onemessagebus`.
+onemessagebus-cli = { workspace = true }
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+tempfile = { workspace = true }
+toml_edit = { workspace = true }
+# The canonical release-target reader: `release-targets.toml` at the root is
+# written against the schema `onevcs` defines, and this is the one implementation
+# of it. A dev-dependency of the journey crate alone — deny.toml bans the crate
+# everywhere else, with this crate as the one permitted wrapper.
+onevcs = "0.21"
+
+# One test binary rather than one per file, so the fixture is a module the
+# journeys share rather than a file each of them compiles its own copy of.
+[[test]]
+name = "e2e"
+path = "tests/e2e/main.rs"
