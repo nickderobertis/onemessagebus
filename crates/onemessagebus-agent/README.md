@@ -14,7 +14,8 @@ shares, declared once here and re-exported by every consumer.
   `onevcs` and `onepipeline` write today.
 - `registry()` — every schema the stack registers: `agent.event-envelope` at
   `[2, 1]`, `agent.reply-envelope` at `[3, 2]`, and the artifact reference, the
-  filter and the labels at 1.
+  filter and the labels (`agent.artifact-ref`, `agent.event-filter`,
+  `agent.labels`) at 1.
 
 ```rust
 use onemessagebus_agent::{Emitter, Labels, Phase, Source};

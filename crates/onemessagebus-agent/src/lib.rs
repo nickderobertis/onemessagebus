@@ -64,3 +64,9 @@ impl Vocabulary for Agent {
         }
     }
 }
+
+/// The README's sample, compiled by `cargo test --doc` so a sample naming an
+/// item this crate no longer has fails rather than reaching crates.io.
+#[doc = include_str!("../README.md")]
+#[cfg(doctest)]
+pub struct ReadmeDoctests;
