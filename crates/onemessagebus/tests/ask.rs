@@ -489,6 +489,54 @@ fn a_blocking_question_held_pending_is_released_by_its_reply_by_correlation_or_b
 }
 
 #[test]
+fn a_reply_by_position_after_another_answered_an_abandoned_claim_is_appended_and_answers_nothing() {
+    let rig = Rig::new();
+    let bus = rig.bus();
+    let questions = bus.queue(&queue("questions")).expect("a queue");
+    let pending = bus
+        .ask::<Question, Ruling>(
+            &queue("questions"),
+            question("who answers?"),
+            AskOptions {
+                blocking: true,
+                ..AskOptions::default()
+            },
+        )
+        .expect("asked");
+    let claimed = questions
+        .claim(&onemessagebus::ConsumerName::default_consumer())
+        .expect("a claim")
+        .expect("claimed");
+    // An abandoned question is still answered, and a reply that loses the race
+    // for it still learns that another reply answered first.
+    pending.abandon().expect("abandoned");
+    bus.reply_at(&queue("questions"), &claimed.position, ruling("first"))
+        .expect("answered");
+    let late = bus
+        .reply_at(&queue("questions"), &claimed.position, ruling("second"))
+        .expect_err("another reply answered it first");
+    assert!(matches!(late, BusError::Unbound { .. }), "{late}");
+    assert!(
+        late.to_string()
+            .contains("was answered by another reply first"),
+        "{late}"
+    );
+    assert_eq!(
+        rig.lines("replies").len(),
+        2,
+        "the losing reply is appended"
+    );
+    assert_eq!(
+        rig.lines("questions")
+            .iter()
+            .filter(|line| line["event"] == json!("answered"))
+            .count(),
+        1,
+        "the question was answered more than once"
+    );
+}
+
+#[test]
 fn a_queue_that_keeps_no_events_or_answers_nowhere_is_not_asked_on() {
     let rig = Rig::new();
     let bus = rig.bus();

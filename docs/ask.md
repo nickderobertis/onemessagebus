@@ -99,10 +99,7 @@ edits stays the consumer's.
 
 `Bus::reply_at(queue, position, reply)` answers the record pending at a claim
 position instead, the way `reply <queue> <position>` always has, stamping the
-pending question's correlation on the reply where it carries one. A reply that
-loses the race for that record — another reply answered it first, before or
-after this one was checked — is appended, answers nothing, and is refused saying
-so.
+pending question's correlation on the reply where it carries one.
 
 ## The command line
 

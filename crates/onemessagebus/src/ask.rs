@@ -922,30 +922,42 @@ impl Bus {
         reply: Value,
     ) -> Result<Bound, BusError> {
         let (questions, answers) = self.askable(queue)?;
-        // A reply that lost the race can arrive after the winner released the
-        // record, and finds the claim answered rather than pending.
-        let (held, lost) = match questions.pending_at(position) {
-            Ok(held) => (held, false),
+        let answered_first = |held: &Claimed<Value>, at: &Position| {
+            BusError::Unbound {
+            queue: queue.clone(),
+            why: format!(
+                "the record pending at position {} was answered by another reply first; this reply was appended to {} at position {at} and answers nothing",
+                held.position,
+                answers.name()
+            ),
+        }
+        };
+        let held = match questions.pending_at(position) {
+            Ok(held) => held,
+            // A reply that lost the race can arrive after the winner released
+            // the record, and finds the claim answered rather than pending.
             Err(refusal @ QueueError::NotPending { .. }) => {
-                match questions.answered_claim(position)? {
-                    Some(answered) => (answered, true),
-                    None => return Err(refusal.into()),
-                }
+                let Some(answered) = questions.answered_claim(position)? else {
+                    return Err(refusal.into());
+                };
+                let correlation = correlation_of(&answered.record);
+                return match self.append_reply(&answers, correlation.as_ref(), reply)? {
+                    (_, Some(at)) => Err(answered_first(&answered, &at)),
+                    (sent, None) => Ok(Bound {
+                        correlation,
+                        question: answered,
+                        answered: false,
+                        sent,
+                    }),
+                };
             }
             Err(failure) => return Err(failure.into()),
         };
         let correlation = correlation_of(&held.record);
         let (sent, at) = self.append_reply(&answers, correlation.as_ref(), reply)?;
         if let Some(at) = &at {
-            if lost || !questions.answer(&held, at)? {
-                return Err(BusError::Unbound {
-                    queue: queue.clone(),
-                    why: format!(
-                        "the record pending at position {} was answered by another reply first; this reply was appended to {} at position {at} and answers nothing",
-                        held.position,
-                        answers.name()
-                    ),
-                });
+            if !questions.answer(&held, at)? {
+                return Err(answered_first(&held, at));
             }
         }
         Ok(Bound {

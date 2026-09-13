@@ -1701,8 +1701,8 @@ impl RawQueue {
 
     /// The record claimed at `position` when a reply has since answered that
     /// claim: what a reply that lost the race for it arrives to find. `None`
-    /// when nothing was claimed there, or the claim ended another way — it was
-    /// abandoned, or the record was claimed again elsewhere.
+    /// when nothing was claimed there, or the claim is not answered yet. A
+    /// claim marked abandoned is still answered, and still found here.
     ///
     /// # Errors
     ///
@@ -1720,17 +1720,16 @@ impl RawQueue {
             let Some(id) = record_id(&record) else {
                 continue;
             };
-            if event == Event::Claimed && stored.after == *position {
-                claim = Some((id, record));
-            } else if claim.as_ref().is_some_and(|(held, _)| *held == id) {
-                if event == Event::Answered {
+            match event {
+                Event::Claimed if stored.after == *position => claim = Some((id, record)),
+                Event::Answered if claim.as_ref().is_some_and(|(held, _)| *held == id) => {
                     return Ok(claim.map(|(id, record)| Claimed {
                         id: Some(id),
                         record,
                         position: *position,
                     }));
                 }
-                claim = None;
+                _ => {}
             }
         }
         Ok(None)
