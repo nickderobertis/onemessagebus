@@ -1486,10 +1486,11 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> 
             ),
         },
     };
-    let run_env = settings
-        .run_env
-        .as_ref()
-        .map_or(onejudge::RUN_ENV, EnvName::as_str);
+    let run_env = settings.run_env.clone().unwrap_or_else(|| {
+        onejudge::RUN_ENV
+            .parse()
+            .expect("the linked onejudge run variable is a valid environment name")
+    });
     let options = ServeOptions {
         asker,
         about,
@@ -1509,7 +1510,7 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> 
     let bus = resolved(config)?;
     bus.queue(&queue).map_err(bus_refusal)?;
     let mut codec = Onejudge::new()
-        .with_run_env(run_env, std::env::var(run_env).ok())
+        .with_run_env(run_env.clone(), std::env::var(run_env.as_str()).ok())
         .with_alternate_home(std::env::var(onejudge::CODEX_ALT_HOME_ENV).ok());
     match bus.serve(&queue, &mut codec, &options, input, out) {
         Ok(Served::StreamEnded { .. }) => Ok(()),

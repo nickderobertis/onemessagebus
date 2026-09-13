@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::num::NonZeroU64;
 
 use schemars::{schema_for, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
@@ -372,7 +373,7 @@ pub struct ServeVerbOptions {
     pub codec: CodecName,
     /// Seconds the session serves before it stops of its own accord.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_seconds: Option<u64>,
+    pub session_seconds: Option<NonZeroU64>,
     /// Who the session listens for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asker: Option<Asker>,

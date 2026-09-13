@@ -448,7 +448,10 @@ fn what_a_session_is_about_is_held_to_the_consumers_check_and_a_run_to_its_sourc
         matches!(&refused, ServeError::Refused(why) if why.contains(onejudge::RUN_ENV)),
         "{refused}"
     );
-    let mut unsafe_run = Onejudge::new().with_run_env("RUN", Some("../elsewhere".to_owned()));
+    let mut unsafe_run = Onejudge::new().with_run_env(
+        "RUN".parse().expect("an environment name"),
+        Some("../elsewhere".to_owned()),
+    );
     let (served, _) = serve(&bus, &mut unsafe_run, &ServeOptions::default(), &judge);
     assert!(
         matches!(served, Err(ServeError::Refused(why)) if why.contains("not a run id")),
@@ -491,7 +494,10 @@ fn a_reply_that_is_neither_a_ruling_nor_a_live_edit_fails_the_member_and_an_unex
                 std::thread::sleep(Duration::from_millis(20));
             }
         });
-        let mut codec = Onejudge::new().with_run_env("RUN", Some("r-7".to_owned()));
+        let mut codec = Onejudge::new().with_run_env(
+            "RUN".parse().expect("an environment name"),
+            Some("r-7".to_owned()),
+        );
         let options = ServeOptions {
             reply_window: Duration::from_secs(20),
             ..ServeOptions::default()

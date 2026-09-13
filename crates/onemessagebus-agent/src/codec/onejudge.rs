@@ -39,7 +39,9 @@
 
 use std::path::Path;
 
-use onemessagebus::{Address, Answer, Codec, CodecFailure, Message, SchemaId, ServeSession};
+use onemessagebus::{
+    Address, Answer, Codec, CodecFailure, EnvName, Message, SchemaId, ServeSession,
+};
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -96,9 +98,6 @@ pub mod field {
     /// The field a framed reply record carries its envelope in.
     pub const REPLY: &str = "reply";
 }
-
-// ---------------------------------------------------------------------------
-// The frames, transcribed field for field.
 
 /// Who produced a message of the conversation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -340,9 +339,6 @@ fn frame_schema<F: Message>(word: &str) -> (SchemaId, Schema) {
     (F::SCHEMA, schema)
 }
 
-// ---------------------------------------------------------------------------
-// The responses.
-
 /// What a provider reports it spent; any subset.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Usage {
@@ -411,7 +407,10 @@ struct SupervisorWire {
     #[serde(default)]
     reason: String,
     #[serde(default)]
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "protocol v6 includes usage in supervisor responses even though routing does not inspect it"
+    )]
     usage: Option<Usage>,
 }
 
@@ -497,9 +496,6 @@ pub struct AssessResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<Usage>,
 }
-
-// ---------------------------------------------------------------------------
-// The machine transcript a lost turn leaves behind.
 
 /// The fixed strings of a harness's JSON-RPC stream this codec reads.
 pub mod transcript {
@@ -729,9 +725,6 @@ pub fn liveness(messages: &[ConversationMessage], alternate_home: Option<&str>) 
     }
 }
 
-// ---------------------------------------------------------------------------
-// The run, and what the codec says.
-
 /// How a composed task's opening line names its run: this, then the run, then
 /// a closing backtick.
 pub const RUN_IN_TASK_OPENS: &str = "onepipeline run `";
@@ -853,7 +846,7 @@ pub type AboutCheck = Box<dyn Fn(&str, &Address) -> Result<(), String> + Send>;
 
 /// The onejudge codec.
 pub struct Onejudge {
-    run_env: String,
+    run_env: EnvName,
     run_from_env: Option<String>,
     alternate_home: Option<String>,
     about_check: Option<AboutCheck>,
@@ -873,7 +866,9 @@ impl std::fmt::Debug for Onejudge {
 impl Default for Onejudge {
     fn default() -> Self {
         Self {
-            run_env: RUN_ENV.to_owned(),
+            run_env: RUN_ENV
+                .parse()
+                .expect("RUN_ENV is a valid environment name"),
             run_from_env: None,
             alternate_home: None,
             about_check: None,
@@ -891,8 +886,8 @@ impl Onejudge {
     /// The same codec, with `value` as what the variable `name` names the run —
     /// read at the boundary by whoever reads the environment.
     #[must_use]
-    pub fn with_run_env(mut self, name: &str, value: Option<String>) -> Self {
-        name.clone_into(&mut self.run_env);
+    pub fn with_run_env(mut self, name: EnvName, value: Option<String>) -> Self {
+        self.run_env = name;
         self.run_from_env = value;
         self
     }

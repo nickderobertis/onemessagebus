@@ -36,6 +36,10 @@ fn validator_double() {
         .position(|argument| argument == DOUBLE)
         .and_then(|at| arguments.get(at + 1))
     else {
+        assert!(
+            std::env::var_os(VALIDATE_QUEUE_ENV).is_none(),
+            "the ordinary test invocation must not look like a validator child"
+        );
         return;
     };
     let role = if std::env::var_os(VALIDATE_QUEUE_ENV).is_some() {
