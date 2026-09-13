@@ -16,7 +16,8 @@ fail() {
 }
 
 # llmlint: ignore-block[changed_behavior_has_e2e] every branch below is a conversation with the live npm registry under a publish token — a 404 that permits publishing, an immutable version already live, an auth or network refusal — and a fake npm or registry in front of it would put the fake under test; release.yml's verify-npm job installs each version this publishes from the real registry on every platform, which is the end-to-end proof.
-[ "$#" -gt 0 ] || fail "pass at least one package directory or tarball"
+[ "$#" -gt 0 ] ||
+  fail "no package directory or tarball was given, so there is nothing to publish; pass at least one, e.g. 'publish-npm.sh npm/dist/onemessagebus-cli'"
 
 work="$(mktemp -d)" ||
   fail "cannot create a scratch directory in ${TMPDIR:-/tmp}; free space there or point TMPDIR at a writable directory, then re-run the release"
