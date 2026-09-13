@@ -110,8 +110,17 @@ impl SchemaId {
     }
 
     /// The same family at another version.
+    ///
+    /// # Panics
+    ///
+    /// When `version` is 0, which the grammar refuses: the family is already
+    /// well-formed, so the version is the one part left to fault.
     #[must_use]
     pub fn at(&self, version: u32) -> Self {
+        assert!(
+            version > 0,
+            "SchemaId::at: the version is not a positive integer"
+        );
         Self {
             namespace: self.namespace.clone(),
             name: self.name.clone(),

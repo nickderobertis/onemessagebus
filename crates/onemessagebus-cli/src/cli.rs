@@ -179,22 +179,41 @@ impl From<LangArg> for Lang {
     }
 }
 
-/// A refusal, with the exit code it carries.
+/// Which of the two failing exit codes a refusal carries: closed, because the
+/// exit codes are a contract and a refusal has no third way to end.
+#[derive(Debug, Clone, Copy)]
+enum Verdict {
+    /// A well-formed no.
+    Failed,
+    /// Refused input.
+    Invalid,
+}
+
+impl Verdict {
+    const fn code(self) -> u8 {
+        match self {
+            Self::Failed => EXIT_FAILED,
+            Self::Invalid => EXIT_INVALID,
+        }
+    }
+}
+
+/// A refusal, with the verdict its exit code comes from.
 struct Refusal {
-    code: u8,
+    verdict: Verdict,
     message: String,
 }
 
 fn invalid(message: impl Into<String>) -> Refusal {
     Refusal {
-        code: EXIT_INVALID,
+        verdict: Verdict::Invalid,
         message: message.into(),
     }
 }
 
 fn failed(message: impl Into<String>) -> Refusal {
     Refusal {
-        code: EXIT_FAILED,
+        verdict: Verdict::Failed,
         message: message.into(),
     }
 }
@@ -216,7 +235,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         Ok(()) => ExitCode::from(EXIT_OK),
         Err(refusal) => {
             eprintln!("onemessagebus: {}", refusal.message);
-            ExitCode::from(refusal.code)
+            ExitCode::from(refusal.verdict.code())
         }
     }
 }

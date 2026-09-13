@@ -74,6 +74,12 @@ fn a_literal_at_version_zero_panics() {
     let _ = SchemaId::literal("agent", "finding", std::hint::black_box(0));
 }
 
+#[test]
+#[should_panic(expected = "SchemaId::at: the version is not a positive integer")]
+fn an_id_moved_to_version_zero_panics() {
+    let _ = SchemaId::literal("agent", "finding", 1).at(std::hint::black_box(0));
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Finding {
