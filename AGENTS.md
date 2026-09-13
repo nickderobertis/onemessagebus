@@ -144,8 +144,12 @@ you:
   commits and rebase-merging are off, so one PR is one squash commit whose
   subject is the PR title. Queue with `gh pr merge --auto --squash`; head
   branches auto-delete. Admins may bypass in a break-glass.
-- **All gating checks are required**: `gate`, `cross`, `msrv`, `deny`,
-  `install`, `wheel`, `pr-title`, and `llmlint`. `install-documented.yml` runs
+- **All gating checks are required**, by the context each reports: `gate`,
+  `changes`, `cross (macos-latest)`, `cross (windows-latest)`, `msrv`, `deny`,
+  `install (ubuntu-latest)`, `install (macos-latest)`, `install (windows-latest)`,
+  `wheel`, `pr-title`, and `llmlint`. A matrix job reports one context per
+  platform, and `changes` is required because the jobs it gates are skipped —
+  which counts as passing — when it fails. `install-documented.yml` runs
   on a push to `main`, never on a pull request, so it cannot be required. `notignored` is deliberately
   not: it is the review artifact naming the suppressions a PR adds, and a fork's
   read-only token cannot post it.
