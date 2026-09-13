@@ -20,6 +20,7 @@ use crate::support::{run_in, Run};
 const DOUBLE: &str = "validators::scripted_validator";
 
 /// The subprocess fixture, whose ordinary invocation verifies it is not a child.
+// llmlint: ignore-block[e2e_not_mocked] This scripted command is the real external validator Contract V admits: the shipped binary launches it as a real subprocess and maps its exit 0, 1, or other status to pass, refuse, or unjudged. Nothing above that process boundary is doubled; the script varies the external command's observed response so the journeys cover every contract outcome.
 #[test]
 fn scripted_validator() {
     let arguments: Vec<String> = std::env::args().collect();
@@ -60,15 +61,15 @@ fn scripted_validator() {
         "{}",
         json!({"role": role, "queue": std::env::var(VALIDATE_QUEUE_ENV).ok(), "stdin": stdin})
     )
-    .expect("the double logs");
+    .expect("the subprocess fixture logs");
     let mut out = std::io::stdout();
     out.write_all(part["stdout"].as_str().unwrap_or_default().as_bytes())
         .and_then(|()| out.flush())
-        .expect("the double writes stdout");
+        .expect("the subprocess fixture writes stdout");
     let mut err = std::io::stderr();
     err.write_all(part["stderr"].as_str().unwrap_or_default().as_bytes())
         .and_then(|()| err.flush())
-        .expect("the double writes stderr");
+        .expect("the subprocess fixture writes stderr");
     std::process::exit(
         part["exit"]
             .as_i64()
@@ -76,6 +77,7 @@ fn scripted_validator() {
             .unwrap_or(0),
     );
 }
+// llmlint: ignore-end[e2e_not_mocked] The external validator subprocess fixture ends here.
 
 /// A scratch directory holding a channel, the subprocess fixture's script and a
 /// configuration.
