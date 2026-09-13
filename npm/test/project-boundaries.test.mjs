@@ -1,5 +1,3 @@
-// The project boundaries, enforced.
-//
 // `nx.json`'s `boundaries.allow` says which project types may depend on which,
 // by tag: the core is a contract and depends on nothing in this repository, the
 // profile depends on the core, the binary on both, the journeys and the
@@ -19,7 +17,6 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SKIP = new Set(["node_modules", "target", ".git", ".nx", "dist"]);
 
-/// Every project.json in the tree, as `{ path, project }`.
 function projects(dir = REPO_ROOT, found = []) {
   for (const entry of readdirSync(dir)) {
     if (SKIP.has(entry)) continue;
@@ -35,7 +32,6 @@ function projects(dir = REPO_ROOT, found = []) {
   return found;
 }
 
-/// The one `type:` tag a project carries.
 function typeOf(entry) {
   const types = (entry.project.tags ?? []).filter((tag) => tag.startsWith("type:"));
   assert.equal(types.length, 1, `${entry.path} must carry exactly one type: tag, has ${types}`);

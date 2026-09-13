@@ -24,6 +24,11 @@ msrv-version := `sed -n 's/^rust-version *= *"\([^"]*\)".*/\1/p' Cargo.toml`
 # Keep the gate's own output to signal: successes are silent, failures are not.
 export CARGO_TERM_QUIET := "true"
 
+# A compiler warning is an error in every build the gate makes, tests and the
+# journeys' binary included. Cargo caps lints in registry dependencies, so
+# this reaches the workspace's own crates and nothing else.
+export RUSTFLAGS := "-D warnings"
+
 # Where cargo-llvm-cov keeps the instrumented build and every project's raw
 # profiles; the aggregate report reads them all. Cleared before a test sweep so
 # a profile from a binary that no longer exists is never merged in.
@@ -207,7 +212,7 @@ _deps-check:
 # installed (`rustup toolchain install <version>`). Warnings are errors here too.
 # Build under the declared MSRV.
 msrv:
-    @RUSTFLAGS="-D warnings" cargo +{{msrv-version}} check --workspace --locked --all-targets --quiet \
+    @cargo +{{msrv-version}} check --workspace --locked --all-targets --quiet \
       || { echo "the {{msrv-version}} floor no longer builds — install that toolchain, or raise rust-version in Cargo.toml (and clippy.toml)" >&2; exit 1; }
 
 # Ensures `just`, verifies the rest, then runs setup-llmlint. Runs automatically

@@ -53,8 +53,22 @@ base_branch() {
 }
 
 # The merge base this branch forked from, or nothing when it cannot be derived.
+#
+# A push to the base branch has no fork to derive one from, so a caller names
+# the commit the push replaced (`ONEMESSAGEBUS_NX_BASE_SHA`, GitHub's
+# `github.event.before`); a SHA that is not in this checkout — a first push, a
+# force-push — fails closed like a missing branch does.
 resolve_base() {
-  local branch
+  local branch sha
+  sha="${ONEMESSAGEBUS_NX_BASE_SHA:-}"
+  if [ -n "$sha" ]; then
+    if printf '%s' "$sha" | grep -Eq '^[0-9a-f]{7,64}$' && git cat-file -e "$sha^{commit}" 2>/dev/null; then
+      printf '%s' "$sha"
+      return 0
+    fi
+    echo "nx-affected: ONEMESSAGEBUS_NX_BASE_SHA '$sha' is not a commit in this checkout, so every project runs" >&2
+    return 1
+  fi
   branch="$(base_branch)" || return 1
   # A PR runner's checkout has the base branch only as a remote-tracking ref if
   # it was fetched; fetch it before asking for the merge base so detection does

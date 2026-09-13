@@ -85,9 +85,8 @@ disagrees with its name is refused.
 ### `events merge <file>... [--filter SPEC] [--profile NAME] [--format json|text]`
 
 Merge the stream files into one stream in `(ts, stream, seq)` order, on
-stdout. `--filter` is a filter document (the grammar in
-[`wire.md`](wire.md)): inline JSON when it starts with `{`, otherwise a path to
-a YAML file. A filter that could not be honoured — a matcher naming no field,
+stdout. `--filter` is a filter document: inline JSON when it starts with `{`,
+otherwise a path to a YAML file. A filter that could not be honoured — a matcher naming no field,
 an empty field, a field the profile does not have — is refused naming the list,
 the index and the matcher.
 

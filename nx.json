@@ -40,7 +40,11 @@
     "lint": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
     "doc": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
     "build": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
-    "test": { "cache": false, "inputs": ["crateSource", "^crateSource"] },
+    "test": {
+      "cache": false,
+      "inputs": ["crateSource", "^crateSource"],
+      "outputs": ["{workspaceRoot}/target/llvm-cov-target/*.profraw"]
+    },
     "check": {
       "cache": false,
       "dependsOn": ["format-check", "lint", "test", "doc"]

@@ -46,11 +46,11 @@ jobs:
         id: affected
         run: echo "crate=$(just affected-crate)" >> "$GITHUB_OUTPUT"
 
-  # The full gate on a clean checkout: bootstrap from scratch, then the
-  # deterministic gate (format, clippy, tests incl. e2e with the coverage
-  # threshold, docs) over every project. A pull request runs it over the affected
-  # projects only; main runs the whole graph, so nothing affected-detection or a
-  # stale cache could miss survives past the merge.
+  # The gate on a clean checkout: bootstrap from scratch, then the deterministic
+  # gate (format, clippy, tests incl. e2e with the coverage threshold, docs).
+  # Affected projects on an ordinary pull request and on a push to main; every
+  # project on the release PR, because release-plz batches merges behind it and
+  # its commit is the one that ships.
   #
   # Linux-only because coverage is measured here; macOS/Windows prove the artifact
   # via the `cross` job below.
@@ -70,19 +70,26 @@ jobs:
       - uses: ./.github/actions/setup-just
       - name: Bootstrap
         run: just bootstrap
+      # The affected tier on an ordinary pull request and on a push to main
+      # (scoped against the commit the push replaced); the broader tier — the
+      # full sweep — on the release PR, whose commit is what release-plz tags.
       - name: Quality gate (affected projects)
-        if: github.event_name == 'pull_request'
+        if: github.event_name != 'pull_request' || !startsWith(github.head_ref, 'release-plz-')
+        env:
+          ONEMESSAGEBUS_NX_BASE_SHA: ${{ github.event.before }}
         run: just check-affected
       - name: Quality gate (every project)
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-plz-')
         run: just check
       # A committed lockfile that `just bootstrap`/`just check` had to change is a
       # stale generated file; fail rather than let it drift.
       - name: Committed generated files are up to date
         run: git diff --exit-code -- Cargo.lock package-lock.json
 
-  # Prove the artifact builds and its tests pass on macOS and Windows (without the
-  # coverage threshold, which is enforced on Linux).
+  # Prove the artifact builds and its tests pass on macOS and Windows: what a
+  # platform can change. Formatting and lints are platform-independent and the
+  # gate job already ran them, so they are not repeated; coverage is measured
+  # on Linux alone.
   cross:
     needs: changes
     if: needs.changes.outputs.crate == 'true'
@@ -106,8 +113,6 @@ jobs:
       - uses: ./.github/actions/setup-just
       - name: Bootstrap
         run: just bootstrap
-      - name: Format + lint
-        run: just fmt-check && just lint
       - name: Tests (every crate and the npm packaging)
         run: just test-quick
 
@@ -171,6 +176,8 @@ jobs:
       # On a PR the change is not on the remote yet, so `--path` is the only way to
       # install *this* revision.
       - name: Install (this revision)
+        env:
+          RUSTFLAGS: "-D warnings"
         run: cargo install --path crates/onemessagebus-cli --locked
       - name: Smoke-test the installed binary
         run: |
@@ -216,6 +223,8 @@ jobs:
         with:
           python-version: "3.12"
       - name: Build the wheel
+        env:
+          RUSTFLAGS: "-D warnings"
         uses: PyO3/maturin-action@v1
         with:
           args: --release --locked --out dist

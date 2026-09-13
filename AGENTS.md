@@ -148,12 +148,13 @@ you:
   `install`, `wheel`, `pr-title`, and `llmlint`. `notignored` is deliberately
   not: it is the review artifact naming the suppressions a PR adds, and a fork's
   read-only token cannot post it.
-- **The broader tier runs at merge-to-main.** A pull request runs the affected
-  tier (`just check-affected`); the push to `main` runs the full sweep
-  (`just check`) over every project. release-plz batches merges behind a
-  release PR, whose own merge is one more push to `main` and so is swept the
-  same way — the commit release-plz tags is one CI already swept, and
-  `release.yml` builds and publishes it without re-running the gate.
+- **The broader tier runs on the release PR.** release-plz batches merges
+  behind a release PR, so the commit that ships is that PR's, and it is the
+  one CI sweeps whole (`just check` over every project). An ordinary pull
+  request and a push to `main` run the affected tier (`just check-affected`,
+  scoped against the fork point or the commit the push replaced). The
+  tag-triggered `release.yml` builds and publishes the swept commit and re-runs
+  no gate.
 - **PRs follow `.github/pull_request_template.md`** — terse **What** and **Why**;
   it becomes the squash body. `.github/CODEOWNERS` routes the review by subtree.
 - **Releases are fully automated; the only human action is merging a PR.**
@@ -200,7 +201,7 @@ values live in the secret store, never in the tree.
   narrow agent allowlist in `.claude/settings.json`, and redaction before an
   envelope leaves the emitter.
 - **Exit codes are a contract**: `0` did it, `1` a well-formed no, `2` refused
-  input. `docs/cli.md` is the source.
+  input.
 
 ## Scripts and output are context
 

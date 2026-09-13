@@ -2,8 +2,7 @@
 
 What travels on a onemessagebus stream, how streams are ordered and merged, how
 payloads are bounded and redacted, and how the schema registry versions the
-shapes. [`contract.md`](contract.md) is the approved text this restates; the
-contract tests hold both to the types.
+shapes — the approved contract, said in this repository's own voice.
 
 ## One line, one envelope
 
