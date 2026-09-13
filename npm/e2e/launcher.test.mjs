@@ -14,6 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
+import { invocation } from "./support/invocation.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -41,6 +42,13 @@ function run(command, args, options = {}) {
   });
 }
 
+/// Run a program npm installs as a shim — `npm` itself, or a launcher npm put in
+/// a project's `.bin` — in the form this platform can start (`support/invocation.mjs`).
+function runShim(program, args, options = {}) {
+  const form = invocation(program, args, process.platform);
+  return run(form.command, form.args, { ...form.options, ...options });
+}
+
 /// Pack a package directory into the tarball the registry would serve.
 ///
 /// Installing the directory instead would symlink it, and node resolves a
@@ -50,7 +58,7 @@ function run(command, args, options = {}) {
 /// and the one `release.yml` publishes.
 function pack(dir, into) {
   const packed = JSON.parse(
-    run("npm", ["pack", "--json", "--pack-destination", into, dir], {
+    runShim("npm", ["pack", "--json", "--pack-destination", into, dir], {
       stdio: ["ignore", "pipe", "ignore"],
     }),
   );
@@ -63,7 +71,7 @@ function pack(dir, into) {
 /// per-platform pins, which exist only once a release has published them: the
 /// platform package under test is passed explicitly instead when it is wanted.
 function installInto(project, packages) {
-  run("npm", [
+  runShim("npm", [
     "install",
     "--prefix",
     project,
@@ -78,7 +86,7 @@ function installInto(project, packages) {
 function launch(project, args) {
   const bin = join(project, "node_modules", ".bin", "onemessagebus");
   try {
-    const stdout = run(bin, args, { cwd: project, stdio: ["ignore", "pipe", "pipe"] });
+    const stdout = runShim(bin, args, { cwd: project, stdio: ["ignore", "pipe", "pipe"] });
     return { code: 0, stdout, stderr: "" };
   } catch (error) {
     return {
