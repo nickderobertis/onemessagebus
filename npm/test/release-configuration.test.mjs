@@ -61,6 +61,30 @@ function jobBody(workflow, job) {
   return next === -1 ? rest : rest.slice(0, next + 1);
 }
 
+/// Every `run:` step's shell lines, one array per step. Read line by line rather
+/// than by pattern: a block is its inline command, if any, and every following
+/// line indented deeper than its `run:` key, so the job's last step is read whole
+/// however the job's text happens to end.
+function runBlocks(body) {
+  const lines = body.split("\n");
+  const blocks = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const key = lines[i].match(/^(\s*)(?:- )?run:\s*(.*)$/);
+    if (!key) continue;
+    const depth = key[1].length;
+    const block = [];
+    if (key[2] && key[2] !== "|" && key[2] !== ">") block.push(key[2]);
+    for (let j = i + 1; j < lines.length; j += 1) {
+      const line = lines[j];
+      if (line.trim() === "") continue;
+      if (line.match(/^\s*/)[0].length <= depth) break;
+      block.push(line.trim());
+    }
+    blocks.push(block);
+  }
+  return blocks;
+}
+
 // The release commit was swept whole on its release PR, so a job that runs after
 // publishing may verify what the registry serves and nothing else. What that looks
 // like in a workflow is held here, so a post-publish job cannot quietly grow into a
@@ -109,12 +133,14 @@ describe("the post-publish jobs", () => {
         /bash scripts\/smoke-published\.sh/,
         `${job} no longer smoke-tests the published artifact`,
       );
-      const commands = [...body.matchAll(/run: \|?\n?((?:.*\n)*?)(?=\s+- (?:name|uses):|$)/g)]
-        .map((m) => m[1])
-        .join("\n")
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line && !line.startsWith("#"));
+      const blocks = runBlocks(body);
+      assert.equal(
+        blocks.length,
+        (body.match(/^\s*(?:- )?run:/gm) ?? []).length,
+        `${job}: a run step was not read`,
+      );
+      const commands = blocks.flat().filter((line) => !line.startsWith("#"));
+      assert.ok(commands.length > 0, `${job}: no run commands were read`);
       for (const line of commands) {
         for (const gate of gates) {
           assert.doesNotMatch(
