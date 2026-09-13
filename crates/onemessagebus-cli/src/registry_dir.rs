@@ -97,11 +97,21 @@ impl RegistryDir {
                     dir: dir.to_path_buf(),
                     source,
                 })?;
-                let mut paths: Vec<PathBuf> = entries
-                    .filter_map(Result::ok)
-                    .map(|entry| entry.path())
-                    .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
-                    .collect();
+                // An entry that cannot be read is refused rather than skipped: a
+                // registry read with a document missing would answer as though
+                // that schema had never been registered.
+                let mut paths = Vec::new();
+                for entry in entries {
+                    let path = entry
+                        .map_err(|source| RegistryDirError::Dir {
+                            dir: dir.to_path_buf(),
+                            source,
+                        })?
+                        .path();
+                    if path.extension().is_some_and(|ext| ext == "json") {
+                        paths.push(path);
+                    }
+                }
                 paths.sort();
                 for path in paths {
                     let document = read_document(&path)?;
