@@ -18,7 +18,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use onemessagebus::{
-    Asker, Author, ConsumerName, Layout as _, LocalTransport, Position, QueueName, Transport,
+    Asker, Author, Config, ConsumerName, Layout as _, Layouts, LocalTransport, Position, QueueName,
+    Transport, TransportKinds,
 };
 use onemessagebus_agent::channel::{
     allowlist, allows, allows_completion, Channel, CommandOutcome, Op, PlannerChannel,
@@ -620,6 +621,71 @@ fn the_typed_channel_answers_only_a_verdict_and_names_its_ops_by_word() {
         assert_eq!(Op::of_word(op.word()), Some(op));
     }
     assert_eq!(Op::of_word("context"), None);
+}
+
+/// A commands-only reply by position, arriving after another reply answered the
+/// surface, is command traffic rather than a lost answer: it reaches the command
+/// path alone, answers nothing, and is not refused.
+#[test]
+fn a_commands_only_reply_by_position_after_the_surface_was_answered_reaches_the_command_path_alone()
+{
+    let bus = Config::parse("version: 1\ntransport: {kind: memory}\nprofile: planner-channel\n")
+        .expect("loads")
+        .resolve(
+            &Layouts::new().with(Arc::new(PlannerChannel)),
+            &TransportKinds::builtin(),
+        )
+        .expect("resolves");
+    let surfaces = queue(SURFACES);
+    bus.send(
+        &surfaces,
+        json!({"kind": "planner-question", "message": "is the base right?", "source": "proposal", "blocking": true}),
+    )
+    .expect("raised");
+    let claimed = bus
+        .queue(&surfaces)
+        .expect("a queue")
+        .claim(&ConsumerName::default_consumer())
+        .expect("a claim")
+        .expect("claimed");
+    let first = bus
+        .reply_at(
+            &surfaces,
+            &claimed.position,
+            json!({"message": "yes, carry on"}),
+        )
+        .expect("answered");
+    assert!(first.answered);
+
+    let late = bus
+        .reply_at(
+            &surfaces,
+            &claimed.position,
+            json!({"version": 3, "commands": [{"op": "cancel", "id": "build"}]}),
+        )
+        .expect("a commands-only reply is not refused as a lost answer");
+    assert!(!late.answered, "a commands-only reply answered the surface");
+    assert_eq!(late.question.id, claimed.id);
+    assert_eq!(
+        late.sent
+            .iter()
+            .map(|(queue, _)| queue.to_string())
+            .collect::<Vec<_>>(),
+        vec![COMMANDS]
+    );
+    let records = |name: &str| {
+        bus.queue(&queue(name))
+            .expect("a queue")
+            .status()
+            .expect("a status")
+            .records
+    };
+    assert_eq!(
+        records(REPLIES),
+        1,
+        "the late reply reached the reply queue"
+    );
+    assert_eq!(records(COMMANDS), 1);
 }
 
 /// A reply offered already framed is checked against its author and kept whole,
