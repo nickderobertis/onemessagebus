@@ -447,6 +447,24 @@ pub const CAPABILITIES: &[Capability] = &[
         ],
         uncovered: &[],
     },
+    Capability {
+        method: "serve",
+        verb: &["serve"],
+        options: Some("serve_options"),
+        stdout: StdoutShape::Jsonl("codec_response"),
+        stdin: true,
+        library_entry: "onemessagebus::Bus::serve",
+        bindings: &[
+            bind("queue", FlagKind::Positional),
+            bind("codec", FlagKind::Value("--codec")),
+            bind("sessionSeconds", FlagKind::Value("--session-seconds")),
+            bind("asker", FlagKind::Value("--asker")),
+            bind("file", FlagKind::Value("--file")),
+            CONFIG,
+            TRANSPORT_DIR,
+        ],
+        uncovered: &[],
+    },
 ];
 
 /// The configuration file every queue verb reads.

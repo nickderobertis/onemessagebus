@@ -179,6 +179,39 @@ fn exercised() -> Vec<Exercise> {
             }),
         ),
         (
+            "onemessagebus::Bus::serve",
+            Box::new(|| {
+                let bus = Config::parse(
+                    "version: 1\ntransport: {kind: memory}\nprofile: planner-channel\n",
+                )
+                .expect("loads")
+                .resolve(
+                    &Layouts::new().with(Arc::new(onemessagebus_agent::channel::PlannerChannel)),
+                    &TransportKinds::builtin(),
+                )
+                .expect("resolves");
+                let frame = json!({
+                    "op": "supervisor", "task": "onepipeline run `r-1`.", "persona": "p",
+                    "worktree": "/w", "history_name": "h",
+                    "messages": [{ "role": "assistant", "content": "here" }]
+                });
+                let mut output = Vec::new();
+                let served = bus
+                    .serve(
+                        &queue("surfaces"),
+                        &mut onemessagebus_agent::codec::onejudge::Onejudge::new(),
+                        &onemessagebus::ServeOptions::default(),
+                        Box::new(std::io::Cursor::new(format!("{frame}\n"))),
+                        &mut output,
+                    )
+                    .expect("served");
+                assert_eq!(served, onemessagebus::Served::StreamEnded { abandoned: 0 });
+                let response: serde_json::Value =
+                    serde_json::from_slice(&output).expect("a response");
+                assert_eq!(response["completion"], json!(false));
+            }),
+        ),
+        (
             "onemessagebus::Bus::ask",
             Box::new(|| {
                 let (_dir, bus) = asking_bus();

@@ -14,6 +14,11 @@ const PROFILE_IDS: &[&str] = &[
     "agent.event-filter@1",
     "agent.labels@1",
     "agent.note@1",
+    "agent.onejudge-frame.assess@6",
+    "agent.onejudge-frame.judge@6",
+    "agent.onejudge-frame.respond@6",
+    "agent.onejudge-frame.supervisor@6",
+    "agent.onejudge-frame.user@6",
     "agent.planner-surface@1",
     "agent.queued-commands@1",
     "agent.queued-reply@1",
@@ -486,7 +491,7 @@ fn schema_gen_rust_covers_every_construct_the_renderer_declares() {
     let value: generated_rich::Rich = serde_json::from_value(json!({
         "name": "n", "count": 1, "total": 2, "delta": -3, "ratio": 0.5, "enabled": true,
         "tags": ["a"], "level": "low", "inner": { "id": "i", "more": 1 }, "extra": null,
-        "bag": { "k": [1] }, "counts": { "x": 9 }, "kebab-key": "k"
+        "bag": { "k": [1] }, "counts": { "x": 9 }, "kebab-key": "k", "code": "c"
     }))
     .expect("the declaration reads a conforming document");
     assert_eq!(value.level, generated_rich::Level::Low);

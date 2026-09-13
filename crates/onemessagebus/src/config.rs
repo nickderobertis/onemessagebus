@@ -26,6 +26,7 @@ use serde_json::Value;
 
 use crate::ask::Correlation;
 use crate::author::{Allowlist, Author, NarrowingRefused, OpWord};
+use crate::codec::{CodecConfig, CodecName};
 use crate::kinds::{TransportConfig, TransportKinds};
 use crate::queue::{
     Delivery, Ordering, Policy, Predicate, Pushed, QueueError, QueueSpec, RawQueue, Retention,
@@ -70,6 +71,11 @@ pub struct Config {
     /// appended, in the order each queue judges by them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub validators: Vec<ValidatorConfig>,
+    /// What a host configures for each codec `serve` runs, by the codec's name.
+    /// Which names there are is the binary's: one no linked codec answers to is
+    /// refused where `serve` resolves it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub codecs: BTreeMap<CodecName, CodecConfig>,
 }
 
 /// One validator of a configuration: the external kind, which a Rust
@@ -350,6 +356,7 @@ impl Config {
             queues: BTreeMap::new(),
             authors: BTreeMap::new(),
             validators: Vec::new(),
+            codecs: BTreeMap::new(),
         }
     }
 

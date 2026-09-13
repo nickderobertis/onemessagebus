@@ -26,11 +26,14 @@ use onemessagebus::sdk_schema::{
 };
 use onemessagebus::{
     Address, Admits, Answer, AskOptions, Asker, BackendError, Bus, BusError, Carry, CheckError,
-    Config, ConsumerName, Correlation, Emitter, Filter, Layouts, Lifetime, Merge, Open, Pending,
-    Position, Predicate, QueueError, QueueName, QueueStatus, Redactor, SchemaId, Spool,
-    Subscription, TransportKinds, Undelivered, Vocabulary, SPOOL_WAIT,
+    CodecName, Config, ConsumerName, Correlation, Emitter, EnvName, Filter, Layouts, Lifetime,
+    Merge, Open, Pending, Position, Predicate, QueueError, QueueName, QueueStatus, Redactor,
+    SchemaId, ServeError, ServeOptions, Served, Spool, Subscription, TransportKinds, Undelivered,
+    Vocabulary, DEFAULT_REPLY_WINDOW, SPOOL_WAIT,
 };
 use onemessagebus_agent::channel::{PlannerChannel, PLANNER_CHANNEL};
+use onemessagebus_agent::codec::onejudge::{self, Onejudge};
+use onemessagebus_agent::codec::CODECS;
 use onemessagebus_agent::Agent;
 use serde_json::{Map, Value};
 
@@ -94,6 +97,34 @@ enum Command {
     /// Judge a record by a queue's validators, appending nothing, and print the
     /// verdict.
     Validate(ValidateArgs),
+    /// Serve a member's judge side: frames of a codec's protocol in, one
+    /// response per frame out, over a queue.
+    Serve(ServeArgs),
+}
+
+/// What `serve` takes.
+#[derive(Debug, Args)]
+struct ServeArgs {
+    /// The queue the codec raises and asks on.
+    #[arg(value_name = "QUEUE")]
+    queue: String,
+    /// The codec the frames are read with.
+    #[arg(long, value_name = "NAME")]
+    codec: String,
+    /// Seconds the session serves before it stops of its own accord, leaving
+    /// what it asked counted; read from the codec's session variable when
+    /// absent, and no bound when neither is set.
+    #[arg(long, value_name = "SECONDS")]
+    session_seconds: Option<u64>,
+    /// Who the session listens for; read from the codec's asker variable when
+    /// absent.
+    #[arg(long, value_name = "WORD")]
+    asker: Option<OsString>,
+    /// A file of frames, one per line; stdin when absent.
+    #[arg(long, value_name = "PATH")]
+    file: Option<PathBuf>,
+    #[command(flatten)]
+    bus: BusArgs,
 }
 
 /// What `validate` takes.
@@ -484,6 +515,7 @@ fn dispatch(cli: Cli, out: &mut impl std::io::Write) -> Result<(), Refusal> {
         Command::Status(args) => status(args, out),
         Command::Transports { format } => transports(format, out),
         Command::Validate(args) => validate(args, out),
+        Command::Serve(args) => serve(args, out),
     }
 }
 
@@ -953,6 +985,12 @@ fn layouts() -> Layouts {
 /// transport directory overridden when one is named — or, with no file, the
 /// planner-channel layout over a local transport in that directory.
 fn open_bus(args: &BusArgs) -> Result<Bus, Refusal> {
+    resolved(configuration(args)?)
+}
+
+/// The configuration a queue verb opens its bus with, loaded and checked but
+/// not yet bound to the layouts and transports this binary has.
+fn configuration(args: &BusArgs) -> Result<Config, Refusal> {
     let config = match (&args.config, &args.transport_dir) {
         (Some(path), _) => Config::load(path).map_err(|failure| invalid(failure.to_string()))?,
         (None, Some(dir)) => Config::local(dir, Some(PLANNER_CHANNEL)),
@@ -965,10 +1003,15 @@ fn open_bus(args: &BusArgs) -> Result<Bus, Refusal> {
             ))
         }
     };
-    let config = match &args.transport_dir {
+    Ok(match &args.transport_dir {
         Some(dir) => config.with_transport_dir(dir),
         None => config,
-    };
+    })
+}
+
+/// `config` bound to the layouts this binary links and the transports it can
+/// open.
+fn resolved(config: Config) -> Result<Bus, Refusal> {
     config
         .resolve(&layouts(), &TransportKinds::builtin())
         .map_err(|failure| invalid(failure.to_string()))
@@ -1363,6 +1406,135 @@ fn transports(format: OutputFormat, out: &mut impl std::io::Write) -> Result<(),
         }
     };
     emit_text(out, &text)
+}
+
+fn serve(args: ServeArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+    let queue = parse_queue(&args.queue)?;
+    let name: CodecName = args
+        .codec
+        .parse()
+        .map_err(|failure| invalid(format!("--codec: {failure}")))?;
+    if !CODECS.contains(&name.as_str()) {
+        return Err(invalid(format!(
+            "--codec: `{name}` is not a codec this build links; it links: {}",
+            CODECS.join(", ")
+        )));
+    }
+    let config = configuration(&args.bus)?;
+    let settings = config.codecs.get(&name).cloned().unwrap_or_default();
+    if let Some(configured) = &settings.queue {
+        if configured != &queue {
+            return Err(invalid(format!(
+                "codecs.{name}.queue names `{configured}`, and serve was asked to serve `{queue}`; \
+                 name the same queue in both, or leave codecs.{name}.queue unset"
+            )));
+        }
+    }
+    let session_env = settings
+        .session_env
+        .as_ref()
+        .map_or(onejudge::SESSION_ENV, EnvName::as_str);
+    let bound = "a whole number of seconds greater than zero";
+    let session = match args.session_seconds {
+        Some(0) => {
+            return Err(invalid(format!(
+                "--session-seconds is {bound}; leave it unset for a session that serves until its \
+                 frame stream ends"
+            )))
+        }
+        Some(seconds) => Some(seconds),
+        None => match std::env::var_os(session_env) {
+            None => None,
+            Some(value) => Some(
+                value
+                    .to_str()
+                    .and_then(|text| text.trim().parse::<u64>().ok())
+                    .filter(|seconds| *seconds > 0)
+                    .ok_or_else(|| {
+                        invalid(format!(
+                            "{session_env} is {bound}, and this session was given {value:?}; \
+                             leave it unset for a session that serves until its frame stream ends"
+                        ))
+                    })?,
+            ),
+        },
+    };
+    let asker_env = settings
+        .asker_env
+        .as_ref()
+        .map_or(onejudge::ASKER_ENV, EnvName::as_str);
+    let asker = match &args.asker {
+        Some(value) => Some(Asker::named(value, "--asker")),
+        None => std::env::var_os(asker_env).map(|value| Asker::named(&value, asker_env)),
+    }
+    .transpose()
+    .map_err(|failure| invalid(failure.to_string()))?;
+    let about = match &settings.about_env {
+        None => None,
+        Some(env) => match std::env::var_os(env.as_str()) {
+            None => None,
+            Some(value) => Some(
+                value
+                    .to_str()
+                    .ok_or_else(|| {
+                        invalid(format!(
+                            "{env} is set to a value this host cannot read as text"
+                        ))
+                    })?
+                    .parse::<Address>()
+                    .map_err(|failure| invalid(format!("{env}: {failure}")))?,
+            ),
+        },
+    };
+    let run_env = settings
+        .run_env
+        .as_ref()
+        .map_or(onejudge::RUN_ENV, EnvName::as_str);
+    let options = ServeOptions {
+        asker,
+        about,
+        session: session.map(Duration::from_secs),
+        reply_window: settings
+            .reply_window_seconds
+            .map_or(DEFAULT_REPLY_WINDOW, |seconds| {
+                Duration::from_secs(seconds.get())
+            }),
+    };
+    let input: Box<dyn std::io::BufRead + Send> = match &args.file {
+        Some(path) => Box::new(std::io::BufReader::new(std::fs::File::open(path).map_err(
+            |failure| invalid(format!("cannot read {}: {failure}", path.display())),
+        )?)),
+        None => Box::new(std::io::BufReader::new(std::io::stdin())),
+    };
+    let bus = resolved(config)?;
+    bus.queue(&queue).map_err(bus_refusal)?;
+    let mut codec = Onejudge::new()
+        .with_run_env(run_env, std::env::var(run_env).ok())
+        .with_alternate_home(std::env::var(onejudge::CODEX_ALT_HOME_ENV).ok());
+    match bus.serve(&queue, &mut codec, &options, input, out) {
+        Ok(Served::StreamEnded { .. }) => Ok(()),
+        Ok(Served::SessionOver { standing }) => {
+            eprintln!(
+                "onemessagebus: this serving session reached its {}-second bound with the frame \
+                 stream still open; {}",
+                session.unwrap_or_default(),
+                match standing {
+                    0 => "nothing it asked stands unanswered".to_owned(),
+                    standing => format!(
+                        "the {standing} question(s) it asked stay on {queue}, still counted and \
+                         still waiting for an answer"
+                    ),
+                }
+            );
+            Ok(())
+        }
+        Err(ServeError::Refused(why)) => Err(invalid(why)),
+        Err(ServeError::Failed(why)) => Err(failed(why)),
+        Err(ServeError::Bus(failure)) => Err(bus_refusal(failure)),
+        Err(failure @ (ServeError::Stream(_) | ServeError::Write(_))) => {
+            Err(failed(failure.to_string()))
+        }
+    }
 }
 
 fn validate(args: ValidateArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {

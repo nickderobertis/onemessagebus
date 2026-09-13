@@ -33,6 +33,7 @@ mod bounds;
 mod capability;
 mod carry;
 mod clock;
+mod codec;
 mod config;
 pub mod conformance;
 mod emit;
@@ -68,6 +69,10 @@ pub use capability::{
 };
 pub use carry::{CarriedEntry, Carry, CARRY_SCHEMA_VERSION};
 pub use clock::now_rfc3339;
+pub use codec::{
+    Codec, CodecConfig, CodecFailure, CodecName, EnvName, NameRefused, ServeError, ServeOptions,
+    ServeSession, Served, DEFAULT_REPLY_WINDOW,
+};
 pub use config::{
     AuthorConfig, Bus, BusError, CacheConfig, Config, ConfigError, Layout, Layouts, PolicyConfig,
     QueueConfig, Router, ValidatorConfig, ValidatorKind, CONFIG_VERSION, NARROWED,

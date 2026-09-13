@@ -35,18 +35,22 @@ fn fixture(name: &str) -> String {
 /// `spool-documents` and `carry-store`, the note contract's `note`, `accepted`
 /// and `note-undelivered`, and the planner channel's `planner-channel` and
 /// `planner-channel-grants` there alone, since each names the agent profile's
-/// message or layout. The validators' `verdicts` and `validators-config` are
-/// driven here. A fixture added to the document is added here beside the test
-/// that drives it.
+/// message or layout. The validators' `verdicts` and `validators-config` and
+/// the ask's `asked` are driven here; the codecs' `codecs-config` in
+/// `tests/serve.rs`, and `onejudge-frames` in the profile's `tests/onejudge.rs`.
+/// A fixture added to the document is added here beside the test that drives
+/// it.
 const DRIVEN_FIXTURES: &[&str] = &[
     "accepted",
     "asked",
     "carry-store",
+    "codecs-config",
     "config",
     "envelope",
     "filter",
     "note",
     "note-undelivered",
+    "onejudge-frames",
     "planner-channel",
     "planner-channel-grants",
     "plugin-protocol",

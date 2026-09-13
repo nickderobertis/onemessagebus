@@ -13,5 +13,6 @@ mod onepipeline;
 mod queues;
 mod rich;
 mod schema;
+mod serve;
 mod support;
 mod validators;

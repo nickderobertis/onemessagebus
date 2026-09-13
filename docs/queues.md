@@ -215,6 +215,12 @@ Reading it is two steps, and the types keep them apart:
    its kind refuses. What it answers, a `Bus`, is the one type that opens a queue
    or authors a record.
 
+Two more blocks sit beside these: `validators`, what a queue judges a message by
+before anything is appended (`docs/validators.md`), and `codecs`, what a host
+configures for each codec `serve` runs (`docs/codecs.md`). Each refuses an
+unknown key by name at `Config::load`, and `validators[<index>].on` naming no
+declared queue is refused by `Config::resolve`.
+
 The binary reads the file from `--config <path>` or `ONEMESSAGEBUS_CONFIG`, and
 `--transport-dir <dir>` or `ONEMESSAGEBUS_TRANSPORT_DIR` replaces `transport.dir`
 for one invocation — the flag over the variable, and the variable over the file.

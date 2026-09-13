@@ -26,8 +26,9 @@ Three artifacts:
   did with each message — and `send`, `next`, `reply`, `subscribe` and `status`
   over durable queues kept on a transport a configuration names, with
   `transports` listing the kinds a transport can be, `ask` raising a question and
-  waiting for the one reply that echoes its correlation, and `validate` judging a
-  record by a queue's validators before anything is sent. The local transport keeps
+  waiting for the one reply that echoes its correlation, `validate` judging a
+  record by a queue's validators before anything is sent, and `serve` answering a
+  `onejudge` member's frames as its judge side. The local transport keeps
   the planner channel's files byte-compatible with `onepipeline`, and a
   distributed one is a plugin rather than a consumer change.
 

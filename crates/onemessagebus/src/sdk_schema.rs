@@ -17,6 +17,7 @@ use serde_json::{Map, Value};
 use crate::ask::{Address, Correlation};
 use crate::capability::{Capability, CAPABILITIES};
 use crate::carry::CarriedEntry;
+use crate::codec::CodecName;
 use crate::config::Config;
 use crate::envelope::Envelope;
 use crate::filter::{Filter, Matcher};
@@ -360,6 +361,32 @@ pub struct AskVerbOptions {
     pub transport_dir: Option<String>,
 }
 
+/// The options of `serve`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "ServeOptions")]
+pub struct ServeVerbOptions {
+    /// The queue the codec raises and asks on.
+    pub queue: QueueName,
+    /// The codec the frames are read with.
+    pub codec: CodecName,
+    /// Seconds the session serves before it stops of its own accord.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_seconds: Option<u64>,
+    /// Who the session listens for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asker: Option<Asker>,
+    /// A file of frames, one per line; stdin when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// The configuration file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
+    /// The transport directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport_dir: Option<String>,
+}
+
 /// What `ask` answered. Every answer names itself in `answer`, and only a
 /// reply carries a `reply`: a caller reading the reply member of a timeout, an
 /// abandoned listener or a refusal reads nothing.
@@ -578,6 +605,9 @@ pub struct Bundle {
     pub validated: Schema,
     /// The output of `ask`: the answer, named.
     pub asked: Schema,
+    /// One line of `serve`: the response to one frame, in the protocol of the
+    /// codec served.
+    pub codec_response: Schema,
     /// The option contracts, by the root each capability names.
     pub options: BTreeMap<&'static str, Schema>,
     /// Every message the registry holds, by id.
@@ -607,6 +637,7 @@ pub fn bundle<V: Vocabulary>(registry: &Registry) -> Bundle {
     options.insert("transports_options", schema_for!(TransportsOptions));
     options.insert("validate_options", schema_for!(ValidateOptions));
     options.insert("ask_options", schema_for!(AskVerbOptions));
+    options.insert("serve_options", schema_for!(ServeVerbOptions));
     Bundle {
         capabilities: CAPABILITIES,
         vocabulary: VocabularyManifest {
@@ -635,6 +666,11 @@ pub fn bundle<V: Vocabulary>(registry: &Registry) -> Bundle {
         transport_kinds: schema_for!(Vec<KindEntry>),
         validated: schema_for!(Validated),
         asked: schema_for!(Asked),
+        codec_response: schemars::json_schema!({
+            "title": "CodecResponse",
+            "description": "The response to one frame, in the protocol of the codec served: one JSON object per line.",
+            "type": "object"
+        }),
         options,
         messages: registry
             .ids()
@@ -932,6 +968,14 @@ mod rust {
             let _ = writeln!(out, "}}");
             return Ok(());
         }
+        if let Some(inner) = scalar_newtype(id, name, schema)? {
+            let _ = writeln!(
+                out,
+                "#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]"
+            );
+            let _ = writeln!(out, "pub struct {ident}(pub {inner});");
+            return Ok(());
+        }
         let properties = schema
             .get("properties")
             .and_then(Value::as_object)
@@ -939,7 +983,7 @@ mod rust {
                 unrenderable(
                     id,
                     name,
-                    "a schema that is neither an object with properties nor a string enum",
+                    "a schema that is neither an object with properties, a string enum, nor a named scalar",
                 )
             })?;
         let required: Vec<&str> = schema
@@ -1008,6 +1052,44 @@ mod rust {
         }
         let _ = writeln!(out, "}}");
         Ok(())
+    }
+
+    /// The type a named scalar is a newtype over: a schema that is one scalar
+    /// `type` beside nothing a newtype would not regenerate — its description,
+    /// an integer's format, and the zero minimum schemars writes beside an
+    /// unsigned one. `None` for any other schema, which is left to be refused
+    /// by name: a pattern or a length on a scalar is a keyword no newtype
+    /// declaration regenerates.
+    fn scalar_newtype(
+        id: &SchemaId,
+        at: &str,
+        schema: &Value,
+    ) -> Result<Option<String>, GenerateError> {
+        let Some(object) = schema.as_object() else {
+            return Ok(None);
+        };
+        let scalar = matches!(
+            object.get("type").and_then(Value::as_str),
+            Some("string" | "boolean" | "integer" | "number")
+        );
+        let unsigned = object
+            .get("format")
+            .and_then(Value::as_str)
+            .is_some_and(|format| format.starts_with("uint"));
+        let regenerates = object.iter().all(|(key, value)| match key.as_str() {
+            "type" | "description" | "format" => true,
+            "minimum" => unsigned && value.as_u64() == Some(0),
+            _ => false,
+        });
+        if !scalar || !regenerates {
+            return Ok(None);
+        }
+        let inner: Map<String, Value> = object
+            .iter()
+            .filter(|(key, _)| key.as_str() != "description")
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        type_of(id, at, &Value::Object(inner)).map(Some)
     }
 
     /// The words of a closed string set, each with its description and its

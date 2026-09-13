@@ -616,6 +616,68 @@ validators:
   (`Bus::with_validator`, `Queue::with_validators`) is not configurable from the
   file, because it is code. Every key is refused by name when unknown.
 
+### Contract K — the onejudge codec behind `serve`
+
+`docs/codecs.md` restates this section in the repository's own voice.
+
+`onemessagebus serve <queue> --codec onejudge [--config <path>]` is a member's
+judge-side command provider in the sense of `onejudge`'s `docs/protocol.md`: one
+request frame in on stdin, one response object out on stdout, per op. It replaces
+the pair `onepipeline channel serve` and `channel-serve.py` with **one** process
+that reads the frames `onejudge` writes.
+
+- `supervisor` → **liveness only**: any assistant content in the last turn means
+  the member took its turn — no surface is raised, and the response is a
+  non-completion the member can act on. A turn with **no** assistant content, or
+  whose last assistant message is a machine transcript proving the turn was lost
+  (JSON-RPC frames ending in an `error` frame or a failed `turn/completed`), is a
+  failure: one bounded, non-blocking `monitor-failed` surface naming the cause and
+  the identity is raised on the configured queue, and the process exits non-zero.
+  Nothing else in a turn's prose is ever raised — a monitor reports through the
+  `finding` op it issues itself.
+- `judge` → the criterion is raised as its own non-blocking ask on the queue; the
+  ruling that comes back is the score (`completion` → the boolean, the prose → the
+  reason); a timeout is the conservative `unsatisfied`, never a fabricated pass.
+- `assess` and a non-boolean `judge` → refused by name.
+- The run this member belongs to is read from the frame's `task` opening line
+  where `onejudge` writes one, and from the environment variable the codec's
+  configuration names (`run_env`) otherwise; what a frame is about is validated
+  against a predicate the consumer configures (`Onejudge::with_about_check`;
+  `onepipeline` supplies "the run's graph has it").
+- A reply that is a live edit (commands, no verdict) never reaches this process —
+  it is routed by Contract A — and if one arrives anyway (a regressed transport)
+  it is recognised, the member is answered with a non-completion naming the edits,
+  and nothing is re-applied.
+- The session bound and the asker are `serve`'s `--session-seconds` and
+  `--asker`, each also readable from a configured environment name; a session
+  reaching its bound leaves what it raised counted, and a stream ending marks it
+  abandoned — `onepipeline`'s `Served` distinction, kept.
+- Every fixed string this codec reads or writes — the frame ops, the response
+  fields, the transcript-frame shape — is declared once in
+  `onemessagebus_agent::codec::onejudge`. The frames are `Message` types
+  registered as `agent.onejudge-frame.<op>@6`, transcribed field for field from
+  `onejudge`'s `docs/protocol.md` and `crates/onejudge/src/command.rs` at 0.8.1,
+  exposed as `codec::onejudge::schemas() -> Vec<(SchemaId, Schema)>`, and covered
+  by `schema gen`:
+
+<!-- fixture: onejudge-frames -->
+```json
+{"protocol": 6, "transcribed from": "onejudge 0.8.1",
+ "frames": ["agent.onejudge-frame.respond@6", "agent.onejudge-frame.user@6", "agent.onejudge-frame.supervisor@6", "agent.onejudge-frame.judge@6", "agent.onejudge-frame.assess@6"],
+ "served": ["supervisor", "judge"]}
+```
+
+- The constants a host configures — the reply window, the queue, and the
+  session, asker, run and about variable names — are the `codecs.onejudge` block
+  of `onemessagebus.yaml`:
+
+<!-- fixture: codecs-config -->
+```yaml
+codecs:
+  onejudge: {queue: surfaces, reply_window_seconds: 3000, session_env: ONEPIPELINE_SERVE_SESSION_SECONDS,
+             asker_env: ONEPIPELINE_CHANNEL_ASKER, run_env: ONEPIPELINE_RUN_ID, about_env: ORCHESTRATOR_ASK_MANAGER_NODE}
+```
+
 **Departures, ruled by the manager over the ask seam** for this node's contracts
 (R, V, A, K and C), recorded here so the adopting nodes read them where they read
 the contract:
@@ -643,6 +705,17 @@ the contract:
    effect. Abandonment is state on the queue, which `status` reads as nobody
    waiting now, and an answer arriving for an abandoned question is still matched
    to it.
+6. The `codecs` block is generic in the core, which names no agent word:
+   `Config.codecs` maps a codec name to one block (`queue`,
+   `reply_window_seconds`, `session_env`, `asker_env`, `run_env`, `about_env`),
+   every key refused by name when unknown at `Config::load`. The binary owns the
+   set of codec names it resolves and refuses one it does not link, naming those
+   it does; every onejudge fixed string lives in
+   `onemessagebus_agent::codec::onejudge`; and the serving loop is the core's
+   `Bus::serve` over a `Codec` trait that names no protocol.
+7. A `judge` score's prose is written as `reason`, the field `onejudge` 0.8.1's
+   `JudgePayload` reads. The host's `channel-serve.py` wrote `rationale`, which
+   `onejudge` drops, so every score it relayed arrived unexplained.
 
 ### Contract C — the command line and the capability manifest
 
@@ -706,5 +779,5 @@ the contract:
 
 <!-- fixture: verbs -->
 ```json
-["schema list", "schema check", "schema gen", "schema register", "events merge", "events emit", "deliver", "inbox carried", "send", "next", "reply", "subscribe", "status", "transports", "validate", "ask"]
+["schema list", "schema check", "schema gen", "schema register", "events merge", "events emit", "deliver", "inbox carried", "send", "next", "reply", "subscribe", "status", "transports", "validate", "ask", "serve"]
 ```
