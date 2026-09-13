@@ -209,7 +209,7 @@ jobs:
       # with maturin, and onemessagebus-pypi-e2e installs it into a fresh
       # virtualenv and smoke-tests what it put on PATH.
       - name: Build, install and smoke-test the wheel
-        run: bash scripts/nx run onemessagebus-pypi-e2e:test
+        run: just nx run onemessagebus-pypi-e2e:test
 
   # Lint the PR title: under squash-merge it becomes the release-driving commit.
   pr-title:
