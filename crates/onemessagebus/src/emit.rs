@@ -407,9 +407,9 @@ impl<V: Vocabulary> Emitter<V> {
                     Ok(line) => line,
                     Err(failure) => return Err(self.unserializable(envelope, failure)),
                 };
-                // One whole line in one call: an appending write is positioned
-                // atomically, and two writes per line is how two processes
-                // appending together interleave into a line neither wrote.
+                // One whole line in one call, at the end `recorded` left the
+                // handle at, under the lock: two writes per line is how a writer
+                // dying between them leaves a line nobody finished.
                 match file.write_all(line.as_bytes()).and_then(|()| file.flush()) {
                     Ok(()) => Ok(envelope),
                     Err(failure) => Err(self.failed(envelope, failure)),
@@ -454,14 +454,21 @@ fn line_of<V: Vocabulary>(envelope: &Envelope<V>) -> serde_json::Result<String> 
     Ok(line)
 }
 
-/// The shared stream file, opened for appending and locked exclusively. The
-/// OS lock is the one coordination that survives a holder being killed, and it
-/// is released when the file is dropped, at the end of the emit.
+/// The shared stream file, opened for reading and writing and locked
+/// exclusively. The OS lock is the one coordination that survives a holder
+/// being killed, and it is released when the file is dropped, at the end of the
+/// emit.
+///
+/// Not opened for appending: healing a torn tail truncates through this handle,
+/// and Windows refuses `set_len` on an append-only handle. Every writer holds the
+/// lock while it reads to the end and writes there, so the lock positions the
+/// line where an append flag would have.
 fn open_locked(path: &Path) -> std::io::Result<File> {
     let file = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
-        .append(true)
+        .write(true)
         .open(path)?;
     file.lock()?;
     Ok(file)
