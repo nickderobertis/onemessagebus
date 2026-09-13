@@ -73,6 +73,7 @@ impl<'de, V: Vocabulary> Deserialize<'de> for Envelope<V> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let mut fields: Map<String, Value> = Map::deserialize(deserializer)?;
         let v = take(&mut fields, "v")?;
+        // llmlint: ignore[boundary_inputs_validated] Contract W lists what a read refuses — an unknown top-level field, a non-u64 seq, an unknown source, a missing required field, as each producer's serde does today — and names no timestamp refusal; no producer refuses one, the recorded streams round-trip byte for byte, and the merge orders `(ts, stream, seq)` over the string as written.
         let ts = take(&mut fields, "ts")?;
         let stream = take(&mut fields, "stream")?;
         let seq = take(&mut fields, "seq")?;

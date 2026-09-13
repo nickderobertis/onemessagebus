@@ -122,6 +122,7 @@ pub struct EventsMergeOptions {
     pub filter: Option<String>,
     /// The profile whose vocabulary the streams are read through.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    // llmlint: ignore[invalid_states_unrepresentable] the core names no agent word and knows no profile: the binary in crates/onemessagebus-cli links the profiles and owns their names, and the SDK node reads the set from the manifest, so a closed type here would put the profile's words in the core.
     pub profile: Option<String>,
     /// How the merged stream is rendered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -143,6 +144,7 @@ pub struct EventsEmitOptions {
     pub source: Option<String>,
     /// The profile whose vocabulary the envelope is written over.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    // llmlint: ignore[invalid_states_unrepresentable] the core names no agent word and knows no profile: the binary in crates/onemessagebus-cli links the profiles and owns their names, and the SDK node reads the set from the manifest, so a closed type here would put the profile's words in the core.
     pub profile: Option<String>,
     /// Labels to stamp, by key.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
