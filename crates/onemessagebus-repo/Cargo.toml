@@ -1,0 +1,29 @@
+# This repository's own configuration, held to its sources: the release-target
+# declaration through `onevcs`'s canonical reader, and the toolchain pins restated
+# outside Cargo.toml. Never published: a `publish = false` workspace member
+# holding only `tests/`, kept apart from the journeys so a release or toolchain
+# change does not pay for the whole compiled-binary suite.
+[package]
+name = "onemessagebus-repo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lib]
+# No library: this crate is its tests and nothing else.
+path = "src/lib.rs"
+
+[dependencies]
+
+[dev-dependencies]
+toml_edit = { workspace = true }
+# The canonical release-target reader: `release-targets.toml` at the root is
+# written against the schema `onevcs` defines, and this is the one implementation
+# of it. A dev-dependency of this crate alone — deny.toml bans the crate
+# everywhere else, with this crate as the one permitted wrapper.
+onevcs = "0.21"

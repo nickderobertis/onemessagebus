@@ -24,7 +24,7 @@
 //! `npm/test/release-targets.test.mjs` holds it against the release configuration
 //! itself, in both directions.
 //!
-//! This lives in the journey crate rather than a published one because `onevcs`
+//! This lives in `onemessagebus-repo` rather than a published crate because `onevcs`
 //! is banned everywhere else in the workspace: the bus is a leaf the stack
 //! adopts, and this crate is the one wrapper `deny.toml` lets name it.
 

@@ -13,12 +13,7 @@
     "test": {
       "command": "just _e2e-test",
       "dependsOn": [{ "projects": ["onemessagebus-cli"], "target": "build" }],
-      "inputs": [
-        "crateSource",
-        "^crateSource",
-        "{workspaceRoot}/release-targets.toml",
-        "{workspaceRoot}/scripts/release-probe.sh"
-      ]
+      "inputs": ["crateSource", "^crateSource"]
     },
     "doc": { "command": "just _crate-doc onemessagebus-e2e" },
     "check": {

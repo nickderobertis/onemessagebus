@@ -99,8 +99,10 @@ rationale; the mechanics live in the files named. -->
   npm packaging tests and release-configuration drift gates),
   `onemessagebus-pypi` (the wheel, built by maturin), `onemessagebus-npm-e2e` and
   `onemessagebus-pypi-e2e` (the install journeys, split from their deliverables
-  as the costly tier), and the root `workspace` project (the coverage floor and
-  the supply-chain check). The binary is its own `publish = false` crate because
+  as the costly tier), `onemessagebus-repo` (tests holding the release
+  declaration and toolchain pins to their sources, apart from the journeys so
+  those changes do not pay for them), and the root `workspace` project (the
+  coverage floor and the supply-chain check). The binary is its own `publish = false` crate because
   it links the agent profile so `--profile` defaults to it, and the profile
   depends on the core — so it can live in neither library; the manager ruled
   this over the ask seam.
@@ -195,7 +197,7 @@ you:
 - **What this repository publishes is declared in `release-targets.toml`, and
   answered by `scripts/release-probe.sh`.** Four targets — the two crates, the
   wheel, the npm launcher (covering its five platform packages) — at schema
-  version 3. `crates/onemessagebus-e2e/tests/release_declaration.rs` holds the
+  version 3. `crates/onemessagebus-repo/tests/release_declaration.rs` holds the
   document to the schema through `onevcs`'s own reader, and
   `npm/test/release-targets.test.mjs` holds it to the release configuration in
   both directions, so a new artifact fails the gate rather than going

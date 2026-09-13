@@ -7,7 +7,7 @@
 # answers exactly three ways — a version, nothing (no release yet), or not
 # answered — and `npm/test/release-targets.test.mjs` holds this file to the
 # release configuration in both directions, while
-# `crates/onemessagebus-e2e/tests/release_declaration.rs` holds it to the schema
+# `crates/onemessagebus-repo/tests/release_declaration.rs` holds it to the schema
 # through `onevcs`'s own reader.
 #
 # The `onemessagebus` binary is built from the unpublished `onemessagebus-cli`

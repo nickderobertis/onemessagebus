@@ -29,12 +29,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }
 tempfile = { workspace = true }
-toml_edit = { workspace = true }
-# The canonical release-target reader: `release-targets.toml` at the root is
-# written against the schema `onevcs` defines, and this is the one implementation
-# of it. A dev-dependency of the journey crate alone — deny.toml bans the crate
-# everywhere else, with this crate as the one permitted wrapper.
-onevcs = "0.21"
 
 # One test binary rather than one per file, so the fixture is a module the
 # journeys share rather than a file each of them compiles its own copy of.

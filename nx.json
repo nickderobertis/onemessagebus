@@ -30,7 +30,8 @@
       "type:app": ["type:contract", "type:profile"],
       "type:e2e": ["type:contract", "type:profile", "type:app", "type:packaging"],
       "type:packaging": ["type:app"],
-      "type:workspace": ["type:contract", "type:profile", "type:app", "type:e2e", "type:packaging"]
+      "type:repo": [],
+      "type:workspace": ["type:contract", "type:profile", "type:app", "type:e2e", "type:packaging", "type:repo"]
     }
   },
   "targetDefaults": {

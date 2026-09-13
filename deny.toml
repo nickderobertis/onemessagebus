@@ -44,13 +44,13 @@ allow = []
 # The library is a leaf. Neither published crate may depend on a sibling of the
 # stack: the bus is what those siblings adopt, and an edge back would make the
 # bus's release wait on theirs. The one crate allowed to name `onevcs` is the
-# unpublished journey crate, whose release-declaration test hands
+# unpublished `onemessagebus-repo`, whose release-declaration test hands
 # `release-targets.toml` to onevcs's canonical reader — the one implementation of
 # that schema — rather than restating its rules here.
 deny = [
     { crate = "onejudge", reason = "the bus is a leaf: the stack adopts it, never the reverse" },
     { crate = "oneagentgraph", reason = "the bus is a leaf: the stack adopts it, never the reverse" },
-    { crate = "onevcs", reason = "the bus is a leaf: the stack adopts it, never the reverse", wrappers = ["onemessagebus-e2e"] },
+    { crate = "onevcs", reason = "the bus is a leaf: the stack adopts it, never the reverse", wrappers = ["onemessagebus-repo"] },
     { crate = "onepipeline", reason = "the bus is a leaf: the stack adopts it, never the reverse" },
     { crate = "oneharness", reason = "the bus is a leaf: the stack adopts it, never the reverse" },
     { crate = "oneharness-core", reason = "the bus is a leaf: the stack adopts it, never the reverse" },

@@ -836,12 +836,18 @@ dependencies = [
  "onemessagebus",
  "onemessagebus-agent",
  "onemessagebus-cli",
- "onevcs",
  "predicates",
  "schemars",
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "onemessagebus-repo"
+version = "0.1.0"
+dependencies = [
+ "onevcs",
  "toml_edit",
 ]
 

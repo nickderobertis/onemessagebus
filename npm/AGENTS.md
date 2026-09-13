@@ -35,7 +35,7 @@ npm — the release-target declaration's drift against what a release really
 publishes, and the release probe's not-answered answer — because this is the
 packaging project and they read the same `release.yml` the matrix gate does.
 Whether that declaration is a *shape* its schema allows is not asked here:
-`crates/onemessagebus-e2e/tests/release_declaration.rs` hands it to `onevcs`'s
+`crates/onemessagebus-repo/tests/release_declaration.rs` hands it to `onevcs`'s
 own reader, and `test/support/declaration.mjs` merely parses the document the
 way any consumer with a TOML parser does.
 

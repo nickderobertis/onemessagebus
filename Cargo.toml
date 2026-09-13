@@ -1,5 +1,6 @@
-# The Cargo workspace: the core bus, the agent profile over it, and the journey
-# crate that drives the built binary. Shared metadata lives in
+# The Cargo workspace: the core bus, the agent profile over it, the binary, the
+# journey crate that drives it, and the crate holding this repository's own
+# configuration to its sources. Shared metadata lives in
 # `[workspace.package]` and shared version requirements in
 # `[workspace.dependencies]`, so a member never pins its own copy of either.
 #

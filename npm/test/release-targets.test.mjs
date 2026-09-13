@@ -25,7 +25,7 @@
 // publish and it fails the other way.
 //
 // What that document may SAY is a separate question from whether it is true, and
-// it is answered separately: `crates/onemessagebus-e2e/tests/release_declaration.rs` hands it to the
+// it is answered separately: `crates/onemessagebus-repo/tests/release_declaration.rs` hands it to the
 // canonical schema's own reader — `onevcs`'s, the one implementation that defines
 // it — and this repository restates none of those rules. So the document read
 // below is one that has already been held to its schema, and everything here is

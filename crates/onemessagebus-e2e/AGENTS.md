@@ -11,6 +11,6 @@ renderer covers. Regenerate a file with that command when the renderer or its
 schema moves; the journeys hold each to the binary's current output and to the
 document it regenerates.
 
-`tests/release_declaration.rs` is here rather than in a published crate because
-`onevcs` is banned everywhere else: this crate is the one wrapper `deny.toml`
-lets name it.
+A test about the repository's configuration rather than the binary (the release
+declaration, the toolchain pins) belongs in `crates/onemessagebus-repo`, so it
+does not pay for this suite.

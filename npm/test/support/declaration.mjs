@@ -3,7 +3,7 @@
 //
 // Reading is all this does. Whether the document conforms to the canonical
 // release-target schema is decided by that schema's own implementation —
-// `onevcs`'s reader, called from `crates/onemessagebus-e2e/tests/release_declaration.rs` — and never by
+// `onevcs`'s reader, called from `crates/onemessagebus-repo/tests/release_declaration.rs` — and never by
 // anything here: a schema restated in the repository that writes against it is a
 // second opinion presented as the first one, and the copy is what drifts. So there
 // is no validation below, and a document that is wrong is wrong at that gate.
