@@ -9,6 +9,10 @@
 //! the core's envelope over it, serializing to the same bytes the stack's
 //! producers write today.
 //!
+//! The [`note`] module is the agent note contract — a role-addressed correction
+//! into a running conversation — declared as the profile's first message family
+//! over the core's inbox.
+//!
 //! The dependency runs one way: this crate depends on the core, and the core
 //! never on this crate.
 
@@ -16,6 +20,7 @@
 #![warn(missing_docs)]
 
 pub mod event;
+pub mod note;
 pub mod registry;
 
 use onemessagebus::{Reserved, Vocabulary};
@@ -24,6 +29,9 @@ pub use event::{
     AgentEnvelope, AgentFilter, ArtifactRef, Dimensions, Emitter, Envelope, EventFilter, Labels,
     MatchFields, Matcher, Merge, Phase, Reader, Source,
 };
+/// The note contract's own refusal, named apart from the core's
+/// [`onemessagebus::Undelivered`] where both are in scope.
+pub use note::Undelivered as NoteUndelivered;
 pub use registry::{registry, EVENT_ENVELOPE_FAMILY, REPLY_ENVELOPE_FAMILY};
 
 /// The agent stack's vocabulary.

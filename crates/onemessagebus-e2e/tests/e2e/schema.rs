@@ -12,6 +12,7 @@ const PROFILE_IDS: &[&str] = &[
     "agent.event-envelope@2",
     "agent.event-filter@1",
     "agent.labels@1",
+    "agent.note@1",
     "agent.reply-envelope@2",
     "agent.reply-envelope@3",
 ];

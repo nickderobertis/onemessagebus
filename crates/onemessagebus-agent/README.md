@@ -12,10 +12,14 @@ shares, declared once here and re-exported by every consumer.
 - `Envelope`, `EventFilter`, `Matcher`, `Emitter`, `Reader`, `Merge` — the core's
   generic types over this vocabulary, serializing to the bytes `oneagentgraph`,
   `onevcs` and `onepipeline` write today.
+- `note` — the agent note contract: `Note`, `Addressee`, `Criterion`,
+  `Accepted`, and `Notes`/`NoteInbox`, the core's inbox pair over them, so a note
+  reaches a live conversation in process, through a spool, or carried to a later
+  one.
 - `registry()` — every schema the stack registers: `agent.event-envelope` at
   `[2, 1]`, `agent.reply-envelope` at `[3, 2]`, and the artifact reference, the
-  filter and the labels (`agent.artifact-ref`, `agent.event-filter`,
-  `agent.labels`) at 1.
+  filter, the labels and the note (`agent.artifact-ref`, `agent.event-filter`,
+  `agent.labels`, `agent.note`) at 1.
 
 ```rust
 use onemessagebus_agent::{Emitter, Labels, Phase, Source};

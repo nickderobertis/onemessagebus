@@ -191,6 +191,7 @@ fn every_registered_id_is_in_the_agent_namespace_and_listed_in_order() {
             "agent.event-envelope@2",
             "agent.event-filter@1",
             "agent.labels@1",
+            "agent.note@1",
             "agent.reply-envelope@2",
             "agent.reply-envelope@3",
         ]
