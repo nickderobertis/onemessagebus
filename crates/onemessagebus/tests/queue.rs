@@ -6,7 +6,11 @@
 use std::sync::{Arc, Mutex};
 
 use onemessagebus::conformance::{self, QUEUE_TABLE};
-use onemessagebus::{LocalTransport, MemoryTransport, Transport};
+use onemessagebus::{
+    Asker, ConsumerName, DocumentName, LocalTransport, MemoryTransport, Policy, QueueSpec,
+    RawQueue, Registry, Transport,
+};
+use serde_json::{json, Value};
 
 fn memory() -> Arc<dyn Transport> {
     Arc::new(MemoryTransport::new())
@@ -76,4 +80,69 @@ rows!(
 #[test]
 fn the_whole_table_runs_over_the_memory_transport_in_one_pass() {
     conformance::queue_table(&memory);
+}
+
+/// An untyped event queue writes each record in the order it was given, and a
+/// fold of its log — every event record read back, the projection lost — hands
+/// it back in that same order under the same seal.
+#[test]
+fn an_untyped_event_queue_keeps_each_records_field_order_through_a_fold() {
+    let transport: Arc<dyn Transport> = Arc::new(MemoryTransport::new());
+    let projection: DocumentName = "questions.json".parse().expect("a document name");
+    let queue = RawQueue::open(
+        Arc::clone(&transport),
+        QueueSpec::new(
+            "questions".parse().expect("a queue name"),
+            Policy {
+                hold_pending: true,
+                projection: Some(projection.clone()),
+                ..Policy::default()
+            },
+        ),
+        Arc::new(Registry::new()),
+    );
+    queue
+        .push(json!({"zeta": 1, "blocking": true, "asker": "a", "alpha": 2}))
+        .expect("queued");
+    queue.push(json!({"omega": 3, "alpha": 4})).expect("queued");
+    queue
+        .claim(&ConsumerName::default_consumer())
+        .expect("a claim")
+        .expect("a record");
+    queue.abandon(&[0]).expect("abandoned");
+    queue
+        .attend(&Asker::new("a", "the test").expect("an asker"))
+        .expect("attended");
+    let written = transport
+        .document(queue.name(), &projection)
+        .expect("a read")
+        .expect("a projection");
+
+    transport
+        .replace_document(queue.name(), &projection, b"{}")
+        .expect("the projection is lost");
+    let status = queue.status().expect("a status");
+    assert_eq!(
+        serde_json::to_string(&status.pending).expect("JSON"),
+        r#"{"id":0,"zeta":1,"blocking":true,"asker":"a","alpha":2}"#,
+        "a fold reordered the pending record's fields"
+    );
+    assert_eq!(
+        serde_json::to_string(&status.waiting).expect("JSON"),
+        r#"[{"id":1,"omega":3,"alpha":4}]"#,
+        "a fold reordered a waiting record's fields"
+    );
+    let refolded: Value = serde_json::from_slice(
+        &transport
+            .document(queue.name(), &projection)
+            .expect("a read")
+            .expect("the repaired projection"),
+    )
+    .expect("JSON");
+    let written: Value = serde_json::from_slice(&written).expect("JSON");
+    assert_eq!(
+        serde_json::to_string(&refolded).expect("JSON"),
+        serde_json::to_string(&written).expect("JSON"),
+        "the fold's projection differs from the one the writer sealed"
+    );
 }

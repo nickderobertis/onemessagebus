@@ -8,13 +8,15 @@
 //! the library it describes.
 
 use std::collections::BTreeSet;
-
+use std::sync::Arc;
 use std::time::Duration;
 
 use onemessagebus::sdk_schema::{self, Lang};
 use onemessagebus::{
-    Carried, Carry, Disposition, Emitter, Inbox, Merge, Message, Open, Reader, Reading, Redactor,
-    Registry, SchemaId, Source, Spool, CAPABILITIES,
+    Carried, Carry, Changed, Config, ConsumerName, Disposition, Emitter, Inbox, Layouts,
+    MemoryTransport, Merge, Message, Open, Policy, Position, QueueConfig, QueueName, QueueSpec,
+    RawQueue, Reader, Reading, Redactor, Registry, SchemaId, Source, Spool, TransportKinds,
+    CAPABILITIES,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -147,7 +149,113 @@ fn exercised() -> Vec<Exercise> {
                 assert_eq!(entries[0].message, json!({ "n": 1 }));
             }),
         ),
+        (
+            "onemessagebus::Bus::send",
+            Box::new(|| {
+                let dir = tempfile::tempdir().expect("a temp dir");
+                let mut config = Config::local(dir.path(), None);
+                config
+                    .queues
+                    .insert(queue("findings"), QueueConfig::default());
+                let bus = config
+                    .resolve(&Layouts::new(), &TransportKinds::builtin())
+                    .expect("resolves");
+                let sent = bus
+                    .send(&queue("findings"), json!({ "what": "a finding" }))
+                    .expect("sent");
+                assert_eq!(sent.len(), 1);
+                assert!(dir.path().join("findings.jsonl").is_file());
+            }),
+        ),
+        (
+            "onemessagebus::RawQueue::claim",
+            Box::new(|| {
+                let notes = plain("notes");
+                notes.push(json!({ "n": 0 })).expect("appended");
+                let claimed = notes
+                    .claim(&ConsumerName::default_consumer())
+                    .expect("a claim")
+                    .expect("a record");
+                assert_eq!(claimed.record, json!({ "n": 0 }));
+            }),
+        ),
+        (
+            "onemessagebus::RawQueue::answer_at",
+            Box::new(|| {
+                let policy = Policy {
+                    hold_pending: true,
+                    ..Policy::default()
+                };
+                let questions = RawQueue::open(
+                    Arc::new(MemoryTransport::new()),
+                    QueueSpec::new(queue("questions"), policy),
+                    Arc::new(Registry::new()),
+                );
+                questions
+                    .push(json!({ "blocking": true, "text": "go on?" }))
+                    .expect("queued");
+                let claimed = questions
+                    .claim(&ConsumerName::default_consumer())
+                    .expect("a claim")
+                    .expect("a record");
+                let answered = questions
+                    .answer_at(&claimed.position, &Position::from_token(0))
+                    .expect("answered");
+                assert_eq!(answered.id, Some(0));
+                assert!(questions.held().expect("a read").is_none());
+            }),
+        ),
+        (
+            "onemessagebus::RawQueue::wait_for_change",
+            Box::new(|| {
+                let notes = plain("notes");
+                let since = notes.fingerprint().expect("a fingerprint");
+                let writer = notes.clone();
+                let appending = std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(20));
+                    writer.push(json!({ "n": 1 })).expect("appended");
+                });
+                let changed = notes
+                    .wait_for_change(&since, Duration::from_secs(10))
+                    .expect("a wait");
+                appending.join().expect("the writer finishes");
+                assert!(matches!(changed, Changed::Moved(_)));
+            }),
+        ),
+        (
+            "onemessagebus::RawQueue::status",
+            Box::new(|| {
+                let notes = plain("notes");
+                notes.push(json!({ "n": 0 })).expect("appended");
+                let status = notes.status().expect("a status");
+                assert_eq!((status.records, status.unread), (1, 1));
+            }),
+        ),
+        (
+            "onemessagebus::TransportKinds::kinds",
+            Box::new(|| {
+                let kinds: Vec<String> = TransportKinds::builtin()
+                    .searching(Vec::new())
+                    .kinds()
+                    .into_iter()
+                    .map(|entry| entry.kind)
+                    .collect();
+                assert_eq!(kinds, vec!["local", "memory"]);
+            }),
+        ),
     ]
+}
+
+fn queue(name: &str) -> QueueName {
+    name.parse().expect("a queue name")
+}
+
+fn plain(name: &str) -> RawQueue {
+    RawQueue::open(
+        Arc::new(MemoryTransport::new()),
+        QueueSpec::new(queue(name), Policy::default()),
+        Arc::new(Registry::new()),
+    )
 }
 
 #[test]

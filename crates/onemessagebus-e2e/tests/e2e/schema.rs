@@ -8,13 +8,20 @@ use crate::support::{fixture, run, run_in};
 /// else.
 const PROFILE_IDS: &[&str] = &[
     "agent.artifact-ref@1",
+    "agent.command-outcome@1",
     "agent.event-envelope@1",
     "agent.event-envelope@2",
     "agent.event-filter@1",
     "agent.labels@1",
     "agent.note@1",
+    "agent.planner-surface@1",
+    "agent.queued-commands@1",
+    "agent.queued-reply@1",
     "agent.reply-envelope@2",
     "agent.reply-envelope@3",
+    "onemessagebus.transport-hello@1",
+    "onemessagebus.transport-reply@1",
+    "onemessagebus.transport-request@1",
 ];
 
 /// The committed Rust declaration `schema gen --lang rust agent.artifact-ref@1`
@@ -34,8 +41,8 @@ fn schema_list_prints_every_registered_id_and_nothing_else() {
         .map(|entry| entry["id"].as_str().expect("an id"))
         .collect();
     assert_eq!(ids, PROFILE_IDS);
-    assert_eq!(entries[1]["family"], json!("agent.event-envelope"));
-    assert_eq!(entries[1]["version"], json!(1));
+    assert_eq!(entries[2]["family"], json!("agent.event-envelope"));
+    assert_eq!(entries[2]["version"], json!(1));
     assert!(listed.stderr.is_empty(), "{}", listed.stderr);
 
     let text = run(&["schema", "list", "--format", "text"], None);

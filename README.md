@@ -21,9 +21,13 @@ Three artifacts:
   `crates/onemessagebus-agent/tests/recorded/` prove byte for byte.
 - **`onemessagebus`**, the binary — `schema list|check|gen|register` over the
   registry, `events merge|emit` over streams with `--profile agent` (the
-  default) or `--profile open`, and `deliver` and `inbox carried` over the inbox:
+  default) or `--profile open`, `deliver` and `inbox carried` over the inbox —
   a typed channel into a running process whose sender learns what the receiver
-  did with each message.
+  did with each message — and `send`, `next`, `reply`, `subscribe` and `status`
+  over durable queues kept on a transport a configuration names, with
+  `transports` listing the kinds a transport can be. The local transport keeps
+  the planner channel's files byte-compatible with `onepipeline`, and a
+  distributed one is a plugin rather than a consumer change.
 
 ## Install the command line
 

@@ -360,5 +360,5 @@ adopting nodes read them where they read the contract:
 
 <!-- fixture: verbs -->
 ```json
-["schema list", "schema check", "schema gen", "schema register", "events merge", "events emit", "deliver", "inbox carried"]
+["schema list", "schema check", "schema gen", "schema register", "events merge", "events emit", "deliver", "inbox carried", "send", "next", "reply", "subscribe", "status", "transports"]
 ```

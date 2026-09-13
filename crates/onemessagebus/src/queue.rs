@@ -827,6 +827,27 @@ impl Folded {
     }
 }
 
+/// `fields` without `key`, and what `key` held, every other key in its place.
+///
+/// Not `Map::remove`: under `preserve_order` that swaps the last key into the
+/// hole, and a record read back through it comes out in another field order —
+/// under another seal.
+fn without_key(fields: Map<String, Value>, key: &str) -> (Option<Value>, Map<String, Value>) {
+    let mut taken = None;
+    let kept = fields
+        .into_iter()
+        .filter_map(|(name, value)| {
+            if name == key {
+                taken = Some(value);
+                None
+            } else {
+                Some((name, value))
+            }
+        })
+        .collect();
+    (taken, kept)
+}
+
 fn record_id(record: &Value) -> Option<u64> {
     record.get("id").and_then(Value::as_u64)
 }
@@ -996,11 +1017,9 @@ impl RawQueue {
         let Some(fields) = record.as_object() else {
             return record.clone();
         };
-        let mut fields = fields.clone();
+        let (_, mut fields) = without_key(fields.clone(), "abandoned");
         if abandoned {
             fields.insert("abandoned".to_owned(), Value::Bool(true));
-        } else {
-            fields.remove("abandoned");
         }
         (self.shape)(Value::Object(fields)).unwrap_or_else(|_| record.clone())
     }
@@ -1010,10 +1029,11 @@ impl RawQueue {
     /// One line of the log read back: what it says happened, and the record.
     /// `None` for a line this queue cannot read, which is passed over.
     fn parse_line(&self, bytes: &[u8]) -> Option<(Option<Event>, Value)> {
-        let Ok(Value::Object(mut fields)) = serde_json::from_slice::<Value>(bytes) else {
+        let Ok(Value::Object(line)) = serde_json::from_slice::<Value>(bytes) else {
             return None;
         };
-        let event = match fields.remove("event") {
+        let (event, fields) = without_key(line, "event");
+        let event = match event {
             None | Some(Value::Null) => None,
             Some(Value::String(word)) => Some(Event::of_word(&word)?),
             Some(_) => return None,
@@ -1156,11 +1176,10 @@ impl RawQueue {
                 let shape = &self.shape;
                 for held in folded.waiting.iter_mut().chain(folded.pending.iter_mut()) {
                     if record_id(held) == Some(id) {
-                        let mut fields = held.as_object().cloned().unwrap_or_default();
+                        let (_, mut fields) =
+                            without_key(held.as_object().cloned().unwrap_or_default(), "abandoned");
                         if abandoned {
                             fields.insert("abandoned".to_owned(), Value::Bool(true));
-                        } else {
-                            fields.remove("abandoned");
                         }
                         if let Ok(reshaped) = shape(Value::Object(fields)) {
                             *held = reshaped;

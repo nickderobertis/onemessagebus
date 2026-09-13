@@ -22,10 +22,14 @@ pub fn binary() -> PathBuf {
     path
 }
 
-/// A command over the binary, with no inherited registry.
+/// A command over the binary, with no inherited registry, configuration or
+/// transport directory.
 pub fn onemessagebus() -> Command {
     let mut command = Command::new(binary());
-    command.env_remove("ONEMESSAGEBUS_REGISTRY");
+    command
+        .env_remove("ONEMESSAGEBUS_REGISTRY")
+        .env_remove("ONEMESSAGEBUS_CONFIG")
+        .env_remove("ONEMESSAGEBUS_TRANSPORT_DIR");
     command
 }
 

@@ -13,10 +13,22 @@ homepage.workspace = true
 publish = false
 
 [lib]
-# No library: this crate is its journeys and nothing else.
+# No library: this crate is its journeys, and the transport plugin executable
+# they point the binary at.
 path = "src/lib.rs"
 
+# The `dirfiles` transport plugin (src/bin/): the transport tests/plugin_transport.rs
+# implements outside the core, served over the plugin protocol. Integration tests
+# reach it as `CARGO_BIN_EXE_onemessagebus-transport-dirfiles`.
 [dependencies]
+onemessagebus = { workspace = true }
+
+[[bin]]
+name = "onemessagebus-transport-dirfiles"
+path = "src/bin/onemessagebus-transport-dirfiles.rs"
+# No tests of its own: its transport is tested where it is written,
+# tests/plugin_transport.rs, whose journeys need Cargo's path to this binary.
+test = false
 
 [dev-dependencies]
 onemessagebus = { workspace = true }

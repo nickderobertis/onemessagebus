@@ -43,6 +43,10 @@ pub const PROTOCOL: &str = "onemessagebus-transport";
 /// another version is refused, naming both.
 pub const PROTOCOL_VERSION: u32 = 1;
 
+/// The longest one wait request holds a plugin's pipe: a longer wait is a
+/// succession of these, so another handle's request is never held behind one.
+const REMOTE_WAIT: Duration = Duration::from_millis(50);
+
 /// What a plugin executable's name starts with: `onemessagebus-transport-nats`
 /// serves the kind `nats`.
 pub const PLUGIN_PREFIX: &str = "onemessagebus-transport-";
@@ -921,7 +925,11 @@ impl PluginProcess {
         }
     }
 
-    fn call_wait(
+    /// One bounded wait on the plugin, no longer than [`REMOTE_WAIT`]: the pipe
+    /// is held for a request, so a wait holds it no longer than that, and a
+    /// request from another handle — the claim a waiter is waiting to see —
+    /// lands between two of them.
+    fn call_wait_once(
         &self,
         holder: Option<u64>,
         queue: &QueueName,
@@ -933,7 +941,7 @@ impl PluginProcess {
             &PluginRequest::WaitForChange {
                 queue: queue.clone(),
                 since: since.clone(),
-                timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+                timeout_ms: u64::try_from(timeout.min(REMOTE_WAIT).as_millis()).unwrap_or(u64::MAX),
             },
         )? {
             PluginAnswer::Changed {
@@ -945,6 +953,25 @@ impl PluginProcess {
                 fingerprint,
             } => Ok(Changed::Unchanged(fingerprint)),
             other => Err(self.unexpected(&other, "wait_for_change")),
+        }
+    }
+
+    fn call_wait(
+        &self,
+        holder: Option<u64>,
+        queue: &QueueName,
+        since: &Fingerprint,
+        timeout: Duration,
+    ) -> Result<Changed, TransportError> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            match self.call_wait_once(holder, queue, since, left)? {
+                Changed::Unchanged(now) if !left.is_zero() && left > REMOTE_WAIT => {
+                    let _ = now;
+                }
+                answered => return Ok(answered),
+            }
         }
     }
 

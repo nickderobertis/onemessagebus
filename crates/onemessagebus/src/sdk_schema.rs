@@ -16,9 +16,13 @@ use serde_json::{Map, Value};
 
 use crate::capability::{Capability, CAPABILITIES};
 use crate::carry::CarriedEntry;
+use crate::config::Config;
 use crate::envelope::Envelope;
 use crate::filter::{Filter, Matcher};
+use crate::kinds::KindEntry;
+use crate::queue::{Asker, QueueStatus};
 use crate::schema::{Registry, SchemaId};
+use crate::transport::{ConsumerName, Position, QueueName};
 use crate::vocabulary::{Reserved, Vocabulary};
 
 /// How a reading verb renders what it read.
@@ -189,6 +193,167 @@ pub struct InboxCarriedOptions {
     pub format: Option<Format>,
 }
 
+/// The options of `send`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SendOptions {
+    /// The queue to append to.
+    pub queue: QueueName,
+    /// The record file; stdin when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// The configuration file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
+    /// The transport directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport_dir: Option<String>,
+}
+
+/// The options of `next`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NextOptions {
+    /// The queue to claim from.
+    pub queue: QueueName,
+    /// Who claims; the default consumer when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumer: Option<ConsumerName>,
+    /// The asker this claim listens for, taking back what it abandoned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asker: Option<Asker>,
+    /// How the claimed record is rendered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<Format>,
+    /// The configuration file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
+    /// The transport directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport_dir: Option<String>,
+}
+
+/// The options of `reply`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReplyOptions {
+    /// The queue whose pending record is answered.
+    pub queue: QueueName,
+    /// Where that record was claimed, as `next` printed it.
+    pub position: Position,
+    /// The reply file; stdin when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// The configuration file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
+    /// The transport directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport_dir: Option<String>,
+}
+
+/// The options of `subscribe`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SubscribeOptions {
+    /// The queue to stream.
+    pub queue: QueueName,
+    /// The predicate ending the stream: inline JSON, or a path to a YAML
+    /// document.
+    // llmlint: ignore[invalid_states_unrepresentable] these options are the argv an SDK client hands `subscribe`, which takes the predicate as a spec — inline JSON or a path to a YAML file, as `--filter` does — and refuses one that is not a predicate by name at that boundary; a typed `Predicate` here could not carry the path form.
+    pub until: String,
+    /// Seconds to wait before giving up; no bound when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+    /// How each record is rendered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<Format>,
+    /// The configuration file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
+    /// The transport directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport_dir: Option<String>,
+}
+
+/// The options of `status`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StatusOptions {
+    /// The queue to report; every declared queue when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue: Option<QueueName>,
+    /// How the report is rendered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<Format>,
+    /// The configuration file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
+    /// The transport directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport_dir: Option<String>,
+}
+
+/// The options of `transports`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TransportsOptions {
+    /// How the list is rendered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<Format>,
+}
+
+/// One record `send` or `reply` appended.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Sent {
+    /// The queue it landed on.
+    pub queue: QueueName,
+    /// The position after it.
+    pub position: Position,
+    /// The id it was given, on a queue that gives one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
+}
+
+/// The record `next` claimed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimedRecord {
+    /// The queue it was claimed from.
+    pub queue: QueueName,
+    /// Where the claim was recorded: what `reply` names the record by.
+    pub position: Position,
+    /// The record's id, on a queue that gives one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
+    /// The record.
+    pub record: Value,
+}
+
+/// What `reply` did: the pending record it answered, and the records it
+/// appended — a reply routed by its halves appends more than one, and one with
+/// no verdict answers nothing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Replied {
+    /// The pending record answered, or `null` when the reply carried nothing
+    /// for its answer queue.
+    pub answered: Option<ClaimedRecord>,
+    /// Every record appended, in order.
+    pub sent: Vec<Sent>,
+}
+
+/// One line of a queue's log, as `subscribe` streams it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LogRecord {
+    /// The position after it.
+    pub position: Position,
+    /// The line: on an event queue, `{"event": ..., ...record}`.
+    pub record: Value,
+}
+
 /// One entry of `schema list`.
 ///
 /// `family` and `version` restate `id` for a reader that does not parse ids, so
@@ -291,6 +456,20 @@ pub struct Bundle {
     pub disposition: Schema,
     /// One line of `inbox carried`.
     pub carried_entry: Schema,
+    /// The configuration file every queue verb reads, `onemessagebus.yaml`.
+    pub config: Schema,
+    /// One line of `send`: a record appended.
+    pub sent: Schema,
+    /// The output of `next`: the record claimed.
+    pub claimed: Schema,
+    /// The output of `reply`.
+    pub replied: Schema,
+    /// One line of `subscribe`: a line of a queue's log.
+    pub log_record: Schema,
+    /// The output of `status`: one report per queue.
+    pub queue_statuses: Schema,
+    /// The output of `transports`: every kind this build can open.
+    pub transport_kinds: Schema,
     /// The option contracts, by the root each capability names.
     pub options: BTreeMap<&'static str, Schema>,
     /// Every message the registry holds, by id.
@@ -312,6 +491,12 @@ pub fn bundle<V: Vocabulary>(registry: &Registry) -> Bundle {
     options.insert("events_emit_options", schema_for!(EventsEmitOptions));
     options.insert("deliver_options", schema_for!(DeliverOptions));
     options.insert("inbox_carried_options", schema_for!(InboxCarriedOptions));
+    options.insert("send_options", schema_for!(SendOptions));
+    options.insert("next_options", schema_for!(NextOptions));
+    options.insert("reply_options", schema_for!(ReplyOptions));
+    options.insert("subscribe_options", schema_for!(SubscribeOptions));
+    options.insert("status_options", schema_for!(StatusOptions));
+    options.insert("transports_options", schema_for!(TransportsOptions));
     Bundle {
         capabilities: CAPABILITIES,
         vocabulary: VocabularyManifest {
@@ -331,6 +516,13 @@ pub fn bundle<V: Vocabulary>(registry: &Registry) -> Bundle {
             "description": "What the receiver answered the message with: any JSON value, in the vocabulary of the message family the spool carries."
         }),
         carried_entry: schema_for!(CarriedEntry),
+        config: schema_for!(Config),
+        sent: schema_for!(Sent),
+        claimed: schema_for!(ClaimedRecord),
+        replied: schema_for!(Replied),
+        log_record: schema_for!(LogRecord),
+        queue_statuses: schema_for!(Vec<QueueStatus>),
+        transport_kinds: schema_for!(Vec<KindEntry>),
         options,
         messages: registry
             .ids()
