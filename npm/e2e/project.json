@@ -4,7 +4,7 @@
   "projectType": "application",
   "sourceRoot": "npm/e2e",
   "tags": ["scope:e2e", "lang:js", "type:e2e"],
-  "implicitDependencies": ["onemessagebus-cli"],
+  "implicitDependencies": ["onemessagebus-cli", "onemessagebus-npm"],
   "targets": {
     "bootstrap": { "executor": "nx:noop" },
     "format": {

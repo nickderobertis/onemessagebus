@@ -115,6 +115,7 @@ fetch() {
     "check network access to the registry, then re-run; this is NOT evidence that nothing is published"
 }
 
+# llmlint: ignore-block[boundary_inputs_validated] the registry document is read with grep and sed because the probe is a contract consumers run with bash and curl alone — the suite spawns it with nothing but a search path and a home directory — so no JSON parser can be assumed on their hosts. The input is still validated before it becomes an answer: each reader takes a key only when it occurs exactly once or the probe answers "not answered", and whatever it extracts must match VERSION_SHAPE below before it is printed.
 # The value of a `"key": "value"` pair that occurs exactly once in `$2`.
 #
 # JSON escapes an embedded quote as `\"`, so this byte sequence cannot occur
@@ -139,6 +140,7 @@ json_object() {
   [ "$(printf '%s' "$matches" | grep -c .)" = "1" ] || return 1
   printf '%s' "$matches"
 }
+# llmlint: ignore-end[boundary_inputs_validated]
 
 case "$registry" in
   # crates.io's own summary of the crate, which is where "what a `cargo add`

@@ -22,7 +22,7 @@
       "Bash(just gate)",
       "Bash(just test)",
       "Bash(just test-e2e)",
-      "Bash(just test-quick)",
+      "Bash(just test-uninstrumented)",
       "Bash(just coverage)",
       "Bash(just lint)",
       "Bash(just format)",

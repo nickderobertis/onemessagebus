@@ -179,8 +179,8 @@ test-e2e:
 
 # Coverage instrumentation is measured on Linux only, so the cross-platform CI
 # legs run the same suites through this instead of `test`.
-# Every crate's tests without coverage instrumentation.
-test-quick:
+# Every project's tests, the npm install journeys included, without coverage instrumentation.
+test-uninstrumented:
     @cargo build -p onemessagebus-cli --locked --quiet
     @cargo nextest run --workspace --locked --status-level fail --final-status-level fail
     @cargo test --doc --workspace --locked --quiet
