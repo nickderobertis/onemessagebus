@@ -136,11 +136,13 @@ pub struct EventsEmitOptions {
     /// The stream file to append to.
     pub path: String,
     /// The kind of the event.
+    // llmlint: ignore[invalid_states_unrepresentable] these options are the argv an SDK client hands `events emit`, which refuses a kind that is not kebab-case by name at that boundary; `Kind` is an open newtype by contract, because a relay carries a sibling's kinds, so there is no closed kind type in the core to use here.
     pub kind: String,
     /// The stream id to stamp.
     pub stream: String,
     /// The source word; the profile's default when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    // llmlint: ignore[invalid_states_unrepresentable] the source words are the chosen profile's, and the core knows no profile: the binary refuses a word outside the profile it runs by name, and a closed type here would put a vocabulary's words in the core.
     pub source: Option<String>,
     /// The profile whose vocabulary the envelope is written over.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -158,8 +160,12 @@ pub struct EventsEmitOptions {
 }
 
 /// One entry of `schema list`.
+///
+/// `family` and `version` restate `id` for a reader that does not parse ids, so
+/// an entry whose restatement contradicts its id is refused on read rather than
+/// handed back with two answers to the same question.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "SchemaEntryWire")]
 pub struct SchemaEntry {
     /// The full id.
     pub id: SchemaId,
@@ -167,6 +173,34 @@ pub struct SchemaEntry {
     pub family: String,
     /// The version.
     pub version: u32,
+}
+
+/// A `schema list` entry as it arrives, before its restatement is checked.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "SchemaEntry")]
+struct SchemaEntryWire {
+    /// The full id.
+    id: SchemaId,
+    /// The id without its version.
+    family: String,
+    /// The version.
+    version: u32,
+}
+
+impl TryFrom<SchemaEntryWire> for SchemaEntry {
+    type Error = String;
+
+    fn try_from(wire: SchemaEntryWire) -> Result<Self, Self::Error> {
+        let entry = Self::from(&wire.id);
+        if wire.family != entry.family || wire.version != entry.version {
+            return Err(format!(
+                "the schema entry for {} restates it as family {} at version {}, which its id contradicts",
+                wire.id, wire.family, wire.version
+            ));
+        }
+        Ok(entry)
+    }
 }
 
 impl From<&SchemaId> for SchemaEntry {

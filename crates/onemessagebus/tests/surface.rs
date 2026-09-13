@@ -289,3 +289,45 @@ fn the_bundle_renders_as_json_and_formats_default_to_json() {
     assert_eq!(Lang::Json.as_str(), "json");
     assert_eq!(Lang::Rust.as_str(), "rust");
 }
+
+#[test]
+fn a_schema_entry_whose_family_or_version_contradicts_its_id_is_refused() {
+    let id: SchemaId = "billing.invoice@2".parse().expect("a well-formed id");
+    let entry = sdk_schema::SchemaEntry::from(&id);
+    let written = serde_json::to_value(&entry).expect("an entry serializes");
+    assert_eq!(
+        written,
+        json!({"id": "billing.invoice@2", "family": "billing.invoice", "version": 2})
+    );
+    assert_eq!(
+        serde_json::from_value::<sdk_schema::SchemaEntry>(written).expect("an entry reads back"),
+        entry
+    );
+
+    for (field, value, restated) in [
+        (
+            "family",
+            json!("billing.receipt"),
+            "family billing.receipt at version 2",
+        ),
+        ("version", json!(3), "family billing.invoice at version 3"),
+    ] {
+        let mut contradicting =
+            json!({"id": "billing.invoice@2", "family": "billing.invoice", "version": 2});
+        contradicting[field] = value;
+        let refusal = serde_json::from_value::<sdk_schema::SchemaEntry>(contradicting)
+            .expect_err("an entry contradicting its id is refused")
+            .to_string();
+        assert!(
+            refusal.contains("billing.invoice@2") && refusal.contains(restated),
+            "the refusal of a contradicting {field} does not name the id and what it restated: {refusal}"
+        );
+    }
+
+    let refusal = serde_json::from_value::<sdk_schema::SchemaEntry>(json!({
+        "id": "billing.invoice@2", "family": "billing.invoice", "version": 2, "extra": 1
+    }))
+    .expect_err("an unknown field is refused")
+    .to_string();
+    assert!(refusal.contains("extra"), "{refusal}");
+}
