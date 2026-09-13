@@ -1,0 +1,3 @@
+# Local sync bookkeeping for gh-secrets (per-machine; the manifest itself is
+# tracked)
+.gh-secrets-state.json
