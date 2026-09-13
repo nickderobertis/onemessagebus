@@ -86,9 +86,9 @@ disagrees with its name is refused.
 
 Merge the stream files into one stream in `(ts, stream, seq)` order, on
 stdout. `--filter` is a filter document: inline JSON when it starts with `{`,
-otherwise a path to a YAML file. A filter that could not be honoured — a matcher naming no field,
-an empty field, a field the profile does not have — is refused naming the list,
-the index and the matcher.
+otherwise a path to a YAML file. A filter that could not be honoured is refused:
+a matcher naming no field, or naming an empty field, with the list, the index
+and the matcher; a field the profile does not have, by that field's name.
 
 A file whose final line is torn is not an error: every whole record is printed,
 and the torn tail is reported on stderr with the byte it starts at, for its

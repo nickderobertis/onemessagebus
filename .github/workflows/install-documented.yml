@@ -24,13 +24,33 @@ jobs:
       run:
         shell: bash
     steps:
+      # For rust-toolchain.toml, README.md and scripts/smoke-published.sh. The
+      # install itself resolves everything it builds from the remote, which is
+      # the point; running it inside the checkout is what makes rustup build it
+      # with the pinned toolchain rather than the runner's floating default.
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
-      # Named explicitly: the repository root is a virtual workspace manifest, so
-      # `cargo install --git` has to be told which package to build.
+      # Read from README.md rather than restated here, so this job cannot end up
+      # proving a command nobody is told to type.
       - name: Install (the command the README gives users)
-        run: cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebus-cli --locked
-      - name: Smoke-test the installed binary
         run: |
-          onemessagebus --version
-          onemessagebus --help >/dev/null
+          documented=$(grep -m1 '^cargo install --git ' README.md || true)
+          if [[ -z $documented ]]; then
+            echo "README.md's Install section no longer gives a 'cargo install --git' one-liner, so there is nothing for this job to prove — restore it or drop this job" >&2
+            exit 1
+          fi
+          # README.md is committed, but it is still file-derived input: accept
+          # only a plain argv of unambiguous characters, then run it as an argv.
+          # Nothing in that file is ever handed to the shell to interpret.
+          if [[ $documented =~ [^A-Za-z0-9._:/@=+[:space:]-] ]]; then
+            echo "README.md's install one-liner carries characters this job will not run: $documented" >&2
+            exit 1
+          fi
+          read -r -a argv <<<"$documented"
+          echo "running README.md's command: ${argv[*]}"
+          "${argv[@]}"
+      - name: Smoke-test the installed binary
+        run: bash scripts/smoke-published.sh --label "cargo install --git on $RUNNER_OS/$RUNNER_ARCH"
 
