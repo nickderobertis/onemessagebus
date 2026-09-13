@@ -34,10 +34,14 @@ function hostTarget() {
   return target;
 }
 
+/// Run a program to completion. Its stderr is captured rather than inherited or
+/// discarded, so a program that fails throws an error carrying what it said —
+/// the one place a CI log shows why a journey's setup broke.
 function run(command, args, options = {}) {
   return execFileSync(command, args, {
     cwd: REPO_ROOT,
     encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
     ...options,
   });
 }
@@ -56,13 +60,7 @@ function runNpm(args, options = {}) {
 /// project's node_modules, and never find it. A tarball is both the real shape
 /// and the one `release.yml` publishes.
 function pack(dir, into) {
-  const packed = JSON.parse(
-    // stderr is captured rather than discarded so a failed pack's error names
-    // what npm said; stdout stays clean JSON either way.
-    runNpm(["pack", "--json", "--pack-destination", into, dir], {
-      stdio: ["ignore", "pipe", "pipe"],
-    }),
-  );
+  const packed = JSON.parse(runNpm(["pack", "--json", "--pack-destination", into, dir]));
   assert.equal(packed.length, 1, "npm pack must produce exactly one tarball");
   return join(into, packed[0].filename);
 }
@@ -89,13 +87,12 @@ function launch(project, args) {
   const bin = join(project, "node_modules", ".bin", "onemessagebus");
   const form = shimInvocation(bin, args, process.platform);
   try {
-    const stdout = run(form.command, form.args, {
-      ...form.options,
-      cwd: project,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const stdout = run(form.command, form.args, { ...form.options, cwd: project });
     return { code: 0, stdout, stderr: "" };
   } catch (error) {
+    // No exit status means the launcher never ran; that is a broken journey,
+    // not an exit code to assert on, so Node's own error is what surfaces.
+    if (error.status === null || error.status === undefined) throw error;
     return {
       code: error.status,
       stdout: error.stdout ?? "",
@@ -186,7 +183,7 @@ describe("the npm distribution", () => {
     installInto(project, [launcherTgz]);
 
     const failed = launch(project, ["--version"]);
-    assert.equal(failed.code, 1);
+    assert.equal(failed.code, 1, failed.stderr);
     assert.match(failed.stderr, /platform package onemessagebus-cli-/);
     assert.match(failed.stderr, /Reinstall with optional/);
     assert.match(failed.stderr, /pip install onemessagebus-cli/);
