@@ -674,10 +674,9 @@ fn the_plugin_protocol_serves_every_method_and_names_its_version_first() {
         "{}",
         replies[11]
     );
-    assert_eq!(
-        replies[12]["ok"]["changed"]["moved"],
-        json!(true),
-        "{}",
+    assert!(
+        replies[12]["ok"]["moved"].is_array(),
+        "a wait from a fingerprint the queue has left did not answer that it moved: {}",
         replies[12]
     );
     assert_eq!(

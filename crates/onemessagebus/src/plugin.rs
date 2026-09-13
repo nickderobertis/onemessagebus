@@ -210,13 +210,11 @@ pub enum PluginAnswer {
     Cursor(Option<Position>),
     /// A fingerprint.
     Fingerprint(Fingerprint),
-    /// What a wait for a change found.
-    Changed {
-        /// Whether the queue moved.
-        moved: bool,
-        /// Its fingerprint now.
-        fingerprint: Fingerprint,
-    },
+    /// A wait for a change saw the queue move: its fingerprint now.
+    Moved(Fingerprint),
+    /// A wait for a change timed out with the queue where it was: its
+    /// fingerprint now.
+    Unchanged(Fingerprint),
     /// A document's contents, or `null` where there is none.
     Document(Option<String>),
     /// Done, with nothing to hand back.
@@ -549,14 +547,8 @@ fn answer(
             since,
             timeout_ms,
         } => match transport.wait_for_change(&queue, &since, Duration::from_millis(timeout_ms))? {
-            Changed::Moved(fingerprint) => PluginAnswer::Changed {
-                moved: true,
-                fingerprint,
-            },
-            Changed::Unchanged(fingerprint) => PluginAnswer::Changed {
-                moved: false,
-                fingerprint,
-            },
+            Changed::Moved(fingerprint) => PluginAnswer::Moved(fingerprint),
+            Changed::Unchanged(fingerprint) => PluginAnswer::Unchanged(fingerprint),
         },
         PluginRequest::Document { queue, name } => PluginAnswer::Document(
             transport
@@ -951,14 +943,8 @@ impl PluginProcess {
                 timeout_ms: u64::try_from(timeout.min(REMOTE_WAIT).as_millis()).unwrap_or(u64::MAX),
             },
         )? {
-            PluginAnswer::Changed {
-                moved: true,
-                fingerprint,
-            } => Ok(Changed::Moved(fingerprint)),
-            PluginAnswer::Changed {
-                moved: false,
-                fingerprint,
-            } => Ok(Changed::Unchanged(fingerprint)),
+            PluginAnswer::Moved(fingerprint) => Ok(Changed::Moved(fingerprint)),
+            PluginAnswer::Unchanged(fingerprint) => Ok(Changed::Unchanged(fingerprint)),
             other => Err(self.unexpected(&other, "wait_for_change")),
         }
     }
