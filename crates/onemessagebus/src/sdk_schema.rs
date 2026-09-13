@@ -353,6 +353,7 @@ pub fn generate(lang: Lang, id: &SchemaId, document: &Value) -> Result<String, G
 /// enums, nullable fields, and `$defs` references.
 mod rust {
     use super::{GenerateError, Map, SchemaId, Value};
+    use std::collections::BTreeMap;
     use std::fmt::Write as _;
 
     /// Every declaration the document needs, root first, then its `$defs` in
@@ -368,17 +369,161 @@ mod rust {
             .get("title")
             .and_then(Value::as_str)
             .ok_or_else(|| unrenderable(id, "", "the document has no title to name the type by"))?;
-        let mut declarations = vec![(title.to_owned(), document.clone())];
+        // Every type name is checked before any declaration is rendered, so a
+        // `$ref` naming a declared type always names one that renders.
+        let mut types = Names::new("type");
+        let ident = types.admit(id, "/title", "title", title, title.to_owned())?;
+        let mut declarations = vec![(title, ident, String::new(), document)];
         if let Some(defs) = document.get("$defs").and_then(Value::as_object) {
             for (name, def) in defs {
-                declarations.push((name.clone(), def.clone()));
+                let at = format!("/$defs/{}", pointer_token(name));
+                let ident = types.admit(id, &at, "$defs name", name, name.clone())?;
+                declarations.push((name, ident, at, def));
             }
         }
-        for (name, schema) in declarations {
+        for (name, ident, at, schema) in declarations {
             out.push('\n');
-            declaration(id, &name, &schema, &mut out)?;
+            declaration(id, name, &ident, &at, schema, &mut out)?;
         }
         Ok(out)
+    }
+
+    /// Keywords Rust accepts as raw identifiers: strict, reserved, and those of
+    /// later editions, so a declaration compiles under any of them.
+    const RAW_KEYWORDS: &[&str] = &[
+        "abstract", "as", "async", "await", "become", "box", "break", "const", "continue", "do",
+        "dyn", "else", "enum", "extern", "false", "final", "fn", "for", "gen", "if", "impl", "in",
+        "let", "loop", "macro", "match", "mod", "move", "mut", "override", "priv", "pub", "ref",
+        "return", "static", "struct", "trait", "true", "try", "type", "typeof", "unsafe",
+        "unsized", "use", "virtual", "where", "while", "yield",
+    ];
+
+    /// Keywords Rust refuses even as raw identifiers.
+    const UNRAW_KEYWORDS: &[&str] = &["crate", "self", "Self", "super"];
+
+    /// The identifiers one namespace of the generated source has handed out —
+    /// the types of the module, the fields of a struct, the variants of an
+    /// enum — so two names from the document cannot become the same one.
+    struct Names<'a> {
+        /// What an identifier here declares, for a refusal.
+        declares: &'static str,
+        /// Each identifier, by what named it and the name it was derived from;
+        /// `None` for one the renderer declares itself.
+        taken: BTreeMap<String, Option<(&'a str, &'a str)>>,
+    }
+
+    impl<'a> Names<'a> {
+        fn new(declares: &'static str) -> Self {
+            Self {
+                declares,
+                taken: BTreeMap::new(),
+            }
+        }
+
+        /// Hold `ident` for the renderer's own use.
+        fn reserve(&mut self, ident: &str) {
+            self.taken.insert(ident.to_owned(), None);
+        }
+
+        /// `derived`, the identifier the renderer spells `name` as, once it is
+        /// known to be one Rust accepts and no other name here became it.
+        fn admit(
+            &mut self,
+            id: &SchemaId,
+            at: &str,
+            what: &'a str,
+            name: &'a str,
+            derived: String,
+        ) -> Result<String, GenerateError> {
+            let ident = identifier(id, at, what, name, derived)?;
+            match self.taken.get(&ident) {
+                Some(Some((named, earlier))) => Err(unrenderable(
+                    id,
+                    at,
+                    &format!(
+                        "the {named} {earlier:?} and the {what} {name:?} both become the {} `{ident}`",
+                        self.declares
+                    ),
+                )),
+                Some(None) => Err(unrenderable(
+                    id,
+                    at,
+                    &format!(
+                        "the {what} {name:?} becomes `{ident}`, the {} the renderer declares for every other key",
+                        self.declares
+                    ),
+                )),
+                None => {
+                    self.taken.insert(ident.clone(), Some((what, name)));
+                    Ok(ident)
+                }
+            }
+        }
+    }
+
+    /// `derived`, the identifier the renderer spells `name` as, checked to be
+    /// one Rust accepts: a keyword is written raw where Rust allows that, since
+    /// a name from the document is spliced into source verbatim.
+    fn identifier(
+        id: &SchemaId,
+        at: &str,
+        what: &str,
+        name: &str,
+        derived: String,
+    ) -> Result<String, GenerateError> {
+        let Some(defect) = defect_of(name, &derived) else {
+            return Ok(if RAW_KEYWORDS.contains(&derived.as_str()) {
+                format!("r#{derived}")
+            } else {
+                derived
+            });
+        };
+        let spelled = if derived == name || derived.is_empty() {
+            String::new()
+        } else {
+            format!(" (as `{derived}`)")
+        };
+        Err(unrenderable(
+            id,
+            at,
+            &format!("the {what} {name:?}{spelled} is not a Rust identifier: {defect}"),
+        ))
+    }
+
+    /// What keeps `ident`, derived from `name`, from being a Rust identifier.
+    fn defect_of(name: &str, ident: &str) -> Option<String> {
+        let Some(first) = ident.chars().next() else {
+            return Some(if name.is_empty() {
+                "it is empty".to_owned()
+            } else {
+                "nothing of it is left once mapped".to_owned()
+            });
+        };
+        if first.is_ascii_digit() {
+            return Some("it starts with a digit".to_owned());
+        }
+        if let Some(ch) = ident
+            .chars()
+            .find(|ch| !ch.is_ascii_alphanumeric() && *ch != '_')
+        {
+            return Some(format!(
+                "{ch:?} is not an ASCII letter, digit or underscore"
+            ));
+        }
+        if ident == "_" {
+            return Some("a lone `_` is a pattern, not a name".to_owned());
+        }
+        if UNRAW_KEYWORDS.contains(&ident) {
+            return Some(format!(
+                "`{ident}` is a keyword Rust does not take even as a raw identifier"
+            ));
+        }
+        None
+    }
+
+    /// `name` escaped as one reference token of a JSON pointer.
+    fn pointer_token(name: &str) -> String {
+        name.replace('~', "~0").replace('/', "~1")
     }
 
     fn unrenderable(id: &SchemaId, at: &str, why: &str) -> GenerateError {
@@ -405,9 +550,13 @@ mod rust {
         }
     }
 
+    /// The declaration of `schema`, which the document names `name` and which
+    /// sits at the JSON pointer `at`, as the type `ident`.
     fn declaration(
         id: &SchemaId,
         name: &str,
+        ident: &str,
+        at: &str,
         schema: &Value,
         out: &mut String,
     ) -> Result<(), GenerateError> {
@@ -417,14 +566,22 @@ mod rust {
                 out,
                 "#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]"
             );
-            let _ = writeln!(out, "pub enum {name} {{");
-            for (word, description) in variants {
+            let _ = writeln!(out, "pub enum {ident} {{");
+            let mut taken = Names::new("variant");
+            for (word, description, within) in variants {
                 let word = word
                     .as_str()
                     .ok_or_else(|| unrenderable(id, name, "an enum value that is not a string"))?;
+                let variant = taken.admit(
+                    id,
+                    &format!("{at}/{within}"),
+                    "enum value",
+                    word,
+                    pascal(word),
+                )?;
                 doc(description, "    ", out);
                 let _ = writeln!(out, "    #[serde(rename = \"{}\")]", escape(word));
-                let _ = writeln!(out, "    {},", pascal(word));
+                let _ = writeln!(out, "    {variant},");
             }
             let _ = writeln!(out, "}}");
             return Ok(());
@@ -445,6 +602,10 @@ mod rust {
             .map(|required| required.iter().filter_map(Value::as_str).collect())
             .unwrap_or_default();
         let closed = schema.get("additionalProperties") == Some(&Value::Bool(false));
+        let flattened = !closed
+            && schema
+                .get("additionalProperties")
+                .is_some_and(|extra| extra != &Value::Bool(false));
         let _ = writeln!(
             out,
             "#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]"
@@ -452,14 +613,24 @@ mod rust {
         if closed {
             let _ = writeln!(out, "#[serde(deny_unknown_fields)]");
         }
-        let _ = writeln!(out, "pub struct {name} {{");
+        let _ = writeln!(out, "pub struct {ident} {{");
+        let mut taken = Names::new("field");
+        if flattened {
+            taken.reserve("extra");
+        }
         for (property, property_schema) in properties {
+            let field = taken.admit(
+                id,
+                &format!("{at}/properties/{}", pointer_token(property)),
+                "property name",
+                property,
+                field_name(property),
+            )?;
             doc(property_schema.get("description"), "    ", out);
             let at = format!("{name}.{property}");
             let (nullable, inner) = nullable(property_schema);
             let ty = type_of(id, &at, &inner)?;
             let is_required = required.contains(&property.as_str());
-            let field = field_name(property);
             let mut attributes = Vec::new();
             if field != *property {
                 attributes.push(format!("rename = \"{}\"", escape(property)));
@@ -481,11 +652,7 @@ mod rust {
             }
             let _ = writeln!(out, "    pub {field}: {ty},");
         }
-        if !closed
-            && schema
-                .get("additionalProperties")
-                .is_some_and(|extra| extra != &Value::Bool(false))
-        {
+        if flattened {
             let _ = writeln!(out, "    /// Every other key, carried through untouched.");
             let _ = writeln!(out, "    #[serde(flatten)]");
             let _ = writeln!(
@@ -497,20 +664,30 @@ mod rust {
         Ok(())
     }
 
-    /// The words of a closed string set, each with its description: schemars
-    /// spells an undocumented set as `enum` and a documented one as `oneOf`
-    /// string constants.
-    fn words_of(schema: &Value) -> Option<Vec<(&Value, Option<&Value>)>> {
+    /// The words of a closed string set, each with its description and its
+    /// JSON pointer below the set: schemars spells an undocumented set as
+    /// `enum` and a documented one as `oneOf` string constants.
+    fn words_of(schema: &Value) -> Option<Vec<(&Value, Option<&Value>, String)>> {
         if let Some(words) = schema.get("enum").and_then(Value::as_array) {
-            return Some(words.iter().map(|word| (word, None)).collect());
+            return Some(
+                words
+                    .iter()
+                    .enumerate()
+                    .map(|(index, word)| (word, None, format!("enum/{index}")))
+                    .collect(),
+            );
         }
         let branches = schema.get("oneOf")?.as_array()?;
         let mut words = Vec::new();
-        for branch in branches {
+        for (index, branch) in branches.iter().enumerate() {
             if branch.get("type") != Some(&Value::String("string".to_owned())) {
                 return None;
             }
-            words.push((branch.get("const")?, branch.get("description")));
+            words.push((
+                branch.get("const")?,
+                branch.get("description"),
+                format!("oneOf/{index}/const"),
+            ));
         }
         Some(words)
     }
@@ -552,10 +729,10 @@ mod rust {
             return Ok("serde_json::Value".to_owned());
         }
         if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
-            return reference
+            let target = reference
                 .strip_prefix("#/$defs/")
-                .map(str::to_owned)
-                .ok_or_else(|| unrenderable(id, at, "a reference outside the document's $defs"));
+                .ok_or_else(|| unrenderable(id, at, "a reference outside the document's $defs"))?;
+            return identifier(id, at, "reference target", target, target.to_owned());
         }
         let kind = schema
             .get("type")
@@ -606,6 +783,7 @@ mod rust {
         })
     }
 
+    /// The snake-case spelling of `property`, before it is checked.
     fn field_name(property: &str) -> String {
         let mut out = String::new();
         for (index, ch) in property.chars().enumerate() {
@@ -620,15 +798,10 @@ mod rust {
                 out.push(ch);
             }
         }
-        if matches!(
-            out.as_str(),
-            "type" | "ref" | "self" | "match" | "move" | "use" | "mod"
-        ) {
-            out.insert_str(0, "r#");
-        }
         out
     }
 
+    /// The Pascal-case spelling of `word`, before it is checked.
     fn pascal(word: &str) -> String {
         let mut out = String::new();
         let mut upper = true;

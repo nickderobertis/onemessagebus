@@ -280,6 +280,188 @@ fn the_rust_renderer_covers_the_shapes_the_rich_journey_does_not_reach() {
 }
 
 #[test]
+fn the_rust_renderer_maps_names_that_need_it_to_identifiers() {
+    let document = json!({
+        "title": "Thing",
+        "type": "object",
+        "properties": {
+            "kebab-key": { "type": "string" },
+            "camelCase": { "type": "string" },
+            "type": { "type": "string" },
+            "async": { "type": "string" },
+            "_private": { "type": "string" },
+            "plain2": { "type": "string" },
+            "kind": { "$ref": "#/$defs/match" }
+        },
+        "$defs": {
+            "match": { "enum": ["in-flight", "done_now", "_quiet"] }
+        }
+    });
+    let rendered = render(document).expect("renders");
+    for expected in [
+        "#[serde(rename = \"kebab-key\", default)]\n    pub kebab_key: String,",
+        "#[serde(rename = \"camelCase\", default)]\n    pub camel_case: String,",
+        "#[serde(rename = \"type\", default)]\n    pub r#type: String,",
+        "#[serde(rename = \"async\", default)]\n    pub r#async: String,",
+        "#[serde(default)]\n    pub _private: String,",
+        "#[serde(default)]\n    pub plain2: String,",
+        "pub kind: r#match,",
+        "pub enum r#match {",
+        "#[serde(rename = \"in-flight\")]\n    InFlight,",
+        "#[serde(rename = \"done_now\")]\n    DoneNow,",
+        "#[serde(rename = \"_quiet\")]\n    Quiet,",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "missing {expected:?} in:\n{rendered}"
+        );
+    }
+}
+
+/// A name the document gives — a title, a `$defs` name, a property, an enum
+/// value — is spliced into Rust source, so one that cannot become an
+/// identifier is refused naming its pointer, the name, and what is wrong.
+#[test]
+fn the_rust_renderer_refuses_a_name_that_cannot_become_an_identifier() {
+    let titled = |title: &str| json!({ "title": title, "type": "object", "properties": {} });
+    let property = |name: &str| json!({ "title": "Thing", "type": "object", "properties": { name: { "type": "string" } } });
+    let words = |words: Value| json!({ "title": "Thing", "enum": words });
+    let cases = [
+        (titled(""), "/title", "the title \"\"", "it is empty"),
+        (
+            titled("9Lives"),
+            "/title",
+            "the title \"9Lives\"",
+            "it starts with a digit",
+        ),
+        (
+            titled("Has Space"),
+            "/title",
+            "the title \"Has Space\"",
+            "' ' is not an ASCII letter, digit or underscore",
+        ),
+        (titled("_"), "/title", "the title \"_\"", "a lone `_`"),
+        (
+            property(""),
+            "/properties/",
+            "the property name \"\"",
+            "it is empty",
+        ),
+        (
+            property("1st"),
+            "/properties/1st",
+            "the property name \"1st\"",
+            "it starts with a digit",
+        ),
+        (
+            property("a.b"),
+            "/properties/a.b",
+            "the property name \"a.b\"",
+            "'.' is not an ASCII letter, digit or underscore",
+        ),
+        (
+            property("a/b~"),
+            "/properties/a~1b~0",
+            "the property name \"a/b~\"",
+            "'/' is not an ASCII letter",
+        ),
+        (
+            property("self"),
+            "/properties/self",
+            "the property name \"self\"",
+            "`self` is a keyword Rust does not take even as a raw identifier",
+        ),
+        (
+            property("Super"),
+            "/properties/Super",
+            "the property name \"Super\" (as `super`)",
+            "`super` is a keyword",
+        ),
+        (
+            words(json!([""])),
+            "/enum/0",
+            "the enum value \"\"",
+            "it is empty",
+        ),
+        (
+            words(json!(["ok", "9"])),
+            "/enum/1",
+            "the enum value \"9\"",
+            "it starts with a digit",
+        ),
+        (
+            words(json!(["-"])),
+            "/enum/0",
+            "the enum value \"-\"",
+            "nothing of it is left once mapped",
+        ),
+        (
+            json!({ "title": "Thing", "oneOf": [{ "type": "string", "const": "self" }] }),
+            "/oneOf/0/const",
+            "the enum value \"self\" (as `Self`)",
+            "`Self` is a keyword",
+        ),
+        (
+            json!({ "title": "Thing", "type": "object", "properties": {}, "$defs": { "a b": { "enum": ["x"] } } }),
+            "/$defs/a b",
+            "the $defs name \"a b\"",
+            "' ' is not",
+        ),
+        (
+            json!({ "title": "Thing", "type": "object", "properties": {}, "$defs": { "Word": { "enum": ["x", "a.b"] } } }),
+            "/$defs/Word/enum/1",
+            "the enum value \"a.b\" (as `A.b`)",
+            "'.' is not",
+        ),
+        (
+            json!({ "title": "Thing", "type": "object", "properties": { "x": { "$ref": "#/$defs/no such" } } }),
+            "Thing.x",
+            "the reference target \"no such\"",
+            "' ' is not",
+        ),
+        (
+            json!({ "title": "Thing", "type": "object", "properties": { "a-b": { "type": "string" }, "a_b": { "type": "string" } } }),
+            "/properties/a_b",
+            "the property name \"a-b\" and the property name \"a_b\"",
+            "both become the field `a_b`",
+        ),
+        (
+            json!({ "title": "Thing", "type": "object", "properties": { "fooBar": { "type": "string" }, "foo_bar": { "type": "string" } } }),
+            "/properties/foo_bar",
+            "the property name \"fooBar\" and the property name \"foo_bar\"",
+            "both become the field `foo_bar`",
+        ),
+        (
+            words(json!(["in-flight", "in_flight"])),
+            "/enum/1",
+            "the enum value \"in-flight\" and the enum value \"in_flight\"",
+            "both become the variant `InFlight`",
+        ),
+        (
+            json!({ "title": "Word", "type": "object", "properties": {}, "$defs": { "Word": { "enum": ["x"] } } }),
+            "/$defs/Word",
+            "the title \"Word\" and the $defs name \"Word\"",
+            "both become the type `Word`",
+        ),
+        (
+            json!({ "title": "Thing", "type": "object", "properties": { "extra": { "type": "string" } }, "additionalProperties": true }),
+            "/properties/extra",
+            "the property name \"extra\" becomes `extra`",
+            "the field the renderer declares for every other key",
+        ),
+    ];
+    for (document, at, named, defect) in cases {
+        let said = render(document).expect_err(named).to_string();
+        assert!(
+            said.starts_with(&format!("test.thing@1: cannot render {at} as Rust: ")),
+            "{said}"
+        );
+        assert!(said.contains(named), "{said}");
+        assert!(said.contains(defect), "{said}");
+    }
+}
+
+#[test]
 fn the_bundle_renders_as_json_and_formats_default_to_json() {
     let bundle: Bundle = sdk_schema::bundle::<Open>(&Registry::new());
     let text = bundle.to_json();

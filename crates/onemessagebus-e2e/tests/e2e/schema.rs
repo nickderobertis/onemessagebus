@@ -486,6 +486,155 @@ fn schema_gen_rust_covers_every_construct_the_renderer_declares() {
     assert_eq!(value.inner.id, "i");
 }
 
+/// Register `document` under `id` in `registry`, from a file in `dir`, and
+/// hand back what `schema gen --lang rust` then prints for it.
+fn register_and_gen_rust(
+    dir: &std::path::Path,
+    registry: &str,
+    id: &str,
+    document: &Value,
+) -> crate::support::Run {
+    let file = format!("{id}.json");
+    std::fs::write(dir.join(&file), document.to_string()).expect("written");
+    let registered = run_in(
+        dir,
+        &[
+            "schema",
+            "register",
+            id,
+            "--file",
+            &file,
+            "--registry",
+            registry,
+        ],
+        None,
+        &[],
+    );
+    assert_eq!(registered.code, 0, "{id}: {}", registered.stderr);
+    run_in(
+        dir,
+        &[
+            "schema",
+            "gen",
+            "--lang",
+            "rust",
+            id,
+            "--registry",
+            registry,
+        ],
+        None,
+        &[],
+    )
+}
+
+/// A registered document is anyone's JSON, and its names are spliced into the
+/// Rust `schema gen` prints: one that cannot become an identifier is refused
+/// as input, naming the id, the pointer and the name, and nothing is printed.
+#[test]
+fn schema_gen_rust_refuses_a_name_that_cannot_become_an_identifier() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let registry = dir.path().join("registry");
+    let registry_arg = registry.to_str().expect("UTF-8");
+    let cases = [
+        (
+            "test.bad-title@1",
+            json!({ "title": "9Lives", "type": "object", "properties": { "a": { "type": "string" } } }),
+            "/title",
+            "the title \"9Lives\" is not a Rust identifier: it starts with a digit",
+        ),
+        (
+            "test.bad-property@1",
+            json!({ "title": "Finding", "type": "object", "properties": { "a.b": { "type": "string" } } }),
+            "/properties/a.b",
+            "the property name \"a.b\" is not a Rust identifier: '.' is not an ASCII letter, digit or underscore",
+        ),
+        (
+            "test.bad-word@1",
+            json!({
+                "title": "Finding",
+                "type": "object",
+                "properties": { "level": { "$ref": "#/$defs/Level" } },
+                "$defs": { "Level": { "enum": ["low", "9"] } }
+            }),
+            "/$defs/Level/enum/1",
+            "the enum value \"9\" is not a Rust identifier: it starts with a digit",
+        ),
+        (
+            "test.bad-keyword@1",
+            json!({ "title": "Finding", "type": "object", "properties": { "self": { "type": "string" } } }),
+            "/properties/self",
+            "the property name \"self\" is not a Rust identifier: `self` is a keyword Rust does not take even as a raw identifier",
+        ),
+        (
+            "test.colliding@1",
+            json!({
+                "title": "Finding",
+                "type": "object",
+                "properties": { "line-no": { "type": "integer" }, "line_no": { "type": "integer" } }
+            }),
+            "/properties/line_no",
+            "the property name \"line-no\" and the property name \"line_no\" both become the field `line_no`",
+        ),
+    ];
+    for (id, document, at, why) in cases {
+        let refused = register_and_gen_rust(dir.path(), registry_arg, id, &document);
+        assert_eq!(refused.code, 2, "{id}: {}", refused.stderr);
+        assert!(refused.stdout.is_empty(), "{id}: {}", refused.stdout);
+        assert_eq!(
+            refused.stderr.trim_end(),
+            format!("onemessagebus: {id}: cannot render {at} as Rust: {why}"),
+            "{id}"
+        );
+    }
+}
+
+/// The names the renderer maps rather than refuses: a kebab-case or camelCase
+/// property becomes a snake-case field, a keyword a raw identifier, an enum
+/// word a Pascal-case variant, each renamed back to the wire spelling.
+#[test]
+fn schema_gen_rust_maps_names_that_need_it_and_renames_them_back() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let registry = dir.path().join("registry");
+    let registry_arg = registry.to_str().expect("UTF-8");
+    let document = json!({
+        "title": "Finding",
+        "type": "object",
+        "properties": {
+            "line-no": { "type": "integer", "format": "uint32" },
+            "filePath": { "type": "string" },
+            "type": { "$ref": "#/$defs/Severity" },
+            "_note": { "type": "string" }
+        },
+        "required": ["line-no", "filePath", "type", "_note"],
+        "additionalProperties": false,
+        "$defs": { "Severity": { "enum": ["needs-review", "blocking_now"] } }
+    });
+    let printed = register_and_gen_rust(dir.path(), registry_arg, "test.mapped@1", &document);
+    assert_eq!(printed.code, 0, "{}", printed.stderr);
+    assert!(printed.stderr.is_empty(), "{}", printed.stderr);
+    for expected in [
+        "pub struct Finding {",
+        "    #[serde(rename = \"line-no\")]\n    pub line_no: u32,",
+        "    #[serde(rename = \"filePath\")]\n    pub file_path: String,",
+        "    #[serde(rename = \"type\")]\n    pub r#type: Severity,",
+        "    pub _note: String,",
+        "pub enum Severity {",
+        "    #[serde(rename = \"needs-review\")]\n    NeedsReview,",
+        "    #[serde(rename = \"blocking_now\")]\n    BlockingNow,",
+    ] {
+        assert!(
+            printed.stdout.contains(expected),
+            "missing {expected:?} in:\n{}",
+            printed.stdout
+        );
+    }
+    assert!(
+        !printed.stdout.contains("rename = \"_note\""),
+        "a name that is already an identifier is not renamed:\n{}",
+        printed.stdout
+    );
+}
+
 #[test]
 fn a_registry_directory_that_is_not_one_is_refused_naming_the_file() {
     let dir = tempfile::tempdir().expect("a temp dir");

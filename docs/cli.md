@@ -67,6 +67,20 @@ byte for byte; for `rust`, a declaration that compiles with serde and schemars
 and regenerates the same document. `python` and `typescript` are rendered by
 the SDK packages, not by this build, and are refused by name here.
 
+The names a document gives become Rust identifiers: a kebab-case or camelCase
+property becomes a snake_case field and an enum value a PascalCase variant, each
+renamed back to its wire spelling, and a keyword is written raw (`r#type`). A
+title, `$defs` name, property name or enum value that still is not an
+identifier — empty, starting with a digit, holding any character but an ASCII
+letter, digit or `_`, or `self`, `Self`, `super` or `crate` — is refused with
+exit 2 naming the id, its JSON pointer and the name, and so are two names that
+become the same identifier.
+
+```bash
+$ onemessagebus schema gen --lang rust test.bad-property@1
+onemessagebus: test.bad-property@1: cannot render /properties/a.b as Rust: the property name "a.b" is not a Rust identifier: '.' is not an ASCII letter, digit or underscore
+```
+
 ### `schema register <id> --file <schema.json> [--registry DIR]`
 
 Record the JSON Schema document in `--file` under `<id>`, in the registry
