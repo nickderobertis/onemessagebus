@@ -315,7 +315,16 @@ jobs:
       run:
         shell: bash
     steps:
+      # Artifact verification, not a gate: the release commit was swept on its
+      # release PR, so this job checks out the two scripts it runs and nothing
+      # else — no test suite or recipe of this repository is on the runner.
+      # npm/test/release-configuration.test.mjs holds it to that.
       - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/retry-install.sh
+            scripts/smoke-published.sh
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -476,7 +485,14 @@ jobs:
       run:
         shell: bash
     steps:
+      # Artifact verification, not a gate, exactly as verify-pypi: only the two
+      # scripts it runs are checked out.
       - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/retry-install.sh
+            scripts/smoke-published.sh
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
