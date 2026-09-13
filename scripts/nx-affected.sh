@@ -79,7 +79,7 @@ case "${1:-}" in
     exit 0
   fi
   # Read for Nx's answer, so the wrapper must not fold it into a summary line.
-  if ! projects="$(ONEMESSAGEBUS_NX_SHOW_OUTPUT=1 bash scripts/nx.sh show projects --affected --base="$base" --head=HEAD --json)"; then
+  if ! projects="$(ONEMESSAGEBUS_NX_SHOW_OUTPUT=1 bash scripts/nx show projects --affected --base="$base" --head=HEAD --json)"; then
     echo "nx-affected: Nx could not list the affected projects, so '$project' counts as affected (reproduce with 'just nx show projects --affected --base=$base --head=HEAD')" >&2
     printf 'true\n'
     exit 0
@@ -100,8 +100,8 @@ case "${1:-}" in
   }
   if ! base="$(resolve_base)"; then
     echo "nx-affected: no merge base, so every project runs (git fetch --unshallow to scope it)" >&2
-    exec bash scripts/nx.sh run-many "$@"
+    exec bash scripts/nx run-many "$@"
   fi
-  exec bash scripts/nx.sh affected --base="$base" --head=HEAD "$@"
+  exec bash scripts/nx affected --base="$base" --head=HEAD "$@"
   ;;
 esac

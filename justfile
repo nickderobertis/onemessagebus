@@ -38,7 +38,7 @@ default:
 # at once race the same directory.
 # Set up the project from a clean clone.
 bootstrap:
-    @bash scripts/nx.sh run-many -t bootstrap --parallel=1
+    @bash scripts/nx run-many -t bootstrap --parallel=1
 
 # The Rust workspace's provisioning (every crate's `bootstrap` target; one
 # resolve covers them all).
@@ -79,7 +79,7 @@ gate base="origin/main": check (lint-llm-diff base)
 check-affected:
     @bash scripts/nx-affected.sh -t format-check lint doc build
     @rm -f {{profraw-root}}/*.profraw
-    @if [ "$(just affected-crate)" = "true" ]; then bash scripts/nx.sh run workspace:coverage; \
+    @if [ "$(just affected-crate)" = "true" ]; then bash scripts/nx run workspace:coverage; \
       else bash scripts/nx-affected.sh -t test; fi
     @echo "check-affected: ok"
 
@@ -93,38 +93,38 @@ affected-crate:
 # Escape hatch for Nx itself, e.g. `just nx show projects` or `just nx graph`.
 # Run an arbitrary Nx command against this workspace.
 nx *ARGS:
-    @bash scripts/nx.sh {{ARGS}}
+    @bash scripts/nx {{ARGS}}
 
 # Verify formatting without modifying files.
 fmt-check:
-    @bash scripts/nx.sh run-many -t format-check
+    @bash scripts/nx run-many -t format-check
 
 # Format the codebase in place.
 format:
-    @bash scripts/nx.sh run-many -t format
+    @bash scripts/nx run-many -t format
 
 # Lint every project with its own linter; any warning is an error.
 lint:
-    @bash scripts/nx.sh run-many -t lint
+    @bash scripts/nx run-many -t lint
 
 # Every project's test suite, each writing its coverage profile for `coverage`.
 test:
     @rm -f {{profraw-root}}/*.profraw
-    @bash scripts/nx.sh run-many -t test
+    @bash scripts/nx run-many -t test
 
 # Build every project that has a build target (the binary).
 build:
-    @bash scripts/nx.sh run-many -t build
+    @bash scripts/nx run-many -t build
 
 # Build every project's docs; warnings are errors.
 doc:
-    @bash scripts/nx.sh run-many -t doc
+    @bash scripts/nx run-many -t doc
 
 # 95% line coverage over the union of every project's run; lower it only with a
 # documented reason in AGENTS.md.
 # The aggregate coverage floor over every project's test run.
 coverage:
-    @bash scripts/nx.sh run workspace:coverage
+    @bash scripts/nx run workspace:coverage
 
 # Verify one crate's formatting without modifying files.
 _crate-fmt-check crate:
@@ -166,7 +166,7 @@ _coverage:
 # Drives the compiled binary as a subprocess — never an in-process `main()`.
 # The end-to-end binary journeys in isolation (also run by `test`/`check`).
 test-e2e:
-    @bash scripts/nx.sh run onemessagebus-e2e:test
+    @bash scripts/nx run onemessagebus-e2e:test
 
 # Coverage instrumentation is measured on Linux only, so the cross-platform CI
 # legs run the same suites through this instead of `test`.
@@ -193,7 +193,7 @@ upgrade:
 # Separate from `check`: `cargo deny` needs a network-fetched advisory DB.
 # Advisory + license audit, the sibling ban, and the unused-dependency check.
 deps-check:
-    @bash scripts/nx.sh run workspace:deps-check
+    @bash scripts/nx run workspace:deps-check
 
 _deps-check:
     @command -v cargo-deny >/dev/null || { echo "cargo-deny not installed: cargo install cargo-deny --locked" >&2; exit 1; }

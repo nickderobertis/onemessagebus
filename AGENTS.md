@@ -111,7 +111,7 @@ you:
 - **`just gate` is the bar, not `just check`.** `check` is the deterministic
   tier and stays offline and credential-free; `gate` adds the diff-scoped
   llmlint tier, and that is what must be green before pushing.
-- **The repo-wide verbs delegate to Nx** (`scripts/nx.sh`), which fans the
+- **The repo-wide verbs delegate to Nx** (`scripts/nx`), which fans the
   uniform target names across the graph. A target's *body* belongs to its
   project, never to a for-each loop here: the `_crate-*` recipes take the crate
   name their project.json passes.
@@ -196,7 +196,7 @@ values live in the secret store, never in the tree.
 ## Scripts and output are context
 
 Quiet on success — a line or nothing. On failure, print the exact error and a
-concrete next action. `scripts/nx.sh` preserves each run's full output at
+concrete next action. `scripts/nx` preserves each run's full output at
 `.logs/<label>.log` (gitignored, owner-only, credential values redacted) so a
 green run owes one line and a red one still has everything.
 

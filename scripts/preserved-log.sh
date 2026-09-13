@@ -11,7 +11,7 @@
 # and unbounded history inside a working tree is its own problem.
 #
 # "Per run" has to mean per *invocation*, though. `just check` runs the e2e suite
-# through Nx, and those journeys spawn `scripts/nx.sh` again — so a nested
+# through Nx, and those journeys spawn `scripts/nx` again — so a nested
 # invocation resolves the same `.logs/nx.log` the still-running outer one is
 # writing and would truncate it, making the running gate uninspectable exactly
 # when a reader needs it. Every invocation therefore records the absolute path it
@@ -22,7 +22,7 @@
 # No `set -euo pipefail` here, unlike every other script in this tree: this file
 # is sourced, so those options would land on whatever shell sourced it, and a
 # library must not reach into its caller's. Every caller runs strict already
-# (`scripts/nx.sh`, and the justfile via `set shell`), and every function below
+# (`scripts/nx`, and the justfile via `set shell`), and every function below
 # checks and reports its own failures rather than relying on errexit.
 #
 # shellcheck shell=bash

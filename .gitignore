@@ -1,5 +1,5 @@
 /target
-# The Nx orchestrator's own install and computation cache. `scripts/nx.sh`
+# The Nx orchestrator's own install and computation cache. `scripts/nx`
 # re-creates node_modules from the committed lockfile whenever it is missing.
 /node_modules
 /.nx
