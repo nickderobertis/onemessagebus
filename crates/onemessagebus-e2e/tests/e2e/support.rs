@@ -93,6 +93,7 @@ pub fn run(args: &[&str], stdin: Option<&str>) -> Run {
 /// The profile crate's recorded and golden fixtures.
 pub fn fixture(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
+        // llmlint: ignore[shared_internals_are_a_project_not_a_reach_in] the task places the recorded streams under the profile crate's tests/recorded/ and requires these journeys to run `events merge` over those same streams; they are byte-identical producer output, so a copy here would be a second one free to drift.
         .join("../onemessagebus-agent/tests")
         .join(relative)
 }

@@ -33,7 +33,6 @@ fn fixture(name: &str) -> String {
 /// added to the document is added here beside the test that drives it.
 const DRIVEN_FIXTURES: &[&str] = &["envelope", "filter", "read-sets", "verbs"];
 
-/// The name a `<!-- fixture: name -->` line tags, if it is one.
 fn fixture_tag(line: &str) -> Option<&str> {
     line.trim()
         .strip_prefix("<!-- fixture: ")

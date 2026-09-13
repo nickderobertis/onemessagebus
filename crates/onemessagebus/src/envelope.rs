@@ -34,8 +34,10 @@ pub struct Envelope<V: Vocabulary> {
     /// The envelope schema version the producer wrote against.
     pub v: u32,
     /// RFC 3339, millisecond precision, UTC.
+    // llmlint: ignore[invalid_states_unrepresentable] the contract holds every envelope to the bytes its producer wrote and the recorded streams round-trip with no byte changed; a parsed timestamp re-renders the stamp in its own spelling, and `(ts, stream, seq)` orders the merge over the string as written.
     pub ts: String,
     /// Unique id of the producing process.
+    // llmlint: ignore[invalid_states_unrepresentable] the contract gives a stream id no grammar beyond a unique id per producing process and refuses none on read; a relay carries a sibling's stream ids untouched, so a narrower type would refuse lines the recorded streams hold.
     pub stream: String,
     /// Monotonic per [`stream`](Self::stream).
     pub seq: u64,
@@ -135,6 +137,7 @@ impl<V: Vocabulary> Envelope<V> {
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
 )]
 #[serde(transparent)]
+// llmlint: ignore[invalid_states_unrepresentable] the contract makes `kind` open on the wire and a string newtype in the core because a relay carries a sibling's kinds without interpreting them; kebab-case is refused where a kind is authored (`events emit`), never where one is read.
 pub struct Kind(pub String);
 
 impl Kind {
