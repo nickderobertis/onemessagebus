@@ -2,15 +2,14 @@
 # Smoke-test an `onemessagebus` that is already on PATH, and name the install
 # that broke when it does not behave.
 #
-# One script, one set of assertions. `release.yml`'s verify jobs and
-# `published-smoke.yml` run this over a binary they installed from PyPI or npm;
-# CI's `install` job runs the identical file over the binary this repo just
-# compiled. That is what stops a workflow's idea of "it works" from drifting from
+# One script, one set of assertions. `release.yml`'s verify jobs run this over a
+# binary they installed from PyPI or npm; CI's `install` job runs the identical
+# file over the binary this repo just compiled. That is what stops a workflow's idea of "it works" from drifting from
 # what actually ships — assertions inlined in a workflow keep passing after the
 # surface around them changes.
 #
-# Deliberately toolchain-free: bash and the installed binary. The published smoke
-# runs this on every OS, for both registries, each time a release completes, and
+# Deliberately toolchain-free: bash and the installed binary. The verify jobs run
+# this on every OS, for both registries, each time a release publishes, and
 # anything it had to install first would be a second thing that can rot.
 #
 # What a published artifact is held to here is what it can prove *alone*: it

@@ -46,7 +46,7 @@ function binaryPath() {
   // llmlint: ignore-block[changed_behavior_has_e2e] reaching this branch means running
   // where no prebuilt package exists, and a test could only get there by lying to node
   // about process.platform — which would prove the lie. The sibling branches are driven
-  // for real by npm/test/launcher.test.mjs, and npm's own os/cpu fields keep a user from
+  // for real by npm/e2e/launcher.test.mjs, and npm's own os/cpu fields keep a user from
   // installing a platform package this map does not name.
   if (!pkg) {
     fail(

@@ -4,8 +4,8 @@
 // Nothing here is stubbed. `scripts/npm-build.mjs` assembles the real packages
 // around the real compiled binary, `npm install` resolves them, and the launcher
 // resolves the platform package and execs the binary. The one thing this cannot
-// do locally is publish to the registry; `.github/workflows/release.yml` and
-// `published-smoke.yml` cover that against the real npm.
+// do locally is publish to the registry; `.github/workflows/release.yml`'s
+// verify-npm job covers that against the real npm.
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";

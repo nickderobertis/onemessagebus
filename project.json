@@ -8,7 +8,8 @@
     "onemessagebus-agent",
     "onemessagebus-cli",
     "onemessagebus-e2e",
-    "onemessagebus-npm"
+    "onemessagebus-npm",
+    "onemessagebus-npm-e2e"
   ],
   "targets": {
     "coverage": {

@@ -31,7 +31,11 @@ fn value(document: &str, origin: &str, path: &[&str]) -> String {
 
 #[test]
 fn clippy_holds_the_msrv_cargo_declares() {
-    let declared = value(CARGO, "Cargo.toml", &["workspace", "package", "rust-version"]);
+    let declared = value(
+        CARGO,
+        "Cargo.toml",
+        &["workspace", "package", "rust-version"],
+    );
     let clippy = value(CLIPPY, "clippy.toml", &["msrv"]);
     assert_eq!(
         clippy, declared,

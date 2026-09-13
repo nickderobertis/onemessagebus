@@ -37,11 +37,9 @@ name: Release
 #                     NPM_PUBLISH repo variable.
 #   * verify-npm    — the same, on the same matrix, for `npm install -g`.
 #
-# Every verify job runs the version at publish time only. `published-smoke.yml`
-# runs the identical script against whatever the registries serve as `latest`,
-# triggered by *this* workflow completing, so what a release actually left on the
-# registries is asked about at the moment it can first be wrong. Its failures
-# open an issue here rather than only reddening a run nobody opens.
+# Every verify job runs the version at publish time only. A watch over what the
+# registries later serve as `latest` is a follow-up AGENTS.md records, for once a
+# first release exists to watch; nothing runs it yet.
 #
 # The version is never written here: every artifact takes it from Cargo.toml's
 # [workspace.package] (maturin via `dynamic = ["version"]`, npm via
@@ -53,7 +51,7 @@ name: Release
 # mean standing up a runner and a public release, or replacing both with a simulation —
 # and the simulation is what would then be under test. They are proven the only way they
 # can be, by running on every real release, and everything they call that *can* be driven
-# locally is: the npm packaging in npm/test/launcher.test.mjs, and the smoke script
+# locally is: the npm packaging in npm/e2e/launcher.test.mjs, and the smoke script
 # in ci.yml's `install` job on every pull request.
 #
 # llmlint: ignore-file[live_tier_compiles_and_requires_credential] the publish and verify

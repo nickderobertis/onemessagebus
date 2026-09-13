@@ -148,10 +148,14 @@ _crate-build crate:
     @cargo build -p {{crate}} --locked --quiet
 
 # One crate's unit and integration tests, instrumented, with its raw profiles
-# left for the aggregate report rather than reported on their own.
+# left for the aggregate report rather than reported on their own. nextest does
+# not run doctests, and the crate READMEs are compiled as doctests so a sample
+# naming a removed item fails here; they run uninstrumented beside it.
 _crate-test crate:
     @cargo llvm-cov --no-report nextest -p {{crate}} --locked --status-level fail --final-status-level fail \
       || { echo "{{crate}}: tests failed — fix the failures named above" >&2; exit 1; }
+    @cargo test --doc -p {{crate}} --locked --quiet \
+      || { echo "{{crate}}: doctests failed — fix the sample named above, or the README it is compiled from" >&2; exit 1; }
 
 # The compiled-binary journeys: the binary built instrumented in the coverage
 # target directory, so what the journeys spawn is attributed to the crates it
@@ -179,7 +183,8 @@ test-e2e:
 test-quick:
     @cargo build -p onemessagebus-cli --locked --quiet
     @cargo nextest run --workspace --locked --status-level fail --final-status-level fail
-    @node --test npm/test/*.test.mjs
+    @cargo test --doc --workspace --locked --quiet
+    @node --test npm/test/*.test.mjs npm/e2e/*.test.mjs
 
 # Build one crate's docs with warnings denied (kept in the gate so doc links don't rot).
 _crate-doc crate:

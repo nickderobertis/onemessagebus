@@ -38,9 +38,11 @@ $ onemessagebus events merge run.ndjson other.ndjson --filter '{"include":[{"sou
 $ onemessagebus schema check agent.event-envelope@2 --file envelope.json
 ```
 
+<!-- llmlint: ignore-block[no_redundant_instruction_pointers] this README is also the PyPI page of the `onemessagebus-cli` wheel (pyproject.toml's `readme`) and the repository's front page, read by someone who has installed or found the tool and never opens AGENTS.md; these links are how that reader reaches the command line, the wire and the contract. -->
 [`docs/cli.md`](docs/cli.md) is the whole command line; [`docs/wire.md`](docs/wire.md)
 is the wire; [`docs/contract.md`](docs/contract.md) is the approved contract the
 consumers restate from.
+<!-- llmlint: ignore-end[no_redundant_instruction_pointers] -->
 
 ## Use the library
 

@@ -95,7 +95,10 @@ rationale; the mechanics live in the files named. -->
   `onemessagebus-agent` (the profile), `onemessagebus-cli` (the binary,
   unpublished), `onemessagebus-e2e` (the compiled-binary journeys, whose `test`
   depends on the binary's `build`), `onemessagebus-npm` (the launcher and the
-  release-configuration drift gates), and the root `workspace` project carrying
+  release-configuration drift gates), `onemessagebus-npm-e2e` (the launcher's
+  install journeys, which pack the built binary and install it the way a user
+  does — the costly tier, kept out of the packaging project's own tests), and
+  the root `workspace` project carrying
   the aggregate coverage floor and the supply-chain check. The binary is its
   own `publish = false` crate because it links the agent profile so `--profile`
   defaults to it, a binary links only its own crate's dependencies, and the

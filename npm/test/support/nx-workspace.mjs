@@ -21,12 +21,14 @@ const WRAPPERS = ["nx", "nx-affected.sh", "preserved-log.sh"];
 /// wrappers from outside a case. Each of these is really set where this suite
 /// runs — under `scripts/nx` in the gate, on a GitHub runner — and each would
 /// change an answer: an inherited `NX_*` can point Nx at another workspace,
-/// `CI` and `GITHUB_BASE_REF` change which base the selection derives, and a
-/// global git config can sign commits or install hooks.
+/// `CI` and `GITHUB_BASE_REF` change which base the selection derives, a
+/// `FORCE_COLOR` that Nx sets for the targets it runs styles the output the
+/// cases read, and a global git config can sign commits or install hooks.
 export function isolatedEnv(extra = {}) {
   const env = {};
   for (const [name, value] of Object.entries(process.env)) {
-    if (name === "CI" || /^(NX_|GIT_|GITHUB_|ONEMESSAGEBUS_)/.test(name)) continue;
+    if (name === "CI" || name === "FORCE_COLOR" || name === "NO_COLOR") continue;
+    if (/^(NX_|GIT_|GITHUB_|ONEMESSAGEBUS_)/.test(name)) continue;
     env[name] = value;
   }
   return { ...env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", ...extra };

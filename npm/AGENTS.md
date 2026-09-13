@@ -20,6 +20,11 @@ version has exactly one source — `Cargo.toml`'s `[workspace.package]`, written
 by release-plz — and `scripts/npm-build.mjs` stamps it into the launcher and
 every platform pin at publish time. Never hand-edit a version here.
 
+The journeys that assemble the packages around the built binary, install them
+and run what npm put on PATH live in `e2e/`, their own `onemessagebus-npm-e2e`
+project: that tier builds and installs, and `test/` stays the fast checks over
+the manifests and the scripts.
+
 `test/` also carries the checks that are about the release rather than about
 npm — the release-target declaration's drift against what a release really
 publishes, and the release probe's not-answered answer — because this is the
