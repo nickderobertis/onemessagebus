@@ -2,9 +2,8 @@
 //! anything is appended, with a scripted validator command.
 //!
 //! The validator a configuration names is this test binary, re-run as
-//! `validators::validator_double` with a script path after it — the one test
-//! here that does nothing unless it is handed one. It logs the message it read
-//! on stdin and answers with the exit status, stderr and stdout its script
+//! `validators::scripted_validator` with a script path after it. It logs the
+//! message it read on stdin and answers with the exit status, stderr and stdout its script
 //! gives its role: `validate` when the binary tells it a queue, `fingerprint`
 //! when it is run as a pass cache's bar. A journey rewrites the script between
 //! invocations to move the bar or change the answer.
@@ -17,12 +16,12 @@ use serde_json::{json, Value};
 
 use crate::support::{run_in, Run};
 
-/// The test path a validator command names this double by.
-const DOUBLE: &str = "validators::validator_double";
+/// The test path a validator command names this subprocess fixture by.
+const DOUBLE: &str = "validators::scripted_validator";
 
-/// Not a journey: the scripted validator command. See the module's note.
+/// The subprocess fixture, whose ordinary invocation verifies it is not a child.
 #[test]
-fn validator_double() {
+fn scripted_validator() {
     let arguments: Vec<String> = std::env::args().collect();
     let Some(script) = arguments
         .iter()
@@ -41,9 +40,9 @@ fn validator_double() {
         "fingerprint"
     };
     let part = serde_json::from_str::<Value>(
-        &std::fs::read_to_string(script).expect("the double's script is readable"),
+        &std::fs::read_to_string(script).expect("the subprocess fixture's script is readable"),
     )
-    .expect("the double's script is JSON")[role]
+    .expect("the subprocess fixture's script is JSON")[role]
         .clone();
     let mut stdin = String::new();
     if role == "validate" {
@@ -55,7 +54,7 @@ fn validator_double() {
         .create(true)
         .append(true)
         .open(format!("{script}.log"))
-        .expect("the double's log opens");
+        .expect("the subprocess fixture's log opens");
     writeln!(
         log,
         "{}",
@@ -78,7 +77,7 @@ fn validator_double() {
     );
 }
 
-/// A scratch directory holding a channel, the double's script and a
+/// A scratch directory holding a channel, the subprocess fixture's script and a
 /// configuration.
 struct Scratch {
     dir: tempfile::TempDir,

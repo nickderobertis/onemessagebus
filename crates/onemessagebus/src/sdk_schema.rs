@@ -238,6 +238,7 @@ pub struct NextOptions {
 }
 
 /// The options of `reply`.
+// llmlint: ignore[invalid_states_unrepresentable] This is the language-neutral SDK wire object for a CLI invocation: preserving `position` and `correlation` as independently omitted fields keeps the generated clients' object shape stable, while clap and every SDK executor refuse both together before calling the bus. The library operation itself takes one `Option<&Correlation>` beside its distinct position-based queue operation, so this transport description is not an internal state retained after validation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReplyOptions {
@@ -330,6 +331,7 @@ pub struct ValidateOptions {
 }
 
 /// The options of `ask`.
+// llmlint: ignore[invalid_states_unrepresentable] This is the language-neutral SDK wire object, where each named field must remain a top-level capability binding. Clap and every generated SDK executor validate that `correlation` is not combined with `blocking`, `about`, or `file` before an invocation reaches `Bus::ask`; encoding the modes as a nested Rust enum would change those shared option keys and cease to describe the CLI boundary this schema exists to generate.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[schemars(rename = "AskOptions")]

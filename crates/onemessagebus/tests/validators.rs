@@ -1,8 +1,8 @@
 //! Contract V: validators judge a message before anything is appended.
 //!
 //! The external validator is driven for real: the command a configuration names
-//! is this test binary, re-run as `validator_double` — the one test here that
-//! does nothing unless it is handed a script — which reads the message on its
+//! is this test binary, re-run as `scripted_validator`. When handed a script it
+//! reads the message on its
 //! stdin, logs it, and answers with the exit status, stderr and stdout its script
 //! says. A test rewrites the script between sends to move the bar or change the
 //! answer, and counts the log to see whether the command ran.
@@ -22,14 +22,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// The argument a validator command names this test by.
-const DOUBLE: &str = "validator_double";
+const DOUBLE: &str = "scripted_validator";
 
-/// Not a test of anything: the scripted validator command. Run by the test
-/// harness with no script it returns at once; run by a validator with a script
-/// path after its name it plays the part the script gives its role — `validate`
-/// when it is told a queue, `fingerprint` otherwise — and exits.
+/// The scripted validator command. Its ordinary harness invocation checks that
+/// it was not accidentally given the validator environment; a validator child
+/// receives a script path and runs its `validate` or `fingerprint` role.
 #[test]
-fn validator_double() {
+fn scripted_validator() {
     let arguments: Vec<String> = std::env::args().collect();
     let Some(script) = arguments
         .iter()
@@ -48,9 +47,9 @@ fn validator_double() {
         "fingerprint"
     };
     let part: Value = serde_json::from_str::<Value>(
-        &std::fs::read_to_string(script).expect("the double's script is readable"),
+        &std::fs::read_to_string(script).expect("the subprocess fixture's script is readable"),
     )
-    .expect("the double's script is JSON")[role]
+    .expect("the subprocess fixture's script is JSON")[role]
         .clone();
     let mut stdin = String::new();
     if role == "validate" {
@@ -62,7 +61,7 @@ fn validator_double() {
         .create(true)
         .append(true)
         .open(format!("{script}.log"))
-        .expect("the double's log opens");
+        .expect("the subprocess fixture's log opens");
     writeln!(
         log,
         "{}",
@@ -89,7 +88,7 @@ fn validator_double() {
     );
 }
 
-/// A scratch directory, the double's script in it, and a configuration over a
+/// A scratch directory, the subprocess fixture's script in it, and a configuration over a
 /// local transport there.
 struct Rig {
     dir: tempfile::TempDir,
