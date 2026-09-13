@@ -149,7 +149,7 @@ giving more than one, naming each source given; either way nothing is written
 to the spool. `<address>` is the only positional, so a message passed as a
 second one is a usage error. When the spool's receiver declared a schema this
 build registers, the message is checked against it first, and one that does not
-conform is refused naming the JSON pointer, with nothing written.
+conform exits 1 naming the JSON pointer, with nothing written.
 
 What became of the message:
 

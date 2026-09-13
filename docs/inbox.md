@@ -110,7 +110,8 @@ its sender withdrawing it cannot both succeed.
 
 `<id>` is the minting instant in nanoseconds since the Unix epoch (39 digits),
 the minting process's id, and a per-process counter (20 digits), joined by `-`:
-the courier takes offers in the order they were made. The exact documents are
+the courier takes offers in the order of their minting instants, which is
+the order they were made unless the system clock steps back. The exact documents are
 `docs/contract.md`'s `spool-documents` fixture, which the profile's contract
 test holds to what a bound spool writes.
 

@@ -324,6 +324,7 @@ impl Note {
     /// If `text` is empty or whitespace.
     #[must_use]
     pub fn to(addressee: Addressee, text: impl Into<String>) -> Self {
+        // llmlint: ignore[no_panics_on_recoverable_errors] Contract N moves `Note::to` from `onejudge::note` at 0.8.1 with the same signature and its documented panic, for a caller holding a literal where blank text is a programming error; `Note::new` beside it is the `Result` for text from outside, and consumers call `to` today.
         Note::new(addressee, text).expect("a note carries text")
     }
 
@@ -510,8 +511,6 @@ impl Criteria {
     }
 }
 
-// --- The inbox ------------------------------------------------------------
-
 /// A note is the agent profile's message `agent.note@1`.
 impl Message for Note {
     const SCHEMA: SchemaId = SchemaId::literal("agent", "note", 1);
@@ -608,8 +607,6 @@ impl From<InboxUndelivered> for Undelivered {
         }
     }
 }
-
-// --- Rendering ------------------------------------------------------------
 
 /// The block a party is handed when notes reach it, framed by the role each note
 /// is addressed to. Empty when `notes` is empty.
@@ -736,8 +733,6 @@ pub fn supervisor_block(notes: &[DeliveredNote]) -> Option<String> {
     }
     Some(out)
 }
-
-// --- Criterion validation -------------------------------------------------
 
 /// Work the dispatch cannot perform: it happens after the worker settles.
 const OUT_OF_DISPATCH: [&str; 7] = [

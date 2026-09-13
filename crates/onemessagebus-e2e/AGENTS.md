@@ -15,7 +15,6 @@ A test about the repository's configuration rather than the binary (the release
 declaration, the toolchain pins) belongs in `crates/onemessagebus-repo`, so it
 does not pay for this suite.
 
-`tests/e2e/inbox.rs`'s `receiver_child` is the child half of the killed-receiver
-journey, re-run from this test binary: it does nothing unless
-`ONEMESSAGEBUS_E2E_RECEIVER_SPOOL` is set. A journey kills only the `Child` it
-spawned.
+A journey that needs a receiver to die without closing runs this test binary
+as its child and kills that `Child` by the handle that started it — never a
+process found by name, which on a shared host is somebody else's.

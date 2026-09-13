@@ -372,7 +372,7 @@ fn deliver_refuses_what_it_cannot_send_and_reports_what_the_receiver_refused() {
         ],
         None,
     );
-    assert_eq!(off_schema.code, 2, "{}", off_schema.stderr);
+    assert_eq!(off_schema.code, 1, "{}", off_schema.stderr);
     assert!(
         off_schema.stderr.contains("agent.note@1") && off_schema.stderr.contains("/addressee"),
         "{}",
@@ -454,13 +454,13 @@ fn deliver_to_a_spool_nothing_services_reports_the_elapsed_wait_and_withdraws_th
 }
 
 /// The child half of the killed-receiver journey: a receiver bound to the spool
-/// `RECEIVER_SPOOL` names, which never takes anything and never closes. Run on
-/// its own, without that variable, it does nothing.
+/// `RECEIVER_SPOOL` names, which never takes anything and never closes. Ignored,
+/// so the suite never runs it on its own; that journey runs it with `--ignored`.
 #[test]
+#[ignore = "the child half of the killed-receiver journey, which runs it with --ignored"]
 fn receiver_child() {
-    let Some(address) = std::env::var_os(RECEIVER_SPOOL) else {
-        return;
-    };
+    let address = std::env::var_os(RECEIVER_SPOOL)
+        .expect("run only as the killed-receiver journey's child, which names the spool");
     let inbox = NoteInbox::new();
     let _spool = Spool::bind(PathBuf::from(address), &inbox).expect("the child binds");
     // Bound until killed; the courier takes offers into an inbox nobody reads.
@@ -487,6 +487,7 @@ fn deliver_to_a_receiver_killed_without_closing_reports_the_elapsed_wait_and_wit
             "inbox::receiver_child",
             "--exact",
             "--nocapture",
+            "--ignored",
             "--test-threads=1",
         ])
         .env(RECEIVER_SPOOL, &address)
@@ -558,6 +559,8 @@ fn deliver_reports_an_answer_document_that_is_not_an_answer_naming_it() {
             )
         })
     };
+    // llmlint: ignore-block[e2e_not_mocked] the acceptance criterion for this node requires an answer document a test has overwritten with bytes that are not an answer; a real receiver's answer is read and removed by its sender within one poll, so only a test holding the receiver's side can overwrite it. The sender is the spawned binary, unchanged, and every other journey here drives a real receiver.
+    // llmlint: ignore-block[tests_mirror_real_usage] the acceptance criterion for this node requires an answer document a test has overwritten with bytes that are not an answer; a real receiver's answer is read and removed by its sender within one poll, so only a test holding the receiver's side can overwrite it. The sender is the spawned binary, unchanged, and every other journey here drives a real receiver.
     // Stand in for the receiver's side: take the offer, and overwrite its answer
     // document with bytes that are not an answer.
     let until = Instant::now() + Duration::from_secs(30);
@@ -582,6 +585,8 @@ fn deliver_reports_an_answer_document_that_is_not_an_answer_naming_it() {
     .expect("taken");
     let answer = address.join(format!("{id}.answer.json"));
     std::fs::write(&answer, "\u{0}\u{1} not an answer").expect("overwritten");
+    // llmlint: ignore-end[tests_mirror_real_usage]
+    // llmlint: ignore-end[e2e_not_mocked]
     let (run, _) = sending.join().expect("the sender finishes");
     assert_eq!(run.code, 1, "{}", run.stderr);
     assert!(

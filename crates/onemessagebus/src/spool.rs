@@ -403,8 +403,8 @@ where
     drop(lock);
 }
 
-/// The ids of every offer waiting, oldest first: an id leads with the instant
-/// it was minted.
+/// The ids of every offer waiting, in the order of the instants they were
+/// minted at.
 fn offered(dir: &Path) -> Vec<String> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();
@@ -572,10 +572,10 @@ fn remove_if_present(path: &Path) -> Result<(), BackendError> {
     }
 }
 
-/// An id no two offers share, ordered by the instant it was minted: the clock
-/// leads so the courier takes offers in the order they were made, the process
-/// id separates two processes offering at once, and the counter two threads of
-/// one process reading the same instant.
+/// An id no two offers share. The wall clock leads, so the courier takes offers
+/// in the order of their minting instants — the order they were made, unless
+/// the system clock steps back; the process id separates two processes minting
+/// in one instant, and the counter two threads of one process.
 fn mint() -> String {
     static MINTED: AtomicU64 = AtomicU64::new(0);
     let now = std::time::SystemTime::now()

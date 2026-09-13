@@ -12,10 +12,11 @@
 //! with it, so two processes carrying at once, or carrying while a receiver
 //! drains, leave every message in the store or in the inbox and never in both.
 
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -46,6 +47,7 @@ struct Header {
 #[serde(deny_unknown_fields)]
 pub struct CarriedEntry {
     /// When it was carried: RFC 3339, millisecond precision, UTC.
+    // llmlint: ignore[invalid_states_unrepresentable] the stamp is carried as the bytes `now_rfc3339` wrote, exactly as the envelope's `ts` is, and reading a store refuses a record whose `ts` is not that form (`is_stamp`), so a malformed one never leaves `Carry::read` or `adopt_carried`.
     pub ts: String,
     /// The schema the message is.
     pub schema: SchemaId,
@@ -118,9 +120,8 @@ impl<M: Message, D: Carried> InboxBackend<M, D> for Carrier<M, D> {
         if store.is_dir() {
             return Err(absent(store, "it is a directory").into());
         }
+        create_store(store)?;
         let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
             .read(true)
             .write(true)
             .open(store)
@@ -128,15 +129,9 @@ impl<M: Message, D: Carried> InboxBackend<M, D> for Carrier<M, D> {
         file.lock()
             .map_err(|failure| BackendError::io("lock", store, &failure))?;
         let contents = contents_of(&mut file, store)?;
-        let mut write = String::new();
-        if contents.is_empty() {
-            write.push_str(&header_line()?);
-        } else {
-            parse(store, &contents)?;
-        }
-        write.push_str(&line);
+        parse(store, &contents)?;
         file.seek(SeekFrom::End(0))
-            .and_then(|_| file.write_all(write.as_bytes()))
+            .and_then(|_| file.write_all(line.as_bytes()))
             .and_then(|()| file.sync_data())
             .map_err(|failure| BackendError::io("append to", store, &failure))?;
         Ok(D::carried())
@@ -289,12 +284,60 @@ fn parse(store: &Path, contents: &str) -> Result<(usize, Vec<CarriedEntry>), Bac
         .lines()
         .enumerate()
         .map(|(index, line)| {
-            serde_json::from_str::<CarriedEntry>(line).map_err(|failure| BackendError::Unreadable {
+            let unreadable = |why: String| BackendError::Unreadable {
                 at: store.to_path_buf(),
                 file: store.to_path_buf(),
-                why: format!("record {}: {failure}", index + 1),
-            })
+                why: format!("record {}: {why}", index + 1),
+            };
+            let entry = serde_json::from_str::<CarriedEntry>(line)
+                .map_err(|failure| unreadable(failure.to_string()))?;
+            if !is_stamp(&entry.ts) {
+                return Err(unreadable(format!(
+                    "its ts {:?} is not RFC 3339 with millisecond precision in UTC",
+                    entry.ts
+                )));
+            }
+            Ok(entry)
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok((header.len() + 1, entries))
+}
+
+/// Whether `ts` is the stamp `now_rfc3339` writes: `YYYY-MM-DDTHH:MM:SS.mmmZ`.
+fn is_stamp(ts: &str) -> bool {
+    const SHAPE: &[u8; 24] = b"dddd-dd-ddTdd:dd:dd.dddZ";
+    ts.len() == SHAPE.len()
+        && ts
+            .bytes()
+            .zip(SHAPE.iter())
+            .all(|(byte, shape)| match shape {
+                b'd' => byte.is_ascii_digit(),
+                literal => byte == *literal,
+            })
+}
+
+/// Create the store with its header line unless something is already there, in
+/// one step: the header is written beside the store and linked into place, so no
+/// reader or drain ever finds a store that exists without its header.
+fn create_store(store: &Path) -> Result<(), BackendError> {
+    static STAGED: AtomicU64 = AtomicU64::new(0);
+    if store.exists() {
+        return Ok(());
+    }
+    let mut staging = store.as_os_str().to_owned();
+    staging.push(format!(
+        ".{}-{}.staging",
+        std::process::id(),
+        STAGED.fetch_add(1, Ordering::Relaxed)
+    ));
+    let staging = PathBuf::from(staging);
+    fs::write(&staging, header_line()?)
+        .map_err(|failure| BackendError::io("write", &staging, &failure))?;
+    let linked = fs::hard_link(&staging, store);
+    let _ = fs::remove_file(&staging);
+    match linked {
+        Ok(()) => Ok(()),
+        Err(failure) if failure.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(failure) => Err(BackendError::io("create", store, &failure)),
+    }
 }

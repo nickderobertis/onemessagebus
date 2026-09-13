@@ -446,7 +446,7 @@ fn deliver(args: DeliverArgs, out: &mut impl std::io::Write) -> Result<(), Refus
     if let Some(schema) = declared {
         let registry = onemessagebus_agent::registry();
         if let Err(CheckError::Violation(violation)) = registry.check(&schema, &message) {
-            return Err(invalid(format!(
+            return Err(failed(format!(
                 "the message is not the {schema} the spool's receiver takes: {violation}"
             )));
         }

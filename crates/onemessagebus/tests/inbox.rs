@@ -81,8 +81,6 @@ fn next<M: Message + Send + 'static, D: Disposition>(
         .expect("a message arrives within ten seconds")
 }
 
-// --- In process -------------------------------------------------------------
-
 #[test]
 fn each_sender_is_answered_exactly_the_disposition_its_receiver_gave_it() {
     let (sender, inbox) = Sender::<Order, Receipt>::channel();
@@ -321,8 +319,6 @@ fn an_undelivered_names_what_became_of_the_message() {
     };
     assert_eq!(encoding.to_string(), "the message does not serialize: no");
 }
-
-// --- Spool --------------------------------------------------------------------
 
 /// A receiver bound to a spool, answering every order it takes with `answer`
 /// after `delay`, until the returned flag is set.
@@ -705,8 +701,6 @@ fn a_path_that_is_no_spool_or_a_record_this_build_did_not_write_is_refused_by_na
     ));
 }
 
-// --- Carry --------------------------------------------------------------------
-
 #[test]
 fn a_carried_message_is_answered_carried_and_adopted_exactly_once() {
     let dir = tempfile::tempdir().expect("a temp dir");
@@ -878,5 +872,96 @@ fn a_path_that_is_no_carry_store_is_refused_by_name() {
     assert!(matches!(
         Carry::read(&garbled),
         Err(BackendError::Unreadable { why, .. }) if why.starts_with("record 1")
+    ));
+}
+
+#[test]
+fn concurrent_carriers_lose_nothing_and_a_drain_racing_them_takes_each_message_exactly_once() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let store = dir.path().join("carried.ndjson");
+    let (writers, each) = (4_usize, 25_usize);
+    let carrying: Vec<_> = (0..writers)
+        .map(|writer| {
+            let store = store.clone();
+            std::thread::spawn(move || {
+                let sender = Carry::sender::<Order, Receipt>(&store);
+                for n in 0..each {
+                    assert_eq!(
+                        sender.send(order(&format!("{writer}-{n}"))),
+                        Ok(Receipt::Deferred)
+                    );
+                }
+            })
+        })
+        .collect();
+    // A receiver drains the store over and over while the carriers write to it.
+    let inbox = Inbox::<Order, Receipt>::new();
+    let mut adopted = 0;
+    while carrying.iter().any(|carrier| !carrier.is_finished()) {
+        adopted += inbox.adopt_carried(&store).expect("a drain succeeds");
+    }
+    for carrier in carrying {
+        carrier.join().expect("a carrier finishes");
+    }
+    adopted += inbox
+        .adopt_carried(&store)
+        .expect("the last drain succeeds");
+    assert_eq!(
+        adopted,
+        writers * each,
+        "a carried message was lost or taken twice"
+    );
+
+    let mut taken = Vec::new();
+    while let Some(delivered) = inbox.take() {
+        taken.push(delivered.message().sku.clone());
+    }
+    let mut distinct = taken.clone();
+    distinct.sort();
+    distinct.dedup();
+    assert_eq!(
+        distinct.len(),
+        writers * each,
+        "a message reached the inbox twice"
+    );
+    for writer in 0..writers {
+        let prefix = format!("{writer}-");
+        let mine: Vec<usize> = taken
+            .iter()
+            .filter_map(|sku| sku.strip_prefix(&prefix))
+            .map(|n| n.parse().expect("a number"))
+            .collect();
+        assert_eq!(
+            mine,
+            (0..each).collect::<Vec<_>>(),
+            "carrier {writer}'s messages were not taken in the order it carried them"
+        );
+    }
+    assert_eq!(Carry::read(&store), Ok(Vec::new()));
+}
+
+#[test]
+fn a_carried_record_whose_stamp_is_not_a_stamp_is_refused_naming_the_record() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let store = dir.path().join("store");
+    std::fs::write(
+        &store,
+        "{\"schema_version\":1,\"kind\":\"onemessagebus-carry-store\"}\n\
+         {\"ts\":\"yesterday\",\"schema\":\"shop.order@1\",\"message\":{\"sku\":\"a\",\"quantity\":1}}\n",
+    )
+    .expect("written");
+    match Carry::read(&store) {
+        Err(failure @ BackendError::Unreadable { .. }) => {
+            let said = failure.to_string();
+            assert!(
+                said.contains("record 1") && said.contains("\"yesterday\""),
+                "{said}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(
+        Inbox::<Order, Receipt>::new().adopt_carried(&store),
+        Err(Undelivered::Backend(BackendError::Unreadable { .. }))
     ));
 }
