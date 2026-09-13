@@ -81,10 +81,19 @@ function attempt(what, action, step) {
 // The version both registries index this release under. npm rejects anything
 // that is not semver, and a version with a stray specifier would publish under a
 // name no consumer could ask for — so it is validated here rather than at the
-// registry, whichever source it came from. At most one `-prerelease` and one
-// `+build`, in that order: repeating either (`1.2.3+one+two`) is not a version
-// npm will take.
-const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+// registry, whichever source it came from. The shape is SemVer 2.0.0's: numbers
+// without leading zeros, then at most one `-prerelease` and one `+build`, in that
+// order, each a dot-separated run of non-empty identifiers, and no leading zero on
+// a numeric prerelease identifier — so `1.2.3-.`, `1.2.3-a..b`, `1.2.3-01` and
+// `1.2.3+one+two` are refused here rather than by the registry mid-publish.
+const NUMBER = "(?:0|[1-9]\\d*)";
+const PRERELEASE_ID = "(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)";
+const BUILD_ID = "[0-9A-Za-z-]+";
+const VERSION = new RegExp(
+  `^${NUMBER}\\.${NUMBER}\\.${NUMBER}` +
+    `(?:-${PRERELEASE_ID}(?:\\.${PRERELEASE_ID})*)?` +
+    `(?:\\+${BUILD_ID}(?:\\.${BUILD_ID})*)?$`,
+);
 
 // Read the workspace version from the root Cargo.toml [workspace.package]
 // section — the one version every crate inherits. A tiny hand parser avoids a

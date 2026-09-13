@@ -5,15 +5,17 @@ binary ships in a per-platform package (`onemessagebus-cli-<platform>-<arch>`)
 that npm selects by `os`/`cpu`, and `bin/onemessagebus.js` resolves it and execs
 it with the caller's argv.
 
-Four places name that platform matrix and must move together:
+Five places name that platform matrix and must move together:
 
 1. `bin/onemessagebus.js`'s `PACKAGES` map,
 2. `package.json`'s `optionalDependencies`,
 3. `scripts/npm-build.mjs`'s `TARGETS` table,
 4. the `upload`, `build-wheels` and `build-npm` matrices in
-   `.github/workflows/release.yml`.
+   `.github/workflows/release.yml`,
+5. `rust-toolchain.toml`'s `targets`, the standard libraries rustup installs
+   so every one of those triples builds from the pinned toolchain.
 
-`test/platform-matrix.test.mjs` holds the four to each other.
+`test/platform-matrix.test.mjs` holds the five to each other.
 
 The committed `package.json` carries `0.0.0-managed`, not a real version. The
 version has exactly one source — `Cargo.toml`'s `[workspace.package]`, written

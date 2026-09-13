@@ -205,8 +205,14 @@ fi
 # never a JSON escape, a tag name, or a second line — and anything else is not
 # answered rather than passed through for a consumer to misread. Bash's own regex
 # rather than `grep`, which matches per line and would accept a value with one
-# good line in it.
-readonly VERSION_SHAPE='^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'
+# good line in it. The shape is SemVer 2.0.0's: numbers without leading zeros,
+# then an optional prerelease and an optional build, each a dot-separated run of
+# non-empty identifiers — so `1.2.3-.`, `1.2.3-a..b` and `1.2.3-01` are not
+# versions, however much of them looks like one.
+readonly NUMBER='(0|[1-9][0-9]*)'
+readonly PRERELEASE_ID='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+readonly BUILD_ID='[0-9A-Za-z-]+'
+readonly VERSION_SHAPE="^$NUMBER\\.$NUMBER\\.$NUMBER(-$PRERELEASE_ID(\\.$PRERELEASE_ID)*)?(\\+$BUILD_ID(\\.$BUILD_ID)*)?\$"
 if ! [[ $version =~ $VERSION_SHAPE ]]; then
   not_answered "$url answered with '$version', which is not a version" \
     "the registry served something this cannot read as one version — fix the reader in this script; a released artifact must never read as unreleased"

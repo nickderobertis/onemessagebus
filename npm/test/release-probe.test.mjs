@@ -143,6 +143,17 @@ describe("the release probe against a registry that answers", {
         "npm:onemessagebus-cli",
         "0.3.0+build.7",
       ],
+      // A prerelease and a build together, each with several identifiers: the
+      // whole of what SemVer lets one version say.
+      [
+        {
+          [PYPI]: {
+            body: { info: { name: "onemessagebus-cli", version: "1.0.0-0.3.7+exp.sha.5114f85" } },
+          },
+        },
+        "pypi:onemessagebus-cli",
+        "1.0.0-0.3.7+exp.sha.5114f85",
+      ],
     ];
     for (const [routes, identifier, version] of answers) {
       const result = await probeRegistry(routes, identifier);
@@ -174,6 +185,16 @@ describe("the release probe against a registry that answers", {
       '1.2.3"',
       "1.2.3-",
       "$(touch pwned)",
+      // Shaped like a version until an identifier is read: empty ones, a leading
+      // zero, a build suffix repeated or left bare.
+      "1.2.3-.",
+      "1.2.3-a..b",
+      "1.2.3-rc.",
+      "1.2.3-01",
+      "01.2.3",
+      "1.2.3+",
+      "1.2.3+a..b",
+      "1.2.3+one+two",
     ];
     for (const value of values) {
       for (const [routes, identifier] of [

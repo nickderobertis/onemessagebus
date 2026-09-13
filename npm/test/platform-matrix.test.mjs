@@ -1,4 +1,4 @@
-// The drift gate for the one platform matrix this repository restates four
+// The drift gate for the one platform matrix this repository restates five
 // times.
 //
 // The set of Rust targets a release builds has to agree, exactly, across:
@@ -7,22 +7,26 @@
 //   2. `npm/onemessagebus-cli/bin/onemessagebus.js`'s PACKAGES (the launcher's
 //      platform-to-package resolution),
 //   3. `npm/onemessagebus-cli/package.json`'s optionalDependencies (what npm
-//      installs), and
+//      installs),
 //   4. the `upload`, `build-wheels`, and `build-npm` matrices in
-//      `.github/workflows/release.yml` (what actually gets built).
+//      `.github/workflows/release.yml` (what actually gets built), and
+//   5. `rust-toolchain.toml`'s `targets` (the standard libraries rustup installs
+//      beside the pinned toolchain, so each of those triples builds from it).
 //
 // None can be generated from another — a workflow matrix is YAML a workflow
-// engine reads, npm resolves optionalDependencies before any code runs, and the
-// launcher must resolve with no build step. So the sets are reconciled here
-// instead: add a platform in one place and this fails until it is added in all
-// four. Drift here does not break a build; it 404s an install, on the one
-// platform nobody tested.
+// engine reads, npm resolves optionalDependencies before any code runs, the
+// launcher must resolve with no build step, and rustup reads its own file. So the
+// sets are reconciled here instead: add a platform in one place and this fails
+// until it is added in all five. Drift here does not break a build; it 404s an
+// install, on the one platform nobody tested.
 
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
+
+import { parse } from "smol-toml";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -75,6 +79,19 @@ describe("the platform matrix", () => {
         `release.yml's \`${job}\` matrix and npm-build.mjs's TARGETS disagree`,
       );
     }
+  });
+
+  it("installs a standard library for every triple a release builds, and no other", () => {
+    const toolchain = parse(read("rust-toolchain.toml")).toolchain;
+    assert.ok(
+      Array.isArray(toolchain?.targets),
+      "rust-toolchain.toml declares no [toolchain] targets",
+    );
+    assert.deepEqual(
+      [...toolchain.targets].sort(),
+      [...triples].sort(),
+      "rust-toolchain.toml's targets and npm-build.mjs's TARGETS disagree",
+    );
   });
 
   it("resolves every built target from the launcher", () => {
