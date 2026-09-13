@@ -186,9 +186,13 @@ fn exercised() -> Vec<Exercise> {
                     hold_pending: true,
                     ..Policy::default()
                 };
+                let transport: Arc<dyn onemessagebus::Transport> = Arc::new(MemoryTransport::new());
                 let questions = RawQueue::open(
-                    Arc::new(MemoryTransport::new()),
-                    QueueSpec::new(queue("questions"), policy),
+                    Arc::clone(&transport),
+                    QueueSpec {
+                        answers: Some(queue("replies")),
+                        ..QueueSpec::new(queue("questions"), policy)
+                    },
                     Arc::new(Registry::new()),
                 );
                 questions
@@ -198,8 +202,19 @@ fn exercised() -> Vec<Exercise> {
                     .claim(&ConsumerName::default_consumer())
                     .expect("a claim")
                     .expect("a record");
-                let answered = questions
+                let refused = questions
                     .answer_at(&claimed.position, &Position::from_token(0))
+                    .expect_err("a position no reply ends at");
+                assert!(
+                    matches!(refused, onemessagebus::QueueError::NoReply { .. }),
+                    "{refused}"
+                );
+                assert!(questions.held().expect("a read").is_some());
+                let reply = transport
+                    .append(&queue("replies"), br#"{"text":"go on"}"#)
+                    .expect("a reply is appended");
+                let answered = questions
+                    .answer_at(&claimed.position, &reply)
                     .expect("answered");
                 assert_eq!(answered.id, Some(0));
                 assert!(questions.held().expect("a read").is_none());
