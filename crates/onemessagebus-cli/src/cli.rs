@@ -1414,10 +1414,14 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> 
         .codec
         .parse()
         .map_err(|failure| invalid(format!("--codec: {failure}")))?;
-    if !CODECS.contains(&name.as_str()) {
+    if !CODECS.contains(&name) {
         return Err(invalid(format!(
             "--codec: `{name}` is not a codec this build links; it links: {}",
-            CODECS.join(", ")
+            CODECS
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
         )));
     }
     let config = configuration(&args.bus)?;

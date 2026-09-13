@@ -78,8 +78,12 @@ impl Correlation {
     /// digest of the time, this process and a count of mints.
     #[must_use]
     pub fn mint() -> Self {
+        Self::mint_with(|bytes| getrandom::fill(bytes).map_err(|_| ()))
+    }
+
+    fn mint_with(fill: impl FnOnce(&mut [u8; 16]) -> Result<(), ()>) -> Self {
         let mut bytes = [0u8; 16];
-        if getrandom::fill(&mut bytes).is_err() {
+        if fill(&mut bytes).is_err() {
             let mut fallback = Sha256::new();
             let nanos = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -97,6 +101,26 @@ impl Correlation {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Correlation;
+
+    #[test]
+    fn an_entropy_failure_still_mints_distinct_well_formed_correlations() {
+        let first = Correlation::mint_with(|_| Err(()));
+        let second = Correlation::mint_with(|_| Err(()));
+
+        assert_ne!(first, second);
+        for minted in [first, second] {
+            assert_eq!(minted.as_str().len(), 34);
+            assert!(minted.as_str().starts_with("c-"));
+            assert!(minted.as_str()[2..]
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit()));
+        }
     }
 }
 

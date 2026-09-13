@@ -52,7 +52,11 @@ fn the_documented_frames_are_the_ones_the_profile_registers_and_serves() {
         .collect();
     assert_eq!(documented["frames"], json!(registered));
     assert_eq!(documented["served"], json!(onejudge::op::SERVED));
-    assert_eq!(onemessagebus_agent::codec::CODECS, [onejudge::CODEC]);
+    assert_eq!(onemessagebus_agent::codec::CODECS.len(), 1);
+    assert_eq!(
+        onemessagebus_agent::codec::CODECS[0].as_str(),
+        onejudge::CODEC
+    );
 }
 
 /// The `codexHome` the recorded lost turn names.

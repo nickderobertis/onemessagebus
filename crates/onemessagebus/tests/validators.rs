@@ -389,6 +389,43 @@ fn a_pass_is_recorded_under_the_content_and_the_bar_and_a_moved_bar_runs_the_com
 }
 
 #[test]
+fn a_cache_record_whose_fingerprint_or_command_was_changed_grants_no_pass() {
+    let rig = Rig::new();
+    let bus = rig.bus(&format!(
+        "  - {{on: findings, kind: command, command: {command}, cache: {{dir: {dir}, bar_fingerprint: {command}}}}}\n",
+        command = rig.command(),
+        dir = serde_json::to_string(&rig.path("passes")).expect("a path"),
+    ));
+    let message = json!({"what": "the cache is evidence"});
+    bus.send(&queue("findings"), message.clone()).expect("sent");
+    let path = rig.cached().into_iter().next().expect("a pass record");
+
+    for (field, replacement) in [
+        ("fingerprint", json!("a different bar")),
+        ("command", json!(["a", "different", "command"])),
+    ] {
+        let mut record: Value = serde_json::from_slice(
+            &std::fs::read(&path).expect("the pass record remains readable"),
+        )
+        .expect("the pass record remains JSON");
+        record[field] = replacement;
+        std::fs::write(
+            &path,
+            serde_json::to_vec_pretty(&record).expect("the changed record renders"),
+        )
+        .expect("the changed record is written");
+        bus.send(&queue("findings"), message.clone())
+            .expect("the validator reruns and passes");
+    }
+
+    assert_eq!(
+        rig.ran("validate").len(),
+        3,
+        "a changed cache record granted a pass"
+    );
+}
+
+#[test]
 fn only_a_pass_is_recorded_and_a_bar_with_no_fingerprint_records_nothing() {
     let rig = Rig::new();
     rig.script(

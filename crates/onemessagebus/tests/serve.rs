@@ -4,7 +4,7 @@
 //! that ends abandons them, a session bound leaves them counted.
 
 use std::io::{BufReader, Read};
-use std::sync::mpsc;
+use std::sync::{mpsc, LazyLock};
 use std::time::{Duration, Instant};
 
 use onemessagebus::{
@@ -17,9 +17,12 @@ use serde_json::{json, Value};
 /// answer the word its wait answered, `raise` a record, `refuse` or `fail`.
 struct Scripted;
 
+static SCRIPTED_NAME: LazyLock<CodecName> =
+    LazyLock::new(|| "scripted".parse().expect("a codec name"));
+
 impl Codec for Scripted {
-    fn name(&self) -> &str {
-        "scripted"
+    fn name(&self) -> &CodecName {
+        &SCRIPTED_NAME
     }
 
     fn answer(
@@ -146,7 +149,7 @@ fn each_frame_is_answered_with_one_line_in_order_and_blank_lines_are_passed_over
         lines(&output),
         vec![json!({"echo": "a"}), json!({"echo": "b"})]
     );
-    assert_eq!(Scripted.name(), "scripted");
+    assert_eq!(Scripted.name().as_str(), "scripted");
 }
 
 #[test]

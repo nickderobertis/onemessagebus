@@ -40,7 +40,7 @@
 use std::path::Path;
 
 use onemessagebus::{
-    Address, Answer, Codec, CodecFailure, EnvName, Message, SchemaId, ServeSession,
+    Address, Answer, Codec, CodecFailure, CodecName, EnvName, Message, SchemaId, ServeSession,
 };
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
@@ -48,6 +48,12 @@ use serde_json::{Map, Value};
 
 use crate::channel::source::PROPOSAL;
 use crate::note::DeliveredNote;
+
+static CODEC_NAME: std::sync::LazyLock<CodecName> = std::sync::LazyLock::new(|| {
+    CODEC
+        .parse()
+        .expect("the linked onejudge codec has a valid name")
+});
 
 /// The codec's name, as `serve --codec` gives it.
 pub const CODEC: &str = "onejudge";
@@ -1095,8 +1101,8 @@ fn refused_op(word: &str) -> CodecFailure {
 }
 
 impl Codec for Onejudge {
-    fn name(&self) -> &str {
-        CODEC
+    fn name(&self) -> &CodecName {
+        &CODEC_NAME
     }
 
     fn answer(

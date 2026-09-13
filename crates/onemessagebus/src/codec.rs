@@ -256,7 +256,7 @@ pub enum CodecFailure {
 /// A codec: one frame in, one response object out.
 pub trait Codec: Send {
     /// The codec's name, as `serve --codec` gives it.
-    fn name(&self) -> &str;
+    fn name(&self) -> &CodecName;
 
     /// Answer one frame — its line, as the member wrote it — raising and asking
     /// through `session` what the answer needs.

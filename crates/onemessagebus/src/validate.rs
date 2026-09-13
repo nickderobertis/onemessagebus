@@ -659,6 +659,8 @@ impl PassCache {
             record.schema_version == PASS_RECORD_VERSION
                 && record.content == key.content
                 && record.bar == key.bar
+                && record.fingerprint == key.fingerprint
+                && record.command == key.command
         })
     }
 
