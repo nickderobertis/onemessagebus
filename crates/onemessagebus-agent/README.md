@@ -27,5 +27,7 @@ let envelope = emitter.emit("push", Map::new());
 assert_eq!(envelope.v, 1);
 ```
 
+<!-- llmlint: ignore-block[no_redundant_instruction_pointers] this README is the crate's crates.io and docs.rs page (`readme = "README.md"`), read by a consumer who has only the packaged crate and never this repository's AGENTS.md; this link is how that reader reaches the contract at all. -->
 The contract every consumer restates from is
 [`docs/contract.md`](https://github.com/nickderobertis/onemessagebus/blob/main/docs/contract.md).
+<!-- llmlint: ignore-end[no_redundant_instruction_pointers] -->

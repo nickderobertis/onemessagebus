@@ -25,7 +25,9 @@ let written = emitter.emit("invoice-issued", Map::new());
 assert_eq!(written.seq, 1);
 ```
 
+<!-- llmlint: ignore-block[no_redundant_instruction_pointers] this README is the crate's crates.io and docs.rs page (`readme = "README.md"`), read by a consumer who has only the packaged crate and never this repository's AGENTS.md; these links are how that reader reaches the wire and the contract at all. -->
 The wire, the grammar and the registry rules are stated in the repository's
 [`docs/wire.md`](https://github.com/nickderobertis/onemessagebus/blob/main/docs/wire.md)
 and held by
 [`docs/contract.md`](https://github.com/nickderobertis/onemessagebus/blob/main/docs/contract.md).
+<!-- llmlint: ignore-end[no_redundant_instruction_pointers] -->

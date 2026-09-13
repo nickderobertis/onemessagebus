@@ -337,6 +337,50 @@ describe("the declared release targets", () => {
     }
   });
 
+  it("names the release job that publishes each target and the manifest that names it", () => {
+    // What the canonical reader accepts as prose, held to the configuration it
+    // describes: a `published_by` naming a job release.yml does not have, or a
+    // `manifest` that does not name the artifact, sends whoever follows it to the
+    // wrong place. Read raw, because the schema reader has no use for either.
+    const raw = parse(readFileSync(join(REPO_ROOT, FILE), "utf8"));
+    assert.equal(raw.schema_version, 3, `${FILE} is no longer written against schema version 3`);
+    assert.deepEqual(
+      raw.target.map((target) => [target.id, target.name]),
+      [
+        ["crate:onemessagebus", "crate"],
+        ["crate:onemessagebus-agent", "agent-crate"],
+        ["pypi:onemessagebus-cli", "pypi"],
+        ["npm:onemessagebus-cli", "npm"],
+      ],
+    );
+    const jobs = jobNames(io.workflow);
+    for (const target of raw.target) {
+      const [registry, artifact] = target.id.split(":");
+      const named = [...target.published_by.matchAll(/`([a-z][a-z0-9-]*)`/g)].map((m) => m[1]);
+      for (const job of named) {
+        assert.ok(
+          jobs.includes(job),
+          `${target.id}'s published_by names \`${job}\`, which release.yml has no job called`,
+        );
+      }
+      const publisher = named.find((job) => job.startsWith("publish-"));
+      assert.equal(
+        PUBLISHERS[publisher],
+        registry,
+        `${target.id}'s published_by names no publish job that pushes to ${registry}`,
+      );
+      const manifest = readFileSync(join(REPO_ROOT, target.manifest), "utf8");
+      const declared = target.manifest.endsWith("package.json")
+        ? JSON.parse(manifest).name
+        : tomlName(manifest, target.manifest === "pyproject.toml" ? "project" : "package");
+      assert.equal(
+        declared,
+        artifact,
+        `${target.id}'s manifest ${target.manifest} names ${declared}`,
+      );
+    }
+  });
+
   it("points at an executable probe", () => {
     accessSync(join(REPO_ROOT, io.declaration.probe), constants.X_OK);
   });
