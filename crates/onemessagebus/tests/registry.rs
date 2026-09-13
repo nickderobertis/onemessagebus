@@ -36,6 +36,23 @@ fn a_well_formed_id_parses_to_its_family_and_version() {
 }
 
 #[test]
+fn a_name_may_be_dot_joined_and_the_first_dot_still_ends_the_namespace() {
+    let frame: SchemaId = "agent.onejudge-frame.judge@6".parse().expect("parses");
+    assert_eq!(frame.namespace(), "agent");
+    assert_eq!(frame.name(), "onejudge-frame.judge");
+    assert_eq!(frame.version(), 6);
+    assert_eq!(frame.family(), "agent.onejudge-frame.judge");
+    assert_eq!(frame.to_string(), "agent.onejudge-frame.judge@6");
+    assert_eq!(SchemaId::literal("agent", "onejudge-frame.judge", 6), frame);
+    assert_eq!(
+        SchemaId::new("agent", "onejudge-frame.judge", 6).expect("builds"),
+        frame
+    );
+    let deep: SchemaId = "a.b.c.d@1".parse().expect("parses");
+    assert_eq!((deep.namespace(), deep.name()), ("a", "b.c.d"));
+}
+
+#[test]
 fn a_malformed_id_is_refused_naming_the_fault() {
     let refusals = [
         ("agent.finding", "names no version"),
@@ -45,6 +62,10 @@ fn a_malformed_id_is_refused_naming_the_fault() {
         ("agent.@1", "name is empty"),
         ("@1", "names no namespace"),
         ("agent.fin ding@1", "not letters, digits"),
+        ("agent.fin..ding@1", "dot-joined parts is empty"),
+        ("agent..finding@1", "dot-joined parts is empty"),
+        ("agent.finding.@1", "dot-joined parts is empty"),
+        ("agent.onejudge-frame.ju dge@6", "not letters, digits"),
     ];
     for (text, names) in refusals {
         let refusal = text.parse::<SchemaId>().expect_err(text);
@@ -68,8 +89,14 @@ fn a_literal_with_an_empty_namespace_panics() {
 
 #[test]
 #[should_panic(expected = "SchemaId::literal: the name is not")]
-fn a_literal_whose_name_carries_a_dot_panics() {
-    let _ = SchemaId::literal("agent", std::hint::black_box("fin.ding"), 1);
+fn a_literal_whose_name_has_an_empty_dot_joined_part_panics() {
+    let _ = SchemaId::literal("agent", std::hint::black_box("fin..ding"), 1);
+}
+
+#[test]
+#[should_panic(expected = "SchemaId::literal: the namespace is not")]
+fn a_literal_whose_namespace_carries_a_dot_panics() {
+    let _ = SchemaId::literal(std::hint::black_box("age.nt"), "finding", 1);
 }
 
 #[test]

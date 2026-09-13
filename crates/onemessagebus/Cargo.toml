@@ -25,11 +25,13 @@ path = "src/lib.rs"
 # profile. deny.toml's `bans` refuse the edge, and `cargo metadata` shows the
 # profile depending on this crate and never the reverse.
 [dependencies]
+getrandom = { workspace = true }
 jsonschema = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_norway = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 

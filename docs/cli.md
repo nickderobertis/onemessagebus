@@ -207,7 +207,9 @@ envelope sent to `replies` under `planner-channel` is routed by its halves, as
 `onepipeline` routes it: its commands to `commands`, its verdict to `replies`,
 so one send can print two lines. A queue the configuration does not declare is
 refused with exit 2 naming the queues it does, before stdin is read; a record
-its author may not write, or its schema refuses, exits 1 with nothing appended.
+its author may not write, its schema refuses, or a validator refuses or cannot
+judge (`validate`) exits 1 with nothing appended anywhere, the validator's reason
+on stderr unaltered.
 
 ```bash
 $ echo '{"kind":"finding","message":"the base moved","source":"proposal","blocking":true}' | onemessagebus send surfaces --transport-dir runs/r1/channel
@@ -271,6 +273,24 @@ wrapper otherwise takes from `queue.json` by hand. Text is one line per queue,
 
 ```bash
 $ onemessagebus status surfaces --format text --config onemessagebus.yaml
+```
+
+### `validate <queue> [--file PATH] [--config PATH] [--transport-dir DIR]`
+
+Judge the record on stdin (or in `--file`) exactly as `send` would judge it, and
+append nothing: by the validators the configuration declares for `<queue>`, and
+each record the layout routes to another queue by that queue's
+(`docs/validators.md`). It prints `{queue, verdict, reason}` — `verdict` is
+`pass`, `refuse` or `unjudged`, and `reason`, beside a verdict that is not a
+pass, is the validator's own words, unaltered — and exits 0 for a pass and 1 for
+either other verdict, saying the reason on stderr as well. An unjudged record is
+never a pass. A queue the configuration does not declare is refused with exit 2
+before stdin is read; a queue with no validators passes every record. A pass a
+validator's cache records is recorded here as it would be on a send.
+
+```bash
+$ onemessagebus validate replies --file reply.json --config onemessagebus.yaml
+{"queue":"replies","verdict":"refuse","reason":"an `add` states task prose the bar refuses\n"}
 ```
 
 ## `transports`

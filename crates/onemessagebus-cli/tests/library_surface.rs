@@ -258,7 +258,56 @@ fn exercised() -> Vec<Exercise> {
                 assert_eq!(kinds, vec!["local", "memory"]);
             }),
         ),
+        (
+            "onemessagebus::Bus::validate",
+            Box::new(|| {
+                let dir = tempfile::tempdir().expect("a temp dir");
+                let mut config = Config::local(dir.path(), None);
+                config
+                    .queues
+                    .insert(queue("findings"), QueueConfig::default());
+                let bus = config
+                    .resolve(&Layouts::new(), &TransportKinds::builtin())
+                    .expect("resolves")
+                    .with_validator(&queue("findings"), SaysSomething)
+                    .expect("a declared queue");
+                assert!(bus
+                    .validate(&queue("findings"), json!({ "what": "the base moved" }))
+                    .expect("judged")
+                    .passes());
+                let refused = bus
+                    .validate(&queue("findings"), json!({ "what": "" }))
+                    .expect("judged");
+                assert_eq!(refused.reason(), Some("a finding says what it found"));
+                assert!(
+                    !dir.path().join("findings.jsonl").exists(),
+                    "validate appended"
+                );
+            }),
+        ),
     ]
+}
+
+/// A deterministic validator: a finding says what it found.
+struct SaysSomething;
+
+impl onemessagebus::Validator<serde_json::Value> for SaysSomething {
+    fn validate(
+        &self,
+        message: &serde_json::Value,
+        _: &onemessagebus::ValidationContext,
+    ) -> onemessagebus::Verdict {
+        if message["what"]
+            .as_str()
+            .is_some_and(|what| !what.is_empty())
+        {
+            onemessagebus::Verdict::Pass
+        } else {
+            onemessagebus::Verdict::Refuse {
+                reason: "a finding says what it found".to_owned(),
+            }
+        }
+    }
 }
 
 fn queue(name: &str) -> QueueName {

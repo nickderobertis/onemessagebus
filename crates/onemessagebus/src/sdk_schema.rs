@@ -23,6 +23,7 @@ use crate::kinds::KindEntry;
 use crate::queue::{Asker, QueueStatus};
 use crate::schema::{Registry, SchemaId};
 use crate::transport::{ConsumerName, Position, QueueName};
+use crate::validate::Verdict;
 use crate::vocabulary::{Reserved, Vocabulary};
 
 /// How a reading verb renders what it read.
@@ -303,6 +304,34 @@ pub struct TransportsOptions {
     pub format: Option<Format>,
 }
 
+/// The options of `validate`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ValidateOptions {
+    /// The queue whose validators judge the record.
+    pub queue: QueueName,
+    /// The record file; stdin when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// The configuration file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
+    /// The transport directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport_dir: Option<String>,
+}
+
+/// What `validate` judged: the queue, and the verdict its validators reached.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Validated {
+    /// The queue the record was judged for.
+    pub queue: QueueName,
+    /// The verdict: `pass`, `refuse` or `unjudged`, with the reason beside a
+    /// verdict that is not a pass.
+    #[serde(flatten)]
+    pub verdict: Verdict,
+}
+
 /// One record `send` or `reply` appended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -470,6 +499,8 @@ pub struct Bundle {
     pub queue_statuses: Schema,
     /// The output of `transports`: every kind this build can open.
     pub transport_kinds: Schema,
+    /// The output of `validate`: the verdict a queue's validators reached.
+    pub validated: Schema,
     /// The option contracts, by the root each capability names.
     pub options: BTreeMap<&'static str, Schema>,
     /// Every message the registry holds, by id.
@@ -497,6 +528,7 @@ pub fn bundle<V: Vocabulary>(registry: &Registry) -> Bundle {
     options.insert("subscribe_options", schema_for!(SubscribeOptions));
     options.insert("status_options", schema_for!(StatusOptions));
     options.insert("transports_options", schema_for!(TransportsOptions));
+    options.insert("validate_options", schema_for!(ValidateOptions));
     Bundle {
         capabilities: CAPABILITIES,
         vocabulary: VocabularyManifest {
@@ -523,6 +555,7 @@ pub fn bundle<V: Vocabulary>(registry: &Registry) -> Bundle {
         log_record: schema_for!(LogRecord),
         queue_statuses: schema_for!(Vec<QueueStatus>),
         transport_kinds: schema_for!(Vec<KindEntry>),
+        validated: schema_for!(Validated),
         options,
         messages: registry
             .ids()

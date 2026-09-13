@@ -111,7 +111,9 @@ another; the redaction walks every string in the payload, however nested.
 
 ## The registry
 
-A schema id is `<namespace>.<name>@<version>`: `agent.event-envelope@2`. A
+A schema id is `<namespace>.<name>@<version>`: `agent.event-envelope@2`. The
+namespace ends at the first dot, and the name may itself be dot-joined parts —
+`agent.onejudge-frame.judge@6` is the name `onejudge-frame.judge` in `agent`. A
 *family* is the id without its version. The registry records a JSON Schema
 under an id — a Rust type's generated one through `register::<M>()`, or a
 document handed in through `register_schema` — and refuses a second, different

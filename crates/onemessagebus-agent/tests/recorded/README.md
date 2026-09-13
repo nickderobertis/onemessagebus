@@ -29,3 +29,14 @@ the touch rather than the producer.
   the contract's order, which is what `onepipeline` writes once it adopts this
   crate. They are kept apart from the file above so the byte-identity test stays
   exact rather than carrying an exception list.
+- `onejudge/lost-turn.jsonl` — a monitor turn a real producer really lost: the
+  13 JSON-RPC frames `codex app-server` (codex-cli 0.153.4) wrote when driven by
+  `oneharness run --stream --control` (oneharness 0.12.1) against a model
+  endpoint that refuses every turn, as `ai-orchestrator`'s
+  `tests/lost_turn_producer.py` (at `2fc711e`) captures it — its `capture()`,
+  run on this host on 2026-09-13 with a scratch codex home. It ends in an
+  `error` frame and a `turn/completed` whose `status` is `failed`, which is the
+  last assistant message a lost turn leaves in place of an answer and what the
+  onejudge codec reads the cause (`codexErrorInfo`) and identity (`codexHome`)
+  out of. The endpoint and the codex home are the scratch ones the producer
+  stood up; nothing else in the file was touched.

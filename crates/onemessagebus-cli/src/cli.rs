@@ -21,7 +21,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use onemessagebus::sdk_schema::{self, ClaimedRecord, Lang, LogRecord, Replied, SchemaEntry, Sent};
+use onemessagebus::sdk_schema::{
+    self, ClaimedRecord, Lang, LogRecord, Replied, SchemaEntry, Sent, Validated,
+};
 use onemessagebus::{
     Admits, Asker, BackendError, Bus, BusError, Carry, CheckError, Config, ConsumerName, Emitter,
     Filter, Layouts, Lifetime, Merge, Open, Position, Predicate, QueueError, QueueName,
@@ -85,6 +87,22 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
         format: OutputFormat,
     },
+    /// Judge a record by a queue's validators, appending nothing, and print the
+    /// verdict.
+    Validate(ValidateArgs),
+}
+
+/// What `validate` takes.
+#[derive(Debug, Args)]
+struct ValidateArgs {
+    /// The queue whose validators judge the record.
+    #[arg(value_name = "QUEUE")]
+    queue: String,
+    /// The record file; stdin when absent.
+    #[arg(long, value_name = "PATH")]
+    file: Option<PathBuf>,
+    #[command(flatten)]
+    bus: BusArgs,
 }
 
 /// The configuration a queue verb opens its bus with.
@@ -422,6 +440,7 @@ fn dispatch(cli: Cli, out: &mut impl std::io::Write) -> Result<(), Refusal> {
         Command::Subscribe(args) => subscribe(args, out),
         Command::Status(args) => status(args, out),
         Command::Transports { format } => transports(format, out),
+        Command::Validate(args) => validate(args, out),
     }
 }
 
@@ -1189,6 +1208,29 @@ fn transports(format: OutputFormat, out: &mut impl std::io::Write) -> Result<(),
         }
     };
     emit_text(out, &text)
+}
+
+fn validate(args: ValidateArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+    let queue = parse_queue(&args.queue)?;
+    let bus = open_bus(&args.bus)?;
+    // Refused before stdin is read, so a mistyped queue costs nothing.
+    bus.queue(&queue).map_err(bus_refusal)?;
+    let record = read_payload(args.file.as_deref())?;
+    let verdict = bus.validate(&queue, record).map_err(bus_refusal)?;
+    let judged = Validated {
+        queue: queue.clone(),
+        verdict,
+    };
+    emit_text(out, &json_line(&judged)?)?;
+    match judged.verdict.reason() {
+        None => Ok(()),
+        Some(reason) => Err(failed(match judged.verdict {
+            onemessagebus::Verdict::Unjudged { .. } => {
+                format!("{queue}: could not be judged, so it would not be sent: {reason}")
+            }
+            _ => format!("{queue}: refused, so it would not be sent: {reason}"),
+        })),
+    }
 }
 
 fn emit_text(out: &mut impl std::io::Write, text: &str) -> Result<(), Refusal> {

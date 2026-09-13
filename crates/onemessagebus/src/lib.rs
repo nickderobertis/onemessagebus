@@ -47,6 +47,7 @@ mod schema;
 pub mod sdk_schema;
 mod spool;
 pub mod transport;
+mod validate;
 mod vocabulary;
 
 pub use author::{Allowlist, Author, NarrowingRefused, OpWord, Operation, Refusal, NOT_GRANTED};
@@ -60,8 +61,8 @@ pub use capability::{
 pub use carry::{CarriedEntry, Carry, CARRY_SCHEMA_VERSION};
 pub use clock::now_rfc3339;
 pub use config::{
-    AuthorConfig, Bus, BusError, Config, ConfigError, Layout, Layouts, PolicyConfig, QueueConfig,
-    CONFIG_VERSION, NARROWED,
+    AuthorConfig, Bus, BusError, CacheConfig, Config, ConfigError, Layout, Layouts, PolicyConfig,
+    QueueConfig, ValidatorConfig, ValidatorKind, CONFIG_VERSION, NARROWED,
 };
 pub use emit::{Emitter, EmitterError, Unrecorded};
 pub use envelope::{ArtifactRef, Envelope, Kind, Labels, NoDimensions, Source};
@@ -90,6 +91,10 @@ pub use transport::{
     Batch, Changed, ConsumerName, DocumentName, Fingerprint, LocalTransport, MemoryTransport,
     NameError, Position, ProcessTransport, QueueName, Stored, TornRecord, Transport,
     TransportError,
+};
+pub use validate::{
+    CommandValidator, OnRecords, PassCache, ValidationContext, Validator, ValidatorError,
+    Validators, Verdict, When, PASS_RECORD_VERSION, VALIDATE_QUEUE_ENV,
 };
 pub use vocabulary::{Admits, Open, Reserved, Vocabulary, Wire};
 

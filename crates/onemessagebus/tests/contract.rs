@@ -35,8 +35,9 @@ fn fixture(name: &str) -> String {
 /// `spool-documents` and `carry-store`, the note contract's `note`, `accepted`
 /// and `note-undelivered`, and the planner channel's `planner-channel` and
 /// `planner-channel-grants` there alone, since each names the agent profile's
-/// message or layout. A fixture added to the document is added here beside the
-/// test that drives it.
+/// message or layout. The validators' `verdicts` and `validators-config` are
+/// driven here. A fixture added to the document is added here beside the test
+/// that drives it.
 const DRIVEN_FIXTURES: &[&str] = &[
     "accepted",
     "carry-store",
@@ -53,7 +54,9 @@ const DRIVEN_FIXTURES: &[&str] = &[
     "spool-documents",
     "transport-kinds",
     "transport-layout",
+    "validators-config",
     "verbs",
+    "verdicts",
 ];
 
 fn fixture_tag(line: &str) -> Option<&str> {
@@ -561,5 +564,86 @@ fn the_documented_configuration_loads_and_an_unknown_key_in_it_is_refused_by_nam
     assert!(
         refused.to_string().contains("unknown field `queus`"),
         "{refused}"
+    );
+}
+
+#[test]
+fn the_documented_verdicts_are_the_verdict_type_on_the_wire() {
+    use onemessagebus::Verdict;
+    let documented: Value = serde_json::from_str(&fixture("verdicts")).expect("JSON");
+    let read: Vec<Verdict> =
+        serde_json::from_value(documented.clone()).expect("the documented verdicts read");
+    assert!(
+        matches!(
+            read.as_slice(),
+            [
+                Verdict::Pass,
+                Verdict::Refuse { .. },
+                Verdict::Unjudged { .. }
+            ]
+        ),
+        "{read:?}"
+    );
+    assert_eq!(serde_json::to_value(&read).expect("JSON"), documented);
+    assert_eq!(
+        read.iter().map(Verdict::passes).collect::<Vec<_>>(),
+        [true, false, false],
+        "an unjudged verdict passed"
+    );
+}
+
+#[test]
+fn the_documented_validators_block_loads_into_the_config_and_an_unknown_key_in_it_is_refused_by_name(
+) {
+    use onemessagebus::{Config, ValidatorKind, When};
+    let text = format!(
+        "version: 1\ntransport: {{kind: local, dir: runs/r1/channel}}\n{}",
+        fixture("validators-config")
+    );
+    let config = Config::parse(&text).expect("the documented validators block loads");
+    let [validator] = config.validators.as_slice() else {
+        panic!("the documented block declares one validator: {config:?}");
+    };
+    assert_eq!(validator.on.as_str(), "replies");
+    assert_eq!(
+        validator.when,
+        Some(When::Carries("commands".parse().expect("a field path")))
+    );
+    assert_eq!(validator.kind, ValidatorKind::Command);
+    assert_eq!(
+        validator.command,
+        [
+            "uv",
+            "run",
+            "python",
+            "-m",
+            "orchestrator.plan_review",
+            "--envelope"
+        ]
+    );
+    let cache = validator.cache.as_ref().expect("the documented cache");
+    assert_eq!(cache.dir, std::path::Path::new(".validator-passes"));
+    assert_eq!(cache.bar_fingerprint, ["scripts/llmlint-fingerprint.sh"]);
+    for (from, to, named) in [
+        ("bar_fingerprint:", "bar:", "unknown field `bar`"),
+        (
+            "kind: command",
+            "kind: command, retries: 2",
+            "unknown field `retries`",
+        ),
+        (
+            "{carries: commands}",
+            "{carries: commands, and: x}",
+            "`carries` stands alone",
+        ),
+    ] {
+        let refused = Config::parse(&text.replace(from, to)).expect_err(to);
+        assert!(refused.to_string().contains(named), "{to}: {refused}");
+    }
+    let bundle = sdk_schema::bundle::<Open>(&Registry::new());
+    let document: Value = serde_json::from_str(&bundle.to_json()).expect("the bundle is JSON");
+    assert!(
+        document["config"]["properties"]["validators"].is_object(),
+        "the SDK bundle's config root has no validators block"
     );
 }

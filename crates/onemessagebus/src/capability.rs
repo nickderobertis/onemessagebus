@@ -411,6 +411,21 @@ pub const CAPABILITIES: &[Capability] = &[
         bindings: &[bind("format", FlagKind::Value("--format"))],
         uncovered: &[],
     },
+    Capability {
+        method: "validate",
+        verb: &["validate"],
+        options: Some("validate_options"),
+        stdout: StdoutShape::Json("validated"),
+        stdin: true,
+        library_entry: "onemessagebus::Bus::validate",
+        bindings: &[
+            bind("queue", FlagKind::Positional),
+            bind("file", FlagKind::Value("--file")),
+            CONFIG,
+            TRANSPORT_DIR,
+        ],
+        uncovered: &[],
+    },
 ];
 
 /// The configuration file every queue verb reads.

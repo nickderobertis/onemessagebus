@@ -22,9 +22,11 @@ use serde_json::Value;
 
 /// `<namespace>.<name>@<version>`: which schema a message is.
 ///
-/// Namespace and name are non-empty runs of ASCII letters, digits, `-` and
-/// `_`; the first `.` separates them, so a name may not carry one. The version
-/// is a positive integer.
+/// The namespace is a non-empty run of ASCII letters, digits, `-` and `_`, and
+/// the first `.` ends it. The name is everything after it up to the `@`: one or
+/// more such runs joined by single dots — `agent.onejudge-frame.judge@6` is the
+/// name `onejudge-frame.judge` in the namespace `agent`. The version is a
+/// positive integer. Every id whose name has no dot parses as it always did.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SchemaId {
     namespace: Cow<'static, str>,
@@ -48,8 +50,9 @@ impl SchemaId {
     ///
     /// # Panics
     ///
-    /// When the namespace or the name is empty or carries anything but ASCII
-    /// letters, digits, `-` and `_`, or the version is 0. In a `const` — a
+    /// When the namespace is empty or carries anything but ASCII letters,
+    /// digits, `-` and `_`, the name is not such runs joined by single dots, or
+    /// the version is 0. In a `const` — a
     /// [`Message::SCHEMA`] — that is a compile error, so a malformed literal
     /// never reaches a registry:
     ///
@@ -63,8 +66,8 @@ impl SchemaId {
             "SchemaId::literal: the namespace is not a non-empty run of ASCII letters, digits, `-` and `_`"
         );
         assert!(
-            is_part(name),
-            "SchemaId::literal: the name is not a non-empty run of ASCII letters, digits, `-` and `_`"
+            is_name(name),
+            "SchemaId::literal: the name is not non-empty runs of ASCII letters, digits, `-` and `_` joined by single dots"
         );
         assert!(
             version > 0,
@@ -142,6 +145,32 @@ const fn is_part(text: &str) -> bool {
     true
 }
 
+/// Runs [`is_part`] admits, joined by single dots: no empty run, and so no dot
+/// first, last or doubled. A `while` loop for the same reason.
+const fn is_name(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    let mut at = 0;
+    let mut run = 0;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        if byte == b'.' {
+            if run == 0 {
+                return false;
+            }
+            run = 0;
+        } else if byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_' {
+            run += 1;
+        } else {
+            return false;
+        }
+        at += 1;
+    }
+    run > 0
+}
+
 impl FromStr for SchemaId {
     type Err = SchemaIdError;
 
@@ -163,9 +192,11 @@ impl FromStr for SchemaId {
                 "its namespace is not letters, digits, `-` and `_`"
             }));
         }
-        if !is_part(name) {
+        if !is_name(name) {
             return Err(refuse(if name.is_empty() {
                 "its name is empty"
+            } else if name.split('.').any(str::is_empty) {
+                "one of its name's dot-joined parts is empty"
             } else {
                 "its name is not letters, digits, `-` and `_`"
             }));
@@ -211,7 +242,7 @@ impl JsonSchema for SchemaId {
         schemars::json_schema!({
             "type": "string",
             "description": "<namespace>.<name>@<version>: which schema a message is.",
-            "pattern": "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+@[1-9][0-9]*$"
+            "pattern": "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$"
         })
     }
 }
@@ -220,6 +251,12 @@ impl JsonSchema for SchemaId {
 pub trait Message: Serialize + DeserializeOwned + JsonSchema {
     /// The id this type's generated schema is registered under.
     const SCHEMA: SchemaId;
+}
+
+/// Any JSON record, as a queue a configuration declares holds one: what a
+/// validator of such a queue judges.
+impl Message for Value {
+    const SCHEMA: SchemaId = SchemaId::literal("onemessagebus", "json-value", 1);
 }
 
 /// Why the registry refused.

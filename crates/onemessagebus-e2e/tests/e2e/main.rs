@@ -13,3 +13,4 @@ mod queues;
 mod rich;
 mod schema;
 mod support;
+mod validators;
