@@ -12,7 +12,6 @@ use onemessagebus_agent::{Dimensions, Labels, MatchFields, DIMENSIONS, RESERVED_
 use schemars::JsonSchema;
 use serde_json::Value;
 
-/// A type's JSON Schema, as JSON.
 fn schema_of<T: JsonSchema>() -> Value {
     serde_json::to_value(schemars::schema_for!(T)).expect("a schema serializes")
 }
@@ -72,7 +71,9 @@ fn json_type(ty: &str) -> Option<Admits> {
     }
 }
 
-/// Whether a definition is a closed set of string words.
+/// Both spellings count as a word: schemars writes an undocumented set as
+/// `enum` and a documented one as `oneOf` string constants, so documenting a
+/// variant must not turn a word into something this table cannot read.
 fn is_closed_words(definition: &Value) -> bool {
     if let Some(Value::Array(words)) = definition.get("enum") {
         return !words.is_empty() && words.iter().all(Value::is_string);

@@ -262,6 +262,72 @@ fn the_bundle_emits_the_manifest_and_every_documented_root() {
     }
 }
 
+/// The bindings restate the option structs by name, because an SDK builds its
+/// argv from the manifest and cannot see a Rust field. Each capability's
+/// bindings are held to the properties of the options schema it names — the
+/// generated one, so serde's camelCase is what is compared — in both
+/// directions: a binding naming no property renders a flag from nothing, and
+/// a property no binding names is an option the SDK accepts and drops. The
+/// manifest declares uncovered *flags* but no uncovered options, so every
+/// property must be bound. Every disagreement is named at once.
+#[test]
+fn every_capabilitys_bindings_are_exactly_its_options_schemas_properties() {
+    let bundle = sdk_schema::bundle::<Open>(&Registry::new());
+    let options = serde_json::to_value(&bundle.options).expect("the options serialize");
+    let mut named = std::collections::BTreeSet::new();
+    let mut disagreements = Vec::new();
+    for capability in CAPABILITIES {
+        let bound: Vec<&str> = capability.bindings.iter().map(|b| b.option).collect();
+        let Some(root) = capability.options else {
+            if !bound.is_empty() {
+                disagreements.push(format!(
+                    "{}: names no options schema but binds {bound:?}",
+                    capability.method
+                ));
+            }
+            continue;
+        };
+        named.insert(root);
+        let Some(properties) = options[root]["properties"].as_object() else {
+            disagreements.push(format!(
+                "{}: options schema {root} is not in the bundle, or has no properties",
+                capability.method
+            ));
+            continue;
+        };
+        let unbound: Vec<&str> = properties
+            .keys()
+            .map(String::as_str)
+            .filter(|property| !bound.contains(property))
+            .collect();
+        let unknown: Vec<&str> = bound
+            .iter()
+            .copied()
+            .filter(|option| !properties.contains_key(*option))
+            .collect();
+        if !unknown.is_empty() {
+            disagreements.push(format!(
+                "{}: bindings name {unknown:?}, which options schema {root} has no property for",
+                capability.method
+            ));
+        }
+        if !unbound.is_empty() {
+            disagreements.push(format!(
+                "{}: options schema {root} has properties {unbound:?}, which no binding names",
+                capability.method
+            ));
+        }
+    }
+    for root in bundle.options.keys() {
+        if !named.contains(root) {
+            disagreements.push(format!(
+                "options schema {root} is in the bundle, but no capability names it"
+            ));
+        }
+    }
+    assert!(disagreements.is_empty(), "{}", disagreements.join("\n"));
+}
+
 #[test]
 fn an_unsupported_language_is_refused_by_name() {
     let id = "test.thing@1".parse().expect("id");
