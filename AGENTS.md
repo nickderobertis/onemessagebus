@@ -97,8 +97,10 @@ rationale; the mechanics live in the files named. -->
   depends on the binary's `build`), `onemessagebus-npm` (the launcher and the
   release-configuration drift gates), `onemessagebus-npm-e2e` (the launcher's
   install journeys, which pack the built binary and install it the way a user
-  does — the costly tier, kept out of the packaging project's own tests), and
-  the root `workspace` project carrying
+  does — the costly tier, kept out of the packaging project's own tests),
+  `onemessagebus-pypi` (the wheel: `build` runs maturin over the root
+  `pyproject.toml`, `test` installs that wheel into a fresh virtualenv and
+  smoke-tests what it put on PATH), and the root `workspace` project carrying
   the aggregate coverage floor and the supply-chain check. The binary is its
   own `publish = false` crate because it links the agent profile so `--profile`
   defaults to it, a binary links only its own crate's dependencies, and the
@@ -114,6 +116,26 @@ rationale; the mechanics live in the files named. -->
   TypeScript SDK if that node wants it. **A `published-smoke` workflow** — the
   post-release registry watch the siblings carry is a follow-up once the first
   release exists to watch.
+- **Buildout-tier exception, authorized by the manager:** the skill's buildout
+  rules disagree about where the broader-tier sweep runs.
+  `affected_only_explicit_base` (`assets/llmlint/buildout/project-graph.llmlint.yml`)
+  asks for "a full sweep … on the main branch or nightly";
+  `broader_sweep_runs_at_exactly_one_lifecycle_point`
+  (`buildout/ci.llmlint.yml`) asks for exactly one, "at release-prep when
+  releases are batched behind a release PR"; and
+  `broader_sweep_placement_matches_the_release_driver`
+  (`buildout/releasing.llmlint.yml`) puts it "on the release PR for a
+  release-PR gate (`release-plz`, …)". The ongoing
+  `no_second_broader_sweep_over_an_already_gated_commit` refuses a nightly
+  re-sweep of a tree that PR already gated. This repository's release driver is
+  release-plz, so the one broader sweep is `just check` on the release PR and an
+  ordinary pull request runs `just check-affected` against its explicit merge
+  base — no main-branch or nightly sweep. The manager ruled that the first rule's
+  main/nightly wording is the push-to-main case and does not apply here, and the
+  conflict is a dero-skills finding to fix upstream. It is recorded here rather
+  than as a directive at `ci.yml`'s trigger because that rule exists only in the
+  one-time buildout fragments, which `llmlint.yml` does not load, so the
+  deterministic `check-ignores` gate refuses a directive naming it.
 <!-- llmlint: ignore-end[agents_md_durable_and_terse] the required-artifact scope ends here.
 -->
 

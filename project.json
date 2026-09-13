@@ -9,7 +9,8 @@
     "onemessagebus-cli",
     "onemessagebus-e2e",
     "onemessagebus-npm",
-    "onemessagebus-npm-e2e"
+    "onemessagebus-npm-e2e",
+    "onemessagebus-pypi"
   ],
   "targets": {
     "coverage": {

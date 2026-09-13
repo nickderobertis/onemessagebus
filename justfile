@@ -165,6 +165,28 @@ _e2e-test:
     @cargo llvm-cov --no-report nextest -p onemessagebus-e2e --locked --status-level fail --final-status-level fail \
       || { echo "onemessagebus-e2e: journeys failed — fix the failures named above" >&2; exit 1; }
 
+# The PyPI wheel, built by maturin from pyproject.toml with the version release.yml
+# pins, warnings denied, into the gitignored dist/wheels.
+_wheel-build:
+    @rm -rf dist/wheels
+    @RUSTFLAGS="-D warnings" uvx --from 'maturin==1.14.1' maturin build --release --locked --out dist/wheels \
+      || { echo "onemessagebus-pypi: the wheel did not build — fix the error above (maturin reads pyproject.toml), or install uv (https://docs.astral.sh/uv/)" >&2; exit 1; }
+
+# The built wheel installed into a fresh virtualenv the way `pip install
+# onemessagebus-cli` installs it, then the published smoke script over what it put
+# on PATH, holding it to the workspace version.
+_wheel-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    venv="$(mktemp -d)"
+    trap 'rm -rf "$venv"' EXIT
+    uv venv --quiet "$venv" \
+      || { echo "onemessagebus-pypi: cannot create a virtualenv — install uv (https://docs.astral.sh/uv/) and a Python 3.9+" >&2; exit 1; }
+    VIRTUAL_ENV="$venv" uv pip install --quiet --no-index --find-links dist/wheels onemessagebus-cli \
+      || { echo "onemessagebus-pypi: no installable wheel in dist/wheels — run 'just nx run onemessagebus-pypi:build' first" >&2; exit 1; }
+    version="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -n1)"
+    PATH="$venv/bin:$PATH" bash scripts/smoke-published.sh --expect-version "$version" --label "the wheel built from this revision"
+
 # The aggregate report over every project's profiles, enforced once. The
 # conformance table is test support published for profile crates, exercised by
 # its callers rather than a subject of coverage.

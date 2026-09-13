@@ -71,6 +71,9 @@ jobs:
         with:
           tool: nextest,cargo-llvm-cov
       - uses: ./.github/actions/setup-just
+      # onemessagebus-pypi's targets build the wheel with maturin through uvx and
+      # install it into a uv virtualenv.
+      - uses: astral-sh/setup-uv@v6
       - name: Bootstrap
         run: just bootstrap
       - name: Quality gate (affected projects)
