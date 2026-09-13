@@ -85,6 +85,7 @@ jobs:
         with:
           tool: release-plz@${{ env.RELEASE_PLZ_VERSION }},cargo-semver-checks
 
+      # llmlint: ignore-block[changed_behavior_has_e2e] these steps tag, open and auto-merge release PRs through GitHub with RELEASE_PLZ_TOKEN against this repository's real tags and history, which no offline run can reproduce without faking GitHub; every merge to main exercises them, and the release PR they open is itself swept whole by ci.yml's gate before anything ships.
       - name: Tag and publish a merged version bump
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
@@ -129,3 +130,4 @@ jobs:
           else
             echo "No open release PR to auto-merge."
           fi
+      # llmlint: ignore-end[changed_behavior_has_e2e]

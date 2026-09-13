@@ -109,12 +109,37 @@ describe("the release probe against a registry that answers", {
 
   it("answers the version each registry says a bare install resolves to", async () => {
     const answers = [
-      [{ [CRATE]: { body: { crate: { max_stable_version: "1.4.2", newest_version: "1.5.0-rc.1" } } } }, "crate:onemessagebus", "1.4.2"],
-      // No stable release yet: what `cargo add` falls back to.
-      [{ [CRATE]: { body: { crate: { max_stable_version: null, newest_version: "0.2.0-rc.1" } } } }, "crate:onemessagebus", "0.2.0-rc.1"],
-      [{ [PYPI]: { body: { info: { name: "onemessagebus-cli", version: "0.3.0" } } } }, "pypi:onemessagebus-cli", "0.3.0"],
       [
-        { [NPM]: { body: { "dist-tags": { latest: "0.3.0+build.7", next: "0.4.0-rc.1" }, versions: { "0.3.0+build.7": { version: "0.3.0+build.7" } } } } },
+        {
+          [CRATE]: {
+            body: { crate: { max_stable_version: "1.4.2", newest_version: "1.5.0-rc.1" } },
+          },
+        },
+        "crate:onemessagebus",
+        "1.4.2",
+      ],
+      // No stable release yet: what `cargo add` falls back to.
+      [
+        {
+          [CRATE]: { body: { crate: { max_stable_version: null, newest_version: "0.2.0-rc.1" } } },
+        },
+        "crate:onemessagebus",
+        "0.2.0-rc.1",
+      ],
+      [
+        { [PYPI]: { body: { info: { name: "onemessagebus-cli", version: "0.3.0" } } } },
+        "pypi:onemessagebus-cli",
+        "0.3.0",
+      ],
+      [
+        {
+          [NPM]: {
+            body: {
+              "dist-tags": { latest: "0.3.0+build.7", next: "0.4.0-rc.1" },
+              versions: { "0.3.0+build.7": { version: "0.3.0+build.7" } },
+            },
+          },
+        },
         "npm:onemessagebus-cli",
         "0.3.0+build.7",
       ],
@@ -128,7 +153,10 @@ describe("the release probe against a registry that answers", {
   });
 
   it("answers nothing, and exits 0, only when the registry says there is no such artifact", async () => {
-    const result = await probeRegistry({ [NPM]: { status: 404, body: { error: "Not found" } } }, "npm:onemessagebus-cli");
+    const result = await probeRegistry(
+      { [NPM]: { status: 404, body: { error: "Not found" } } },
+      "npm:onemessagebus-cli",
+    );
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, "");
   });
@@ -137,7 +165,16 @@ describe("the release probe against a registry that answers", {
     // Each of these is exactly one `"key": "value"` pair, so the reader picks it
     // out; what it picked out is still not a version, and printing it would hand
     // a consumer a tag name, an escape sequence, or a second line as the answer.
-    const values = ["latest", "1.2", "v1.2.3", "1.2.3 1.2.4", "1.2.3\n9.9.9", '1.2.3"', "1.2.3-", "$(touch pwned)"];
+    const values = [
+      "latest",
+      "1.2",
+      "v1.2.3",
+      "1.2.3 1.2.4",
+      "1.2.3\n9.9.9",
+      '1.2.3"',
+      "1.2.3-",
+      "$(touch pwned)",
+    ];
     for (const value of values) {
       for (const [routes, identifier] of [
         [{ [CRATE]: { body: { crate: { max_stable_version: value } } } }, "crate:onemessagebus"],
@@ -146,7 +183,11 @@ describe("the release probe against a registry that answers", {
       ]) {
         const result = await probeRegistry(routes, identifier);
         assertNotAnswered(result, `${identifier} serving ${JSON.stringify(value)}`);
-        assert.match(result.stderr, /which is not a version/, `${identifier} serving ${JSON.stringify(value)}`);
+        assert.match(
+          result.stderr,
+          /which is not a version/,
+          `${identifier} serving ${JSON.stringify(value)}`,
+        );
       }
     }
   });
@@ -154,9 +195,15 @@ describe("the release probe against a registry that answers", {
   it("does not answer a document it cannot read one version from", async () => {
     const unreadable = [
       [{ [CRATE]: { body: { crate: { name: "onemessagebus" } } } }, "crate:onemessagebus"],
-      [{ [PYPI]: { body: '{"info":{"version":"0.3.0"},"also":{"version":"0.4.0"}}' } }, "pypi:onemessagebus-cli"],
+      [
+        { [PYPI]: { body: '{"info":{"version":"0.3.0"},"also":{"version":"0.4.0"}}' } },
+        "pypi:onemessagebus-cli",
+      ],
       // npm serves a packument with no dist-tags for a name whose every version was unpublished.
-      [{ [NPM]: { body: { name: "onemessagebus-cli", time: { unpublished: {} } } } }, "npm:onemessagebus-cli"],
+      [
+        { [NPM]: { body: { name: "onemessagebus-cli", time: { unpublished: {} } } } },
+        "npm:onemessagebus-cli",
+      ],
     ];
     for (const [routes, identifier] of unreadable) {
       const result = await probeRegistry(routes, identifier);
@@ -167,7 +214,10 @@ describe("the release probe against a registry that answers", {
 
   it("does not answer when the registry answers anything but yes or no", async () => {
     for (const status of [429, 500, 503]) {
-      const result = await probeRegistry({ [CRATE]: { status, body: "busy" } }, "crate:onemessagebus");
+      const result = await probeRegistry(
+        { [CRATE]: { status, body: "busy" } },
+        "crate:onemessagebus",
+      );
       assertNotAnswered(result, `HTTP ${status}`);
       assert.match(result.stderr, new RegExp(`answered HTTP ${status}`));
     }
@@ -176,7 +226,10 @@ describe("the release probe against a registry that answers", {
   it("does not answer when the registry cannot be reached", async () => {
     const result = await probeUnreachable("pypi:onemessagebus-cli");
     assertNotAnswered(result, "an unreachable registry");
-    assert.match(result.stderr, /could not reach https:\/\/pypi\.org\/pypi\/onemessagebus-cli\/json/);
+    assert.match(
+      result.stderr,
+      /could not reach https:\/\/pypi\.org\/pypi\/onemessagebus-cli\/json/,
+    );
     assert.match(result.stderr, /NOT evidence that nothing is published/);
   });
 });

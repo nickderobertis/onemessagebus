@@ -49,6 +49,7 @@ log() { printf 'setup-llmlint: %s\n' "$*" >&2; }
 # Install llmlint from PyPI via uv (the repo's Python package manager). uv is a
 # clean-clone prerequisite; if it is somehow absent, log an actionable pointer and
 # leave any already-installed binary in place rather than aborting startup.
+# llmlint: ignore-block[changed_behavior_has_e2e] the session-start half of the llmlint tier: it installs llmlint-cli into the invoking user's home from PyPI and appends to the session's CLAUDE_ENV_FILE, so a test would rewrite the developer's own toolchain; its contract is that it always exits 0, and `llmlint doctor` at its end is the check it runs on what it installed, while `just lint-llm-validate` and `just lint-llm-diff` exercise the installed tier on every gate.
 ensure_toolchain() {
   if ! command -v uv >/dev/null 2>&1; then
     log "uv not found; cannot install llmlint (install uv: https://docs.astral.sh/uv/)"
@@ -87,4 +88,5 @@ if command -v llmlint >/dev/null 2>&1; then
 else
   log "llmlint not installed"
 fi
+# llmlint: ignore-end[changed_behavior_has_e2e]
 exit 0

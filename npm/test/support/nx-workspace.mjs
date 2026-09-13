@@ -35,7 +35,15 @@ export function isolatedEnv(extra = {}) {
 export function git(cwd, ...args) {
   return execFileSync(
     "git",
-    ["-c", "user.name=nx-workspace", "-c", "user.email=nx-workspace@example.invalid", "-c", "commit.gpgsign=false", ...args],
+    [
+      "-c",
+      "user.name=nx-workspace",
+      "-c",
+      "user.email=nx-workspace@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      ...args,
+    ],
     { cwd, env: isolatedEnv(), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
   ).trim();
 }
@@ -53,7 +61,10 @@ export function createUpstream(root) {
     copyFileSync(join(REPO_ROOT, "scripts", script), join(dir, "scripts", script));
   }
   writeFileSync(join(dir, "nx.json"), "{}\n");
-  writeFileSync(join(dir, "package.json"), `${JSON.stringify({ name: "nx-workspace", private: true })}\n`);
+  writeFileSync(
+    join(dir, "package.json"),
+    `${JSON.stringify({ name: "nx-workspace", private: true })}\n`,
+  );
   writeFileSync(join(dir, ".gitignore"), ".nx\n.logs\nnode_modules\n");
   const projects = {
     a: {
@@ -69,7 +80,10 @@ export function createUpstream(root) {
   };
   for (const [name, targets] of Object.entries(projects)) {
     mkdirSync(join(dir, name));
-    writeFileSync(join(dir, name, "project.json"), `${JSON.stringify({ name, targets }, null, 2)}\n`);
+    writeFileSync(
+      join(dir, name, "project.json"),
+      `${JSON.stringify({ name, targets }, null, 2)}\n`,
+    );
     writeFileSync(join(dir, name, "src.txt"), `${name}\n`);
   }
   git(dir, "init", "--quiet", "--initial-branch=main");
@@ -91,7 +105,8 @@ export function checkout(root, name, upstream, { shallow = false, linkNodeModule
   const dir = join(root, name);
   const depth = shallow ? ["--depth", "1", "--no-single-branch"] : [];
   git(root, "clone", "--quiet", "--branch", "feature", ...depth, `file://${upstream}`, dir);
-  if (linkNodeModules) symlinkSync(join(REPO_ROOT, "node_modules"), join(dir, "node_modules"), "dir");
+  if (linkNodeModules)
+    symlinkSync(join(REPO_ROOT, "node_modules"), join(dir, "node_modules"), "dir");
   return dir;
 }
 

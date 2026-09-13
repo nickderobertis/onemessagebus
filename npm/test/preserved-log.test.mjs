@@ -32,12 +32,21 @@ const LIBRARY = join(REPO_ROOT, "scripts", "preserved-log.sh");
 /// of exactly PATH, HOME and `env` — so the credentials in it are the ones a case
 /// put there, and an enclosing `scripts/nx`'s claim list is not inherited.
 function sourced(script, { env = {}, input } = {}) {
-  const result = spawnSync("bash", ["-c", `set -euo pipefail\n. "$PRESERVED_LOG_LIBRARY"\n${script}`], {
-    encoding: "utf8",
-    input,
-    env: { PATH: process.env.PATH, HOME: process.env.HOME, PRESERVED_LOG_LIBRARY: LIBRARY, ...env },
-    timeout: 30_000,
-  });
+  const result = spawnSync(
+    "bash",
+    ["-c", `set -euo pipefail\n. "$PRESERVED_LOG_LIBRARY"\n${script}`],
+    {
+      encoding: "utf8",
+      input,
+      env: {
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        PRESERVED_LOG_LIBRARY: LIBRARY,
+        ...env,
+      },
+      timeout: 30_000,
+    },
+  );
   assert.equal(result.error, undefined, `bash could not be run: ${result.error}`);
   return result;
 }
@@ -46,7 +55,9 @@ function mode(path) {
   return statSync(path).mode & 0o777;
 }
 
-describe("scripts/preserved-log.sh", { skip: process.platform === "win32" && "asserts POSIX permissions" }, () => {
+describe("scripts/preserved-log.sh", {
+  skip: process.platform === "win32" && "asserts POSIX permissions",
+}, () => {
   let scratch;
   let roots = 0;
 
@@ -72,17 +83,32 @@ describe("scripts/preserved-log.sh", { skip: process.platform === "win32" && "as
     writeFileSync(join(logs, "nx.4242.log"), "a nested run of the previous one\n");
     writeFileSync(join(logs, "other.log"), "another label's log\n");
 
-    const result = sourced('preserved_log_open "$ROOT_DIR" nx\nprintf \'%s\\n\' "$PRESERVED_LOG"\necho fresh >"$PRESERVED_LOG"', {
-      env: { ROOT_DIR: root },
-    });
+    const result = sourced(
+      'preserved_log_open "$ROOT_DIR" nx\nprintf \'%s\\n\' "$PRESERVED_LOG"\necho fresh >"$PRESERVED_LOG"',
+      {
+        env: { ROOT_DIR: root },
+      },
+    );
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stderr, "");
     const log = join(realpathSync(root), ".logs", "nx.log");
-    assert.equal(result.stdout, `${log}\n`, "PRESERVED_LOG is not the absolute, canonical log path");
-    assert.equal(readFileSync(log, "utf8"), "fresh\n", "the previous run's output was not truncated");
+    assert.equal(
+      result.stdout,
+      `${log}\n`,
+      "PRESERVED_LOG is not the absolute, canonical log path",
+    );
+    assert.equal(
+      readFileSync(log, "utf8"),
+      "fresh\n",
+      "the previous run's output was not truncated",
+    );
     assert.equal(mode(log), 0o600, "the log is readable by someone other than its owner");
     assert.equal(mode(logs), 0o700, "the log directory is open to someone other than its owner");
-    assert.equal(existsSync(join(logs, "nx.4242.log")), false, "a diverted leftover survived a top-level run");
+    assert.equal(
+      existsSync(join(logs, "nx.4242.log")),
+      false,
+      "a diverted leftover survived a top-level run",
+    );
     assert.equal(readFileSync(join(logs, "other.log"), "utf8"), "another label's log\n");
   });
 
@@ -107,8 +133,16 @@ describe("scripts/preserved-log.sh", { skip: process.platform === "win32" && "as
     const outer = result.stdout.match(/^outer=(.*)$/m)[1];
     const inner = result.stdout.match(/^inner=(.*)$/m)[1];
     assert.equal(outer, join(realpathSync(root), ".logs", "nx.log"));
-    assert.match(inner, /\/\.logs\/nx\.\d+\.log$/, "the nested run was not diverted to a distinct log");
-    assert.equal(readFileSync(outer, "utf8"), "outer evidence, still being written\n", "the nested run truncated its parent's log");
+    assert.match(
+      inner,
+      /\/\.logs\/nx\.\d+\.log$/,
+      "the nested run was not diverted to a distinct log",
+    );
+    assert.equal(
+      readFileSync(outer, "utf8"),
+      "outer evidence, still being written\n",
+      "the nested run truncated its parent's log",
+    );
     assert.equal(readFileSync(inner, "utf8"), "inner\n");
     assert.equal(mode(inner), 0o600);
   });
@@ -120,25 +154,42 @@ describe("scripts/preserved-log.sh", { skip: process.platform === "win32" && "as
         env: { ROOT_DIR: root, LABEL: label },
       });
       assert.equal(result.stdout, "refused=1\n", `the label '${label}' was accepted`);
-      assert.match(result.stderr, /preserved-log: invalid log label '.*'; use lowercase words and dashes/);
+      assert.match(
+        result.stderr,
+        /preserved-log: invalid log label '.*'; use lowercase words and dashes/,
+      );
     }
-    assert.equal(existsSync(join(root, ".logs")), false, "a refused label still created the log directory");
+    assert.equal(
+      existsSync(join(root, ".logs")),
+      false,
+      "a refused label still created the log directory",
+    );
   });
 
   it("names the directory it could not prepare", () => {
     const root = join(scratch, "a-file-not-a-directory");
     writeFileSync(root, "");
-    const result = sourced('preserved_log_open "$ROOT_DIR" nx || echo "refused=$?"', { env: { ROOT_DIR: root } });
+    const result = sourced('preserved_log_open "$ROOT_DIR" nx || echo "refused=$?"', {
+      env: { ROOT_DIR: root },
+    });
     assert.equal(result.stdout, "refused=1\n");
-    assert.match(result.stderr, /preserved-log: cannot prepare '.*a-file-not-a-directory\/\.logs'; repair its parent permissions and retry/);
+    assert.match(
+      result.stderr,
+      /preserved-log: cannot prepare '.*a-file-not-a-directory\/\.logs'; repair its parent permissions and retry/,
+    );
   });
 
   it("names the log it could not open", () => {
     const root = freshRoot();
     mkdirSync(join(root, ".logs", "nx.log"), { recursive: true });
-    const result = sourced('preserved_log_open "$ROOT_DIR" nx || echo "refused=$?"', { env: { ROOT_DIR: root } });
+    const result = sourced('preserved_log_open "$ROOT_DIR" nx || echo "refused=$?"', {
+      env: { ROOT_DIR: root },
+    });
     assert.equal(result.stdout, "refused=1\n");
-    assert.match(result.stderr, /preserved-log: cannot open '.*\/\.logs\/nx\.log'; repair its permissions and retry/);
+    assert.match(
+      result.stderr,
+      /preserved-log: cannot open '.*\/\.logs\/nx\.log'; repair its permissions and retry/,
+    );
   });
 
   it("replaces every credential value in the environment with the name it came from", () => {

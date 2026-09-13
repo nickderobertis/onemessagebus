@@ -7,10 +7,20 @@
 // and which projects' targets actually ran.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
+import { stripVTControlCharacters } from "node:util";
 import assert from "node:assert/strict";
 
 import { checkout, createUpstream, wrapper } from "./support/nx-workspace.mjs";
@@ -32,12 +42,6 @@ after(() => {
 function markFile() {
   marks += 1;
   return join(scratch, `ran-${marks}`);
-}
-
-/// A log's text without terminal styling: a nested run inherits the colour Nx
-/// forces on its children, and the claim is about what it wrote, not how.
-function plain(text) {
-  return text.replace(/\x1B\[[0-9;]*m/g, "");
 }
 
 /// The projects whose `mark` target ran, as they recorded themselves.
@@ -71,7 +75,10 @@ describe("scripts/nx", { skip: POSIX_ONLY }, () => {
     assert.match(result.stderr, /the token is <redacted:NX_WORKSPACE_TOKEN>/);
     assert.ok(!result.stderr.includes(secret), "the credential value reached the terminal");
     const log = join(realpathSync(workspace), ".logs", "nx.log");
-    assert.ok(!readFileSync(log, "utf8").includes(secret), "the credential value reached the log on disk");
+    assert.ok(
+      !readFileSync(log, "utf8").includes(secret),
+      "the credential value reached the log on disk",
+    );
     assert.match(
       result.stderr,
       new RegExp(
@@ -81,7 +88,9 @@ describe("scripts/nx", { skip: POSIX_ONLY }, () => {
   });
 
   it("streams Nx's own stdout untouched when a caller reads it", () => {
-    const result = wrapper(workspace, "nx", ["show", "projects", "--json"], { ONEMESSAGEBUS_NX_SHOW_OUTPUT: "1" });
+    const result = wrapper(workspace, "nx", ["show", "projects", "--json"], {
+      ONEMESSAGEBUS_NX_SHOW_OUTPUT: "1",
+    });
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout).sort(), ["a", "b"]);
   });
@@ -93,9 +102,13 @@ describe("scripts/nx", { skip: POSIX_ONLY }, () => {
     assert.deepEqual(ran(mark), ["b"]);
     const outer = readFileSync(join(workspace, ".logs", "nx.log"), "utf8");
     assert.match(outer, /nx run a:nested/, "the nested run truncated the outer run's log");
-    const inner = outer.match(/nx: requested targets succeeded \(full output: (.*\/\.logs\/nx\.\d+\.log)\)/);
+    const inner = outer.match(
+      /nx: requested targets succeeded \(full output: (.*\/\.logs\/nx\.\d+\.log)\)/,
+    );
     assert.ok(inner, `the nested run did not report a diverted log:\n${outer}`);
-    assert.match(plain(readFileSync(inner[1], "utf8")), /nx run b:mark/);
+    // A nested run inherits the colour Nx forces on its children; the claim is
+    // about what it wrote, not how it was styled.
+    assert.match(stripVTControlCharacters(readFileSync(inner[1], "utf8")), /nx run b:mark/);
   });
 
   it("says npm is missing, with what to install, on a clone that has no Nx", () => {
@@ -103,7 +116,8 @@ describe("scripts/nx", { skip: POSIX_ONLY }, () => {
     // A machine with bash and nothing else this reaches for before npm.
     const bin = join(scratch, "bin-without-npm");
     execFileSync("mkdir", [bin]);
-    const which = (tool) => execFileSync("bash", ["-c", `command -v ${tool}`], { encoding: "utf8" }).trim();
+    const which = (tool) =>
+      execFileSync("bash", ["-c", `command -v ${tool}`], { encoding: "utf8" }).trim();
     for (const tool of ["bash", "dirname"]) symlinkSync(which(tool), join(bin, tool));
     const result = spawnSync(join(bin, "bash"), ["scripts/nx", "show", "projects"], {
       cwd: bare,
@@ -111,7 +125,10 @@ describe("scripts/nx", { skip: POSIX_ONLY }, () => {
       encoding: "utf8",
     });
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /nx: npm not found; cannot install the pinned Nx the project graph needs/);
+    assert.match(
+      result.stderr,
+      /nx: npm not found; cannot install the pinned Nx the project graph needs/,
+    );
     assert.match(result.stderr, /ACTION: install Node\.js 20\+ .* and re-run 'just bootstrap'/);
   });
 
@@ -121,7 +138,10 @@ describe("scripts/nx", { skip: POSIX_ONLY }, () => {
     const result = wrapper(bare, "nx", ["show", "projects"]);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /nx: 'npm ci' failed in /);
-    assert.match(result.stderr, /ACTION: check network access to the npm registry, then re-run 'just bootstrap'/);
+    assert.match(
+      result.stderr,
+      /ACTION: check network access to the npm registry, then re-run 'just bootstrap'/,
+    );
   });
 });
 
@@ -140,10 +160,7 @@ describe("scripts/nx-affected.sh", { skip: POSIX_ONLY }, () => {
   }
 
   it("scopes to the projects the branch changed since its fork point", () => {
-    assert.deepEqual(
-      [affects(full, "a").stdout, affects(full, "b").stdout],
-      ["true\n", "false\n"],
-    );
+    assert.deepEqual([affects(full, "a").stdout, affects(full, "b").stdout], ["true\n", "false\n"]);
     const mark = markFile();
     const result = wrapper(full, "nx-affected.sh", ["-t", "mark"], { MARK_FILE: mark });
     assert.equal(result.status, 0, result.stderr);
@@ -164,12 +181,19 @@ describe("scripts/nx-affected.sh", { skip: POSIX_ONLY }, () => {
   it("fails closed in a shallow checkout that cannot reach the fork point", () => {
     const answer = affects(shallow, "b");
     assert.equal(answer.stdout, "true\n");
-    assert.match(answer.stderr, /no merge base, so 'b' counts as affected \(git fetch --unshallow to narrow it\)/);
+    assert.match(
+      answer.stderr,
+      /no merge base, so 'b' counts as affected \(git fetch --unshallow to narrow it\)/,
+    );
     const mark = markFile();
     const result = wrapper(shallow, "nx-affected.sh", ["-t", "mark"], { MARK_FILE: mark });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stderr, /no merge base, so every project runs/);
-    assert.deepEqual(ran(mark), ["a", "b"], "a shallow checkout ran a scoped set as if it were the whole");
+    assert.deepEqual(
+      ran(mark),
+      ["a", "b"],
+      "a shallow checkout ran a scoped set as if it were the whole",
+    );
   });
 
   it("fails closed when the base branch does not exist", () => {
@@ -181,7 +205,10 @@ describe("scripts/nx-affected.sh", { skip: POSIX_ONLY }, () => {
   it("fails closed on a CI build that is not a pull request", () => {
     const answer = affects(full, "b", { CI: "true" });
     assert.equal(answer.stdout, "true\n");
-    assert.match(answer.stderr, /not a pull-request build, so every project runs \(set ONEMESSAGEBUS_NX_BASE_REF to scope one\)/);
+    assert.match(
+      answer.stderr,
+      /not a pull-request build, so every project runs \(set ONEMESSAGEBUS_NX_BASE_REF to scope one\)/,
+    );
   });
 
   it("refuses a base branch that is not a plain branch name, and fails closed", () => {
@@ -197,7 +224,12 @@ describe("scripts/nx-affected.sh", { skip: POSIX_ONLY }, () => {
     for (const sha of ["0123456789abcdef0123456789abcdef01234567", "HEAD~1"]) {
       const result = affects(full, "b", { ONEMESSAGEBUS_NX_BASE_SHA: sha });
       assert.equal(result.stdout, "true\n", `'${sha}' was used as a base`);
-      assert.match(result.stderr, new RegExp(`ONEMESSAGEBUS_NX_BASE_SHA '${sha.replace("~", "\\~")}' is not a commit in this checkout`));
+      assert.match(
+        result.stderr,
+        new RegExp(
+          `ONEMESSAGEBUS_NX_BASE_SHA '${sha.replace("~", "\\~")}' is not a commit in this checkout`,
+        ),
+      );
     }
   });
 
@@ -206,7 +238,10 @@ describe("scripts/nx-affected.sh", { skip: POSIX_ONLY }, () => {
     writeFileSync(join(broken, "b", "project.json"), "{ this is not a project\n");
     const result = affects(broken, "b");
     assert.equal(result.stdout, "true\n");
-    assert.match(result.stderr, /Nx could not list the affected projects, so 'b' counts as affected \(reproduce with 'just nx show projects --affected --base=[0-9a-f]+ --head=HEAD'\)/);
+    assert.match(
+      result.stderr,
+      /Nx could not list the affected projects, so 'b' counts as affected \(reproduce with 'just nx show projects --affected --base=[0-9a-f]+ --head=HEAD'\)/,
+    );
   });
 
   it("refuses an invocation with nothing to run", () => {

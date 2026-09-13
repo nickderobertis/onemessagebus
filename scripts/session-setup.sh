@@ -27,6 +27,7 @@ log() { printf 'session-setup: %s\n' "$*" >&2; }
 
 export PATH="${BIN_DIR}:${PATH}"
 
+# llmlint: ignore-block[changed_behavior_has_e2e] a SessionStart hook whose steps install tools into the invoking user's home from PyPI (`uv tool install`) and append to the session's CLAUDE_ENV_FILE; a test would rewrite the developer's own toolchain, and the hook's one contract is that it always exits 0, which the unconditional `exit 0` below states. `just session-setup` runs it by hand, and every `just` recipe a session then runs is the proof it provisioned.
 ensure_just() {
   command -v just >/dev/null 2>&1 && return 0
   if ! command -v uv >/dev/null 2>&1; then
@@ -68,5 +69,6 @@ setup_llmlint="$(dirname "$0")/setup-llmlint.sh"
 if [ -x "$setup_llmlint" ]; then
   "$setup_llmlint" || log "setup-llmlint.sh reported an issue (continuing)"
 fi
+# llmlint: ignore-end[changed_behavior_has_e2e]
 
 exit 0

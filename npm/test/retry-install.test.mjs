@@ -23,7 +23,9 @@ function retry(...args) {
   return result;
 }
 
-describe("scripts/retry-install.sh", { skip: process.platform === "win32" && "drives POSIX shell commands" }, () => {
+describe("scripts/retry-install.sh", {
+  skip: process.platform === "win32" && "drives POSIX shell commands",
+}, () => {
   let dir;
   let cases = 0;
 
@@ -47,7 +49,8 @@ describe("scripts/retry-install.sh", { skip: process.platform === "win32" && "dr
     ].join("\n");
     return {
       argv: ["bash", "-c", script, "install", counter],
-      attempts: () => (existsSync(counter) ? readFileSync(counter, "utf8").split("\n").filter(Boolean).length : 0),
+      attempts: () =>
+        existsSync(counter) ? readFileSync(counter, "utf8").split("\n").filter(Boolean).length : 0,
     };
   }
 
@@ -55,26 +58,44 @@ describe("scripts/retry-install.sh", { skip: process.platform === "win32" && "dr
     const install = flakyInstall(0);
     const result = retry("--label", "onemessagebus-cli from PyPI", "--", ...install.argv);
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /^onemessagebus-cli from PyPI: installed on attempt 1 after \d+s\n$/);
+    assert.match(
+      result.stdout,
+      /^onemessagebus-cli from PyPI: installed on attempt 1 after \d+s\n$/,
+    );
     assert.equal(result.stderr, "");
     assert.equal(install.attempts(), 1);
   });
 
   it("retries until the registry serves the version, doubling the delay up to its cap", () => {
     const install = flakyInstall(3);
-    const result = retry("--first-delay", "1", "--max-delay", "2", "--budget", "60", "--", ...install.argv);
+    const result = retry(
+      "--first-delay",
+      "1",
+      "--max-delay",
+      "2",
+      "--budget",
+      "60",
+      "--",
+      ...install.argv,
+    );
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /: installed on attempt 4 after \d+s\n$/);
     assert.equal(install.attempts(), 4);
     // Each failure names itself with the command's own exit status and its last
     // line — the error, not the resolver chatter before it.
-    const failures = [...result.stderr.matchAll(/attempt (\d+) failed after \d+s \(exit (\d+)\): (.*)/g)];
+    const failures = [
+      ...result.stderr.matchAll(/attempt (\d+) failed after \d+s \(exit (\d+)\): (.*)/g),
+    ];
     assert.deepEqual(
       failures.map((m) => [m[1], m[2], m[3]]),
       [1, 2, 3].map((n) => [String(n), "5", "E404 no matching version on this edge"]),
     );
     const delays = [...result.stderr.matchAll(/retrying in (\d+)s/g)].map((m) => Number(m[1]));
-    assert.deepEqual(delays, [1, 2, 2], "the delay did not double from --first-delay and stop at --max-delay");
+    assert.deepEqual(
+      delays,
+      [1, 2, 2],
+      "the delay did not double from --first-delay and stop at --max-delay",
+    );
   });
 
   it("exhausts its budget with the last attempt's own words, the error, and the command's status", () => {
@@ -104,7 +125,10 @@ describe("scripts/retry-install.sh", { skip: process.platform === "win32" && "dr
     );
     assert.ok(error, `no error line naming the label:\n${result.stderr}`);
     assert.equal(Number(error[1]), install.attempts(), "the error miscounted the attempts it made");
-    assert.ok(install.attempts() >= 2, "a three-second budget with one-second delays made a single attempt");
+    assert.ok(
+      install.attempts() >= 2,
+      "a three-second budget with one-second delays made a single attempt",
+    );
     assert.match(result.stderr, /ACTION: check npm for onemessagebus-cli@0\.4\.0\n$/);
   });
 
