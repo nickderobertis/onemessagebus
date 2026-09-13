@@ -1,10 +1,14 @@
 //! Contract R in the core: `SchemaId`'s grammar, the registry's refusals, and
 //! forward-carry over a family of this test's own.
 
+use std::num::NonZeroU32;
+
 use onemessagebus::{CheckError, Message, Read, Registry, RegistryError, SchemaId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+
+const ONE: NonZeroU32 = NonZeroU32::MIN;
 
 #[test]
 fn a_well_formed_id_parses_to_its_family_and_version() {
@@ -17,7 +21,7 @@ fn a_well_formed_id_parses_to_its_family_and_version() {
     let envelope: SchemaId = "agent.event-envelope@2".parse().expect("parses");
     assert_eq!(envelope.family(), "agent.event-envelope");
     assert_eq!(envelope.version(), 2);
-    assert_eq!(envelope.at(1).to_string(), "agent.event-envelope@1");
+    assert_eq!(envelope.at(ONE).to_string(), "agent.event-envelope@1");
     assert_eq!(SchemaId::literal("agent", "finding", 1), finding);
     assert_eq!(
         SchemaId::new("agent", "finding", 1).expect("builds"),
@@ -75,9 +79,19 @@ fn a_literal_at_version_zero_panics() {
 }
 
 #[test]
-#[should_panic(expected = "SchemaId::at: the version is not a positive integer")]
-fn an_id_moved_to_version_zero_panics() {
-    let _ = SchemaId::literal("agent", "finding", 1).at(std::hint::black_box(0));
+fn an_id_moved_to_a_version_keeps_its_family_and_takes_that_version() {
+    let finding = SchemaId::literal("agent", "finding", 1);
+    for version in [2, 7, u32::MAX] {
+        let moved = finding.at(NonZeroU32::new(version).expect("non-zero"));
+        assert_eq!(moved.family(), "agent.finding");
+        assert_eq!(moved.version(), version);
+        assert_eq!(moved.to_string(), format!("agent.finding@{version}"));
+    }
+    assert_eq!(
+        finding.at(ONE),
+        finding,
+        "moving to its own version is itself"
+    );
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

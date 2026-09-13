@@ -12,6 +12,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt;
+use std::num::NonZeroU32;
 use std::str::FromStr;
 
 use schemars::JsonSchema;
@@ -111,20 +112,14 @@ impl SchemaId {
 
     /// The same family at another version.
     ///
-    /// # Panics
-    ///
-    /// When `version` is 0, which the grammar refuses: the family is already
-    /// well-formed, so the version is the one part left to fault.
+    /// The family is already well-formed, so the version is the one part left
+    /// to fault; taking it non-zero leaves nothing to refuse.
     #[must_use]
-    pub fn at(&self, version: u32) -> Self {
-        assert!(
-            version > 0,
-            "SchemaId::at: the version is not a positive integer"
-        );
+    pub fn at(&self, version: NonZeroU32) -> Self {
         Self {
             namespace: self.namespace.clone(),
             name: self.name.clone(),
-            version,
+            version: version.get(),
         }
     }
 }
