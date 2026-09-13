@@ -173,10 +173,14 @@ fn a_phase_is_omitted_from_the_wire_when_absent() {
     );
 }
 
+/// One way an envelope goes wrong: what is wrong, the single change that makes
+/// it so, and the name the refusal has to carry.
+type Refusal = (&'static str, fn(&mut Value), &'static str);
+
 /// Each way an envelope is refused, and the name the refusal has to carry.
 #[test]
 fn a_malformed_envelope_is_refused_by_name() {
-    let refusals: [(&str, fn(&mut Value), &str); 4] = [
+    let refusals: [Refusal; 4] = [
         (
             "an unknown top-level field",
             |example| example["stage"] = json!("verify"),
