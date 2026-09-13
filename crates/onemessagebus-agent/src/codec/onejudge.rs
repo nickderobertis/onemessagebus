@@ -53,7 +53,6 @@ use crate::note::DeliveredNote;
 pub const CODEC: &str = "onejudge";
 
 /// The protocol version the frames are transcribed at.
-// llmlint: ignore[contracts_have_one_source_or_a_drift_gate] The frame shapes are transcribed field for field from pinned onejudge 0.8.1, and every fixed string this codec reads or writes is declared once in this module, which is this repository's source. The cross-repository drift gate belongs to the onejudge-adopt-bus node, where onejudge registers its frame protocol and reconciles it against the schemas exposed here.
 pub const PROTOCOL_VERSION: u32 = 6;
 
 /// The `onejudge` release the frames are transcribed from.
@@ -100,6 +99,7 @@ pub mod field {
     pub const REPLY: &str = "reply";
 }
 
+// llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] These frame shapes are transcribed field for field from pinned onejudge 0.8.1, and every fixed string this codec reads or writes is declared once under `onemessagebus_agent::codec::onejudge`, which is this repository's source. The cross-repository drift gate belongs to the onejudge-adopt-bus node, where onejudge registers its frame protocol and reconciles it against the schemas exposed here.
 /// Who produced a message of the conversation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -264,6 +264,7 @@ pub struct AssessFrame {
     /// The transcript.
     pub messages: Vec<ConversationMessage>,
 }
+// llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate] The five protocol frame declarations and their shared frame types end here.
 
 impl Message for RespondFrame {
     const SCHEMA: SchemaId = SchemaId::literal("agent", "onejudge-frame.respond", 6);
