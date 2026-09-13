@@ -18,8 +18,12 @@ shares, declared once here and re-exported by every consumer.
   one.
 - `registry()` — every schema the stack registers: `agent.event-envelope` at
   `[2, 1]`, `agent.reply-envelope` at `[3, 2]`, and the artifact reference, the
-  filter, the labels and the note (`agent.artifact-ref`, `agent.event-filter`,
-  `agent.labels`, `agent.note`) at 1.
+  filter, the labels, the note, the planner channel's four records and the
+  transport plugin protocol's three shapes (`agent.artifact-ref`,
+  `agent.event-filter`, `agent.labels`, `agent.note`, `agent.planner-surface`,
+  `agent.queued-reply`, `agent.queued-commands`, `agent.command-outcome`,
+  `onemessagebus.transport-hello`, `onemessagebus.transport-request`,
+  `onemessagebus.transport-reply`) at 1.
 
 ```rust
 use onemessagebus_agent::{Emitter, Labels, Phase, Source};

@@ -19,6 +19,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod channel;
 pub mod event;
 pub mod note;
 pub mod registry;

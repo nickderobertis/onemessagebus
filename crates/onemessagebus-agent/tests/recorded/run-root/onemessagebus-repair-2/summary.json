@@ -1,0 +1,82 @@
+{
+  "schema_version": 2,
+  "run_id": "onemessagebus-repair-2",
+  "last_write_at": 1789267435207,
+  "last_event_kind": "planner-surfaced",
+  "event_count": 170,
+  "node_counts": {
+    "done": 1
+  },
+  "stop_recorded": false,
+  "graph_complete": true,
+  "decisions_pending": 0,
+  "surfaces_queued": 3,
+  "surfaces_read": 3,
+  "awaiting_human_action": false,
+  "project": "authoring:onemessagebus-repair-2",
+  "launcher": "claude-code",
+  "session": "28f7a3f8-23c8-535f-bf37-c37d2dfb31bd",
+  "started_at": "2026-09-13T02:02:42.504Z",
+  "pid": 3682555,
+  "host": "U-17UN402ICR95C",
+  "started": "linux-proc-stat:16354647",
+  "timing": {
+    "schema_version": 2,
+    "run_id": "onemessagebus-repair-2",
+    "wall_ms": 2472692,
+    "buckets": [
+      {
+        "name": "agent",
+        "ms": 988520
+      },
+      {
+        "name": "judge"
+      },
+      {
+        "name": "llmlint"
+      },
+      {
+        "name": "gate"
+      },
+      {
+        "name": "publication_wait",
+        "ms": 0
+      },
+      {
+        "name": "lock_wait",
+        "ms": 0
+      },
+      {
+        "name": "setup",
+        "ms": 0
+      },
+      {
+        "name": "scheduling",
+        "ms": 1484172
+      }
+    ],
+    "usage": {
+      "agent": {
+        "input": 72,
+        "output": 44387,
+        "cache_read": 4895468,
+        "cache_write": 179316,
+        "cost_usd": 5.354126999999998
+      },
+      "total": {
+        "input": 72,
+        "output": 44387,
+        "cache_read": 4895468,
+        "cache_write": 179316,
+        "cost_usd": 5.354126999999998
+      }
+    },
+    "dispatches": 1,
+    "settled_done": 1,
+    "no_diff": 0,
+    "surfaces_queued": 3,
+    "surfaces_read": 3
+  },
+  "journal_len": 228948,
+  "journal_mtime_ms": 1789267435206
+}
