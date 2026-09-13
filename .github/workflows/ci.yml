@@ -72,7 +72,8 @@ jobs:
           tool: nextest,cargo-llvm-cov
       - uses: ./.github/actions/setup-just
       # onemessagebus-pypi's targets build the wheel with maturin through uvx and
-      # install it into a uv virtualenv.
+      # install it into a uv virtualenv, and the journey crate runs the
+      # onepipeline-cli 0.28.2 wheel's reader through `uv tool run`.
       - uses: astral-sh/setup-uv@v6
       - name: Bootstrap
         run: just bootstrap
@@ -112,6 +113,9 @@ jobs:
         with:
           tool: nextest
       - uses: ./.github/actions/setup-just
+      # The journey crate runs the onepipeline-cli 0.28.2 wheel's reader through
+      # `uv tool run` to read a channel directory this build wrote.
+      - uses: astral-sh/setup-uv@v6
       - name: Bootstrap
         run: just bootstrap
       - name: Tests (every crate and the npm packaging)

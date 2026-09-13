@@ -7,6 +7,7 @@
 
 mod events;
 mod inbox;
+mod onepipeline;
 mod queues;
 mod rich;
 mod schema;
