@@ -29,3 +29,22 @@ plugins:
   - "https://raw.githubusercontent.com/nickderobertis/dero-skills/main/skills/bootstrap/create-repo/assets/llmlint/languages/typescript.llmlint.yml@1"
   - "https://raw.githubusercontent.com/nickderobertis/dero-skills/main/skills/bootstrap/create-repo/assets/llmlint/ci.llmlint.yml@1"
   - "https://raw.githubusercontent.com/nickderobertis/dero-skills/main/skills/bootstrap/create-repo/assets/llmlint/releasing.llmlint.yml@1"
+# Imported rules whose violations always sit at one declaration, token or call:
+# requiring a file and line makes each finding point at the site to fix, and
+# changes nothing about what the rule judges.
+rules:
+  - name: cli_output_contract
+    override: true
+    require_line_attribution: true
+  - name: stable_public_surface
+    override: true
+    require_line_attribution: true
+  - name: invalid_states_unrepresentable
+    override: true
+    require_line_attribution: true
+  - name: no_panics_on_recoverable_errors
+    override: true
+    require_line_attribution: true
+  - name: no_unjustified_any_or_non_null
+    override: true
+    require_line_attribution: true
