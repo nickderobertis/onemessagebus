@@ -19,7 +19,9 @@ fail() {
 [ "$#" -gt 0 ] ||
   fail "no package directory or tarball was given, so there is nothing to publish; pass at least one, e.g. 'publish-npm.sh npm/dist/onemessagebus-cli'"
 
-work="$(mktemp -d)" ||
+# An explicit template, because macOS's mktemp given none falls back past a TMPDIR
+# it cannot use, and the diagnosis below must name the directory actually tried.
+work="$(mktemp -d "${TMPDIR:-/tmp}/publish-npm.XXXXXX")" ||
   fail "cannot create a scratch directory in ${TMPDIR:-/tmp}; free space there or point TMPDIR at a writable directory, then re-run the release"
 trap 'rm -rf "$work"' EXIT
 

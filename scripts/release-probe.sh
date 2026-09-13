@@ -94,8 +94,10 @@ no_scratch() {
   not_answered "cannot create a scratch file in ${TMPDIR:-/tmp}" \
     "free space there or point TMPDIR at a writable directory, then re-run; this is NOT evidence that nothing is published"
 }
-body="$(mktemp)" || no_scratch
-curl_err="$(mktemp)" || { rm -f "$body"; no_scratch; }
+# An explicit template, because macOS's mktemp given none falls back past a TMPDIR
+# it cannot use, and the diagnosis above must name the directory actually tried.
+body="$(mktemp "${TMPDIR:-/tmp}/release-probe.XXXXXX")" || no_scratch
+curl_err="$(mktemp "${TMPDIR:-/tmp}/release-probe.XXXXXX")" || { rm -f "$body"; no_scratch; }
 trap 'rm -f "$body" "$curl_err"' EXIT
 
 # GET `$1`, leaving the response body in `$body` and printing the HTTP status.

@@ -54,8 +54,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 # One scratch file for a probe's stderr, so a failure report can carry the
-# binary's own diagnostic rather than only the assertion that tripped.
-probe_stderr="$(mktemp)" || fail "cannot create a scratch file in ${TMPDIR:-/tmp}" \
+# binary's own diagnostic rather than only the assertion that tripped. Its
+# template is explicit, as the working directory's below is, because macOS's
+# mktemp given none falls back past a TMPDIR it cannot use, and the diagnosis
+# must name the directory actually tried.
+probe_stderr="$(mktemp "${TMPDIR:-/tmp}/smoke-published.XXXXXX")" || fail "cannot create a scratch file in ${TMPDIR:-/tmp}" \
   "free space there or point TMPDIR at a writable directory, then re-run"
 trap 'rm -f "$probe_stderr"' EXIT
 
@@ -114,7 +117,7 @@ fi
 
 # `events emit` then `events merge` needs nothing else installed, so it is what
 # proves the artifact can write and read a stream rather than only its registry.
-work="$(mktemp -d)" || fail "cannot create a working directory in ${TMPDIR:-/tmp}" \
+work="$(mktemp -d "${TMPDIR:-/tmp}/smoke-published.XXXXXX")" || fail "cannot create a working directory in ${TMPDIR:-/tmp}" \
   "free space there or point TMPDIR at a writable directory, then re-run"
 trap 'rm -rf "$work" "$probe_stderr"' EXIT
 if ! why="$(printf '{"smoke":true}' | onemessagebus events emit "$work/smoke.ndjson" --kind smoke --stream smoke --source pipeline 2>&1 >/dev/null)"; then
