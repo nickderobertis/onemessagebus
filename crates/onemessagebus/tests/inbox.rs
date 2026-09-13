@@ -965,3 +965,50 @@ fn a_carried_record_whose_stamp_is_not_a_stamp_is_refused_naming_the_record() {
         Err(Undelivered::Backend(BackendError::Unreadable { .. }))
     ));
 }
+
+#[test]
+fn a_carried_stamp_must_name_a_real_date_and_time_of_day() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let store_with = |name: &str, ts: &str| {
+        let store = dir.path().join(name);
+        std::fs::write(
+            &store,
+            format!(
+                "{{\"schema_version\":1,\"kind\":\"onemessagebus-carry-store\"}}\n\
+                 {{\"ts\":\"{ts}\",\"schema\":\"shop.order@1\",\"message\":{{\"sku\":\"a\",\"quantity\":1}}}}\n"
+            ),
+        )
+        .expect("written");
+        store
+    };
+    for (name, ts) in [
+        ("month", "2026-13-01T00:00:00.000Z"),
+        ("day", "2026-02-29T00:00:00.000Z"),
+        ("april", "2026-04-31T00:00:00.000Z"),
+        ("zero", "2026-01-00T00:00:00.000Z"),
+        ("hour", "2026-09-13T24:00:00.000Z"),
+        ("minute", "2026-09-13T12:60:00.000Z"),
+        ("second", "2026-09-13T12:00:60.000Z"),
+    ] {
+        match Carry::read(&store_with(name, ts)) {
+            Err(BackendError::Unreadable { why, .. }) => assert!(why.contains(ts), "{why}"),
+            other => panic!("{ts} was read as a stamp: {other:?}"),
+        }
+    }
+    for (name, ts) in [
+        ("leap", "2024-02-29T23:59:59.999Z"),
+        ("century", "2000-02-29T00:00:00.000Z"),
+        ("december", "2026-12-31T00:00:00.000Z"),
+    ] {
+        assert_eq!(
+            Carry::read(&store_with(name, ts))
+                .expect("a real stamp reads")
+                .len(),
+            1
+        );
+    }
+    match Carry::read(&store_with("not-leap", "1900-02-29T00:00:00.000Z")) {
+        Err(BackendError::Unreadable { .. }) => {}
+        other => panic!("1900 was read as a leap year: {other:?}"),
+    }
+}

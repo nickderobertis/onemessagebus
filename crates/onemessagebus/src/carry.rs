@@ -303,17 +303,37 @@ fn parse(store: &Path, contents: &str) -> Result<(usize, Vec<CarriedEntry>), Bac
     Ok((header.len() + 1, entries))
 }
 
-/// Whether `ts` is the stamp `now_rfc3339` writes: `YYYY-MM-DDTHH:MM:SS.mmmZ`.
+/// Whether `ts` is the stamp `now_rfc3339` writes — `YYYY-MM-DDTHH:MM:SS.mmmZ` —
+/// naming a real calendar date and a time of day.
 fn is_stamp(ts: &str) -> bool {
     const SHAPE: &[u8; 24] = b"dddd-dd-ddTdd:dd:dd.dddZ";
-    ts.len() == SHAPE.len()
-        && ts
-            .bytes()
+    let bytes = ts.as_bytes();
+    let shaped = bytes.len() == SHAPE.len()
+        && bytes
+            .iter()
             .zip(SHAPE.iter())
             .all(|(byte, shape)| match shape {
                 b'd' => byte.is_ascii_digit(),
-                literal => byte == *literal,
-            })
+                literal => byte == literal,
+            });
+    if !shaped {
+        return false;
+    }
+    let number = |from: usize, to: usize| {
+        bytes[from..to]
+            .iter()
+            .fold(0_u32, |total, digit| total * 10 + u32::from(digit - b'0'))
+    };
+    let (year, month, day) = (number(0, 4), number(5, 7), number(8, 10));
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => 0,
+    };
+    (1..=days).contains(&day) && number(11, 13) < 24 && number(14, 16) < 60 && number(17, 19) < 60
 }
 
 /// Create the store with its header line unless something is already there, in

@@ -453,7 +453,8 @@ fn deliver(args: DeliverArgs, out: &mut impl std::io::Write) -> Result<(), Refus
     }
     match Spool::deliver(&args.address, &message, Duration::from_secs(args.wait)) {
         Ok(disposition) => {
-            let mut text = serde_json::to_string(&disposition).unwrap_or_default();
+            let mut text = serde_json::to_string(&disposition)
+                .map_err(|failure| failed(format!("cannot render the disposition: {failure}")))?;
             text.push('\n');
             emit_text(out, &text)
         }
@@ -526,7 +527,9 @@ fn carried(
                 let _ = writeln!(
                     text,
                     "{}",
-                    serde_json::to_string(&entry).unwrap_or_default()
+                    serde_json::to_string(&entry).map_err(|failure| {
+                        failed(format!("cannot render a carried entry: {failure}"))
+                    })?
                 );
             }
             OutputFormat::Text => {
@@ -535,7 +538,9 @@ fn carried(
                     "{} {} {}",
                     entry.ts,
                     entry.schema,
-                    serde_json::to_string(&entry.message).unwrap_or_default()
+                    serde_json::to_string(&entry.message).map_err(|failure| {
+                        failed(format!("cannot render a carried message: {failure}"))
+                    })?
                 );
             }
         }
