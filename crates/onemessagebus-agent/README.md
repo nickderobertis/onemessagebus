@@ -23,7 +23,10 @@ shares, declared once here and re-exported by every consumer.
   `agent.event-filter`, `agent.labels`, `agent.note`, `agent.planner-surface`,
   `agent.queued-reply`, `agent.queued-commands`, `agent.command-outcome`,
   `onemessagebus.transport-hello`, `onemessagebus.transport-request`,
-  `onemessagebus.transport-reply`) at 1.
+  `onemessagebus.transport-reply`) at 1, and the five onejudge protocol frames
+  (`agent.onejudge-frame.respond`, `agent.onejudge-frame.user`,
+  `agent.onejudge-frame.supervisor`, `agent.onejudge-frame.judge`,
+  `agent.onejudge-frame.assess`) at 6.
 
 ```rust
 use onemessagebus_agent::{Emitter, Labels, Phase, Source};
