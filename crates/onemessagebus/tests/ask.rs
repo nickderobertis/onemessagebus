@@ -472,6 +472,16 @@ fn a_blocking_question_held_pending_is_released_by_its_reply_by_correlation_or_b
         .expect("answered");
     assert_eq!(bound.correlation.as_ref(), Some(second.correlation()));
     assert!(questions.held().expect("a read").is_none());
+    let late = bus
+        .reply_at(&queue("questions"), &claimed.position, ruling("too late"))
+        .expect_err("another reply answered it first");
+    assert!(
+        matches!(late, BusError::Unbound { .. })
+            && late
+                .to_string()
+                .contains("was answered by another reply first"),
+        "{late}"
+    );
     match second.wait(SHORT) {
         Answer::Reply(reply) => assert_eq!(reply.reason, "by position"),
         other => panic!("a reply by position did not carry the correlation: {other:?}"),

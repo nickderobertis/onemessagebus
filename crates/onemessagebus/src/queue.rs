@@ -1699,6 +1699,43 @@ impl RawQueue {
         }
     }
 
+    /// The record claimed at `position` when a reply has since answered that
+    /// claim: what a reply that lost the race for it arrives to find. `None`
+    /// when nothing was claimed there, or the claim ended another way — it was
+    /// abandoned, or the record was claimed again elsewhere.
+    ///
+    /// # Errors
+    ///
+    /// A transport failure.
+    pub(crate) fn answered_claim(
+        &self,
+        position: &Position,
+    ) -> Result<Option<Claimed<Value>>, QueueError> {
+        let batch = self.transport.read(&self.spec.name, None, usize::MAX)?;
+        let mut claim: Option<(u64, Value)> = None;
+        for stored in batch.records {
+            let Some((Some(event), record)) = self.parse_line(&stored.bytes) else {
+                continue;
+            };
+            let Some(id) = record_id(&record) else {
+                continue;
+            };
+            if event == Event::Claimed && stored.after == *position {
+                claim = Some((id, record));
+            } else if claim.as_ref().is_some_and(|(held, _)| *held == id) {
+                if event == Event::Answered {
+                    return Ok(claim.map(|(id, record)| Claimed {
+                        id: Some(id),
+                        record,
+                        position: *position,
+                    }));
+                }
+                claim = None;
+            }
+        }
+        Ok(None)
+    }
+
     /// The records waiting to be claimed, oldest first: on an event queue every
     /// waiting record, abandoned ones included; on a plain queue the records
     /// after the default consumer's cursor that a claim would hand out.

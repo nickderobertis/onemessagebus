@@ -912,9 +912,9 @@ impl Bus {
     ///
     /// As [`reply`](Self::reply), with [`QueueError::NotPending`] for a
     /// position the pending record was not claimed at, and
-    /// [`BusError::Unbound`] when another reply released the record between
-    /// the check and the release — this reply is then appended and answers
-    /// nothing.
+    /// [`BusError::Unbound`] when another reply answered the record claimed at
+    /// `position` first — whether before this reply was checked or between the
+    /// check and the release — this reply is then appended and answers nothing.
     pub fn reply_at(
         &self,
         queue: &QueueName,
@@ -922,11 +922,22 @@ impl Bus {
         reply: Value,
     ) -> Result<Bound, BusError> {
         let (questions, answers) = self.askable(queue)?;
-        let held = questions.pending_at(position)?;
+        // A reply that lost the race can arrive after the winner released the
+        // record, and finds the claim answered rather than pending.
+        let (held, lost) = match questions.pending_at(position) {
+            Ok(held) => (held, false),
+            Err(refusal @ QueueError::NotPending { .. }) => {
+                match questions.answered_claim(position)? {
+                    Some(answered) => (answered, true),
+                    None => return Err(refusal.into()),
+                }
+            }
+            Err(failure) => return Err(failure.into()),
+        };
         let correlation = correlation_of(&held.record);
         let (sent, at) = self.append_reply(&answers, correlation.as_ref(), reply)?;
         if let Some(at) = &at {
-            if !questions.answer(&held, at)? {
+            if lost || !questions.answer(&held, at)? {
                 return Err(BusError::Unbound {
                     queue: queue.clone(),
                     why: format!(
