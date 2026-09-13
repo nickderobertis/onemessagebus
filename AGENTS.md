@@ -155,8 +155,8 @@ you:
   read-only token cannot post it.
 - **The broader tier runs on the release PR.** release-plz batches merges
   behind a release PR, so the commit that ships is that PR's, and it is the
-  one CI sweeps whole (`just check` over every project); a nightly run sweeps
-  the same way. An ordinary pull request runs the affected tier
+  one CI sweeps whole (`just check` over every project), once — nothing
+  re-sweeps it on a schedule. An ordinary pull request runs the affected tier
   (`just check-affected`, scoped against its fork point), and a push to `main`
   is gated by nothing further — the pull request that landed it was. The
   tag-triggered `release.yml` builds and publishes the swept commit and re-runs

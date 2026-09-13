@@ -35,6 +35,8 @@ jobs:
       # Read from README.md rather than restated here, so this job cannot end up
       # proving a command nobody is told to type.
       - name: Install (the command the README gives users)
+        env:
+          RUSTFLAGS: "-D warnings"
         run: |
           documented=$(grep -m1 '^cargo install --git ' README.md || true)
           if [[ -z $documented ]]; then

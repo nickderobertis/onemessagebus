@@ -1,16 +1,13 @@
 name: CI
 
 # Pull requests run the affected tier; the release PR — the commit that ships —
-# and a nightly run get the full sweep. A push to main runs nothing here: every
-# commit on main arrived through a gated pull request, and gating it again would
-# re-sweep a tree the merge already proved. The README's install one-liner,
-# which needs the code on the remote, is proven by install-documented.yml.
+# gets the full sweep, once. A push to main runs nothing here, and nothing runs on
+# a schedule: every commit on main arrived through a gated pull request, and
+# gating it again would re-sweep a tree the merge already proved. The README's
+# install one-liner, which needs the code on the remote, is proven by
+# install-documented.yml.
 on:
   pull_request:
-  schedule:
-    # Nightly, 04:17 UTC: the sweep that catches what affected detection or a
-    # stale cache could miss between release PRs.
-    - cron: "17 4 * * *"
 
 # Least privilege: most jobs only need to read the repo.
 permissions:
@@ -26,8 +23,7 @@ env:
 jobs:
   # Which projects this pull request's diff can reach, derived once so every
   # Rust-artifact job below can skip on a change that cannot touch a crate
-  # instead of paying the full matrix. On the nightly run it answers `true` for
-  # everything.
+  # instead of paying the full matrix.
   #
   # `just affected-crate` fails closed: with no derivable merge base — a shallow
   # clone, a missing base branch — it says the crate is affected and the matrices
@@ -57,7 +53,7 @@ jobs:
   # gate (format, clippy, tests incl. e2e with the coverage threshold, docs).
   # Affected projects on an ordinary pull request; every project on the release
   # PR, because release-plz batches merges behind it and its commit is the one
-  # that ships, and nightly.
+  # that ships.
   #
   # Linux-only because coverage is measured here; macOS/Windows prove the artifact
   # via the `cross` job below.

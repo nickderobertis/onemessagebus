@@ -73,7 +73,7 @@ reported="$(onemessagebus --version 2>"$probe_stderr" | tr -d '\r')" || fail \
   "the installed binary cannot run at all — reinstall it, and check the platform package matches this machine"
 if [ -n "$expect_version" ] && [ "$reported" != "onemessagebus $expect_version" ]; then
   fail "reports '$reported', not 'onemessagebus $expect_version'" \
-    "the install resolved a different version than the one just published"
+    "the install resolved a different version than the one just published — wait for the registry to serve $expect_version, reinstall it by exact version, and re-run"
 fi
 
 help="$(onemessagebus --help 2>"$probe_stderr" | tr -d '\r')" || fail \
@@ -83,7 +83,7 @@ for command in schema events; do
   case "$help" in
     *"$command"*) ;;
     *) fail "'--help' does not list the '$command' command" \
-         "the installed binary does not carry the documented command surface" ;;
+         "the installed binary does not carry the documented command surface — check 'command -v onemessagebus' is this install rather than an older one earlier on PATH, then reinstall" ;;
   esac
 done
 
@@ -95,7 +95,7 @@ listed="$(onemessagebus schema list --format text 2>"$probe_stderr" | tr -d '\r'
 case "$listed" in
   *"agent.event-envelope@2"*) ;;
   *) fail "'schema list' does not name agent.event-envelope@2" \
-       "the installed binary does not carry the agent profile's registry" ;;
+       "the installed binary does not carry the agent profile's registry — check 'command -v onemessagebus' is this install, then rebuild from crates/onemessagebus-cli, which links the profile" ;;
 esac
 
 # A payload file that is not there is exit 2, and nothing on stdout: a caller
