@@ -183,14 +183,18 @@ fn supervisor(messages: Value) -> String {
 }
 
 fn judge(kind: &str) -> String {
-    json!({
+    let mut frame = json!({
         "op": "judge",
         "kind": kind,
         "criterion": "the monitor filed every drift it observed as a finding",
         "messages": [{"role": "user", "content": "watch"}, {"role": "assistant", "content": "filed one finding"}],
         "evidence": {"worktree": "/repo", "history_files": ["/state/history/monitor.jsonl"]}
-    })
-    .to_string()
+    });
+    if kind == "numeric" {
+        frame["min"] = json!(0);
+        frame["max"] = json!(1);
+    }
+    frame.to_string()
 }
 
 fn one(run: &Run) -> Value {
@@ -555,6 +559,29 @@ fn serve_refuses_what_it_cannot_serve_before_it_reads_a_frame() {
         "{}",
         no_run.stderr
     );
+    for (malformed_frame, problem) in [
+        (
+            json!({"op": "supervisor", "task": "onepipeline run `r-7`", "persona": "monitor", "worktree": "/repo", "history_name": "r-7-monitor", "messages": [], "sesion": "misspelled"}).to_string(),
+            "unknown field",
+        ),
+        (
+            json!({"op": "judge", "kind": "numeric", "criterion": "score it", "messages": []}).to_string(),
+            "missing field",
+        ),
+    ] {
+        let malformed = scratch.serve(
+            &[],
+            &malformed_frame,
+            &[("TEST_SERVE_RUN", "r-7")],
+        );
+        assert_eq!(malformed.code, 2, "{malformed_frame}: {}", malformed.stderr);
+        assert!(
+            malformed.stderr.contains(problem),
+            "{malformed_frame}: {}",
+            malformed.stderr
+        );
+        assert_eq!(malformed.stdout, "");
+    }
     let undeclared = scratch.bus(&["serve", "findings", "--codec", "onejudge"], Some(&frame));
     assert_eq!(undeclared.code, 2);
 

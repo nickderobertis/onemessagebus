@@ -114,6 +114,7 @@ pub enum Role {
 
 /// One normalized tool event of an assistant turn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ToolEvent {
     /// `tool_call` or `tool_result`.
     pub kind: String,
@@ -136,6 +137,7 @@ pub struct ToolEvent {
 
 /// One turn of the conversation a frame carries.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ConversationMessage {
     /// Who produced it.
     pub role: Role,
@@ -148,6 +150,7 @@ pub struct ConversationMessage {
 
 /// The skill a `respond` frame runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Skill {
     /// Its name.
     pub name: String,
@@ -159,6 +162,7 @@ pub struct Skill {
 
 /// The evidence a `judge` frame names (protocol v6).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Evidence {
     /// The skill's working directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -169,6 +173,7 @@ pub struct Evidence {
 
 /// A `respond` frame: run one skill turn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RespondFrame {
     /// The skill.
     pub skill: Skill,
@@ -181,6 +186,7 @@ pub struct RespondFrame {
 
 /// A `user` frame: produce one simulated-user turn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UserFrame {
     /// The persona to play.
     pub persona: String,
@@ -193,6 +199,7 @@ pub struct UserFrame {
 
 /// A `supervisor` frame: decide completion, or produce the next user turn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SupervisorFrame {
     /// The task the conversation is about; its opening line names the run.
     pub task: String,
@@ -215,49 +222,39 @@ pub struct SupervisorFrame {
     pub session: Option<String>,
 }
 
-/// The score a `judge` frame asks for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum JudgeKind {
-    /// A boolean.
-    Boolean,
-    /// A number between `min` and `max`.
-    Numeric,
-}
-
-impl JudgeKind {
-    /// The kind's wire word.
-    #[must_use]
-    pub const fn word(self) -> &'static str {
-        match self {
-            Self::Boolean => "boolean",
-            Self::Numeric => "numeric",
-        }
-    }
-}
-
 /// A `judge` frame: score a criterion against the transcript.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct JudgeFrame {
-    /// The score's kind.
-    pub kind: JudgeKind,
-    /// The criterion.
-    pub criterion: String,
-    /// A numeric score's floor.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub min: Option<f64>,
-    /// A numeric score's ceiling.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max: Option<f64>,
-    /// The transcript.
-    pub messages: Vec<ConversationMessage>,
-    /// The evidence (v6); omitted without context.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub evidence: Option<Evidence>,
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum JudgeFrame {
+    /// A boolean completion criterion.
+    Boolean {
+        /// The criterion.
+        criterion: String,
+        /// The transcript.
+        messages: Vec<ConversationMessage>,
+        /// The evidence (v6); omitted without context.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        evidence: Option<Evidence>,
+    },
+    /// A numeric score with required bounds.
+    Numeric {
+        /// The criterion.
+        criterion: String,
+        /// The score's floor.
+        min: f64,
+        /// The score's ceiling.
+        max: f64,
+        /// The transcript.
+        messages: Vec<ConversationMessage>,
+        /// The evidence (v6); omitted without context.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        evidence: Option<Evidence>,
+    },
 }
 
 /// An `assess` frame: write a free-text judgement.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AssessFrame {
     /// What to judge.
     pub prompt: String,
@@ -318,27 +315,38 @@ pub fn schemas() -> Vec<(SchemaId, Schema)> {
 fn frame_schema<F: Message>(word: &str) -> (SchemaId, Schema) {
     let mut document = schemars::schema_for!(F).to_value();
     if let Some(object) = document.as_object_mut() {
-        let mut properties = Map::new();
-        properties.insert(
-            OP.to_owned(),
-            serde_json::json!({
-                "type": "string",
-                "const": word,
-                "description": "The operation this frame asks for."
-            }),
-        );
-        if let Some(Value::Object(existing)) = object.get("properties") {
-            properties.extend(existing.clone());
+        stamp_frame_op(object, word);
+        if let Some(Value::Array(variants)) = object.get_mut("oneOf") {
+            for variant in variants {
+                if let Some(variant) = variant.as_object_mut() {
+                    stamp_frame_op(variant, word);
+                }
+            }
         }
-        object.insert("properties".to_owned(), Value::Object(properties));
-        let mut required = vec![Value::String(OP.to_owned())];
-        if let Some(Value::Array(existing)) = object.get("required") {
-            required.extend(existing.iter().cloned());
-        }
-        object.insert("required".to_owned(), Value::Array(required));
     }
     let schema = Schema::try_from(document).unwrap_or_else(|_| schemars::schema_for!(F));
     (F::SCHEMA, schema)
+}
+
+fn stamp_frame_op(object: &mut Map<String, Value>, word: &str) {
+    let mut properties = Map::new();
+    properties.insert(
+        OP.to_owned(),
+        serde_json::json!({
+            "type": "string",
+            "const": word,
+            "description": "The operation this frame asks for."
+        }),
+    );
+    if let Some(Value::Object(existing)) = object.get("properties") {
+        properties.extend(existing.clone());
+    }
+    object.insert("properties".to_owned(), Value::Object(properties));
+    let mut required = vec![Value::String(OP.to_owned())];
+    if let Some(Value::Array(existing)) = object.get("required") {
+        required.extend(existing.iter().cloned());
+    }
+    object.insert("required".to_owned(), Value::Array(required));
 }
 
 /// What a provider reports it spent; any subset.
@@ -991,14 +999,16 @@ impl Onejudge {
         frame: &JudgeFrame,
         session: &mut ServeSession<'_>,
     ) -> Result<Value, CodecFailure> {
-        if frame.kind != JudgeKind::Boolean {
-            return Err(CodecFailure::Refused(format!(
-                "a `{}` score is not one this codec gives: a planner rules with a `completion` boolean, which is no score on a scale; it scores `{}` criteria alone",
-                frame.kind.word(),
-                JudgeKind::Boolean.word()
-            )));
+        let criterion = match frame {
+            JudgeFrame::Boolean { criterion, .. } => criterion,
+            JudgeFrame::Numeric { .. } => {
+                return Err(CodecFailure::Refused(
+                    "a `numeric` score is not one this codec gives: a planner rules with a `completion` boolean, which is no score on a scale; it scores `boolean` criteria alone"
+                        .to_owned(),
+                ));
+            }
         }
-        let criterion = frame.criterion.trim();
+        .trim();
         if criterion.is_empty() {
             return Err(CodecFailure::Refused(
                 "the `judge` frame's criterion is blank, so there is nothing to put to the planner"
@@ -1094,7 +1104,7 @@ impl Codec for Onejudge {
         frame: &str,
         session: &mut ServeSession<'_>,
     ) -> Result<Value, CodecFailure> {
-        let parsed: Value = serde_json::from_str(frame).map_err(|failure| {
+        let mut parsed: Value = serde_json::from_str(frame).map_err(|failure| {
             CodecFailure::Refused(format!("the frame is not JSON: {failure}"))
         })?;
         let word = parsed
@@ -1110,13 +1120,23 @@ impl Codec for Onejudge {
         if !op::SERVED.contains(&word.as_str()) {
             return Err(refused_op(&word));
         }
-        match serde_json::from_value::<Frame>(parsed) {
-            Ok(Frame::Supervisor(frame)) => self.supervise(&frame, session),
-            Ok(Frame::Judge(frame)) => self.score(&frame, session),
-            Ok(_) => Err(refused_op(&word)),
-            Err(failure) => Err(CodecFailure::Refused(format!(
+        parsed
+            .as_object_mut()
+            .expect("a frame naming an op is an object")
+            .remove(OP);
+        let malformed = |failure| {
+            CodecFailure::Refused(format!(
                 "the `{word}` frame is not a onejudge protocol v{PROTOCOL_VERSION} frame: {failure}"
-            ))),
+            ))
+        };
+        match word.as_str() {
+            op::SUPERVISOR => serde_json::from_value::<SupervisorFrame>(parsed)
+                .map_err(malformed)
+                .and_then(|frame| self.supervise(&frame, session)),
+            op::JUDGE => serde_json::from_value::<JudgeFrame>(parsed)
+                .map_err(malformed)
+                .and_then(|frame| self.score(&frame, session)),
+            _ => Err(refused_op(&word)),
         }
     }
 }
