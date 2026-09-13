@@ -87,7 +87,6 @@ pub mod source {
     pub const MONITOR: &str = "monitor";
 }
 
-#[allow(clippy::trivially_copy_pass_by_ref)] // serde's skip_serializing_if hands a reference.
 fn is_false(value: &bool) -> bool {
     !*value
 }
@@ -155,7 +154,6 @@ impl ChannelAuthor {
         }
     }
 
-    #[allow(clippy::trivially_copy_pass_by_ref)] // serde's skip_serializing_if hands a reference.
     fn is_planner(&self) -> bool {
         matches!(self, Self::Planner)
     }
