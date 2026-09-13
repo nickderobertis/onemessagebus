@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::capability::{Capability, CAPABILITIES};
+use crate::carry::CarriedEntry;
 use crate::envelope::Envelope;
 use crate::filter::{Filter, Matcher};
 use crate::schema::{Registry, SchemaId};
@@ -159,6 +160,35 @@ pub struct EventsEmitOptions {
     pub format: Option<Format>,
 }
 
+/// The options of `deliver`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeliverOptions {
+    /// The spool's address: the directory its receiver bound.
+    pub address: String,
+    /// The message, as JSON text. The verb takes its message from exactly one of
+    /// this, `file`, and stdin, and refuses more than one by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// The file holding the message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// Seconds to wait for the message to be taken before it is withdrawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait: Option<u64>,
+}
+
+/// The options of `inbox carried`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InboxCarriedOptions {
+    /// The carry store to list.
+    pub store: String,
+    /// How the list is rendered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<Format>,
+}
+
 /// One entry of `schema list`.
 ///
 /// `family` and `version` restate `id` for a reader that does not parse ids, so
@@ -256,6 +286,11 @@ pub struct Bundle {
     pub registry_document: Schema,
     /// The output of `schema list`.
     pub schema_list: Schema,
+    /// The output of `deliver`: the receiver's disposition, in the vocabulary of
+    /// the message family the spool carries.
+    pub disposition: Schema,
+    /// One line of `inbox carried`.
+    pub carried_entry: Schema,
     /// The option contracts, by the root each capability names.
     pub options: BTreeMap<&'static str, Schema>,
     /// Every message the registry holds, by id.
@@ -275,6 +310,8 @@ pub fn bundle<V: Vocabulary>(registry: &Registry) -> Bundle {
     );
     options.insert("events_merge_options", schema_for!(EventsMergeOptions));
     options.insert("events_emit_options", schema_for!(EventsEmitOptions));
+    options.insert("deliver_options", schema_for!(DeliverOptions));
+    options.insert("inbox_carried_options", schema_for!(InboxCarriedOptions));
     Bundle {
         capabilities: CAPABILITIES,
         vocabulary: VocabularyManifest {
@@ -289,6 +326,11 @@ pub fn bundle<V: Vocabulary>(registry: &Registry) -> Bundle {
         schema_id: schema_for!(SchemaId),
         registry_document: schema_for!(RegistryDocument),
         schema_list: schema_for!(Vec<SchemaEntry>),
+        disposition: schemars::json_schema!({
+            "title": "Disposition",
+            "description": "What the receiver answered the message with: any JSON value, in the vocabulary of the message family the spool carries."
+        }),
+        carried_entry: schema_for!(CarriedEntry),
         options,
         messages: registry
             .ids()

@@ -217,5 +217,5 @@ One NDJSON line per event, byte-identical to what `oneagentgraph`, `onevcs` and
 
 <!-- fixture: verbs -->
 ```json
-["schema list", "schema check", "schema gen", "schema register", "events merge", "events emit"]
+["schema list", "schema check", "schema gen", "schema register", "events merge", "events emit", "deliver", "inbox carried"]
 ```

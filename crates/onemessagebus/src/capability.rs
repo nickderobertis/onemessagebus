@@ -293,4 +293,32 @@ pub const CAPABILITIES: &[Capability] = &[
         ],
         uncovered: &[],
     },
+    Capability {
+        method: "deliver",
+        verb: &["deliver"],
+        options: Some("deliver_options"),
+        stdout: StdoutShape::Json("disposition"),
+        stdin: true,
+        library_entry: "onemessagebus::Spool::deliver",
+        bindings: &[
+            bind("address", FlagKind::Positional),
+            bind("message", FlagKind::Value("--message")),
+            bind("file", FlagKind::Value("--file")),
+            bind("wait", FlagKind::Value("--wait")),
+        ],
+        uncovered: &[],
+    },
+    Capability {
+        method: "inboxCarried",
+        verb: &["inbox", "carried"],
+        options: Some("inbox_carried_options"),
+        stdout: StdoutShape::Jsonl("carried_entry"),
+        stdin: false,
+        library_entry: "onemessagebus::Carry::read",
+        bindings: &[
+            bind("store", FlagKind::Positional),
+            bind("format", FlagKind::Value("--format")),
+        ],
+        uncovered: &[],
+    },
 ];

@@ -1,19 +1,23 @@
 //! The clap tree and each verb's body.
 //!
-//! Payloads arrive on stdin or `--file`, never as a positional argument: the
-//! clap tree admits no positional a payload could be read as, so a payload
-//! passed as one is a usage error rather than a document nobody validated.
+//! Payloads arrive on stdin or `--file` — and `deliver`'s message also through
+//! the named `--message` option, from exactly one of the three — never as a
+//! positional argument: the clap tree admits no positional a payload could be
+//! read as, so a payload passed as one is a usage error rather than a document
+//! nobody validated.
 
 use std::ffi::OsString;
 use std::fmt::Write as _;
-use std::io::Read as _;
+use std::io::{IsTerminal as _, Read as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use onemessagebus::sdk_schema::{self, Lang, SchemaEntry};
 use onemessagebus::{
-    Admits, CheckError, Emitter, Filter, Merge, Open, Redactor, SchemaId, Vocabulary,
+    Admits, BackendError, Carry, CheckError, Emitter, Filter, Merge, Open, Redactor, SchemaId,
+    Spool, Undelivered, Vocabulary, SPOOL_WAIT,
 };
 use onemessagebus_agent::Agent;
 use serde_json::{Map, Value};
@@ -22,7 +26,8 @@ use crate::profile::Profile;
 use crate::registry_dir::RegistryDir;
 use crate::{EXIT_FAILED, EXIT_INVALID, EXIT_OK};
 
-/// A typed NDJSON message bus: schema registry verbs and stream verbs.
+/// A typed NDJSON message bus: schema registry verbs, stream verbs, and an
+/// inbox into a running process.
 #[derive(Debug, Parser)]
 #[command(name = "onemessagebus", version, about, long_about = None)]
 pub struct Cli {
@@ -42,6 +47,14 @@ enum Command {
     Events {
         #[command(subcommand)]
         verb: EventsVerb,
+    },
+    /// Send one message to the spool a running receiver bound, and print the
+    /// disposition it answered.
+    Deliver(DeliverArgs),
+    /// Carry stores: messages kept for a receiver that is not running.
+    Inbox {
+        #[command(subcommand)]
+        verb: InboxVerb,
     },
 }
 
@@ -146,6 +159,38 @@ enum EventsVerb {
     },
 }
 
+/// What `deliver` takes.
+#[derive(Debug, Args)]
+struct DeliverArgs {
+    /// The spool's address: the directory its receiver bound.
+    #[arg(value_name = "ADDRESS")]
+    address: PathBuf,
+    /// The message, as JSON. Exactly one of this, `--file` and stdin.
+    #[arg(long, value_name = "JSON")]
+    message: Option<String>,
+    /// The file holding the message. Exactly one of this, `--message` and stdin.
+    #[arg(long, value_name = "PATH")]
+    file: Option<PathBuf>,
+    /// Seconds to wait for the message to be taken before it is withdrawn and
+    /// reported lost.
+    #[arg(long, value_name = "SECONDS", default_value_t = SPOOL_WAIT.as_secs())]
+    wait: u64,
+}
+
+#[derive(Debug, Subcommand)]
+enum InboxVerb {
+    /// List every message a carry store holds, in the order they were carried,
+    /// without draining it.
+    Carried {
+        /// The carry store.
+        #[arg(value_name = "STORE")]
+        store: PathBuf,
+        /// How to render the list.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+        format: OutputFormat,
+    },
+}
+
 /// `--format`, as clap takes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum OutputFormat {
@@ -244,6 +289,10 @@ fn dispatch(cli: Cli, out: &mut impl std::io::Write) -> Result<(), Refusal> {
     match cli.command {
         Command::Schema { verb } => schema(verb, out),
         Command::Events { verb } => events(verb, out),
+        Command::Deliver(args) => deliver(args, out),
+        Command::Inbox {
+            verb: InboxVerb::Carried { store, format },
+        } => carried(&store, format, out),
     }
 }
 
@@ -383,6 +432,115 @@ fn events(verb: EventsVerb, out: &mut impl std::io::Write) -> Result<(), Refusal
             }
         }
     }
+}
+
+fn deliver(args: DeliverArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+    let text = message_text(&args)?;
+    let message: Value = serde_json::from_str(&text)
+        .map_err(|failure| invalid(format!("the message is not JSON: {failure}")))?;
+    // Checked before anything is offered, where the spool says what its receiver
+    // takes and this build knows that schema: a message the receiver would refuse
+    // is refused here, with nothing written.
+    let declared =
+        Spool::declared(&args.address).map_err(|failure| invalid(failure.to_string()))?;
+    if let Some(schema) = declared {
+        let registry = onemessagebus_agent::registry();
+        if let Err(CheckError::Violation(violation)) = registry.check(&schema, &message) {
+            return Err(invalid(format!(
+                "the message is not the {schema} the spool's receiver takes: {violation}"
+            )));
+        }
+    }
+    match Spool::deliver(&args.address, &message, Duration::from_secs(args.wait)) {
+        Ok(disposition) => {
+            let mut text = serde_json::to_string(&disposition).unwrap_or_default();
+            text.push('\n');
+            emit_text(out, &text)
+        }
+        Err(Undelivered::Backend(failure @ BackendError::Absent { .. })) => {
+            Err(invalid(failure.to_string()))
+        }
+        Err(undelivered) => Err(failed(format!(
+            "the message was not delivered: {undelivered}"
+        ))),
+    }
+}
+
+/// The message `deliver` was given, from exactly one of its three sources.
+fn message_text(args: &DeliverArgs) -> Result<String, Refusal> {
+    let stdin = piped_stdin()?;
+    let mut given = Vec::new();
+    if stdin.is_some() {
+        given.push("stdin");
+    }
+    if args.file.is_some() {
+        given.push("--file");
+    }
+    if args.message.is_some() {
+        given.push("--message");
+    }
+    if given.len() > 1 {
+        return Err(invalid(format!(
+            "the message was given more than once, by {}; pass it exactly one way: on stdin, \
+             with --file <path>, or with --message <json>",
+            given.join(" and ")
+        )));
+    }
+    if let Some(text) = args.message.clone().or(stdin) {
+        return Ok(text);
+    }
+    match &args.file {
+        Some(path) => std::fs::read_to_string(path)
+            .map_err(|failure| invalid(format!("cannot read {}: {failure}", path.display()))),
+        None => Err(invalid(
+            "no message to deliver: pass it on stdin, with --file <path>, or with --message <json>",
+        )),
+    }
+}
+
+/// What stdin carries, when it is not a terminal and carries anything but
+/// whitespace.
+fn piped_stdin() -> Result<Option<String>, Refusal> {
+    let stdin = std::io::stdin();
+    if stdin.is_terminal() {
+        return Ok(None);
+    }
+    let mut text = String::new();
+    stdin
+        .lock()
+        .read_to_string(&mut text)
+        .map_err(|failure| invalid(format!("cannot read the message on stdin: {failure}")))?;
+    Ok((!text.trim().is_empty()).then_some(text))
+}
+
+fn carried(
+    store: &Path,
+    format: OutputFormat,
+    out: &mut impl std::io::Write,
+) -> Result<(), Refusal> {
+    let entries = Carry::read(store).map_err(|failure| invalid(failure.to_string()))?;
+    let mut text = String::new();
+    for entry in entries {
+        match format {
+            OutputFormat::Json => {
+                let _ = writeln!(
+                    text,
+                    "{}",
+                    serde_json::to_string(&entry).unwrap_or_default()
+                );
+            }
+            OutputFormat::Text => {
+                let _ = writeln!(
+                    text,
+                    "{} {} {}",
+                    entry.ts,
+                    entry.schema,
+                    serde_json::to_string(&entry.message).unwrap_or_default()
+                );
+            }
+        }
+    }
+    emit_text(out, &text)
 }
 
 fn merge<V: Vocabulary>(

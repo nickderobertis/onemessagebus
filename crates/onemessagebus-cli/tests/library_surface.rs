@@ -9,10 +9,12 @@
 
 use std::collections::BTreeSet;
 
+use std::time::Duration;
+
 use onemessagebus::sdk_schema::{self, Lang};
 use onemessagebus::{
-    Emitter, Merge, Message, Open, Reader, Reading, Redactor, Registry, SchemaId, Source,
-    CAPABILITIES,
+    Carried, Carry, Disposition, Emitter, Inbox, Merge, Message, Open, Reader, Reading, Redactor,
+    Registry, SchemaId, Source, Spool, CAPABILITIES,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -25,6 +27,18 @@ struct Ping {
 
 impl Message for Ping {
     const SCHEMA: SchemaId = SchemaId::literal("test", "ping", 1);
+}
+
+/// What a ping is answered with.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct Pong(u64);
+
+impl Disposition for Pong {}
+
+impl Carried for Pong {
+    fn carried() -> Self {
+        Pong(0)
+    }
 }
 
 /// One library entry as the manifest spells it, and the call that exercises it.
@@ -99,6 +113,38 @@ fn exercised() -> Vec<Exercise> {
                 assert_eq!(emitter.emit("tock", Map::new()).seq, 2);
                 let read: Vec<Reading<Open>> = Reader::open(&path).expect("opens").collect();
                 assert_eq!(read.len(), 2);
+            }),
+        ),
+        (
+            "onemessagebus::Spool::deliver",
+            Box::new(|| {
+                let dir = tempfile::tempdir().expect("a temp dir");
+                let inbox = Inbox::<Ping, Pong>::new();
+                let spool = Spool::bind(dir.path(), &inbox).expect("binds");
+                let address = spool.address().to_path_buf();
+                let delivering = std::thread::spawn(move || {
+                    Spool::deliver(&address, &json!({ "n": 4 }), Duration::from_secs(10))
+                });
+                let delivered = inbox
+                    .take_within(Duration::from_secs(10))
+                    .expect("the ping arrives");
+                let n = delivered.message().n;
+                delivered.answer(Pong(n * 2));
+                assert_eq!(delivering.join().expect("finishes"), Ok(json!(8)));
+            }),
+        ),
+        (
+            "onemessagebus::Carry::read",
+            Box::new(|| {
+                let dir = tempfile::tempdir().expect("a temp dir");
+                let store = dir.path().join("carried.ndjson");
+                assert_eq!(
+                    Carry::sender::<Ping, Pong>(&store).send(Ping { n: 1 }),
+                    Ok(Pong(0))
+                );
+                let entries = Carry::read(&store).expect("a store");
+                assert_eq!(entries.len(), 1);
+                assert_eq!(entries[0].message, json!({ "n": 1 }));
             }),
         ),
     ]

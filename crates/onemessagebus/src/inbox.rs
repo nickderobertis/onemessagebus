@@ -13,8 +13,8 @@
 //! The promise is narrow on purpose: a message reaches [`Inbox::take`] or its
 //! sender learns why not, and a disposition reaches exactly the sender that
 //! asked. Nothing here answers on a receiver's behalf — there is no timeout that
-//! makes up a disposition — and which party of a conversation a message is
-//! routed to is the consumer's to decide. `docs/inbox.md` states the contract.
+//! makes up a disposition — and where a taken message goes next is the
+//! consumer's to decide. `docs/inbox.md` states the contract.
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
