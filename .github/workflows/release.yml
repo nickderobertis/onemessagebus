@@ -14,8 +14,9 @@ name: Release
 # workflow — a tag or release created by the default GITHUB_TOKEN triggers
 # nothing, and the release would silently ship no artifacts.
 #
-#   * test          — the complete deterministic gate, so untested artifacts
-#                     never publish.
+# The release commit was swept by ci.yml when it landed on main, so nothing
+# here re-runs the gate: a build is not a gate, and a second sweep of the same
+# tree buys no new answer.
 #   * upload        — build each target on a native runner and attach the archive
 #                     + sha256 checksum to the Release.
 #   * publish-crate — idempotent crates.io publish; self-activates the day
@@ -103,27 +104,9 @@ jobs:
             echo "publish=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # Re-gate the release on the same checks CI enforces, so a release can never
-  # publish an artifact that would not pass the gate.
-  test:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: just,nextest,cargo-llvm-cov
-      - run: just bootstrap
-      - run: just check
-
   upload:
     name: upload (${{ matrix.target }})
-    needs: test
+    needs: guard
     permissions:
       contents: write
     strategy:
@@ -168,7 +151,7 @@ jobs:
   # versa. Kept out of release-plz (publish = false there) so versioning/tagging
   # stays decoupled from the registry push.
   publish-crate:
-    needs: [guard, test]
+    needs: guard
     if: ${{ needs.guard.outputs.publish == 'true' }}
     runs-on: ubuntu-latest
     permissions:
@@ -206,7 +189,7 @@ jobs:
   # which is why this is a separate matrix from `upload` rather than a step in it.
   build-wheels:
     name: build-wheels (${{ matrix.target }})
-    needs: test
+    needs: guard
     permissions:
       contents: read
     strategy:
@@ -341,7 +324,7 @@ jobs:
   # then `npm pack`s each to a tarball artifact.
   build-npm:
     name: build-npm (${{ matrix.target }})
-    needs: test
+    needs: guard
     permissions:
       contents: read
     strategy:

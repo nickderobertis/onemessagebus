@@ -2,7 +2,7 @@
   "name": "workspace",
   "$schema": "./node_modules/nx/schemas/project-schema.json",
   "projectType": "application",
-  "tags": ["scope:repo"],
+  "tags": ["scope:repo", "type:workspace"],
   "implicitDependencies": [
     "onemessagebus",
     "onemessagebus-agent",

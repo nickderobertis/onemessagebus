@@ -22,6 +22,17 @@
     ],
     "wholeWorkspace": ["{workspaceRoot}/**/*"]
   },
+  "boundaries": {
+    "//": "Which project types may depend on which, by tag. Enforced by npm/test/project-boundaries.test.mjs over every project's implicitDependencies, which that test also holds to the Cargo dependency graph — so an edge is true rather than declared, and one drawn back from the contract to a consumer fails the gate.",
+    "allow": {
+      "type:contract": [],
+      "type:profile": ["type:contract"],
+      "type:app": ["type:contract", "type:profile"],
+      "type:e2e": ["type:contract", "type:profile", "type:app"],
+      "type:packaging": ["type:app"],
+      "type:workspace": ["type:contract", "type:profile", "type:app", "type:e2e", "type:packaging"]
+    }
+  },
   "targetDefaults": {
     "bootstrap": { "cache": false },
     "format": { "cache": false },

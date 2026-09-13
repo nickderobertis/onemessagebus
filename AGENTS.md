@@ -68,18 +68,29 @@ rationale; the mechanics live in the files named. -->
   public surface held by contract tests, semver through release-plz, boundary
   validation, consumer docs — and its llmlint fragment is pinned in
   `llmlint.yml` beside the composed ones.
-- **Language(s):** rust, python, typescript. Rust is the whole of this node.
-  Python and TypeScript were composed for the SDK packages the
-  `bus-sdks-resident` node adds; today the Python surface is the maturin wheel
+- **Language(s):** rust, plus bash for the wrappers and Node for the npm
+  assembler and its tests, as the siblings. Python and TypeScript are the SDK
+  node's (below); today the Python surface is the maturin wheel
   (`pyproject.toml`, no Python source) and the JavaScript surface is the npm
-  launcher and the packaging tests under `npm/`, so no `ruff`/`ty`/`pytest` or
-  `tsc`/`bun` gate is wired yet — the SDK node wires them with the source they
-  gate. Bash for the wrappers and Node for the npm assembler, as the siblings.
+  launcher and the packaging tests under `npm/`.
 - **References composed:** `base.md`, `project-graph.md`, `shapes/cli.md`,
-  `languages/rust.md`, `languages/python.md`, `languages/typescript.md`,
-  `intersections/rust-cli.md`, `intersections/python-cli.md`, `ci.md`,
-  `llmlint.md`, `releasing.md` (the composer's own list), plus
-  `shapes/library.md` by hand.
+  `shapes/library.md`, `languages/rust.md`, `intersections/rust-cli.md`,
+  `ci.md`, `llmlint.md`, `releasing.md`.
+- **What the composer printed, and what was deferred:** the composer was run
+  as `compose_repo_plan.py --shape library --shape cli --language rust
+  --language python --language typescript --intersection rust-cli --releasing`
+  and printed `base.md, project-graph.md, shapes/cli.md, languages/rust.md,
+  languages/python.md, languages/typescript.md, intersections/rust-cli.md,
+  intersections/python-cli.md, ci.md, llmlint.md, releasing.md` (it takes one
+  shape; `shapes/library.md` was applied by hand, above). `languages/python.md`,
+  `languages/typescript.md` and `intersections/python-cli.md` are **deferred to
+  the SDK node** (`bus-sdks-resident`), which adds the Python and TypeScript
+  source they govern: their gates (a uv workspace with `ruff`/`ty`/`pytest`,
+  bun with `tsc`) and their structural invariants judge source this tree does
+  not have, and recording them as composed here would have the buildout tier
+  fail over Python and TypeScript tooling for a tree with none. Their
+  ongoing llmlint fragments stay pinned in `llmlint.yml` so the rules are in
+  force the day that source lands.
 - **Projects in the graph:** `onemessagebus` (the core; `type:contract`),
   `onemessagebus-agent` (the profile), `onemessagebus-cli` (the binary,
   unpublished), `onemessagebus-e2e` (the compiled-binary journeys, whose `test`
@@ -141,10 +152,8 @@ you:
   tier (`just check-affected`); the push to `main` runs the full sweep
   (`just check`) over every project. release-plz batches merges behind a
   release PR, whose own merge is one more push to `main` and so is swept the
-  same way. `release.yml`'s `test` job runs that sweep once more on the Release
-  commit before anything publishes — a deliberate second run, the siblings'
-  rule, so an artifact never publishes from a tree the gate did not see; the
-  tag-triggered build and publish jobs themselves re-gate nothing.
+  same way — the commit release-plz tags is one CI already swept, and
+  `release.yml` builds and publishes it without re-running the gate.
 - **PRs follow `.github/pull_request_template.md`** — terse **What** and **Why**;
   it becomes the squash body. `.github/CODEOWNERS` routes the review by subtree.
 - **Releases are fully automated; the only human action is merging a PR.**

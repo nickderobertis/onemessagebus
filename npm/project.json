@@ -3,7 +3,7 @@
   "$schema": "../node_modules/nx/schemas/project-schema.json",
   "projectType": "library",
   "sourceRoot": "npm/onemessagebus-cli",
-  "tags": ["scope:packaging", "lang:js"],
+  "tags": ["scope:packaging", "lang:js", "type:packaging"],
   "implicitDependencies": ["onemessagebus-cli"],
   "targets": {
     "bootstrap": { "executor": "nx:noop" },
