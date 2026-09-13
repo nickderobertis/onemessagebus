@@ -29,7 +29,11 @@
 //        [--version <v>] [--out <dir>]
 //   node scripts/npm-build.mjs launcher [--version <v>] [--out <dir>]
 //
-// Both modes print the created package directory on stdout.
+// Both modes print the created package directory on stdout. Exit status follows
+// the repository's contract: 0 assembled, 1 a step that could not be completed
+// (a filesystem failure, or a Cargo.toml whose version is unreadable), 2 an
+// invocation refused before anything was touched (an unknown mode, option or
+// target, a missing value, a binary that does not exist, a malformed --version).
 
 import {
   chmodSync,
@@ -38,6 +42,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -62,9 +67,16 @@ const REPOSITORY = "https://github.com/nickderobertis/onemessagebus";
 
 // Every failure names what to do next: this runs inside a release job, where the
 // only diagnosis anyone gets is what it printed.
-function die(msg, action) {
+function die(msg, action, status = 1) {
   process.stderr.write(`npm-build: ${msg}\nACTION: ${action}\n`);
-  process.exit(1);
+  process.exit(status);
+}
+
+// An invocation this script will not carry out, refused before it touches
+// anything — distinct from a step that failed, so a caller can tell a typo in the
+// release job from a runner that ran out of disk.
+function refuse(msg, action) {
+  return die(msg, action, 2);
 }
 
 // Run a filesystem step, turning anything it throws into the script's own
@@ -89,7 +101,9 @@ function attempt(what, action, step) {
 const NUMBER = "(?:0|[1-9]\\d*)";
 const PRERELEASE_ID = "(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)";
 const BUILD_ID = "[0-9A-Za-z-]+";
-const VERSION = new RegExp(
+// Exported so npm/test/version-grammar.test.mjs can hold it to the same grammar
+// scripts/release-probe.sh reads a registry's answer with.
+export const VERSION = new RegExp(
   `^${NUMBER}\\.${NUMBER}\\.${NUMBER}` +
     `(?:-${PRERELEASE_ID}(?:\\.${PRERELEASE_ID})*)?` +
     `(?:\\+${BUILD_ID}(?:\\.${BUILD_ID})*)?$`,
@@ -128,11 +142,15 @@ function cargoVersion() {
 function resolveVersion(args) {
   const version = args.version ?? cargoVersion();
   if (!VERSION.test(version)) {
-    die(
-      `'${version}' is not a version either registry can index`,
-      args.version === undefined
-        ? "fix the `version` in Cargo.toml [workspace.package]; it must read X.Y.Z"
-        : "pass --version X.Y.Z (a -prerelease or +build suffix is allowed), or omit it to take Cargo.toml's",
+    const message = `'${version}' is not a version either registry can index`;
+    // A malformed --version is the caller's input; a malformed Cargo.toml is the
+    // repository's state, which the invocation itself did nothing wrong to reach.
+    if (args.version === undefined) {
+      die(message, "fix the `version` in Cargo.toml [workspace.package]; it must read X.Y.Z");
+    }
+    refuse(
+      message,
+      "pass --version X.Y.Z (a -prerelease or +build suffix is allowed), or omit it to take Cargo.toml's",
     );
   }
   return version;
@@ -146,12 +164,12 @@ function parseArgs(argv, allowed) {
   const usage = allowed.map((name) => `--${name}`).join(", ");
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (!arg.startsWith("--")) die(`unexpected argument: ${arg}`, `pass options as ${usage}`);
+    if (!arg.startsWith("--")) refuse(`unexpected argument: ${arg}`, `pass options as ${usage}`);
     const key = arg.slice(2);
-    if (!allowed.includes(key)) die(`unknown option --${key}`, `this mode takes ${usage}`);
+    if (!allowed.includes(key)) refuse(`unknown option --${key}`, `this mode takes ${usage}`);
     const value = argv[i + 1];
     if (value === undefined || value.startsWith("--")) {
-      die(`--${key} needs a value`, `give --${key} a value`);
+      refuse(`--${key} needs a value`, `give --${key} a value`);
     }
     out[key] = value;
     i += 1;
@@ -169,15 +187,15 @@ function buildPlatform(args) {
   const known = Object.keys(TARGETS).join(", ");
   const target =
     args.target ||
-    die("platform: --target <triple> is required", `pass --target with one of: ${known}`);
+    refuse("platform: --target <triple> is required", `pass --target with one of: ${known}`);
   const binary =
     args.binary ||
-    die(
+    refuse(
       "platform: --binary <path> is required",
       "pass --binary the path to the built onemessagebus for that target",
     );
   const facts =
-    TARGETS[target] || die(`platform: unknown target ${target}`, `pass one of: ${known}`);
+    TARGETS[target] || refuse(`platform: unknown target ${target}`, `pass one of: ${known}`);
   const version = resolveVersion(args);
   const outRoot = resolve(args.out || join(REPO_ROOT, "npm", "dist"));
 
@@ -192,7 +210,7 @@ function buildPlatform(args) {
   let srcBin = resolve(binary);
   if (!existsSync(srcBin) && existsSync(`${srcBin}.exe`)) srcBin = `${srcBin}.exe`;
   if (!existsSync(srcBin)) {
-    die(
+    refuse(
       `platform: binary not found: ${binary}`,
       `build it first: cargo build --release --locked -p onemessagebus-cli --target ${target}`,
     );
@@ -272,14 +290,19 @@ function buildLauncher(args) {
   process.stdout.write(`${dest}\n`);
 }
 
-const [mode, ...rest] = process.argv.slice(2);
-if (mode === "platform") {
-  buildPlatform(parseArgs(rest, ["target", "binary", "version", "out"]));
-} else if (mode === "launcher") {
-  buildLauncher(parseArgs(rest, ["version", "out"]));
-} else {
-  die(
-    `unknown mode ${mode === undefined ? "(none given)" : mode}`,
-    "run `npm-build.mjs platform --target <triple> --binary <path> [--version <v>] [--out <dir>]` or `npm-build.mjs launcher [--version <v>] [--out <dir>]`",
-  );
+// Dispatched only when run as a script, so importing it for VERSION assembles
+// nothing and exits nothing.
+const invokedAs = process.argv[1];
+if (invokedAs && realpathSync(invokedAs) === realpathSync(fileURLToPath(import.meta.url))) {
+  const [mode, ...rest] = process.argv.slice(2);
+  if (mode === "platform") {
+    buildPlatform(parseArgs(rest, ["target", "binary", "version", "out"]));
+  } else if (mode === "launcher") {
+    buildLauncher(parseArgs(rest, ["version", "out"]));
+  } else {
+    refuse(
+      `unknown mode ${mode === undefined ? "(none given)" : mode}`,
+      "run `npm-build.mjs platform --target <triple> --binary <path> [--version <v>] [--out <dir>]` or `npm-build.mjs launcher [--version <v>] [--out <dir>]`",
+    );
+  }
 }
