@@ -13,7 +13,6 @@ mod profile;
 mod registry_dir;
 
 pub use cli::{run, Cli};
-pub use registry_dir::RegistryDir;
 
 /// The exit code of a verb that did what it was asked.
 pub const EXIT_OK: u8 = 0;
