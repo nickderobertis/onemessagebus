@@ -24,18 +24,19 @@ use serde_json::{json, Value};
 /// The argument a validator command names this test by.
 const DOUBLE: &str = "scripted_validator";
 
+/// The prefix of the argument carrying a validator child's script path. It is
+/// a positional argument libtest reads as a filter matching no test, and one no
+/// test runner passes, so only a child a validator command launched carries it.
+const SCRIPT_ARGUMENT: &str = "scripted-validator-script=";
+
 /// The scripted validator command. Its ordinary harness invocation checks that
 /// it was not accidentally given the validator environment; a validator child
-/// receives a script path and runs its `validate` or `fingerprint` role. A
-/// harness flag after the test name (nextest passes `--exact`) is not a script.
+/// receives its script path in [`SCRIPT_ARGUMENT`] and runs its `validate` or
+/// `fingerprint` role.
 #[test]
 fn scripted_validator() {
-    let arguments: Vec<String> = std::env::args().collect();
-    let Some(script) = arguments
-        .iter()
-        .position(|argument| argument == DOUBLE)
-        .and_then(|at| arguments.get(at + 1))
-        .filter(|argument| !argument.starts_with('-'))
+    let Some(script) = std::env::args()
+        .find_map(|argument| argument.strip_prefix(SCRIPT_ARGUMENT).map(str::to_owned))
     else {
         assert!(
             std::env::var_os(VALIDATE_QUEUE_ENV).is_none(),
@@ -49,7 +50,7 @@ fn scripted_validator() {
         "fingerprint"
     };
     let part: Value = serde_json::from_str::<Value>(
-        &std::fs::read_to_string(script).expect("the subprocess fixture's script is readable"),
+        &std::fs::read_to_string(&script).expect("the subprocess fixture's script is readable"),
     )
     .expect("the subprocess fixture's script is JSON")[role]
         .clone();
@@ -120,11 +121,15 @@ impl Rig {
     /// The double's argv, as a YAML flow sequence.
     fn command(&self) -> String {
         let exe = std::env::current_exe().expect("this test binary");
+        let script = format!(
+            "{SCRIPT_ARGUMENT}{}",
+            self.path("script.json").to_str().expect("a UTF-8 path")
+        );
         serde_json::to_string(&[
             exe.to_str().expect("a UTF-8 path"),
             "--exact",
             DOUBLE,
-            self.path("script.json").to_str().expect("a UTF-8 path"),
+            script.as_str(),
         ])
         .expect("an argv")
     }

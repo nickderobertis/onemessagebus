@@ -19,17 +19,17 @@ use crate::support::{run_in, Run};
 /// The test path a validator command names this subprocess fixture by.
 const DOUBLE: &str = "validators::scripted_validator";
 
+/// The prefix of the argument carrying a validator child's script path. It is
+/// a positional argument libtest reads as a filter matching no test, and one no
+/// test runner passes, so only a child the binary launched carries it.
+const SCRIPT_ARGUMENT: &str = "scripted-validator-script=";
+
 /// The subprocess fixture, whose ordinary invocation verifies it is not a child.
-/// A harness flag after the test name (nextest passes `--exact`) is not a script.
 // llmlint: ignore-block[e2e_not_mocked] This scripted command is the real external validator Contract V admits: the shipped binary launches it as a real subprocess and maps its exit 0, 1, or other status to pass, refuse, or unjudged. Nothing above that process boundary is doubled; the script varies the external command's observed response so the journeys cover every contract outcome.
 #[test]
 fn scripted_validator() {
-    let arguments: Vec<String> = std::env::args().collect();
-    let Some(script) = arguments
-        .iter()
-        .position(|argument| argument == DOUBLE)
-        .and_then(|at| arguments.get(at + 1))
-        .filter(|argument| !argument.starts_with('-'))
+    let Some(script) = std::env::args()
+        .find_map(|argument| argument.strip_prefix(SCRIPT_ARGUMENT).map(str::to_owned))
     else {
         assert!(
             std::env::var_os(VALIDATE_QUEUE_ENV).is_none(),
@@ -43,7 +43,7 @@ fn scripted_validator() {
         "fingerprint"
     };
     let part = serde_json::from_str::<Value>(
-        &std::fs::read_to_string(script).expect("the subprocess fixture's script is readable"),
+        &std::fs::read_to_string(&script).expect("the subprocess fixture's script is readable"),
     )
     .expect("the subprocess fixture's script is JSON")[role]
         .clone();
@@ -114,11 +114,15 @@ impl Scratch {
     /// The double's argv as a YAML flow sequence.
     fn command(&self) -> String {
         let exe = std::env::current_exe().expect("this test binary");
+        let script = format!(
+            "{SCRIPT_ARGUMENT}{}",
+            self.path("script.json").to_str().expect("a UTF-8 path")
+        );
         serde_json::to_string(&[
             exe.to_str().expect("a UTF-8 path"),
             "--exact",
             DOUBLE,
-            self.path("script.json").to_str().expect("a UTF-8 path"),
+            script.as_str(),
         ])
         .expect("an argv")
     }
