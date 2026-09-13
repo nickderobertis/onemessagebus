@@ -72,6 +72,9 @@ fn scripted_validator() {
     err.write_all(part["stderr"].as_str().unwrap_or_default().as_bytes())
         .and_then(|()| err.flush())
         .expect("the subprocess fixture writes stderr");
+    if part["abort"] == json!(true) {
+        std::process::abort();
+    }
     std::process::exit(
         part["exit"]
             .as_i64()
@@ -253,6 +256,38 @@ fn validate_prints_each_verdict_the_scripted_command_reaches_and_appends_nothing
     assert!(
         !scratch.path("channel").join("findings.jsonl").exists(),
         "validate appended"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_validator_ended_by_a_signal_leaves_the_record_unjudged_and_appended_nowhere() {
+    let scratch = Scratch::new();
+    scratch.configure(&format!(
+        "queues:\n  findings: {{}}\nvalidators:\n  - {{on: findings, kind: command, command: {}}}\n",
+        scratch.command()
+    ));
+    scratch.script(
+        json!({"abort": true, "stderr": "the reviewer ran out of memory"}),
+        json!({"exit": 0, "stdout": "bar-1"}),
+    );
+    let record = r#"{"what":"the base moved"}"#;
+
+    let ended = scratch.bus(&["validate", "findings"], Some(record));
+    assert_eq!(ended.code, 1, "an unjudged record passed: {}", ended.stdout);
+    let judged = verdict(&ended);
+    assert_eq!(judged["verdict"], json!("unjudged"));
+    let why = judged["reason"].as_str().expect("a reason");
+    assert!(
+        why.contains("ended by a signal") && why.contains("the reviewer ran out of memory"),
+        "{why}"
+    );
+
+    let sent = scratch.bus(&["send", "findings"], Some(record));
+    assert_eq!(sent.code, 1, "an unjudged record was sent: {}", sent.stdout);
+    assert!(
+        !scratch.path("channel").join("findings.jsonl").exists(),
+        "an unjudged record was appended"
     );
 }
 

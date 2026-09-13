@@ -395,6 +395,7 @@ fn assess_a_numeric_judge_and_the_other_ops_are_refused_by_name() {
         ),
         ("{\"op\":\"transmogrify\"}".to_owned(), "`transmogrify`"),
         ("not a frame".to_owned(), "not JSON"),
+        (r#"{"messages":[]}"#.to_owned(), "names no `op`"),
     ] {
         let refused = scratch.serve(&[], &frame, &run);
         assert_eq!(refused.code, 2, "{frame}: {}", refused.stdout);
@@ -606,6 +607,61 @@ fn serve_refuses_what_it_cannot_serve_before_it_reads_a_frame() {
         elsewhere.stderr
     );
     assert!(scratch.queued().is_empty());
+}
+
+#[test]
+fn serve_reads_what_a_raised_surface_is_about_from_the_configured_environment_name() {
+    let scratch = Scratch::new(30);
+    std::fs::write(
+        scratch.config(),
+        format!(
+            "version: 1\ntransport: {{kind: local, dir: {}}}\nprofile: planner-channel\ncodecs:\n  onejudge: {{about_env: TEST_SERVE_ABOUT}}\n",
+            serde_json::to_string(&scratch.channel()).expect("a path")
+        ),
+    )
+    .expect("written");
+    let silent = supervisor(json!([{"role": "user", "content": "watch"}]));
+
+    let unreadable = scratch.serve(&[], &silent, &[("TEST_SERVE_ABOUT", "build\nand more")]);
+    assert_eq!(unreadable.code, 2, "{}", unreadable.stdout);
+    assert!(
+        unreadable.stderr.contains("TEST_SERVE_ABOUT")
+            && unreadable.stderr.contains("control character"),
+        "{}",
+        unreadable.stderr
+    );
+    let missing = scratch.bus(
+        &[
+            "serve",
+            "surfaces",
+            "--codec",
+            "onejudge",
+            "--file",
+            "no-such-frames.ndjson",
+        ],
+        None,
+    );
+    assert_eq!(missing.code, 2, "{}", missing.stdout);
+    assert!(
+        missing.stderr.contains("cannot read") && missing.stderr.contains("no-such-frames.ndjson"),
+        "{}",
+        missing.stderr
+    );
+    assert!(
+        scratch.queued().is_empty(),
+        "a refused session raised something"
+    );
+
+    let lost = scratch.serve(&[], &silent, &[("TEST_SERVE_ABOUT", "build")]);
+    assert_eq!(lost.code, 1, "{}", lost.stderr);
+    let raised = scratch.queued();
+    assert_eq!(raised.len(), 1, "{raised:?}");
+    assert_eq!(raised[0]["kind"], json!("monitor-failed"));
+    assert_eq!(
+        raised[0]["workstream"],
+        json!("build"),
+        "the surface does not say what it is about"
+    );
 }
 
 #[cfg(unix)]

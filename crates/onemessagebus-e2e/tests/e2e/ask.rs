@@ -550,6 +550,33 @@ fn rearm_after_a_lost_wait_receives_the_eventual_reply() {
 }
 
 #[test]
+fn a_question_the_bus_refuses_answers_refused_with_no_reply_and_appends_nothing() {
+    let scratch = Scratch::new();
+    let refused = scratch.bus(
+        &["ask", "surfaces"],
+        Some(r#"["is", "the", "base", "right?"]"#),
+    );
+    assert_eq!(refused.code, 1, "{}", refused.stderr);
+    let answer = one(&refused);
+    assert_eq!(answer["answer"], json!("refused"));
+    assert!(
+        answer.get("reply").is_none() && answer.get("correlation").is_none(),
+        "a refused question carried a reply or a correlation: {answer}"
+    );
+    let reason = answer["reason"].as_str().expect("a reason");
+    assert!(reason.contains("is a JSON object"), "{reason}");
+    assert!(
+        !refused.stderr.contains("correlation:"),
+        "a refused question printed a correlation: {}",
+        refused.stderr
+    );
+    assert!(
+        scratch.lines("surfaces.jsonl").is_empty(),
+        "a refused question was appended"
+    );
+}
+
+#[test]
 // llmlint: ignore[tests_mirror_real_usage] The invalid state is a reply the CLI schema boundary refuses to produce, so this journey writes it directly to the transport file to represent hand-edited or older storage. The behavior under test is still driven through the real `ask` binary: it answers Refused naming the schema id and pointer.
 fn a_reply_record_its_schema_refuses_answers_refused_naming_the_id_and_pointer() {
     let scratch = Scratch::new();
