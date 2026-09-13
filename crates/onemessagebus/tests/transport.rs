@@ -963,6 +963,11 @@ fn a_plugin_that_does_not_speak_the_protocol_is_refused_saying_what_it_did() {
         ("exits", "read line; exit 0".to_owned(), "exited without answering".to_owned()),
         ("garbage", "read line; echo 'not a reply'".to_owned(), "a line that is not a onemessagebus-transport reply".to_owned()),
         (
+            "unplaced",
+            r#"read line; echo '{"error":{"kind":"past_end","message":"gone"}}'"#.to_owned(),
+            "a line that is not a onemessagebus-transport reply".to_owned(),
+        ),
+        (
             "older",
             r#"read line; echo '{"ok":{"hello":{"protocol":"onemessagebus-transport","version":0}}}'"#.to_owned(),
             "speaks onemessagebus-transport version 0, and this build speaks onemessagebus-transport version 1".to_owned(),

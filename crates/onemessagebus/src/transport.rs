@@ -31,9 +31,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub use crate::plugin::{
-    register_protocol, serve, PluginAnswer, PluginError, PluginErrorKind, PluginHello, PluginReply,
-    PluginRequest, PluginStored, PluginTorn, ProcessTransport, HELLO_SCHEMA, PLUGIN_PREFIX,
-    PROTOCOL, PROTOCOL_VERSION, REPLY_SCHEMA, REQUEST_SCHEMA,
+    register_protocol, serve, PluginAnswer, PluginError, PluginHello, PluginReply, PluginRequest,
+    PluginStored, PluginTorn, ProcessTransport, HELLO_SCHEMA, PLUGIN_PREFIX, PROTOCOL,
+    PROTOCOL_VERSION, REPLY_SCHEMA, REQUEST_SCHEMA,
 };
 
 /// A durable, totally ordered log per queue, with named cursors, small named

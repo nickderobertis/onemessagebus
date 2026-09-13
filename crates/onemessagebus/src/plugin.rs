@@ -243,97 +243,92 @@ pub struct PluginTorn {
     pub bytes: u64,
 }
 
-/// Why a request was not done, in words the client turns back into a
-/// [`TransportError`].
+/// Why a request was not done, discriminated by `kind`, in words the client
+/// turns back into a [`TransportError`]. `past_end` and `not_a_boundary` carry
+/// the queue and the positions, so a queue reading the reply can fold its log
+/// again; a reply missing one of them is not a reply.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PluginError {
-    /// Which refusal: `past_end` and `not_a_boundary` carry the queue and the
-    /// positions, so a queue reading the reply can fold its log again; every
-    /// other refusal is the plugin's words.
-    pub kind: PluginErrorKind,
-    /// What the plugin said.
-    pub message: String,
-    /// The queue, for `past_end` and `not_a_boundary`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub queue: Option<QueueName>,
-    /// The position asked for, for `past_end` and `not_a_boundary`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub position: Option<Position>,
-    /// Where the queue ends, for `past_end`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub end: Option<Position>,
-}
-
-/// The refusals the protocol tells apart.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PluginErrorKind {
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PluginError {
     /// [`TransportError::PastEnd`].
-    PastEnd,
+    PastEnd {
+        /// What the plugin said.
+        message: String,
+        /// The queue.
+        queue: QueueName,
+        /// The position asked for.
+        position: Position,
+        /// Where the queue ends.
+        end: Position,
+    },
     /// [`TransportError::NotABoundary`].
-    NotABoundary,
+    NotABoundary {
+        /// What the plugin said.
+        message: String,
+        /// The queue.
+        queue: QueueName,
+        /// The position asked for.
+        position: Position,
+    },
     /// Anything else the transport refused.
-    Refused,
+    Refused {
+        /// What the plugin said.
+        message: String,
+    },
     /// A request the plugin could not read, or one out of its place.
-    Protocol,
+    Protocol {
+        /// What the plugin said.
+        message: String,
+    },
 }
 
 impl PluginError {
     fn of(failure: &TransportError) -> Self {
-        let mut error = Self {
-            kind: PluginErrorKind::Refused,
-            message: failure.to_string(),
-            queue: None,
-            position: None,
-            end: None,
-        };
+        let message = failure.to_string();
         match failure {
             TransportError::PastEnd {
                 queue,
                 position,
                 end,
-            } => {
-                error.kind = PluginErrorKind::PastEnd;
-                error.queue = Some(queue.clone());
-                error.position = Some(*position);
-                error.end = Some(*end);
-            }
-            TransportError::NotABoundary { queue, position } => {
-                error.kind = PluginErrorKind::NotABoundary;
-                error.queue = Some(queue.clone());
-                error.position = Some(*position);
-            }
-            _ => {}
+            } => Self::PastEnd {
+                message,
+                queue: queue.clone(),
+                position: *position,
+                end: *end,
+            },
+            TransportError::NotABoundary { queue, position } => Self::NotABoundary {
+                message,
+                queue: queue.clone(),
+                position: *position,
+            },
+            _ => Self::Refused { message },
         }
-        error
     }
 
     fn protocol(message: impl Into<String>) -> Self {
-        Self {
-            kind: PluginErrorKind::Protocol,
+        Self::Protocol {
             message: message.into(),
-            queue: None,
-            position: None,
-            end: None,
         }
     }
 
     fn into_transport_error(self, kind: &str) -> TransportError {
-        match (self.kind, self.queue, self.position, self.end) {
-            (PluginErrorKind::PastEnd, Some(queue), Some(position), Some(end)) => {
-                TransportError::PastEnd {
-                    queue,
-                    position,
-                    end,
-                }
-            }
-            (PluginErrorKind::NotABoundary, Some(queue), Some(position), _) => {
-                TransportError::NotABoundary { queue, position }
-            }
-            _ => TransportError::Backend {
+        match self {
+            Self::PastEnd {
+                queue,
+                position,
+                end,
+                ..
+            } => TransportError::PastEnd {
+                queue,
+                position,
+                end,
+            },
+            Self::NotABoundary {
+                queue, position, ..
+            } => TransportError::NotABoundary { queue, position },
+            Self::Refused { message } | Self::Protocol { message } => TransportError::Backend {
                 transport: kind.to_owned(),
-                detail: self.message,
+                detail: message,
             },
         }
     }
