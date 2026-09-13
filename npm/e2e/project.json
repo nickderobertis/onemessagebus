@@ -21,21 +21,7 @@
     "test": {
       "command": "node --test npm/e2e/*.test.mjs",
       "dependsOn": [{ "projects": ["onemessagebus-cli"], "target": "build" }],
-      "inputs": [
-        "{projectRoot}/**/*",
-        "{workspaceRoot}/npm/onemessagebus-cli/**/*",
-        "{workspaceRoot}/scripts/npm-build.mjs",
-        "{workspaceRoot}/crates/onemessagebus/src/**/*",
-        "{workspaceRoot}/crates/onemessagebus/Cargo.toml",
-        "{workspaceRoot}/crates/onemessagebus-agent/src/**/*",
-        "{workspaceRoot}/crates/onemessagebus-agent/schemas/**/*",
-        "{workspaceRoot}/crates/onemessagebus-agent/Cargo.toml",
-        "{workspaceRoot}/crates/onemessagebus-cli/src/**/*",
-        "{workspaceRoot}/crates/onemessagebus-cli/Cargo.toml",
-        "{workspaceRoot}/Cargo.toml",
-        "{workspaceRoot}/Cargo.lock",
-        "sharedGlobals"
-      ]
+      "inputs": ["{projectRoot}/**/*", "^crateSource", "{workspaceRoot}/scripts/npm-build.mjs"]
     },
     "doc": { "executor": "nx:noop" },
     "check": {

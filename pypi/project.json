@@ -9,39 +9,13 @@
     "bootstrap": { "executor": "nx:noop" },
     "build": {
       "command": "just _wheel-build",
-      "inputs": [
-        "{workspaceRoot}/pyproject.toml",
-        "{workspaceRoot}/README.md",
-        "{workspaceRoot}/crates/onemessagebus/src/**/*",
-        "{workspaceRoot}/crates/onemessagebus/Cargo.toml",
-        "{workspaceRoot}/crates/onemessagebus-agent/src/**/*",
-        "{workspaceRoot}/crates/onemessagebus-agent/schemas/**/*",
-        "{workspaceRoot}/crates/onemessagebus-agent/Cargo.toml",
-        "{workspaceRoot}/crates/onemessagebus-cli/src/**/*",
-        "{workspaceRoot}/crates/onemessagebus-cli/Cargo.toml",
-        "{workspaceRoot}/Cargo.toml",
-        "{workspaceRoot}/Cargo.lock",
-        "sharedGlobals"
-      ],
+      "inputs": ["{workspaceRoot}/pyproject.toml", "{workspaceRoot}/README.md", "^crateSource"],
       "outputs": ["{workspaceRoot}/dist/wheels"]
     },
     "format": { "executor": "nx:noop" },
     "format-check": { "executor": "nx:noop" },
     "lint": { "executor": "nx:noop" },
-    "test": {
-      "command": "just _wheel-test",
-      "dependsOn": ["build"],
-      "inputs": [
-        "{workspaceRoot}/pyproject.toml",
-        "{workspaceRoot}/scripts/smoke-published.sh",
-        "{workspaceRoot}/crates/onemessagebus/src/**/*",
-        "{workspaceRoot}/crates/onemessagebus-agent/src/**/*",
-        "{workspaceRoot}/crates/onemessagebus-cli/src/**/*",
-        "{workspaceRoot}/Cargo.toml",
-        "{workspaceRoot}/Cargo.lock",
-        "sharedGlobals"
-      ]
-    },
+    "test": { "executor": "nx:noop" },
     "doc": { "executor": "nx:noop" },
     "check": {
       "executor": "nx:noop",

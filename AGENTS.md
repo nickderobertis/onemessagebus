@@ -98,9 +98,11 @@ rationale; the mechanics live in the files named. -->
   release-configuration drift gates), `onemessagebus-npm-e2e` (the launcher's
   install journeys, which pack the built binary and install it the way a user
   does — the costly tier, kept out of the packaging project's own tests),
-  `onemessagebus-pypi` (the wheel: `build` runs maturin over the root
-  `pyproject.toml`, `test` installs that wheel into a fresh virtualenv and
-  smoke-tests what it put on PATH), and the root `workspace` project carrying
+  `onemessagebus-pypi` (the wheel, whose `build` runs maturin over the root
+  `pyproject.toml`), `onemessagebus-pypi-e2e` (the wheel's install journey,
+  which installs that build into a fresh virtualenv and smoke-tests what it put
+  on PATH — split from the deliverable as the npm journeys are), and the root
+  `workspace` project carrying
   the aggregate coverage floor and the supply-chain check. The binary is its
   own `publish = false` crate because it links the agent profile so `--profile`
   defaults to it, a binary links only its own crate's dependencies, and the

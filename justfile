@@ -165,8 +165,8 @@ _e2e-test:
     @cargo llvm-cov --no-report nextest -p onemessagebus-e2e --locked --status-level fail --final-status-level fail \
       || { echo "onemessagebus-e2e: journeys failed — fix the failures named above" >&2; exit 1; }
 
-# The PyPI wheel, built by maturin from pyproject.toml with the version release.yml
-# pins, warnings denied, into the gitignored dist/wheels.
+# Pinned to the maturin CI's `wheel` job builds with, so a wheel that builds here
+# is the one that job would build.
 _wheel-build:
     @rm -rf dist/wheels
     @RUSTFLAGS="-D warnings" uvx --from 'maturin==1.14.1' maturin build --release --locked --out dist/wheels \

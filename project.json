@@ -10,7 +10,8 @@
     "onemessagebus-e2e",
     "onemessagebus-npm",
     "onemessagebus-npm-e2e",
-    "onemessagebus-pypi"
+    "onemessagebus-pypi",
+    "onemessagebus-pypi-e2e"
   ],
   "targets": {
     "coverage": {
