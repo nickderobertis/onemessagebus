@@ -265,6 +265,28 @@ fn next_claims_blocking_first_holds_it_pending_and_exits_one_when_nothing_is_lef
         "reading narration answered the pending question"
     );
 
+    // One pending at a time: a second blocking claim takes the slot, and the
+    // question it displaces is not held beside it.
+    scratch.bus(
+        &["send", "surfaces"],
+        Some(&surface(
+            "planner-question",
+            "a later question",
+            "proposal",
+            true,
+        )),
+    );
+    let later = one_line(&scratch.bus(&["next", "surfaces"], None));
+    assert_eq!(later["record"]["message"], json!("a later question"));
+    let status = scratch.status("surfaces");
+    assert_eq!(status["pending"]["message"], json!("a later question"));
+    assert_eq!(status["pending_position"], later["position"]);
+    assert_eq!(
+        status["waiting"],
+        json!([]),
+        "a displaced question is held beside the pending one"
+    );
+
     let empty = scratch.bus(&["next", "surfaces"], None);
     assert_eq!(empty.code, 1);
     assert_eq!(
@@ -598,6 +620,21 @@ fn subscribe_streams_until_its_predicate_admits_a_record_and_times_out_otherwise
         "{}",
         timed_out.stderr
     );
+    let as_payload = scratch.bus(
+        &[
+            "subscribe",
+            "surfaces",
+            r#"{"kind":"finding"}"#,
+            "--until",
+            r#"{"field":"event","equals":"answered"}"#,
+        ],
+        None,
+    );
+    assert_eq!(
+        as_payload.code, 2,
+        "subscribe took a payload: {}",
+        as_payload.stdout
+    );
     let bad = scratch.bus(
         &["subscribe", "surfaces", "--until", r#"{"field":"event"}"#],
         None,
@@ -655,6 +692,23 @@ fn status_reports_every_declared_queue_and_transports_lists_the_kinds() {
     );
     let unknown = scratch.bus(&["status", "findings"], None);
     assert_eq!(unknown.code, 2);
+    let as_payload = scratch.bus(&["status", "surfaces", r#"{"kind":"finding"}"#], None);
+    assert_eq!(
+        as_payload.code, 2,
+        "status took a payload: {}",
+        as_payload.stdout
+    );
+    let as_queue = scratch.bus(&["status", r#"{"kind":"finding"}"#], None);
+    assert_eq!(
+        as_queue.code, 2,
+        "status read a payload as a queue: {}",
+        as_queue.stdout
+    );
+    assert!(
+        as_queue.stderr.contains("is not a queue name"),
+        "{}",
+        as_queue.stderr
+    );
 
     let kinds = run_in(scratch.root(), &["transports"], None, &[("PATH", "")]);
     assert_eq!(kinds.code, 0, "{}", kinds.stderr);
