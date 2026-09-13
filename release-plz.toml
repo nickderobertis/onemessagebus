@@ -35,6 +35,11 @@ semver_check = true
 git_tag_name = "v{{ version }}"
 git_release_name = "v{{ version }}"
 
+# The release PR's branch prefix, stated rather than left to the default: ci.yml
+# gives that PR the full sweep and release-plz.yml auto-merges it by this prefix,
+# and npm/test/release-configuration.test.mjs holds both to this one value.
+pr_branch_prefix = "release-plz-"
+
 # Keep-a-Changelog-style grouping. The version bump is computed from the
 # conventional-commit *type*, independent of these display groups.
 [changelog]

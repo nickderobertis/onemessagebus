@@ -11,7 +11,7 @@ manifest does not say.
 ```bash
 pip install onemessagebus-cli          # the wheel, no toolchain needed
 npm install -g onemessagebus-cli       # the npm launcher, no toolchain needed
-cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebus-cli
+cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebus-cli --locked
 ```
 
 ## Rules every verb keeps

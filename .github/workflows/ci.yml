@@ -1,9 +1,16 @@
 name: CI
 
+# Pull requests run the affected tier; the release PR — the commit that ships —
+# and a nightly run get the full sweep. A push to main runs nothing here: every
+# commit on main arrived through a gated pull request, and gating it again would
+# re-sweep a tree the merge already proved. The README's install one-liner,
+# which needs the code on the remote, is proven by install-documented.yml.
 on:
-  push:
-    branches: [main]
   pull_request:
+  schedule:
+    # Nightly, 04:17 UTC: the sweep that catches what affected detection or a
+    # stale cache could miss between release PRs.
+    - cron: "17 4 * * *"
 
 # Least privilege: most jobs only need to read the repo.
 permissions:
@@ -18,8 +25,8 @@ env:
 
 jobs:
   # Which projects this pull request's diff can reach, derived once so every
-  # Rust-artifact job below can skip on a change that cannot touch the crate
-  # instead of paying the full matrix. On a push to main it answers `true` for
+  # Rust-artifact job below can skip on a change that cannot touch a crate
+  # instead of paying the full matrix. On the nightly run it answers `true` for
   # everything.
   #
   # `just affected-crate` fails closed: with no derivable merge base — a shallow
@@ -48,9 +55,9 @@ jobs:
 
   # The gate on a clean checkout: bootstrap from scratch, then the deterministic
   # gate (format, clippy, tests incl. e2e with the coverage threshold, docs).
-  # Affected projects on an ordinary pull request and on a push to main; every
-  # project on the release PR, because release-plz batches merges behind it and
-  # its commit is the one that ships.
+  # Affected projects on an ordinary pull request; every project on the release
+  # PR, because release-plz batches merges behind it and its commit is the one
+  # that ships, and nightly.
   #
   # Linux-only because coverage is measured here; macOS/Windows prove the artifact
   # via the `cross` job below.
@@ -70,16 +77,11 @@ jobs:
       - uses: ./.github/actions/setup-just
       - name: Bootstrap
         run: just bootstrap
-      # The affected tier on an ordinary pull request and on a push to main
-      # (scoped against the commit the push replaced); the broader tier — the
-      # full sweep — on the release PR, whose commit is what release-plz tags.
       - name: Quality gate (affected projects)
-        if: github.event_name != 'pull_request' || !startsWith(github.head_ref, 'release-plz-')
-        env:
-          ONEMESSAGEBUS_NX_BASE_SHA: ${{ github.event.before }}
+        if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-plz-')
         run: just check-affected
       - name: Quality gate (every project)
-        if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-plz-')
+        if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-plz-')
         run: just check
       # A committed lockfile that `just bootstrap`/`just check` had to change is a
       # stale generated file; fail rather than let it drift.
@@ -185,30 +187,6 @@ jobs:
           bash scripts/smoke-published.sh \
             --expect-version "$version" \
             --label "cargo install onemessagebus-cli $version on $RUNNER_OS/$RUNNER_ARCH"
-
-  # The README's install one-liner, run verbatim. It can only resolve code that is
-  # already on the remote, so it runs on main rather than on PRs — where the
-  # `install` job above proves the same path against the branch's own revision.
-  install-documented:
-    if: github.event_name == 'push'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: Swatinem/rust-cache@v2
-      # Named explicitly: the repository root is a virtual workspace manifest, so
-      # `cargo install --git` has to be told which package to build.
-      - name: Install (the command the README gives users)
-        run: cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebus-cli --locked
-      - name: Smoke-test the installed binary
-        run: |
-          onemessagebus --version
-          onemessagebus --help >/dev/null
 
   # The PyPI path on every PR: build the wheel maturin will publish from this
   # revision, install it, and smoke-test what it put on PATH.

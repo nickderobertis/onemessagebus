@@ -145,14 +145,16 @@ you:
   subject is the PR title. Queue with `gh pr merge --auto --squash`; head
   branches auto-delete. Admins may bypass in a break-glass.
 - **All gating checks are required**: `gate`, `cross`, `msrv`, `deny`,
-  `install`, `wheel`, `pr-title`, and `llmlint`. `notignored` is deliberately
+  `install`, `wheel`, `pr-title`, and `llmlint`. `install-documented.yml` runs
+  on a push to `main`, never on a pull request, so it cannot be required. `notignored` is deliberately
   not: it is the review artifact naming the suppressions a PR adds, and a fork's
   read-only token cannot post it.
 - **The broader tier runs on the release PR.** release-plz batches merges
   behind a release PR, so the commit that ships is that PR's, and it is the
-  one CI sweeps whole (`just check` over every project). An ordinary pull
-  request and a push to `main` run the affected tier (`just check-affected`,
-  scoped against the fork point or the commit the push replaced). The
+  one CI sweeps whole (`just check` over every project); a nightly run sweeps
+  the same way. An ordinary pull request runs the affected tier
+  (`just check-affected`, scoped against its fork point), and a push to `main`
+  is gated by nothing further — the pull request that landed it was. The
   tag-triggered `release.yml` builds and publishes the swept commit and re-runs
   no gate.
 - **PRs follow `.github/pull_request_template.md`** — terse **What** and **Why**;

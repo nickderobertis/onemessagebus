@@ -33,7 +33,7 @@ const PACKAGES = {
 // only what went wrong.
 const OTHER_INSTALLS =
   "Install another way instead: 'pip install onemessagebus-cli', or " +
-  "'cargo install onemessagebus --locked'.";
+  "'cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebus-cli --locked'.";
 
 function fail(message) {
   process.stderr.write(`onemessagebus: ${message}\n`);

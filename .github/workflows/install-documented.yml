@@ -1,0 +1,36 @@
+# The README's install one-liner, run verbatim on every platform a user installs
+# on. It can only resolve code that is already on the remote, so it runs on a
+# push to main rather than on a pull request — where ci.yml's `install` job
+# proves the same path against the branch's own revision. A smoke of the
+# documented path, not a gate: the commit it runs on was gated by the pull
+# request that landed it.
+name: Install (documented)
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  install-documented:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: Swatinem/rust-cache@v2
+      # Named explicitly: the repository root is a virtual workspace manifest, so
+      # `cargo install --git` has to be told which package to build.
+      - name: Install (the command the README gives users)
+        run: cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebus-cli --locked
+      - name: Smoke-test the installed binary
+        run: |
+          onemessagebus --version
+          onemessagebus --help >/dev/null
+

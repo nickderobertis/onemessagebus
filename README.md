@@ -28,7 +28,7 @@ Three artifacts:
 ```bash
 pip install onemessagebus-cli          # PyPI wheel, no toolchain needed
 npm install -g onemessagebus-cli       # npm launcher, no toolchain needed
-cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebus-cli
+cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebus-cli --locked
 ```
 
 ```bash
