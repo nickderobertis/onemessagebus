@@ -33,18 +33,23 @@ plugins:
 # requiring a file and line makes each finding point at the site to fix, and
 # changes nothing about what the rule judges.
 rules:
+  # llmlint: ignore[description_and_relevance_are_concise] this override sets only require_line_attribution; the description and relevance are inherited unchanged from the pinned dero-skills plugin and are not written in this file, so rewording them here would fork the plugin's rule rather than tune it.
   - name: cli_output_contract
     override: true
     require_line_attribution: true
+  # llmlint: ignore[description_and_relevance_are_concise] this override sets only require_line_attribution; the description and relevance are inherited unchanged from the pinned dero-skills plugin and are not written in this file, so rewording them here would fork the plugin's rule rather than tune it.
   - name: stable_public_surface
     override: true
     require_line_attribution: true
+  # llmlint: ignore[description_and_relevance_are_concise] this override sets only require_line_attribution; the description and relevance are inherited unchanged from the pinned dero-skills plugin and are not written in this file, so rewording them here would fork the plugin's rule rather than tune it.
   - name: invalid_states_unrepresentable
     override: true
     require_line_attribution: true
+  # llmlint: ignore[description_and_relevance_are_concise] this override sets only require_line_attribution; the description and relevance are inherited unchanged from the pinned dero-skills plugin and are not written in this file, so rewording them here would fork the plugin's rule rather than tune it.
   - name: no_panics_on_recoverable_errors
     override: true
     require_line_attribution: true
+  # llmlint: ignore[description_yields_clear_verdict] this override sets only require_line_attribution; the description is inherited unchanged from the pinned dero-skills plugin and is not written in this file, so restating its verdict wording here would fork the plugin's rule rather than tune it.
   - name: no_unjustified_any_or_non_null
     override: true
     require_line_attribution: true
