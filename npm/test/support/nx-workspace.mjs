@@ -71,7 +71,12 @@ export function createUpstream(root) {
   const projects = {
     a: {
       mark: { command: 'echo a >> "$MARK_FILE"' },
-      leak: { command: 'echo "the token is $NX_WORKSPACE_TOKEN"; exit 3' },
+      // Nx itself intermittently drops the only line of a command that prints and
+      // exits within a few milliseconds — about one run in ten here, with and
+      // without its native terminal, while the wrapper replayed and redacted every
+      // line it was given. The pause keeps that race in Nx out of a case whose
+      // subject is the wrapper's replay and redaction.
+      leak: { command: 'echo "the token is $NX_WORKSPACE_TOKEN"; sleep 0.2; exit 3' },
       // What the e2e journeys do inside `just check`: run the wrapper again from
       // inside a target the wrapper is running.
       nested: { command: "bash scripts/nx run b:mark" },
