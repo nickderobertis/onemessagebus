@@ -1,9 +1,7 @@
 # Asking and answering
 
 A question asked on a queue is a record carrying a **correlation** the bus
-minted, and only a reply echoing that correlation answers it. It is the approved
-contract's Contract A, said in this repository's own voice; `docs/contract.md`
-is the text both restate.
+minted, and only a reply echoing that correlation answers it.
 
 Every rule below was an incident first, in the wrappers this replaces
 (`ask-manager.sh`, `ask-manager-contract.sh` and `channel-reply.sh` in
@@ -28,9 +26,8 @@ bus owns:
 | `asker` | who asks, when an asker is named: a later listener of the same asker takes the question back |
 | `about` | what the question is about, when named; the `planner-channel` layout carries it as the surface's `workstream`, where `onepipeline` reads it |
 
-Then it is shaped by the layout, judged by the validators (`docs/validators.md`),
-validated against the queue's schema and appended. A refusal at any step appends
-nothing.
+Then it is shaped by the layout, judged by the queue's validators, validated
+against the queue's schema and appended. A refusal at any step appends nothing.
 
 A `Correlation` is `c-` and 32 hex digits of the operating system's randomness,
 checked against every question the queue already holds; text from outside — a

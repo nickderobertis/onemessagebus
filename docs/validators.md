@@ -1,8 +1,7 @@
 # Validators
 
 A validator is a judgement a queue makes of a message **before anything is
-appended**. It is the approved contract's Contract V, said in this repository's
-own voice; `docs/contract.md` is the text both restate.
+appended**.
 
 ## Verdicts
 
@@ -103,8 +102,7 @@ by side:
   there and is not `null`, `""`, `[]` or `{}`. `{carries: commands}` judges a
   reply envelope that carries edits and passes one that carries only a verdict.
   `carries` stands alone; a `when` naming it beside another key is refused.
-- any queue predicate (`docs/queues.md`): `{field, equals}`, `{field, present}`,
-  `{field, non_empty}`, `{all}`, `{any}`, `{not}`.
+- any queue predicate: `{field, equals}`, `{field, present}`, `{field,
+  non_empty}`, `{all}`, `{any}`, `{not}`.
 
-`carries` is not a form of the queue predicate grammar — a departure from
-Contract V's wording ruled by the manager and recorded in `docs/contract.md`.
+`carries` is a separate form from the queue predicate grammar.

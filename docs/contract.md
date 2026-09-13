@@ -528,8 +528,6 @@ recorded here so the adopting nodes read them where they read the contract:
 
 ### Contract A — ask and answer
 
-`docs/ask.md` restates this section in the repository's own voice.
-
 - `Bus::ask::<Q: Message, R: Message>(&self, queue: &QueueName, question: Q,
   options: AskOptions) -> Result<Pending<R>, BusError>` raises `question` on
   `queue` and hands back the handle its answer arrives on, with `AskOptions {
@@ -577,8 +575,6 @@ recorded here so the adopting nodes read them where they read the contract:
 
 ### Contract V — validators
 
-`docs/validators.md` restates this section in the repository's own voice.
-
 - `trait Validator<M: Message>: Send + Sync { fn validate(&self, message: &M,
   context: &ValidationContext) -> Verdict; }` and `enum Verdict { Pass, Refuse {
   reason }, Unjudged { reason } }`; **an `Unjudged` verdict never passes**. On the
@@ -617,8 +613,6 @@ validators:
   file, because it is code. Every key is refused by name when unknown.
 
 ### Contract K — the onejudge codec behind `serve`
-
-`docs/codecs.md` restates this section in the repository's own voice.
 
 `onemessagebus serve <queue> --codec onejudge [--config <path>]` is a member's
 judge-side command provider in the sense of `onejudge`'s `docs/protocol.md`: one

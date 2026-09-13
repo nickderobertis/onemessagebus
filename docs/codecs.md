@@ -2,8 +2,7 @@
 
 A codec reads the frames of a member's protocol and answers each with one
 response object, over a bus. `onemessagebus serve <queue> --codec <name>` runs
-one. This is the approved contract's Contract K, said in this repository's own
-voice; `docs/contract.md` is the text both restate.
+one.
 
 ## The loop every codec shares
 
@@ -17,7 +16,7 @@ on a response the session decided not to write.
 
 A codec reaches the bus through its `ServeSession`: `raise` puts a record on the
 served queue, stamped with the session's asker and what it is about; `ask` asks a
-question there (`docs/ask.md`) and waits the reply window for its answer, and
+question there and waits the reply window for its answer, and
 the session keeps the question. **How the session ends decides what becomes of
 the questions it asked**, which is `onepipeline`'s `Served` distinction, kept:
 
@@ -104,8 +103,8 @@ elapses, or a question abandoned before anyone ruled, is scored the conservative
 pass**.
 
 A reply that is a live edit — commands, and no boolean `completion` — never
-reaches the codec, because the reply router sends it to the command path alone
-(`docs/ask.md`). If one arrives anyway, as only a regressed transport would
+reaches the codec, because the reply router sends it to the command path alone.
+If one arrives anyway, as only a regressed transport would
 deliver it, it is recognised, the member is answered with a non-completion
 naming the edits, and nothing is re-applied: the edit reached the engine when it
 was sent, and sending it again would apply it twice.
