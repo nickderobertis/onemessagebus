@@ -39,10 +39,6 @@ use crate::transport::{
     TransportError,
 };
 
-// ---------------------------------------------------------------------------
-// Policy.
-// ---------------------------------------------------------------------------
-
 /// What a queue promises about delivery.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
@@ -524,10 +520,6 @@ impl QueueSpec {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Askers.
-// ---------------------------------------------------------------------------
-
 /// One asker's name: the word by which two listeners are one side.
 ///
 /// A listener is something an asker rents, never the asker itself: an asker may
@@ -601,10 +593,6 @@ impl<'de> Deserialize<'de> for Asker {
         Self::new(&text, "the recorded asker").map_err(serde::de::Error::custom)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Errors and answers.
-// ---------------------------------------------------------------------------
 
 /// Why a queue did not do what it was asked.
 #[derive(Debug, thiserror::Error)]
@@ -720,10 +708,6 @@ pub struct QueueStatus {
     /// Each declared consumer's cursor, `null` for one that has read nothing.
     pub cursors: BTreeMap<ConsumerName, Option<Position>>,
 }
-
-// ---------------------------------------------------------------------------
-// The event log and its projection.
-// ---------------------------------------------------------------------------
 
 /// What one line of an event queue's log says happened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -901,10 +885,6 @@ fn shape_of<M: Message>() -> Shape {
         serde_json::to_value(&typed).map_err(|failure| failure.to_string())
     })
 }
-
-// ---------------------------------------------------------------------------
-// The untyped queue.
-// ---------------------------------------------------------------------------
 
 /// A queue over JSON records: what a configuration-declared queue is, and what
 /// [`Queue`] is over its record type.
@@ -1797,10 +1777,6 @@ impl RawQueue {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The typed queue.
-// ---------------------------------------------------------------------------
-
 /// A queue of `M`: every record is validated against `M::SCHEMA` before it is
 /// appended, and written in `M`'s own field order.
 pub struct Queue<M: Message> {
@@ -1958,10 +1934,6 @@ impl<M: Message + 'static> Queue<M> {
         self.raw.unread_count()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Subscriptions.
-// ---------------------------------------------------------------------------
 
 /// How long a subscription's claims stay its own.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -23,6 +23,7 @@ path = "src/lib.rs"
 [dependencies]
 onemessagebus = { workspace = true }
 
+# llmlint: ignore[new_command_or_client_gets_its_own_project] this is neither a command the tool exposes nor a client for an external system: it is a test double, the third transport the journeys of this publish = false test project spawn as a plugin, with no tests, network or users of its own; the task requires that transport to be written in this project's tests/plugin_transport.rs, so a project of its own could only reach back into this one's test file, and nothing outside this suite ever selects it.
 [[bin]]
 name = "onemessagebus-transport-dirfiles"
 path = "src/bin/onemessagebus-transport-dirfiles.rs"

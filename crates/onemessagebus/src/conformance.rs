@@ -350,10 +350,6 @@ pub fn messages_register_and_check<V: Vocabulary, M: Message + PartialEq + std::
     }
 }
 
-// ---------------------------------------------------------------------------
-// Queues, subscriptions and authors, over any transport.
-// ---------------------------------------------------------------------------
-
 /// Hands a row a fresh, empty transport each time it is called.
 pub type Fresh<'a> = &'a dyn Fn() -> Arc<dyn Transport>;
 

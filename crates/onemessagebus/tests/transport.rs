@@ -548,6 +548,40 @@ fn hello() -> Value {
     .expect("a hello")
 }
 
+/// The protocol carries records and documents as UTF-8 text, so the serving
+/// end refuses bytes that are not, rather than handing them on altered.
+#[test]
+fn the_serving_end_refuses_a_record_or_document_that_is_not_utf8() {
+    let memory: Arc<dyn Transport> = Arc::new(MemoryTransport::new());
+    memory
+        .append(&queue("q"), b"{\"n\":\"\xff\"}")
+        .expect("a transport holds bytes");
+    let name: DocumentName = "q.json".parse().expect("a document name");
+    memory
+        .replace_document(&queue("q"), &name, b"\xfe")
+        .expect("a transport holds a document of bytes");
+    let served = serve_lines(
+        &[
+            hello(),
+            json!({"op": "read", "queue": "q", "limit": 10}),
+            json!({"op": "document", "queue": "q", "name": "q.json"}),
+        ],
+        memory,
+    );
+    served.result.expect("serving goes on after a refusal");
+    for (reply, what) in [
+        (&served.replies[1], "a record"),
+        (&served.replies[2], "document q.json"),
+    ] {
+        assert_eq!(reply["error"]["kind"], json!("refused"), "{reply}");
+        let message = reply["error"]["message"].as_str().expect("a message");
+        assert!(
+            message.contains(what) && message.contains("is not UTF-8"),
+            "{message}"
+        );
+    }
+}
+
 /// The serving end answers the hello with its protocol and version, each
 /// request with one reply, a section's requests inside it, and a refusal the
 /// client can turn back into the transport error it was.

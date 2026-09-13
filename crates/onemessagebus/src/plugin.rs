@@ -516,11 +516,19 @@ fn answer(
                 records: batch
                     .records
                     .into_iter()
-                    .map(|stored| PluginStored {
-                        record: String::from_utf8_lossy(&stored.bytes).into_owned(),
-                        after: stored.after,
+                    .map(|stored| {
+                        let record = String::from_utf8(stored.bytes).map_err(|_| {
+                            TransportError::NotARecord {
+                                queue: queue.clone(),
+                                why: "is not UTF-8, which the plugin protocol carries records as",
+                            }
+                        })?;
+                        Ok(PluginStored {
+                            record,
+                            after: stored.after,
+                        })
                     })
-                    .collect(),
+                    .collect::<Result<_, TransportError>>()?,
                 torn: batch.torn.map(|torn| PluginTorn {
                     at: torn.at,
                     bytes: torn.bytes,
@@ -558,7 +566,15 @@ fn answer(
         PluginRequest::Document { queue, name } => PluginAnswer::Document(
             transport
                 .document(&queue, &name)?
-                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
+                .map(|bytes| {
+                    String::from_utf8(bytes).map_err(|_| TransportError::Backend {
+                        transport: "plugin".to_owned(),
+                        detail: format!(
+                            "document {name} is not UTF-8, which the plugin protocol carries documents as"
+                        ),
+                    })
+                })
+                .transpose()?,
         ),
         PluginRequest::ReplaceDocument { queue, name, bytes } => {
             transport.replace_document(&queue, &name, bytes.as_bytes())?;
@@ -587,10 +603,6 @@ fn write_reply(output: &mut dyn Write, reply: &PluginReply) -> Result<(), Transp
             detail: format!("cannot write a reply: {failure}"),
         })
 }
-
-// ---------------------------------------------------------------------------
-// The client end.
-// ---------------------------------------------------------------------------
 
 /// The plugin process behind a [`ProcessTransport`], and the pipe to it.
 struct PluginProcess {

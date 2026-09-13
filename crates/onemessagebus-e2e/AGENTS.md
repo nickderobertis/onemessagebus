@@ -24,8 +24,6 @@ and `src/bin/onemessagebus-transport-dirfiles.rs` compiles that same file into
 the plugin executable the binary finds on `PATH`: the queue table and the binary
 run over one implementation, so change the transport there and nowhere else.
 
-`tests/e2e/onepipeline.rs` has the `onepipeline-cli` 0.28.2 wheel's reader read a
-channel directory this build wrote, through `uv tool run`. It needs `uv` on
-`PATH`, and the network the first time the wheel is fetched (uv caches it
-after); every CI job that runs this suite installs uv. A failure there is the
-0.28.2 reader disagreeing with this build about the channel layout, not a flake.
+`tests/e2e/onepipeline.rs` is the one journey that is not offline: the 0.28.2
+release's own reader is the only authority on the channel layout, so it needs
+`uv` and, once, the network. Its failure is a layout disagreement, not a flake.

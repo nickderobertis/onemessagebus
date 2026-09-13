@@ -492,10 +492,6 @@ fn unpoisoned<'a, T>(
     guard.unwrap_or_else(PoisonError::into_inner)
 }
 
-// ---------------------------------------------------------------------------
-// The local transport.
-// ---------------------------------------------------------------------------
-
 /// A transport over one directory, laid out as `onepipeline` lays out a run's
 /// channel directory.
 ///
@@ -1056,10 +1052,6 @@ impl Transport for LocalHeld {
         self.local.replace_document(queue, name, bytes)
     }
 }
-
-// ---------------------------------------------------------------------------
-// The memory transport.
-// ---------------------------------------------------------------------------
 
 /// A transport in memory, for tests: every [`Transport`] promise the local one
 /// keeps, with nothing on disk.
