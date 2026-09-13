@@ -85,11 +85,35 @@ impl<V: Vocabulary> Reader<V> {
     ///
     /// # Errors
     ///
-    /// The file could not be read.
+    /// The file could not be read, or `position` is not a record boundary —
+    /// past the end of the file, or not just after a newline — refused as
+    /// [`InvalidInput`](std::io::ErrorKind::InvalidInput) naming the position.
+    /// A position inside a record would read its tail as a record of its own.
     pub fn open_at(path: impl AsRef<Path>, position: u64) -> std::io::Result<Self> {
         let path = path.as_ref().to_path_buf();
         let mut file = File::open(&path)?;
-        file.seek(SeekFrom::Start(position))?;
+        if position > 0 {
+            // The one-byte read that checks the boundary also leaves the
+            // cursor at `position`, so the read below needs no second seek.
+            file.seek(SeekFrom::Start(position - 1))?;
+            let mut before = [0u8; 1];
+            let why = match file.read(&mut before)? {
+                0 => Some("it is past the end of the file"),
+                _ if before[0] != b'\n' => {
+                    Some("it is inside a record: no newline ends the byte before it")
+                }
+                _ => None,
+            };
+            if let Some(why) = why {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "cannot read {} from byte {position}: {why}; resume from a position a reading handed back, or 0",
+                        path.display()
+                    ),
+                ));
+            }
+        }
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
         let readings = read_lines::<V>(&bytes, position);

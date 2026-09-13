@@ -118,7 +118,6 @@ fn a_torn_final_line_is_reported_and_read_whole_once_completed() {
         "resume after the last whole record"
     );
 
-    // The writer finishes the line.
     std::fs::write(&path, format!("{whole}{fourth}\n")).expect("completed");
     let completed: Vec<Reading<Open>> = Reader::open_at(&path, resume).expect("resumes").collect();
     assert_eq!(completed.len(), 1);
@@ -128,6 +127,58 @@ fn a_torn_final_line_is_reported_and_read_whole_once_completed() {
             assert_eq!(record.position, (whole.len() + fourth.len() + 1) as u64);
         }
         other => panic!("{other:?}"),
+    }
+}
+
+/// Every position a reading hands back opens — 0, after each whole record,
+/// after a refused line, and the resume position before a torn tail — and
+/// nothing else does: a position inside a record or past the end is refused
+/// naming it, rather than reading a record's tail as a record of its own.
+#[test]
+fn a_reader_opens_only_at_a_record_boundary() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let path = dir.path().join("s.ndjson");
+    let whole = format!("{}not json\n{}", stream("s", 2), stream("t", 1));
+    std::fs::write(&path, format!("{whole}{{\"v\":1")).expect("written");
+
+    let reader = Reader::<Open>::open_at(&path, 0).expect("0 opens");
+    let resume = reader.position();
+    assert_eq!(resume, whole.len() as u64);
+    let mut handed_back = vec![0, resume];
+    for reading in reader {
+        match reading {
+            Reading::Record(record) => handed_back.push(record.position),
+            Reading::Refused(refused) => handed_back.extend([refused.at, refused.position]),
+            Reading::Torn(torn) => handed_back.push(torn.at),
+        }
+    }
+    assert_eq!(handed_back.len(), 8, "{handed_back:?}");
+    for position in &handed_back {
+        Reader::<Open>::open_at(&path, *position)
+            .unwrap_or_else(|failure| panic!("{position} refused: {failure}"));
+    }
+
+    let length = std::fs::metadata(&path).expect("meta").len();
+    let refusals = [
+        (1, "inside a record"),
+        (handed_back[2] - 1, "inside a record"),
+        (resume + 1, "inside a record"),
+        (length, "inside a record"),
+        (length + 1, "past the end of the file"),
+        (length + 100, "past the end of the file"),
+    ];
+    for (position, why) in refusals {
+        let refusal =
+            Reader::<Open>::open_at(&path, position).expect_err(&format!("{position} refused"));
+        assert_eq!(
+            refusal.kind(),
+            std::io::ErrorKind::InvalidInput,
+            "{refusal}"
+        );
+        let message = refusal.to_string();
+        assert!(message.contains(&format!("byte {position}:")), "{message}");
+        assert!(message.contains(why), "{position}: {message}");
+        assert!(message.contains("s.ndjson"), "{message}");
     }
 }
 
