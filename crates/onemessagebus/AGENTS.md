@@ -13,3 +13,10 @@ field order.
 
 `conformance.rs` is test support published for profile crates; it is excluded
 from the coverage floor and exercised by its callers.
+
+The inbox (`inbox.rs`, `spool.rs`, `carry.rs`) never makes up a disposition: a
+sender is answered, told the inbox closed, or told the backend lost the answer.
+Any new path that could leave a sender blocked must end in one of those three —
+`Reply` answers on drop for exactly that reason. The spool's file names and
+documents are held by the profile's `tests/contract.rs` against
+`docs/contract.md` and `docs/inbox.md`; a change to either is a contract change.
