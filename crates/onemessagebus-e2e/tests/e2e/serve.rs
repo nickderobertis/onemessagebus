@@ -569,6 +569,10 @@ fn serve_refuses_what_it_cannot_serve_before_it_reads_a_frame() {
             json!({"op": "judge", "kind": "numeric", "criterion": "score it", "messages": []}).to_string(),
             "missing field",
         ),
+        (
+            json!({"op": "supervisor", "task": "onepipeline run `r-7`", "persona": "monitor", "worktree": "/repo", "history_name": "r-7-monitor", "messages": [{"role": "assistant", "content": "here", "events": [{"kind": "tool_guess", "index": 0}]}]}).to_string(),
+            "unknown variant",
+        ),
     ] {
         let malformed = scratch.serve(
             &[],

@@ -118,12 +118,22 @@ pub enum Role {
     System,
 }
 
+/// The two normalized tool events a turn can carry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolEventKind {
+    /// A request to invoke a tool.
+    ToolCall,
+    /// What an invoked tool returned.
+    ToolResult,
+}
+
 /// One normalized tool event of an assistant turn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ToolEvent {
     /// `tool_call` or `tool_result`.
-    pub kind: String,
+    pub kind: ToolEventKind,
     /// The normalized tool name, where knowable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
