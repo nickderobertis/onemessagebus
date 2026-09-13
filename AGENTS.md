@@ -93,23 +93,17 @@ rationale; the mechanics live in the files named. -->
   force the day that source lands.
 - **Projects in the graph:** `onemessagebus` (the core; `type:contract`),
   `onemessagebus-agent` (the profile), `onemessagebus-cli` (the binary,
-  unpublished), `onemessagebus-e2e` (the compiled-binary journeys, whose `test`
-  depends on the binary's `build`), `onemessagebus-npm-launcher` (the npm
-  launcher package, a member of the root npm workspace, whose `build` assembles
-  it with its generated platform pins), `onemessagebus-npm` (the npm packaging
-  tests and the release-configuration drift gates), `onemessagebus-npm-e2e` (the launcher's
-  install journeys, which pack the built binary and install it the way a user
-  does — the costly tier, kept out of the packaging project's own tests),
-  `onemessagebus-pypi` (the wheel, whose `build` runs maturin over the root
-  `pyproject.toml`), `onemessagebus-pypi-e2e` (the wheel's install journey,
-  which installs that build into a fresh virtualenv and smoke-tests what it put
-  on PATH — split from the deliverable as the npm journeys are), and the root
-  `workspace` project carrying
-  the aggregate coverage floor and the supply-chain check. The binary is its
-  own `publish = false` crate because it links the agent profile so `--profile`
-  defaults to it, a binary links only its own crate's dependencies, and the
-  profile depends on the core — so it can live in neither library; the manager
-  ruled this over the ask seam.
+  unpublished), `onemessagebus-e2e` (its compiled-binary journeys),
+  `onemessagebus-npm-launcher` (the npm launcher, an npm workspace member whose
+  `build` assembles it with generated platform pins), `onemessagebus-npm` (the
+  npm packaging tests and release-configuration drift gates),
+  `onemessagebus-pypi` (the wheel, built by maturin), `onemessagebus-npm-e2e` and
+  `onemessagebus-pypi-e2e` (the install journeys, split from their deliverables
+  as the costly tier), and the root `workspace` project (the coverage floor and
+  the supply-chain check). The binary is its own `publish = false` crate because
+  it links the agent profile so `--profile` defaults to it, and the profile
+  depends on the core — so it can live in neither library; the manager ruled
+  this over the ask seam.
 - **Excluded, and why:** **asdf / direnv** — `rust-toolchain.toml` and the
   committed lockfiles already pin everything. **A curl-pipe installer and a
   composite action** — every documented install surface is a registry or
@@ -120,26 +114,18 @@ rationale; the mechanics live in the files named. -->
   TypeScript SDK if that node wants it. **A `published-smoke` workflow** — the
   post-release registry watch the siblings carry is a follow-up once the first
   release exists to watch.
-- **Buildout-tier exception, authorized by the manager:** the skill's buildout
-  rules disagree about where the broader-tier sweep runs.
-  `affected_only_explicit_base` (`assets/llmlint/buildout/project-graph.llmlint.yml`)
-  asks for "a full sweep … on the main branch or nightly";
-  `broader_sweep_runs_at_exactly_one_lifecycle_point`
-  (`buildout/ci.llmlint.yml`) asks for exactly one, "at release-prep when
-  releases are batched behind a release PR"; and
+- **Buildout exception, authorized by the manager:** the skill's buildout rules
+  disagree on where the broader sweep runs. `affected_only_explicit_base`
+  (`assets/llmlint/buildout/project-graph.llmlint.yml`) wants "a full sweep … on
+  the main branch or nightly"; `broader_sweep_runs_at_exactly_one_lifecycle_point`
+  (`buildout/ci.llmlint.yml`) and
   `broader_sweep_placement_matches_the_release_driver`
-  (`buildout/releasing.llmlint.yml`) puts it "on the release PR for a
-  release-PR gate (`release-plz`, …)". The ongoing
-  `no_second_broader_sweep_over_an_already_gated_commit` refuses a nightly
-  re-sweep of a tree that PR already gated. This repository's release driver is
-  release-plz, so the one broader sweep is `just check` on the release PR and an
-  ordinary pull request runs `just check-affected` against its explicit merge
-  base — no main-branch or nightly sweep. The manager ruled that the first rule's
-  main/nightly wording is the push-to-main case and does not apply here, and the
-  conflict is a dero-skills finding to fix upstream. It is recorded here rather
-  than as a directive at `ci.yml`'s trigger because that rule exists only in the
-  one-time buildout fragments, which `llmlint.yml` does not load, so the
-  deterministic `check-ignores` gate refuses a directive naming it.
+  (`buildout/releasing.llmlint.yml`) want exactly one, on the release PR of a
+  release-plz driver, and `no_second_broader_sweep_over_an_already_gated_commit`
+  refuses a nightly re-sweep. The driver here is release-plz, so the one sweep is
+  `just check` on the release PR; the manager ruled the first rule's wording is
+  the push-to-main case, and the conflict is a dero-skills finding. It is recorded
+  here because `check-ignores` refuses a directive naming a buildout-only rule.
 <!-- llmlint: ignore-end[agents_md_durable_and_terse] the required-artifact scope ends here.
 -->
 
