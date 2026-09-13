@@ -873,6 +873,8 @@ impl Transport for LocalTransport {
     fn fingerprint(&self, queue: &QueueName) -> Result<Fingerprint, TransportError> {
         let mut parts = Vec::new();
         Self::mark(&self.records_path(queue), &mut parts);
+        // Matches the default consumer's `<queue>-cursor.json` as well as
+        // `<queue>-cursor.<consumer>.json`.
         let prefix = format!("{queue}-cursor.");
         let mut cursors: Vec<PathBuf> = match fs::read_dir(&self.dir) {
             Ok(entries) => entries

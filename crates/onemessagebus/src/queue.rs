@@ -1005,8 +1005,6 @@ impl RawQueue {
         (self.shape)(Value::Object(fields)).unwrap_or_else(|_| record.clone())
     }
 
-    // -- the event log ------------------------------------------------------
-
     /// One line of the log read back: what it says happened, and the record.
     /// `None` for a line this queue cannot read, which is passed over.
     fn parse_line(&self, bytes: &[u8]) -> Option<(Option<Event>, Value)> {
@@ -1319,8 +1317,6 @@ impl RawQueue {
         Ok(positions)
     }
 
-    // -- plain queues --------------------------------------------------------
-
     /// Every record of a plain queue after `from`, parsed, with the position
     /// after each; a line that is not JSON is passed over.
     fn plain_after(
@@ -1346,8 +1342,6 @@ impl RawQueue {
             .as_ref()
             .is_none_or(|claims| claims.matches(record))
     }
-
-    // -- the operations -------------------------------------------------------
 
     /// Validate `record` against the queue's schema and append it.
     ///

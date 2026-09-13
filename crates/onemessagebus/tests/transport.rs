@@ -98,6 +98,34 @@ fn the_transport_trait_is_object_safe_and_held_behind_an_arc() {
     }
 }
 
+/// A cursor commit moves the queue's fingerprint, the default consumer's as
+/// well as another's, so a wait begun before it sees the commit.
+#[test]
+fn a_cursor_commit_moves_the_fingerprint_for_the_default_consumer_and_another() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let chosen: Vec<Arc<dyn Transport>> = vec![
+        Arc::new(MemoryTransport::new()),
+        Arc::new(LocalTransport::open(dir.path()).expect("opens")),
+    ];
+    for transport in chosen {
+        let q = queue("things");
+        let at = transport.append(&q, b"{\"n\":1}").expect("appends");
+        for name in ["default", "alice"] {
+            let before = transport.fingerprint(&q).expect("a fingerprint");
+            transport.commit(&q, &consumer(name), &at).expect("commits");
+            assert!(
+                matches!(
+                    transport
+                        .wait_for_change(&q, &before, Duration::from_millis(10))
+                        .expect("waits"),
+                    Changed::Moved(_)
+                ),
+                "committing the {name} cursor did not move the fingerprint"
+            );
+        }
+    }
+}
+
 /// The local transport writes `<queue>.jsonl`, `<queue>-cursor.json` for the
 /// default consumer, `<queue>-cursor.<consumer>.json` for another, documents at
 /// `<dir>/<name>`, and its lock under `.lock/` — and nothing else.
