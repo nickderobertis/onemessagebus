@@ -770,6 +770,16 @@ mod journeys {
             "the binary does not list the plugin: {kinds}"
         );
 
+        let text = cli(&scratch, &path, &["transports", "--format", "text"], None);
+        assert!(
+            text.stdout
+                .lines()
+                .any(|line| line.starts_with(&format!("{KIND} plugin "))
+                    && line.contains("onemessagebus-transport-")),
+            "the text listing does not name the plugin and its path: {}",
+            text.stdout
+        );
+
         let config = |name: &str, kind: &str, dir: &Path| -> String {
             let file = scratch.join(name);
             std::fs::write(

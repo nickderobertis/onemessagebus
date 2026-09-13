@@ -1276,39 +1276,43 @@ impl RawQueue {
         &self,
         derive: impl FnOnce(&Folded) -> Result<(Vec<(Event, Value)>, T), QueueError>,
     ) -> Result<(T, Vec<(Value, Position)>), QueueError> {
-        let queue = self.spec.name.clone();
-        let mut derive = Some(derive);
+        let queue = &self.spec.name;
+        self.within_section(|inner| {
+            let (mut folded, _) = self.current(inner)?;
+            let (events, extra) = derive(&folded)?;
+            let mut recorded = Vec::new();
+            for (event, record) in events {
+                let position = inner.append(queue, &Self::frame(event, &record))?;
+                self.apply(&mut folded, Some(event), &record);
+                folded.accounted = Some(position.token());
+                recorded.push((record, position));
+            }
+            folded.seal();
+            if let Some(name) = &self.spec.policy.projection {
+                inner.replace_document(queue, name, folded.render().as_bytes())?;
+            }
+            Ok((extra, recorded))
+        })
+    }
+
+    /// Run `body` inside the queue's exclusive section and hand back what it
+    /// answered: the one place a section's answer is carried out of it.
+    fn within_section<T>(
+        &self,
+        body: impl FnOnce(&dyn Transport) -> Result<T, QueueError>,
+    ) -> Result<T, QueueError> {
+        let mut body = Some(body);
         let mut outcome = None;
-        self.transport.exclusive(&queue, &mut |inner| {
-            let result = (|| {
-                let (mut folded, _) = self.current(inner)?;
-                let Some(derive) = derive.take() else {
-                    return Err(QueueError::Transport(TransportError::Backend {
-                        transport: "queue".to_owned(),
-                        detail: "an exclusive section ran its body twice".to_owned(),
-                    }));
-                };
-                let (events, extra) = derive(&folded)?;
-                let mut recorded = Vec::new();
-                for (event, record) in events {
-                    let position = inner.append(&queue, &Self::frame(event, &record))?;
-                    self.apply(&mut folded, Some(event), &record);
-                    folded.accounted = Some(position.token());
-                    recorded.push((record, position));
-                }
-                folded.seal();
-                if let Some(name) = &self.spec.policy.projection {
-                    inner.replace_document(&queue, name, folded.render().as_bytes())?;
-                }
-                Ok((extra, recorded))
-            })();
-            outcome = Some(result);
+        self.transport.exclusive(&self.spec.name, &mut |inner| {
+            if let Some(body) = body.take() {
+                outcome = Some(body(inner));
+            }
             Ok(())
         })?;
         outcome.unwrap_or_else(|| {
             Err(QueueError::Transport(TransportError::Backend {
                 transport: "queue".to_owned(),
-                detail: "an exclusive section never ran its body".to_owned(),
+                detail: "the transport's exclusive section never ran its body".to_owned(),
             }))
         })
     }
@@ -1412,33 +1416,16 @@ impl RawQueue {
                 id,
             });
         }
-        let queue = self.spec.name.clone();
-        let mut record = Some(record);
-        let mut outcome = None;
-        self.transport.exclusive(&queue, &mut |inner| {
-            let result = (|| {
-                let count = inner.read(&queue, None, usize::MAX)?.records.len() as u64;
-                let offered = record.take().ok_or_else(|| QueueError::Shape {
-                    queue: queue.clone(),
-                    why: "an exclusive section ran its body twice".to_owned(),
-                })?;
-                let numbered = self.reshape(self.with_id(offered, count)?)?;
-                self.check(&numbered)?;
-                let line = serde_json::to_vec(&numbered).unwrap_or_default();
-                let position = inner.append(&queue, &line)?;
-                Ok(Pushed {
-                    record: numbered,
-                    position,
-                    id: Some(count),
-                })
-            })();
-            outcome = Some(result);
-            Ok(())
-        })?;
-        outcome.unwrap_or_else(|| {
-            Err(QueueError::Shape {
-                queue: self.spec.name.clone(),
-                why: "the push never ran".to_owned(),
+        self.within_section(|inner| {
+            let count = inner.read(&self.spec.name, None, usize::MAX)?.records.len() as u64;
+            let numbered = self.reshape(self.with_id(record, count)?)?;
+            self.check(&numbered)?;
+            let line = serde_json::to_vec(&numbered).unwrap_or_default();
+            let position = inner.append(&self.spec.name, &line)?;
+            Ok(Pushed {
+                record: numbered,
+                position,
+                id: Some(count),
             })
         })
     }
@@ -1489,28 +1476,21 @@ impl RawQueue {
                 position,
             }));
         }
-        let queue = self.spec.name.clone();
-        let mut outcome = None;
-        self.transport.exclusive(&queue, &mut |inner| {
-            let result = (|| {
-                let cursor = inner.cursor(&queue, consumer)?;
-                let found = self
-                    .plain_after(inner, cursor.as_ref())?
-                    .into_iter()
-                    .find(|(record, _)| self.claimable(record));
-                if let Some((_, after)) = &found {
-                    inner.commit(&queue, consumer, after)?;
-                }
-                Ok(found.map(|(record, position)| Claimed {
-                    id: record_id(&record),
-                    record,
-                    position,
-                }))
-            })();
-            outcome = Some(result);
-            Ok(())
-        })?;
-        outcome.unwrap_or(Ok(None))
+        self.within_section(|inner| {
+            let cursor = inner.cursor(&self.spec.name, consumer)?;
+            let found = self
+                .plain_after(inner, cursor.as_ref())?
+                .into_iter()
+                .find(|(record, _)| self.claimable(record));
+            if let Some((_, after)) = &found {
+                inner.commit(&self.spec.name, consumer, after)?;
+            }
+            Ok(found.map(|(record, position)| Claimed {
+                id: record_id(&record),
+                record,
+                position,
+            }))
+        })
     }
 
     /// Release the pending slot `claimed` holds, recording that the answer at

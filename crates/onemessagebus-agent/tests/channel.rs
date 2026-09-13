@@ -552,3 +552,104 @@ fn a_reply_is_routed_by_its_halves_and_checked_against_its_author() {
         .expect("an outcome passes");
     assert_eq!(outcome[0].1, json!({"id": 3, "applied": true}));
 }
+
+/// The typed channel answers a pending surface only with a verdict, keeps its
+/// command and outcome queues where their readers find them, and names its ops
+/// by their wire words.
+#[test]
+fn the_typed_channel_answers_only_a_verdict_and_names_its_ops_by_word() {
+    use onemessagebus::MemoryTransport;
+    use onemessagebus_agent::channel::{ChannelAuthor, ReplyEnvelope, Surface};
+    let transport: Arc<dyn Transport> = Arc::new(MemoryTransport::new());
+    let channel = Channel::open(&transport).expect("opens");
+    channel
+        .push(&Surface {
+            id: 0,
+            kind: "planner-question".to_owned(),
+            message: "is the base right?".to_owned(),
+            source: "proposal".to_owned(),
+            blocking: true,
+            queued_at: 1,
+            workstream: Some("plan".to_owned()),
+            abandoned: false,
+            asker: None,
+        })
+        .expect("queued");
+    channel.claim().expect("a claim").expect("claimed");
+    let edits = ReplyEnvelope {
+        version: Some(3),
+        commands: vec![json!({"op": "cancel", "id": "plan"})
+            .as_object()
+            .expect("an object")
+            .clone()],
+        ..ReplyEnvelope::default()
+    };
+    assert!(edits.carries_edits_without_a_verdict());
+    assert_eq!(channel.answer_if_verdict(&edits, 2).expect("routed"), None);
+    assert!(
+        channel.pending().expect("a read").is_some(),
+        "a commands-only reply answered the question"
+    );
+    let verdict = ReplyEnvelope {
+        message: Some("yes".to_owned()),
+        ..edits.clone()
+    };
+    assert!(!verdict.carries_edits_without_a_verdict());
+    assert_eq!(
+        channel.answer_if_verdict(&verdict, 3).expect("answered"),
+        Some(0)
+    );
+    assert_eq!(channel.pending().expect("a read"), None);
+
+    channel
+        .submit(ChannelAuthor::Monitor, edits.commands.clone())
+        .expect("submitted");
+    assert_eq!(channel.commands().unread_count().expect("a count"), 1);
+    channel
+        .answer_commands(&CommandOutcome {
+            id: 0,
+            applied: true,
+            reason: None,
+            results: Vec::new(),
+        })
+        .expect("answered");
+    assert_eq!(channel.outcomes().unread_count().expect("a count"), 1);
+
+    for op in Op::ALL {
+        assert_eq!(Op::of_word(op.word()), Some(op));
+    }
+    assert_eq!(Op::of_word("context"), None);
+}
+
+/// A reply offered already framed is checked against its author and kept whole,
+/// and a surface that is not an object is left for its schema to refuse.
+#[test]
+fn a_framed_reply_is_checked_and_kept_whole_and_a_surface_that_is_not_an_object_passes_to_its_schema(
+) {
+    let layout = PlannerChannel;
+    let grants = layout.allowlist();
+    let framed = json!({"id": 0, "reply": {"message": "carry on"}, "at": 5});
+    assert_eq!(
+        layout
+            .prepare(&queue(REPLIES), framed.clone(), &grants)
+            .expect("kept"),
+        vec![(queue(REPLIES), framed)]
+    );
+    let refused = layout
+        .prepare(
+            &queue(REPLIES),
+            json!({"id": 0, "reply": {"author": "monitor", "completion": true}, "at": 5}),
+            &grants,
+        )
+        .expect_err("a framed completion from the monitor");
+    assert!(
+        refused.starts_with("declaring the run complete is not something the monitor may do"),
+        "{refused}"
+    );
+    assert_eq!(
+        layout
+            .prepare(&queue(SURFACES), json!("text"), &grants)
+            .expect("passed on"),
+        vec![(queue(SURFACES), json!("text"))]
+    );
+}

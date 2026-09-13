@@ -423,6 +423,13 @@ fn a_claimant_that_exits_without_answering_leaves_its_record_claimed() {
     let next = one_line(&scratch.bus(&["next", "command-outcomes", "--consumer", "reader"], None));
     assert_eq!(next["record"]["id"], json!(1));
     let bad = scratch.bus(&["next", "command-outcomes", "--consumer", "../x"], None);
+    let plain = scratch.bus(&["next", "command-outcomes", "--asker", "dispatch-a"], None);
+    assert_eq!(plain.code, 2, "{}", plain.stderr);
+    assert!(
+        plain.stderr.contains("is a plain queue"),
+        "{}",
+        plain.stderr
+    );
     assert_eq!(bad.code, 2, "{}", bad.stderr);
 }
 
@@ -599,6 +606,42 @@ fn subscribe_streams_until_its_predicate_admits_a_record_and_times_out_otherwise
         vec![json!("queued"), json!("claimed"), json!("answered")],
         "the stream did not end on the answer"
     );
+
+    // With no --timeout, the stream waits for as long as it takes.
+    let late = onemessagebus()
+        .args([
+            "subscribe",
+            "replies",
+            "--until",
+            r#"{"field":"reply.message","equals":"late"}"#,
+            "--transport-dir",
+            channel.to_str().expect("a path"),
+        ])
+        .current_dir(scratch.root())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the subscriber spawns");
+    std::thread::sleep(Duration::from_millis(1500));
+    let sent = scratch.bus(&["send", "replies"], Some(r#"{"message":"late"}"#));
+    assert_eq!(sent.code, 0, "{}", sent.stderr);
+    let output = late.wait_with_output().expect("the subscriber ends");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let last: Value = serde_json::from_str(
+        String::from_utf8(output.stdout)
+            .expect("UTF-8")
+            .lines()
+            .last()
+            .expect("a line"),
+    )
+    .expect("JSON");
+    assert_eq!(last["record"]["reply"]["message"], json!("late"));
 
     let timed_out = scratch.bus(
         &[

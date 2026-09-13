@@ -417,6 +417,10 @@ pub const QUEUE_TABLE: &[(&str, Row)] = &[
         a_fingerprint_moves_when_the_queue_does_and_a_wait_sees_it,
     ),
     (
+        "every_method_works_through_the_transport_a_section_lends",
+        every_method_works_through_the_transport_a_section_lends,
+    ),
+    (
         "an_allowlist_refuses_by_omission_naming_the_author_the_op_and_the_reason",
         an_allowlist_refuses_by_omission_naming_the_author_the_op_and_the_reason,
     ),
@@ -1435,4 +1439,98 @@ pub fn a_configuration_narrows_an_author_and_is_refused_widening_one(fresh: Fres
             other => panic!("{authors:?} was not refused as a widening: {other:?}"),
         }
     }
+}
+
+/// The transport an exclusive section lends its body is a whole transport: every
+/// method works through it, a section over the queue it holds is the same
+/// section, one over another queue is taken as well, and a position past the end
+/// is refused inside a section as outside one.
+pub fn every_method_works_through_the_transport_a_section_lends(fresh: Fresh<'_>) {
+    use crate::transport::TransportError;
+    let transport = fresh();
+    let held = queue_name("held");
+    let other = queue_name("other");
+    let reader: ConsumerName = "reader".parse().expect("a consumer");
+    let document: DocumentName = "held.json".parse().expect("a document name");
+    let mut ran = false;
+    transport
+        .exclusive(&held, &mut |inner| {
+            let first = inner.append(&held, br#"{"n":0}"#)?;
+            inner.append(&other, br#"{"n":1}"#)?;
+            assert_eq!(inner.read(&held, None, 10)?.records.len(), 1);
+            inner.commit(&held, &reader, &first)?;
+            assert_eq!(inner.cursor(&held, &reader)?, Some(first));
+            inner.replace_document(&held, &document, b"{}")?;
+            assert_eq!(inner.document(&held, &document)?, Some(b"{}".to_vec()));
+            let print = inner.fingerprint(&held)?;
+            assert!(
+                matches!(
+                    inner.wait_for_change(&held, &print, std::time::Duration::from_millis(10))?,
+                    Changed::Unchanged(_)
+                ),
+                "a queue nothing moved reported moving inside a section"
+            );
+            inner.exclusive(&held, &mut |same| {
+                same.append(&held, br#"{"n":2}"#).map(|_| ())
+            })?;
+            inner.exclusive(&other, &mut |both| {
+                let landed = both.append(&other, br#"{"n":3}"#)?;
+                both.append(&held, br#"{"n":4}"#)?;
+                both.commit(&other, &reader, &landed)
+            })?;
+            let past = Position::from_token(u64::MAX);
+            assert!(
+                matches!(
+                    inner.commit(&held, &reader, &past),
+                    Err(TransportError::PastEnd { .. })
+                ),
+                "a commit past the end was not refused as one inside a section"
+            );
+            assert!(
+                matches!(
+                    inner.read(&held, Some(&past), 1),
+                    Err(TransportError::PastEnd { .. })
+                ),
+                "a read past the end was not refused as one inside a section"
+            );
+            ran = true;
+            Ok(())
+        })
+        .expect("the section runs");
+    assert!(ran, "the section never ran its body");
+    assert_eq!(
+        transport
+            .read(&held, None, 10)
+            .expect("reads")
+            .records
+            .len(),
+        3,
+        "a record appended inside the section was lost"
+    );
+    let others = transport.read(&other, None, 10).expect("reads");
+    assert_eq!(others.records.len(), 2);
+    transport
+        .commit(
+            &other,
+            &ConsumerName::default_consumer(),
+            &others.records[0].after,
+        )
+        .expect("a commit outside every section");
+    assert_eq!(
+        transport
+            .cursor(&other, &reader)
+            .expect("reads")
+            .map(|cursor| cursor == others.records[1].after),
+        Some(true),
+        "a commit inside a nested section was lost"
+    );
+    assert!(matches!(
+        transport.commit(&other, &reader, &Position::from_token(u64::MAX)),
+        Err(TransportError::PastEnd { .. })
+    ));
+    assert!(!transport
+        .fingerprint(&held)
+        .expect("a fingerprint")
+        .parts()
+        .is_empty());
 }

@@ -705,3 +705,314 @@ fn the_plugin_protocol_shapes_are_registered_schemas() {
         .check(&transport::REPLY_SCHEMA, &json!({"ok": {"position": 3}}))
         .expect("a reply conforms");
 }
+
+/// A local transport reports what the host refused, naming the path, and reads
+/// the boundaries of its own files exactly.
+#[test]
+fn a_local_transport_reports_what_the_host_refused_naming_the_path() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let file = dir.path().join("a-file");
+    std::fs::write(&file, "").expect("a file");
+    let refusal = LocalTransport::open(file.join("channel")).expect_err("a directory under a file");
+    assert!(
+        refusal.to_string().starts_with("cannot create"),
+        "{refusal}"
+    );
+
+    let channel = dir.path().join("channel");
+    let local = LocalTransport::open(&channel).expect("opens");
+    let q = queue("q");
+    std::fs::create_dir_all(local.records_path(&q)).expect("a directory where the records go");
+    let refusal = local
+        .read(&q, None, 1)
+        .expect_err("the records file is a directory");
+    assert!(refusal.to_string().starts_with("cannot read"), "{refusal}");
+    std::fs::remove_dir(local.records_path(&q)).expect("removed");
+
+    let default = consumer("default");
+    std::fs::create_dir_all(local.cursor_path(&q, &default))
+        .expect("a directory where the cursor goes");
+    let refusal = local
+        .cursor(&q, &default)
+        .expect_err("the cursor file is a directory");
+    assert!(refusal.to_string().starts_with("cannot read"), "{refusal}");
+    std::fs::remove_dir(local.cursor_path(&q, &default)).expect("removed");
+
+    let name: DocumentName = "d.json".parse().expect("a document");
+    std::fs::create_dir_all(channel.join("d.json/inside"))
+        .expect("a directory where the document goes");
+    let refusal = local
+        .document(&q, &name)
+        .expect_err("the document is a directory");
+    assert!(refusal.to_string().starts_with("cannot read"), "{refusal}");
+    let refusal = local
+        .replace_document(&q, &name, b"{}")
+        .expect_err("a document cannot replace a directory");
+    assert!(
+        refusal.to_string().starts_with("cannot rename onto"),
+        "{refusal}"
+    );
+    assert!(
+        std::fs::read_dir(&channel)
+            .expect("the channel")
+            .all(|entry| !entry
+                .expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".staging")),
+        "a failed replacement left its staging file behind"
+    );
+
+    std::fs::write(channel.join(".lock"), "").expect("a file where the locks go");
+    let refusal = local.append(&q, b"1").expect_err("no lock directory");
+    assert!(
+        refusal.to_string().starts_with("cannot create"),
+        "{refusal}"
+    );
+    std::fs::remove_file(channel.join(".lock")).expect("removed");
+
+    let first = local.append(&q, b"1").expect("appends");
+    local.append(&q, b"2").expect("appends");
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(local.records_path(&q))
+        .and_then(|mut records| records.write_all(b"3-torn"))
+        .expect("a torn tail");
+    let batch = local.read(&q, None, 1).expect("reads");
+    assert_eq!(records(&batch), vec!["1"]);
+    assert_eq!(
+        batch.torn, None,
+        "a read that stopped short reported the tail as torn"
+    );
+    std::fs::write(local.cursor_path(&q, &default), "0").expect("a cursor at the start");
+    assert_eq!(
+        local.cursor(&q, &default).expect("reads"),
+        Some(Position::from_token(0))
+    );
+    assert_ne!(first, Position::from_token(0));
+
+    let refusal = "a b".parse::<DocumentName>().expect_err("a space");
+    assert!(refusal.to_string().contains("`.`"), "{refusal}");
+
+    let gone = LocalTransport::open(dir.path().join("gone")).expect("opens");
+    std::fs::remove_dir(gone.dir()).expect("removed");
+    let refusal = gone.fingerprint(&q).expect_err("no directory to list");
+    assert!(refusal.to_string().starts_with("cannot list"), "{refusal}");
+}
+
+/// Serving ends quietly on no input, passes over a blank line, answers a
+/// section its client failed with that failure, and reports a torn record and a
+/// position between records as a local transport does.
+#[test]
+fn serving_passes_over_blank_lines_and_answers_a_failed_section_and_a_torn_read() {
+    let mut output = Vec::new();
+    transport::serve(
+        |_| Ok(Arc::new(MemoryTransport::new()) as Arc<dyn Transport>),
+        &b""[..],
+        &mut output,
+    )
+    .expect("nothing to serve");
+    assert!(output.is_empty());
+
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let local = LocalTransport::open(dir.path()).expect("opens");
+    let q = queue("q");
+    local.append(&q, b"{}").expect("appends");
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(local.records_path(&q))
+        .and_then(|mut records| records.write_all(b"{\"torn"))
+        .expect("a torn tail");
+    let input = format!(
+        "{}\n\n{}\n{}\n{}\n{}\n",
+        hello(),
+        // Read before the section: entering a section heals the torn tail.
+        json!({"op": "read", "queue": "q", "limit": 10}),
+        json!({"op": "read", "queue": "q", "from": 1, "limit": 10}),
+        json!({"op": "begin_exclusive", "queue": "q"}),
+        json!({"op": "end_exclusive", "queue": "q", "failed": true}),
+    );
+    let mut output = Vec::new();
+    transport::serve(
+        move |_| Ok(Arc::new(local) as Arc<dyn Transport>),
+        input.as_bytes(),
+        &mut output,
+    )
+    .expect("serves");
+    let replies: Vec<Value> = String::from_utf8(output)
+        .expect("UTF-8")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("a reply"))
+        .collect();
+    assert_eq!(replies.len(), 5, "{replies:?}");
+    assert_eq!(
+        replies[1]["ok"]["batch"]["torn"],
+        json!({"at": 3, "bytes": 6}),
+        "{}",
+        replies[1]
+    );
+    assert_eq!(
+        replies[2]["error"]["kind"],
+        json!("not_a_boundary"),
+        "{}",
+        replies[2]
+    );
+    assert_eq!(replies[2]["error"]["position"], json!(1));
+    assert_eq!(replies[3], json!({"ok": "done"}));
+    assert_eq!(
+        replies[4]["error"]["kind"],
+        json!("refused"),
+        "{}",
+        replies[4]
+    );
+    assert!(replies[4]["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("section over q failed")));
+}
+
+#[cfg(unix)]
+fn plugin_script(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("a plugin script");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("its mode");
+    path
+}
+
+/// A plugin that does not speak the protocol is refused saying what it did: it
+/// could not be started, exited, answered with a line that is no reply, greeted
+/// at another version, or answered a request with the wrong answer.
+#[cfg(unix)]
+#[test]
+fn a_plugin_that_does_not_speak_the_protocol_is_refused_saying_what_it_did() {
+    use onemessagebus::{Fingerprint, ProcessTransport};
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let config = TransportConfig {
+        kind: "broken".to_owned(),
+        dir: None,
+        options: serde_json::Map::new(),
+    };
+    let greeting = r#"{"ok":{"hello":{"protocol":"onemessagebus-transport","version":1}}}"#;
+    for (name, body, says) in [
+        ("exits", "read line; exit 0".to_owned(), "exited without answering".to_owned()),
+        ("garbage", "read line; echo 'not a reply'".to_owned(), "a line that is not a onemessagebus-transport reply".to_owned()),
+        (
+            "older",
+            r#"read line; echo '{"ok":{"hello":{"protocol":"onemessagebus-transport","version":0}}}'"#.to_owned(),
+            "speaks onemessagebus-transport version 0, and this build speaks onemessagebus-transport version 1".to_owned(),
+        ),
+        ("rude", r#"read line; echo '{"ok":"done"}'"#.to_owned(), "answered the hello with Done".to_owned()),
+    ] {
+        let path = plugin_script(dir.path(), name, &body);
+        let refusal = ProcessTransport::spawn(&path, &config)
+            .err()
+            .unwrap_or_else(|| panic!("the {name} plugin was accepted"));
+        assert!(refusal.to_string().contains(&says), "{name}: {refusal}");
+    }
+    let refusal = ProcessTransport::spawn(&dir.path().join("absent"), &config)
+        .expect_err("a plugin that is not there");
+    assert!(
+        refusal.to_string().contains("cannot start the plugin"),
+        "{refusal}"
+    );
+
+    let q = queue("q");
+    let default = consumer("default");
+    let name: DocumentName = "d.json".parse().expect("a document");
+    let done = plugin_script(
+        dir.path(),
+        "done",
+        &format!(
+            r#"read line; echo '{greeting}'; while read line; do echo '{{"ok":"done"}}'; done"#
+        ),
+    );
+    let answers_done = ProcessTransport::spawn(&done, &config).expect("greets");
+    assert_eq!(answers_done.kind(), "broken");
+    assert!(format!("{answers_done:?}").contains("broken"));
+    for (asked, refusal) in [
+        ("append", answers_done.append(&q, b"x").err()),
+        ("read", answers_done.read(&q, None, 1).err()),
+        ("cursor", answers_done.cursor(&q, &default).err()),
+        ("fingerprint", answers_done.fingerprint(&q).err()),
+        (
+            "wait_for_change",
+            answers_done
+                .wait_for_change(&q, &Fingerprint::default(), Duration::from_millis(10))
+                .err(),
+        ),
+        ("document", answers_done.document(&q, &name).err()),
+    ] {
+        let refusal = refusal.unwrap_or_else(|| panic!("a wrong answer to {asked} was accepted"));
+        assert!(
+            refusal
+                .to_string()
+                .contains(&format!("the plugin answered {asked} with")),
+            "{refusal}"
+        );
+    }
+    let refusal = answers_done.append(&q, &[0xff]).expect_err("not UTF-8");
+    assert!(refusal.to_string().contains("is not UTF-8"), "{refusal}");
+    let refusal = answers_done
+        .replace_document(&q, &name, &[0xff])
+        .expect_err("not UTF-8");
+    assert!(refusal.to_string().contains("is not UTF-8"), "{refusal}");
+    let failed = answers_done
+        .exclusive(&q, &mut |_| {
+            Err(TransportError::Backend {
+                transport: "body".to_owned(),
+                detail: "the body failed".to_owned(),
+            })
+        })
+        .expect_err("the body's failure is the section's");
+    assert!(failed.to_string().contains("the body failed"), "{failed}");
+
+    let positioned = plugin_script(
+        dir.path(),
+        "positioned",
+        &format!(
+            r#"read line; echo '{greeting}'; while read line; do echo '{{"ok":{{"position":1}}}}'; done"#
+        ),
+    );
+    let answers_position = ProcessTransport::spawn(&positioned, &config).expect("greets");
+    for (asked, refusal) in [
+        (
+            "commit",
+            answers_position
+                .commit(&q, &default, &Position::from_token(1))
+                .err(),
+        ),
+        (
+            "replace_document",
+            answers_position.replace_document(&q, &name, b"{}").err(),
+        ),
+        (
+            "begin_exclusive",
+            answers_position.exclusive(&q, &mut |_| Ok(())).err(),
+        ),
+    ] {
+        let refusal = refusal.unwrap_or_else(|| panic!("a wrong answer to {asked} was accepted"));
+        assert!(
+            refusal
+                .to_string()
+                .contains(&format!("the plugin answered {asked} with")),
+            "{refusal}"
+        );
+    }
+    let ends_wrong = plugin_script(
+        dir.path(),
+        "ends-wrong",
+        &format!(
+            r#"read line; echo '{greeting}'; read line; echo '{{"ok":"done"}}'; read line; echo '{{"ok":{{"position":1}}}}'"#
+        ),
+    );
+    let refusal = ProcessTransport::spawn(&ends_wrong, &config)
+        .expect("greets")
+        .exclusive(&q, &mut |_| Ok(()))
+        .expect_err("a wrong answer to the section's end");
+    assert!(
+        refusal
+            .to_string()
+            .contains("the plugin answered end_exclusive with"),
+        "{refusal}"
+    );
+}

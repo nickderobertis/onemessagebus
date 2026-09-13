@@ -272,3 +272,66 @@ fn the_configuration_schema_accepts_the_documented_file_and_refuses_an_unknown_k
         "the schema admits an unknown key"
     );
 }
+
+/// Every policy key and every declaration key a configuration sets reaches the
+/// queue it names, a layout that shapes nothing offers each record as it is, and
+/// a key a built-in transport does not take is refused.
+#[test]
+fn a_configuration_sets_every_policy_and_declaration_key_on_a_queue() {
+    use onemessagebus::{Delivery, Ordering, Retention};
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let text = format!(
+        "version: 1\ntransport: {{kind: local, dir: {}}}\nprofile: ledger\nqueues:\n  beats:\n    policy: {{delivery: at-least-once, ordering: per-queue, supersede_on: {{key: kind, when: {{field: kind, equals: beat}}}}, hold_pending: true, blocking_first: true, retention: keep, projection: beats.json}}\n    claims: {{field: kind, present: true}}\n    consumers: [default, auditor]\n  notes: {{numbered: true}}\n",
+        dir.path().display()
+    );
+    let bus = Config::parse(&text)
+        .expect("loads")
+        .resolve(&layouts(), &TransportKinds::default())
+        .expect("resolves");
+    assert!(format!("{bus:?}").contains("beats"), "{bus:?}");
+    assert!(format!("{:?}", layouts()).contains("ledger"));
+    assert!(format!("{:?}", TransportKinds::default()).contains("local"));
+    let beats = bus
+        .queue(&"beats".parse().expect("a queue"))
+        .expect("declared");
+    let policy = &beats.spec().policy;
+    assert_eq!(
+        (policy.delivery, policy.ordering, policy.retention),
+        (Delivery::AtLeastOnce, Ordering::PerQueue, Retention::Keep)
+    );
+    assert!(policy.hold_pending && policy.blocking_first);
+    assert_eq!(
+        policy
+            .supersede_on
+            .as_ref()
+            .map(|supersede| supersede.key.to_string()),
+        Some("kind".to_owned())
+    );
+    assert_eq!(
+        policy.projection.as_ref().map(|name| name.as_str()),
+        Some("beats.json")
+    );
+    assert!(beats.spec().claims.is_some());
+    let notes = bus
+        .queue(&"notes".parse().expect("a queue"))
+        .expect("declared");
+    assert!(notes.spec().numbered);
+    assert!(bus.registry().ids().is_empty());
+    assert!(Arc::ptr_eq(bus.transport(), beats.transport()));
+
+    let entries: QueueName = "entries".parse().expect("a queue");
+    let sent = bus
+        .send(&entries, json!({"blocking": true, "what": "an entry"}))
+        .expect("the ledger shapes nothing");
+    assert_eq!(sent[0].0, entries);
+    assert_eq!(sent[0].1.record["what"], json!("an entry"));
+
+    let refused = Config::parse("version: 1\ntransport: {kind: memory, dir: somewhere}\n")
+        .expect("loads")
+        .resolve(&layouts(), &TransportKinds::default())
+        .expect_err("the memory transport takes no directory");
+    assert_eq!(
+        refused.to_string(),
+        "transport: transport.dir is not a key the memory transport takes"
+    );
+}
