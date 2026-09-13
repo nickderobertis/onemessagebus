@@ -668,13 +668,7 @@ mod journeys {
             .spawn()
             .expect("the binary spawns");
         if let (Some(text), Some(mut handle)) = (stdin, child.stdin.take()) {
-            // A verb that refuses its arguments exits before it reads stdin,
-            // and a pipe nobody reads is not a failure of this journey.
-            match handle.write_all(text.as_bytes()) {
-                Ok(()) => {}
-                Err(failure) if failure.kind() == std::io::ErrorKind::BrokenPipe => {}
-                Err(failure) => panic!("stdin is written: {failure}"),
-            }
+            handle.write_all(text.as_bytes()).expect("stdin is written");
         }
         let output = child.wait_with_output().expect("the binary exits");
         Ran {
