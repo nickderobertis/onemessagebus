@@ -1171,6 +1171,62 @@ fn an_asker_that_is_not_unicode_is_refused() {
     );
 }
 
+/// A record the file cannot take whole is taken back off it: a `send` whose
+/// append fails partway is refused and leaves the queue's file on the record
+/// boundary it started on, so the next `send` lands on a line of its own.
+#[cfg(unix)]
+#[test]
+fn a_send_that_fails_partway_leaves_the_file_on_its_last_record_boundary() {
+    let scratch = Scratch::new();
+    one_line(&scratch.bus(
+        &["send", "surfaces"],
+        Some(&surface("finding", "logged", "proposal", false)),
+    ));
+    let before = scratch.file("surfaces.jsonl");
+    assert!(before.len() < 512, "{before}");
+    let record = scratch.root().join("large.json");
+    std::fs::write(
+        &record,
+        surface("finding", &"x".repeat(8192), "proposal", false),
+    )
+    .expect("a record file");
+    let channel = scratch.channel();
+    // One block of file size — 512 or 1024 bytes, by shell — is room for the
+    // logged record and not for the large one, and an ignored SIGXFSZ turns the
+    // kernel's refusal into a write that fails partway rather than a kill.
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(r#"trap '' XFSZ; ulimit -f 1; exec "$0" "$@""#)
+        .arg(onemessagebus().get_program())
+        .arg("send")
+        .arg("surfaces")
+        .arg("--file")
+        .arg(&record)
+        .arg("--transport-dir")
+        .arg(&channel)
+        .env_remove("ONEMESSAGEBUS_REGISTRY")
+        .env_remove("ONEMESSAGEBUS_CONFIG")
+        .env_remove("ONEMESSAGEBUS_TRANSPORT_DIR")
+        .current_dir(scratch.root())
+        .output()
+        .expect("the binary runs under a file size limit");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_ne!(output.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("cannot append to"), "{stderr}");
+    assert_eq!(
+        scratch.file("surfaces.jsonl"),
+        before,
+        "the part of the record that reached the file was left on it"
+    );
+
+    let next = one_line(&scratch.bus(
+        &["send", "surfaces"],
+        Some(&surface("finding", "logged after", "proposal", false)),
+    ));
+    assert_eq!(next["id"], json!(1));
+    assert_eq!(scratch.lines("surfaces.jsonl").len(), 2);
+}
+
 /// A projection whose stamp still matches the log but whose claims were moved
 /// is read as no projection: `status` folds the log whole and writes the repair.
 #[test]
