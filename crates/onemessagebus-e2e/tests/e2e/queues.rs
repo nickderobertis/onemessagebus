@@ -549,6 +549,88 @@ fn reply_answers_the_record_pending_at_a_position_from_stdin_or_file() {
     );
 }
 
+/// Replies racing for one pending record answer it once: each other reply exits
+/// 1 saying another answered the record first, rather than reporting an answer
+/// that released nothing.
+#[test]
+fn replies_racing_for_one_pending_record_answer_it_once_and_the_rest_exit_1() {
+    use std::io::Write as _;
+    let scratch = Scratch::new();
+    scratch.bus(
+        &["send", "surfaces"],
+        Some(&surface(
+            "planner-question",
+            "one answer only",
+            "proposal",
+            true,
+        )),
+    );
+    let claimed = one_line(&scratch.bus(&["next", "surfaces"], None));
+    let position = claimed["position"].to_string();
+    let channel = scratch.channel();
+    let mut replies: Vec<std::process::Child> = (0..4)
+        .map(|n| {
+            onemessagebus()
+                .args([
+                    "reply",
+                    "surfaces",
+                    &position,
+                    "--transport-dir",
+                    channel.to_str().expect("a path"),
+                ])
+                .current_dir(scratch.root())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap_or_else(|failure| panic!("reply {n} does not spawn: {failure}"))
+        })
+        .collect();
+    // `reply` asks whether the record is pending before it reads its reply, so
+    // by the time the replies arrive every one of them has found it pending.
+    std::thread::sleep(Duration::from_millis(1500));
+    for child in &mut replies {
+        child
+            .stdin
+            .take()
+            .expect("a piped stdin")
+            .write_all(br#"{"message":"mine"}"#)
+            .expect("the reply is written");
+    }
+    let outputs: Vec<std::process::Output> = replies
+        .into_iter()
+        .map(|child| child.wait_with_output().expect("a reply ends"))
+        .collect();
+    let answered = outputs
+        .iter()
+        .filter(|output| output.status.code() == Some(0))
+        .count();
+    assert_eq!(answered, 1, "not exactly one reply answered: {outputs:?}");
+    let refusals: Vec<String> = outputs
+        .iter()
+        .filter(|output| output.status.code() != Some(0))
+        .map(|output| {
+            assert_eq!(output.status.code(), Some(1), "{output:?}");
+            String::from_utf8_lossy(&output.stderr).into_owned()
+        })
+        .collect();
+    assert!(
+        refusals
+            .iter()
+            .any(|stderr| stderr.contains("was answered by another reply first")),
+        "no losing reply said another answered first: {refusals:?}"
+    );
+    assert_eq!(
+        scratch
+            .lines("surfaces.jsonl")
+            .iter()
+            .filter(|line| line["event"] == json!("answered"))
+            .count(),
+        1,
+        "the record was answered more than once"
+    );
+}
+
 #[test]
 fn subscribe_streams_until_its_predicate_admits_a_record_and_times_out_otherwise() {
     let scratch = Scratch::new();

@@ -44,7 +44,7 @@ cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebu
   file. With no configuration at all, `--transport-dir` names the directory the
   `planner-channel` layout is kept in over a local transport; with neither, the
   verb is refused. A file with an unknown key, or one widening an author's
-  grants, is refused naming the key (`docs/queues.md` states the file).
+  grants, is refused naming the key.
 
 ## Exit codes
 
@@ -238,7 +238,9 @@ and checked as `send` does, and the pending record is released. It prints
 carries only commands answers nothing — `answered` is `null` — and the record
 stays pending. A position the pending record was not claimed at, or a queue with
 nothing pending, exits 1 with nothing appended; a queue that answers on no queue
-is refused with exit 2.
+is refused with exit 2. Of replies racing for one pending record, one answers it;
+each other is appended, answers nothing, and exits 1 saying another reply
+answered the record first.
 
 ### `subscribe <queue> --until PREDICATE [--timeout SECONDS] [--format json|text] [--config PATH] [--transport-dir DIR]`
 

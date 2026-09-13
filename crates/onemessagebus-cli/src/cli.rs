@@ -1039,7 +1039,15 @@ fn reply(args: ReplyArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> 
     }
     let answered = match reply_position {
         Some(at) => {
-            queue.answer(&pending, &at).map_err(queue_refusal)?;
+            // Another reply can release the slot between the check above and
+            // this one; the reply that lost is on the queue but answered nothing.
+            if !queue.answer(&pending, &at).map_err(queue_refusal)? {
+                return Err(failed(format!(
+                    "{queue_name}: the record pending at position {} was answered by another reply \
+                     first; this reply was appended to {answers} at position {at} and answers nothing",
+                    pending.position
+                )));
+            }
             Some(ClaimedRecord {
                 queue: queue_name,
                 position: pending.position,
