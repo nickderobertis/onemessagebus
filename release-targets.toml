@@ -1,0 +1,44 @@
+# What this repository publishes, and the name each registry serves it under.
+#
+# This is the bootstrap declaration the repository was registered with, so that
+# consumers planned against it can name the targets before the first release exists.
+# The scaffold that stands the repository up replaces it with the full form — the
+# probe script, the `published_by` job names, and the tests that hold this file to
+# `onevcs`'s reader and to the real release configuration — without changing the
+# four target ids or their names.
+schema_version = 3
+
+[[target]]
+id = "crate:onemessagebus"
+name = "crate"
+what = "The onemessagebus core library and the `onemessagebus` binary, as a Rust dependent takes them with `cargo add onemessagebus`."
+published_by = "release-plz on merge to main — the crate publication job, under Cargo.toml's [package] name."
+manifest = "crates/onemessagebus/Cargo.toml"
+
+[[target]]
+id = "crate:onemessagebus-agent"
+name = "agent-crate"
+what = "The agent profile over the core: roles, phases, the note contract, the planner-channel layout and the onejudge codec, as a Rust dependent takes it with `cargo add onemessagebus-agent`."
+published_by = "release-plz on merge to main — the crate publication job, under Cargo.toml's [package] name; both crates share the workspace version."
+manifest = "crates/onemessagebus-agent/Cargo.toml"
+
+[[target]]
+id = "pypi:onemessagebus-cli"
+name = "pypi"
+what = "The standalone `onemessagebus` binary as wheels, installed with `pip install onemessagebus-cli`, and the Python SDK's runtime."
+published_by = "the release workflow's PyPI publication job, from pyproject.toml's [project] name."
+manifest = "pyproject.toml"
+
+[[target]]
+id = "npm:onemessagebus-cli"
+name = "npm"
+what = "The `onemessagebus` binary as an npm launcher, installed with `npm install -g onemessagebus-cli`, and the TypeScript SDK's runtime."
+published_by = "the release workflow's npm publication job, from npm/onemessagebus-cli/package.json's name."
+manifest = "npm/onemessagebus-cli/package.json"
+covers = [
+  "npm:onemessagebus-cli-linux-x64",
+  "npm:onemessagebus-cli-linux-arm64",
+  "npm:onemessagebus-cli-darwin-x64",
+  "npm:onemessagebus-cli-darwin-arm64",
+  "npm:onemessagebus-cli-win32-x64",
+]
