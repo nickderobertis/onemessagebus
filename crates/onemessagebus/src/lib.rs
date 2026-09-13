@@ -27,22 +27,29 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod author;
 mod bounds;
 mod capability;
 mod carry;
 mod clock;
+mod config;
 pub mod conformance;
 mod emit;
 mod envelope;
 mod filter;
 mod inbox;
+mod kinds;
+mod plugin;
+mod queue;
 mod read;
 mod redact;
 mod schema;
 pub mod sdk_schema;
 mod spool;
+pub mod transport;
 mod vocabulary;
 
+pub use author::{Allowlist, Author, NarrowingRefused, OpWord, Operation, Refusal, NOT_GRANTED};
 pub use bounds::{
     bound_detail, bound_payload, bound_text, MAX_ACTIVITY_DETAIL_CHARS, MAX_PAYLOAD_TEXT_BYTES,
     TRUNCATED_KEY,
@@ -52,12 +59,24 @@ pub use capability::{
 };
 pub use carry::{CarriedEntry, Carry, CARRY_SCHEMA_VERSION};
 pub use clock::now_rfc3339;
+pub use config::{
+    AuthorConfig, Bus, BusError, Config, ConfigError, Layout, Layouts, PolicyConfig, QueueConfig,
+    CONFIG_VERSION, NARROWED,
+};
 pub use emit::{Emitter, EmitterError, Unrecorded};
 pub use envelope::{ArtifactRef, Envelope, Kind, Labels, NoDimensions, Source};
 pub use filter::{glob, Filter, FilterError, LabelMatch, Matcher};
 pub use inbox::{
     Answered, BackendError, Carried, Closed, Delivered, Disposition, InProcess, Inbox,
     InboxBackend, Sender, Undelivered,
+};
+pub use kinds::{
+    KindEntry, KindOrigin, TransportConfig, TransportFactory, TransportKinds, LOCAL, MEMORY,
+};
+pub use queue::{
+    Asker, AskerRefused, Claimed, Delivery, FieldPath, FieldPathError, Lifetime, Ordering, Policy,
+    Predicate, Pushed, Queue, QueueError, QueueSpec, QueueStatus, RawQueue, Retention,
+    Subscription, Supersede,
 };
 pub use read::{Merge, Reader, Reading, Readings, Record, Refused, Torn};
 pub use redact::{Redactor, CREDENTIAL_PREFIXES, CREDENTIAL_WORDS, REDACTED};
@@ -66,6 +85,11 @@ pub use schema::{
     UnknownVersion,
 };
 pub use spool::{Spool, SPOOL_SCHEMA_VERSION, SPOOL_WAIT};
+pub use transport::{
+    Batch, Changed, ConsumerName, DocumentName, Fingerprint, LocalTransport, MemoryTransport,
+    NameError, Position, ProcessTransport, QueueName, Stored, TornRecord, Transport,
+    TransportError,
+};
 pub use vocabulary::{Admits, Open, Reserved, Vocabulary, Wire};
 
 /// The README's sample, compiled by `cargo test --doc` so a sample naming an
