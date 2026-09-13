@@ -810,6 +810,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "serde_norway",
  "tempfile",
 ]
 

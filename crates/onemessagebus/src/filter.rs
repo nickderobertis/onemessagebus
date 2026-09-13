@@ -12,11 +12,12 @@
 use std::path::Path;
 
 use schemars::JsonSchema;
+use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::envelope::Envelope;
-use crate::vocabulary::Vocabulary;
+use crate::envelope::{take_or_default, Envelope};
+use crate::vocabulary::{Admits, Vocabulary};
 
 /// Which envelopes pass.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -48,7 +49,7 @@ impl<V: Vocabulary> Default for Filter<V> {
 
 /// One matcher: every field it names must hold of an envelope, and a field it
 /// does not name is not consulted.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(bound = "")]
 #[schemars(
     bound = "V::Source: JsonSchema, V::Fields: JsonSchema",
@@ -67,6 +68,22 @@ pub struct Matcher<V: Vocabulary> {
     /// label the envelope did not stamp does not match it.
     #[serde(flatten)]
     pub fields: V::Fields,
+}
+
+/// Read by hand for the reason [`Envelope`] is: a derive with a flattened
+/// field would drop a key the vocabulary does not admit rather than refuse it.
+impl<'de, V: Vocabulary> Deserialize<'de> for Matcher<V> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut fields: Map<String, Value> = Map::deserialize(deserializer)?;
+        let source = take_or_default(&mut fields, "source")?;
+        let kind = take_or_default(&mut fields, "kind")?;
+        let fields = serde_json::from_value(Value::Object(fields)).map_err(de::Error::custom)?;
+        Ok(Self {
+            source,
+            kind,
+            fields,
+        })
+    }
 }
 
 impl<V: Vocabulary> Default for Matcher<V> {
@@ -308,10 +325,17 @@ impl<V: Vocabulary> Matcher<V> {
             }
         }
         if named == 0 {
+            // A matcher asks by exact text, so an integer key is not one it
+            // can name.
             let keys: Vec<&str> = ["source", "kind"]
                 .into_iter()
-                .chain(V::DIMENSIONS.iter().map(|reserved| reserved.key))
-                .chain(V::RESERVED.iter().map(|reserved| reserved.key))
+                .chain(
+                    V::DIMENSIONS
+                        .iter()
+                        .chain(V::RESERVED)
+                        .filter(|reserved| reserved.admits != Admits::Integer)
+                        .map(|reserved| reserved.key),
+                )
                 .collect();
             return Err(format!(
                 "a matcher naming no field matches every event — name at least one of `{}`",

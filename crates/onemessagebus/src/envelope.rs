@@ -7,6 +7,7 @@
 use std::fmt;
 
 use schemars::JsonSchema;
+use serde::de::{self, DeserializeOwned, Deserializer};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -23,7 +24,7 @@ use crate::vocabulary::Vocabulary;
 /// `labels`, and the label set. Deserialization refuses an unknown top-level
 /// field, a `seq` that is not an unsigned integer, a source word the vocabulary
 /// does not admit, and a missing required field — each by name.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(bound = "")]
 #[schemars(
     bound = "V::Source: JsonSchema, V::Dimensions: JsonSchema, V::Labels: JsonSchema",
@@ -59,6 +60,62 @@ pub struct Envelope<V: Vocabulary> {
     /// Evidence stored by the producing library and referenced by id.
     #[serde(default)]
     pub artifacts: Vec<ArtifactRef>,
+}
+
+/// Read by hand rather than derived, because a derive with a flattened field
+/// hands the flattened type only the keys it declares and drops the rest — so
+/// an unknown top-level field would vanish instead of being refused by name.
+/// Every key the envelope names is taken here; whatever remains is the
+/// vocabulary's dimensions, which refuse what they do not admit.
+impl<'de, V: Vocabulary> Deserialize<'de> for Envelope<V> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut fields: Map<String, Value> = Map::deserialize(deserializer)?;
+        let v = take(&mut fields, "v")?;
+        let ts = take(&mut fields, "ts")?;
+        let stream = take(&mut fields, "stream")?;
+        let seq = take(&mut fields, "seq")?;
+        let source = take(&mut fields, "source")?;
+        let kind = take(&mut fields, "kind")?;
+        let labels = take_or_default(&mut fields, "labels")?;
+        let payload = take_or_default(&mut fields, "payload")?;
+        let artifacts = take_or_default(&mut fields, "artifacts")?;
+        let dimensions =
+            serde_json::from_value(Value::Object(fields)).map_err(de::Error::custom)?;
+        Ok(Self {
+            v,
+            ts,
+            stream,
+            seq,
+            source,
+            kind,
+            dimensions,
+            labels,
+            payload,
+            artifacts,
+        })
+    }
+}
+
+/// One required key of a document being read by hand, as its type.
+pub(crate) fn take<T: DeserializeOwned, E: de::Error>(
+    fields: &mut Map<String, Value>,
+    key: &'static str,
+) -> Result<T, E> {
+    let value = fields.remove(key).ok_or_else(|| E::missing_field(key))?;
+    serde_json::from_value(value).map_err(|failure| E::custom(format!("{key}: {failure}")))
+}
+
+/// One optional key of a document being read by hand, defaulted when absent.
+pub(crate) fn take_or_default<T: DeserializeOwned + Default, E: de::Error>(
+    fields: &mut Map<String, Value>,
+    key: &'static str,
+) -> Result<T, E> {
+    match fields.remove(key) {
+        Some(value) => {
+            serde_json::from_value(value).map_err(|failure| E::custom(format!("{key}: {failure}")))
+        }
+        None => Ok(T::default()),
+    }
 }
 
 impl<V: Vocabulary> Envelope<V> {

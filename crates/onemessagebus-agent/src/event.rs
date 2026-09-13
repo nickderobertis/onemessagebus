@@ -27,6 +27,15 @@ pub type EventFilter = onemessagebus::Filter<Agent>;
 /// [`MatchFields`] — `phase` and the five reserved labels a matcher may name.
 pub type Matcher = onemessagebus::Matcher<Agent>;
 
+/// The core's emitter over the agent vocabulary.
+pub type Emitter = onemessagebus::Emitter<Agent>;
+
+/// The core's reader over the agent vocabulary.
+pub type Reader = onemessagebus::Reader<Agent>;
+
+/// The core's merge over the agent vocabulary.
+pub type Merge = onemessagebus::Merge<Agent>;
+
 /// The library that produced an event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]

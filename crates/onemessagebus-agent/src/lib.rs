@@ -22,8 +22,8 @@ pub mod registry;
 use onemessagebus::{Reserved, Vocabulary};
 
 pub use event::{
-    AgentEnvelope, AgentFilter, ArtifactRef, Dimensions, Envelope, EventFilter, Labels,
-    MatchFields, Matcher, Phase, Source,
+    AgentEnvelope, AgentFilter, ArtifactRef, Dimensions, Emitter, Envelope, EventFilter, Labels,
+    MatchFields, Matcher, Merge, Phase, Reader, Source,
 };
 pub use registry::{registry, EVENT_ENVELOPE_FAMILY, REPLY_ENVELOPE_FAMILY};
 
