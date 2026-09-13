@@ -111,18 +111,8 @@ fetch() {
     printf '%s' "$status"
     return 0
   fi
-  # llmlint: ignore-block[changed_behavior_has_e2e] reaching this needs the
-  # registry to be unreachable while the probe runs, and the only way to arrange
-  # that is to put a fake curl or a fake registry in front of the script — at
-  # which point the fake is what is under test, and a fake is exactly what cannot
-  # tell you that crates.io moved. `release.yml` and `published-smoke.yml` carry
-  # the same exclusion for the same reason. What this branch is *for* — never
-  # letting a failure read as an empty answer — is proven end to end by
-  # npm/test/release-probe.test.mjs, over every route to it that does not require
-  # the registry to misbehave.
   not_answered "could not reach $url: $(tr -d '\r\n' <"$curl_err")" \
     "check network access to the registry, then re-run; this is NOT evidence that nothing is published"
-  # llmlint: ignore-end[changed_behavior_has_e2e]
 }
 
 # The value of a `"key": "value"` pair that occurs exactly once in `$2`.
@@ -173,13 +163,8 @@ case "$status" in
   # how a released artifact ends up reading as unreleased.
   404) exit 0 ;;
   *)
-    # llmlint: ignore-block[changed_behavior_has_e2e] the same exclusion the retry
-    # branch above carries: a status that is neither 200 nor 404 is a rate limit
-    # or an outage at a public registry, which cannot be arranged from a test
-    # without standing a fake registry in front of the script.
     not_answered "$url answered HTTP $status" \
       "re-run in a moment — a rate limit or an outage is not evidence that nothing is published"
-    # llmlint: ignore-end[changed_behavior_has_e2e]
     ;;
 esac
 
@@ -209,15 +194,20 @@ case "$registry" in
 esac
 
 if [ -z "${version:-}" ]; then
-  # llmlint: ignore-block[changed_behavior_has_e2e] reaching this needs a registry
-  # to answer 200 with a document this cannot read — a shape change at crates.io,
-  # PyPI or npm. A fixture asserting it would be a fixture asserting itself: the
-  # thing this guards against is precisely the shape nobody has seen yet. The live
-  # tier proves the readers against the real documents on every run, which is what
-  # turns this branch from a guess into a tripwire.
   not_answered "$url answered, but no version could be read from it unambiguously" \
     "the registry's response shape changed — fix the reader in this script; a released artifact must never read as unreleased"
-  # llmlint: ignore-end[changed_behavior_has_e2e]
+fi
+
+# What came out of the document is still registry-supplied text, and a caller
+# parses stdout as the answer. So the answer is only ever one version value —
+# never a JSON escape, a tag name, or a second line — and anything else is not
+# answered rather than passed through for a consumer to misread. Bash's own regex
+# rather than `grep`, which matches per line and would accept a value with one
+# good line in it.
+readonly VERSION_SHAPE='^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'
+if ! [[ $version =~ $VERSION_SHAPE ]]; then
+  not_answered "$url answered with '$version', which is not a version" \
+    "the registry served something this cannot read as one version — fix the reader in this script; a released artifact must never read as unreleased"
 fi
 
 printf '%s\n' "$version"

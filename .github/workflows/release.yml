@@ -170,11 +170,47 @@ jobs:
         # version of the core, so the core has to be on the registry first. The
         # sparse index shards a name by its length; both of these are longer
         # than three characters, so each lives under its first four letters.
+        #
+        # Three answers, kept apart: a 404 is the index saying the crate has no
+        # release (publish), a parsed entry naming this version is "already live"
+        # (skip), and anything else — curl failing, another status, a 200 whose
+        # lines are not the crate's index entries — fails the job. Reducing the
+        # response to one grep would read an outage as "not published" and
+        # publish against an index that never answered.
         run: |
           ver="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -n1)"
+          if [ -z "$ver" ]; then
+            echo "::error::no [workspace.package] version in Cargo.toml; release-plz writes it, so fix the release commit" >&2
+            exit 1
+          fi
+          index="$(mktemp)"
           for crate in onemessagebus onemessagebus-agent; do
-            if curl -fsSL "https://index.crates.io/on/em/$crate" 2>/dev/null \
-               | grep -q "{\"name\":\"$crate\",\"vers\":\"$ver\""; then
+            url="https://index.crates.io/on/em/$crate"
+            if ! status="$(curl --disable --silent --show-error --location --retry 3 \
+                 --connect-timeout 10 --max-time 60 \
+                 --output "$index" --write-out '%{http_code}' "$url")"; then
+              echo "::error::could not reach $url, so whether $crate $ver is live is unknown; re-run this job once the index answers" >&2
+              exit 1
+            fi
+            case "$status" in
+              404) live=false ;;
+              200)
+                # One JSON object per line, each naming this crate and a version;
+                # a line that is not one fails jq, and the job with it.
+                if ! versions="$(jq -r --arg name "$crate" \
+                     'if .name == $name and (.vers | type) == "string" then .vers else error("not an index entry for \($name)") end' \
+                     "$index")" || [ -z "$versions" ]; then
+                  echo "::error::$url answered 200 with a body that is not $crate's index entries; re-run, and fix this reader if the index format changed" >&2
+                  exit 1
+                fi
+                if printf '%s\n' "$versions" | grep -Fxq -- "$ver"; then live=true; else live=false; fi
+                ;;
+              *)
+                echo "::error::$url answered HTTP $status, so whether $crate $ver is live is unknown; re-run this job in a moment" >&2
+                exit 1
+                ;;
+            esac
+            if [ "$live" = true ]; then
               echo "$crate $ver is already on crates.io; nothing to publish."
               continue
             fi

@@ -77,11 +77,17 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$#" -gt 0 ] || fail_usage "no command to run"
+# A zero budget is the typo `need_seconds` exists to catch: it passes the digit
+# check and then turns the retry into one attempt that says nothing about it.
+[ "$budget" -gt 0 ] || fail_usage "--budget must be at least 1 second"
 [ "$first_delay" -gt 0 ] || fail_usage "--first-delay must be at least 1 second"
 [ "$max_delay" -ge "$first_delay" ] || fail_usage "--max-delay is below --first-delay"
 
 if [ -z "$label" ]; then
+  # One line: a `bash -c` script spans several, and a GitHub `::error::`
+  # annotation keeps only the first, which would drop the verdict itself.
   label="$*"
+  label=${label//$'\n'/ }
 fi
 if [ -z "$action" ]; then
   action="check the registry for the version above — it may never have been published"
