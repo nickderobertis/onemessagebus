@@ -393,6 +393,9 @@ pub enum ServeError {
     /// The frame stream failed mid-read — not the same fact as its ending.
     #[error("the frame stream could not be read: {0}")]
     Stream(std::io::Error),
+    /// The frame-reader thread could not be started.
+    #[error("the frame reader could not be started: {0}")]
+    Spawn(std::io::Error),
     /// A response could not be written.
     #[error("a response could not be written: {0}")]
     Write(std::io::Error),
@@ -428,13 +431,16 @@ impl Bus {
             .session
             .and_then(|session| Instant::now().checked_add(session));
         let (frames, arriving) = mpsc::channel();
-        std::thread::spawn(move || {
-            for line in input.lines() {
-                if frames.send(line).is_err() {
-                    break;
+        std::thread::Builder::new()
+            .name("onemessagebus-frame-reader".to_owned())
+            .spawn(move || {
+                for line in input.lines() {
+                    if frames.send(line).is_err() {
+                        break;
+                    }
                 }
-            }
-        });
+            })
+            .map_err(ServeError::Spawn)?;
         let mut session = ServeSession {
             bus: self,
             queue,

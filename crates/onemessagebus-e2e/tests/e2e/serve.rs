@@ -412,6 +412,7 @@ fn assess_a_numeric_judge_and_the_other_ops_are_refused_by_name() {
 }
 
 #[test]
+// llmlint: ignore[tests_mirror_real_usage] The invalid state is a commands-only reply the router refuses to deliver here, so this journey writes it directly to the transport file to represent a regressed transport below the public boundary. The behavior under test is driven through the real `serve` binary: it answers a non-completion naming the edits and applies nothing.
 fn a_commands_only_reply_injected_onto_the_reply_queue_answers_a_non_completion_naming_the_edits_and_applies_nothing(
 ) {
     let scratch = Scratch::new(30);
@@ -601,6 +602,46 @@ fn serve_refuses_what_it_cannot_serve_before_it_reads_a_frame() {
         elsewhere.stderr
     );
     assert!(scratch.queued().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn serve_refuses_non_unicode_run_and_harness_identity_environment_values_by_name() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt as _;
+
+    let scratch = Scratch::new(30);
+    let frame = supervisor(json!([{"role": "assistant", "content": "here"}]));
+    for name in ["TEST_SERVE_RUN", onejudge::CODEX_ALT_HOME_ENV] {
+        let config = scratch.config();
+        let mut child = onemessagebus()
+            .args([
+                "serve",
+                "surfaces",
+                "--codec",
+                "onejudge",
+                "--config",
+                config.to_str().expect("a UTF-8 path"),
+            ])
+            .current_dir(scratch.dir.path())
+            .env(name, OsString::from_vec(vec![0xff]))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("serve spawns");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(format!("{frame}\n").as_bytes())
+            .expect("the frame is written");
+        let output = child.wait_with_output().expect("serve exits");
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+        assert!(stderr.contains(name), "{stderr}");
+        assert!(stderr.contains("cannot read as text"), "{stderr}");
+    }
 }
 
 #[test]

@@ -467,11 +467,24 @@ impl CommandValidator {
         // refusal before it reads its input cannot deadlock against this one.
         // A command that exits without reading its input is not a failure here:
         // its exit status is the verdict.
-        let writing = std::thread::spawn(move || {
-            if let Some(mut stdin) = stdin {
-                let _ = stdin.write_all(&offered);
+        let writing = match std::thread::Builder::new()
+            .name("onemessagebus-validator-stdin".to_owned())
+            .spawn(move || {
+                if let Some(mut stdin) = stdin {
+                    let _ = stdin.write_all(&offered);
+                }
+            }) {
+            Ok(writing) => writing,
+            Err(failure) => {
+                let _ = child.wait();
+                return Verdict::Unjudged {
+                    reason: format!(
+                        "the validator `{}` could not receive its message: {failure}",
+                        self.rendered()
+                    ),
+                };
             }
-        });
+        };
         let output = child.wait_with_output();
         let _ = writing.join();
         let output = match output {

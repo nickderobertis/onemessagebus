@@ -1514,8 +1514,8 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> 
     let bus = resolved(config)?;
     bus.queue(&queue).map_err(bus_refusal)?;
     let mut codec = Onejudge::new()
-        .with_run_env(run_env.clone(), std::env::var(run_env.as_str()).ok())
-        .with_alternate_home(std::env::var(onejudge::CODEX_ALT_HOME_ENV).ok());
+        .with_run_env(run_env.clone(), optional_env_text(run_env.as_str())?)
+        .with_alternate_home(optional_env_text(onejudge::CODEX_ALT_HOME_ENV)?);
     match bus.serve(&queue, &mut codec, &options, input, out) {
         Ok(Served::StreamEnded { .. }) => Ok(()),
         Ok(Served::SessionOver { standing }) => {
@@ -1536,10 +1536,22 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> 
         Err(ServeError::Refused(why)) => Err(invalid(why)),
         Err(ServeError::Failed(why)) => Err(failed(why)),
         Err(ServeError::Bus(failure)) => Err(bus_refusal(failure)),
-        Err(failure @ (ServeError::Stream(_) | ServeError::Write(_))) => {
+        Err(failure @ (ServeError::Stream(_) | ServeError::Spawn(_) | ServeError::Write(_))) => {
             Err(failed(failure.to_string()))
         }
     }
+}
+
+fn optional_env_text(name: &str) -> Result<Option<String>, Refusal> {
+    std::env::var_os(name)
+        .map(|value| {
+            value.into_string().map_err(|value| {
+                invalid(format!(
+                    "{name} is set to a value this host cannot read as text: {value:?}"
+                ))
+            })
+        })
+        .transpose()
 }
 
 fn validate(args: ValidateArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {

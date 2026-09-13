@@ -550,6 +550,7 @@ fn rearm_after_a_lost_wait_receives_the_eventual_reply() {
 }
 
 #[test]
+// llmlint: ignore[tests_mirror_real_usage] The invalid state is a reply the CLI schema boundary refuses to produce, so this journey writes it directly to the transport file to represent hand-edited or older storage. The behavior under test is still driven through the real `ask` binary: it answers Refused naming the schema id and pointer.
 fn a_reply_record_its_schema_refuses_answers_refused_naming_the_id_and_pointer() {
     let scratch = Scratch::new();
     let lost = scratch
