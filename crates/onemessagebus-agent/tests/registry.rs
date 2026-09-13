@@ -1,8 +1,9 @@
 //! Contract R over the registry the profile constructs: the read sets, the
 //! forward-carry rule, and the four golden documents copied from `onepipeline`.
 
-use onemessagebus::{CheckError, Read, SchemaId};
-use onemessagebus_agent::{registry, EVENT_ENVELOPE_FAMILY, REPLY_ENVELOPE_FAMILY};
+use onemessagebus::sdk_schema;
+use onemessagebus::{CheckError, Read, SchemaId, Vocabulary as _, CAPABILITIES};
+use onemessagebus_agent::{registry, Agent, EVENT_ENVELOPE_FAMILY, REPLY_ENVELOPE_FAMILY};
 use serde_json::{json, Value};
 
 const ENVELOPE_V1: &str = include_str!("golden/envelope-v1.json");
@@ -121,6 +122,61 @@ fn the_golden_reply_envelopes_validate_against_their_versions_and_read_at_three(
         Err(CheckError::Violation(violation)) => assert_eq!(violation.pointer, "/commands/0"),
         other => panic!("a headless command validated: {other:?}"),
     }
+}
+
+/// The SDK bundle built from the profile's registry carries every message the
+/// profile registers, each as the document it is registered with, beside the
+/// shared roots and the capability manifest.
+#[test]
+fn the_sdk_bundle_over_the_profile_carries_every_registered_message() {
+    let registry = registry();
+    let bundle = sdk_schema::bundle::<Agent>(&registry);
+    let document: Value = serde_json::from_str(&bundle.to_json()).expect("the bundle is JSON");
+    let ids: Vec<String> = registry.ids().iter().map(ToString::to_string).collect();
+    assert!(!ids.is_empty(), "the profile registers messages");
+    let messages = document["messages"].as_object().expect("a messages object");
+    assert_eq!(
+        messages.keys().cloned().collect::<Vec<_>>(),
+        ids,
+        "the bundle's messages are exactly the registered ids"
+    );
+    for id in registry.ids() {
+        assert_eq!(
+            Some(&messages[&id.to_string()]),
+            registry.schema(&id),
+            "{id} is not carried as its registered document"
+        );
+    }
+    for root in [
+        "envelope",
+        "filter",
+        "matcher",
+        "schema_id",
+        "registry_document",
+        "schema_list",
+    ] {
+        assert!(document[root].is_object(), "the bundle has no {root} root");
+    }
+    assert_eq!(document["vocabulary"]["name"], json!(Agent::NAME));
+    let verbs: Vec<String> = document["capabilities"]
+        .as_array()
+        .expect("a capability manifest")
+        .iter()
+        .map(|entry| {
+            entry["verb"]
+                .as_array()
+                .expect("a verb")
+                .iter()
+                .map(|word| word.as_str().expect("a word"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect();
+    let declared: Vec<String> = CAPABILITIES
+        .iter()
+        .map(|capability| capability.verb.join(" "))
+        .collect();
+    assert_eq!(verbs, declared);
 }
 
 #[test]

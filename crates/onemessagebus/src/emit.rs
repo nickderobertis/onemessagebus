@@ -202,9 +202,9 @@ impl<V: Vocabulary> Emitter<V> {
     /// The same emitter with `labels` stamped on everything it writes next.
     ///
     /// The derived emitter's own stamp wins and this emitter's fills in what it
-    /// left absent — so a member's emitter derived from its run's carries the
-    /// run id it did not name and the member it did, and a stamp added at the
-    /// run never rewrites what a member stamped for itself.
+    /// left absent — so a child emitter derived from its parent's carries the
+    /// keys it did not name and its own value for the ones it did, and a stamp
+    /// added at the parent never rewrites what the child stamped for itself.
     #[must_use]
     pub fn with_labels(mut self, labels: V::Labels) -> Self {
         self.labels = merged(&labels, self.labels.clone());

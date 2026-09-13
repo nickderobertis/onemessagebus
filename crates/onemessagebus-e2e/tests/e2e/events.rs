@@ -159,7 +159,14 @@ fn events_merge_refuses_a_malformed_filter_naming_list_index_and_matcher() {
 
     let unknown = merge(&["--filter", r#"{"include":[{"stream":"s"}]}"#]);
     assert_eq!(unknown.code, 2);
-    assert!(unknown.stderr.contains("stream"), "{}", unknown.stderr);
+    assert!(unknown.stdout.is_empty());
+    // Named by the list and the field, with the keys a matcher does take.
+    for said in [
+        "include: unknown field `stream`",
+        "expected one of `phase`, `run_id`, `node`, `step`, `member`, `persona`",
+    ] {
+        assert!(unknown.stderr.contains(said), "{}", unknown.stderr);
+    }
 
     let missing = merge(&["--filter", "no-such-filter.yaml"]);
     assert_eq!(missing.code, 2);
@@ -290,8 +297,23 @@ fn events_emit_appends_one_envelope_stamped_from_stdin_and_from_file_alike() {
     assert_eq!(on_file.code, 0, "{}", on_file.stderr);
     let written = lines_of(dir.path());
     assert_eq!(written.len(), 2);
-    assert_eq!(written[1]["seq"], json!(2));
-    assert_eq!(written[1]["payload"], json!({ "n": 2 }));
+    let printed = on_file.lines();
+    assert_eq!(printed.len(), 1);
+    assert_eq!(
+        printed[0], written[1],
+        "the envelope printed is the one appended"
+    );
+    for envelope in [&printed[0], &written[1]] {
+        assert_eq!(envelope["kind"], json!("thing-done"));
+        assert_eq!(envelope["stream"], json!("s-1"));
+        assert_eq!(envelope["source"], json!("vcs"));
+        assert_eq!(envelope["seq"], json!(2));
+        assert_eq!(
+            envelope["labels"],
+            json!({ "run_id": "R", "round": 2, "workstream": "w" })
+        );
+        assert_eq!(envelope["payload"], json!({ "n": 2 }));
+    }
 
     let text = emit_in(
         dir.path(),
@@ -553,6 +575,10 @@ fn events_emit_redacts_credential_shaped_values_before_writing() {
     }
     for token in &prefixed {
         assert!(!raw.contains(token.as_str()), "{token} leaked to the file");
+        assert!(
+            !emitted.stdout.contains(token.as_str()),
+            "{token} leaked to stdout"
+        );
     }
     let envelope = &lines_of(dir.path())[0];
     for word in CREDENTIAL_WORDS {
@@ -617,7 +643,14 @@ fn concurrent_emitters_leave_one_gapless_series() {
     let mut seqs = Vec::new();
     for line in std::fs::read_to_string(&stream).expect("the file").lines() {
         let envelope: Value = serde_json::from_str(line).expect("every line is an envelope");
-        seqs.push(envelope["seq"].as_u64().expect("seq"));
+        // And the profile's own type reads every line whole, as a consumer does.
+        let typed: onemessagebus_agent::Envelope = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("a line is not an agent envelope: {e}: {line}"));
+        assert_eq!(typed.source, onemessagebus_agent::Source::Vcs, "{line}");
+        assert_eq!(typed.kind.as_str(), "tick", "{line}");
+        assert!(typed.stream.starts_with("writer-"), "{line}");
+        assert_eq!(Some(typed.seq), envelope["seq"].as_u64(), "{line}");
+        seqs.push(typed.seq);
     }
     seqs.sort_unstable();
     assert_eq!(seqs, (1..=per_writer * writers).collect::<Vec<u64>>());

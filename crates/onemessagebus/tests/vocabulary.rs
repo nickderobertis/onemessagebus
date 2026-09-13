@@ -167,6 +167,29 @@ fn the_commerce_bus_end_to_end() {
             .count(),
         3
     );
+    // The second reserved key filters the same way: an order the merged
+    // streams carry matches, one they do not carry matches nothing.
+    let by_order = Filter::<Commerce>::parse(r#"{"include": [{"order": "o-1"}]}"#)
+        .expect("a matcher on the other reserved key");
+    assert_eq!(
+        merged
+            .records()
+            .iter()
+            .filter(|envelope| by_order.matches(envelope))
+            .count(),
+        3
+    );
+    let other_order = Filter::<Commerce>::parse(r#"{"include": [{"order": "o-2"}]}"#)
+        .expect("a matcher on the other reserved key");
+    assert_eq!(
+        merged
+            .records()
+            .iter()
+            .filter(|envelope| other_order.matches(envelope))
+            .count(),
+        0,
+        "an order no envelope was stamped with matched"
+    );
     let refused = Filter::<Commerce>::parse(r#"{"include": [{"member": "worker"}]}"#)
         .expect_err("an agent key is not one this vocabulary admits");
     assert!(refused.to_string().contains("member"), "{refused}");

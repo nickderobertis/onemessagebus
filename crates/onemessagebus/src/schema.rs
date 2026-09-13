@@ -33,7 +33,7 @@ pub struct SchemaId {
 
 /// Why text is not a [`SchemaId`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("{text:?} is not a schema id: {why}; a schema id is <namespace>.<name>@<version>, e.g. agent.finding@1")]
+#[error("{text:?} is not a schema id: {why}; a schema id is <namespace>.<name>@<version>, e.g. billing.invoice@1")]
 pub struct SchemaIdError {
     /// What was offered.
     pub text: String,
@@ -80,7 +80,7 @@ impl SchemaId {
         self.version
     }
 
-    /// The id without its version: `agent.finding`.
+    /// The id without its version: `billing.invoice`.
     #[must_use]
     pub fn family(&self) -> String {
         format!("{}.{}", self.namespace, self.name)

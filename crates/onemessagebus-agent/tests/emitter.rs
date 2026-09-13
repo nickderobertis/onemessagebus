@@ -160,6 +160,56 @@ fn credential_shaped_values_are_redacted_before_the_envelope_is_written() {
     assert_eq!(written.payload["count"], json!(3));
 }
 
+/// The redactor a producer gets without asking for one: every value this
+/// process's environment holds under a name carrying a credential word, read
+/// by [`Emitter::new`] through `Redactor::from_env`, and a token with each
+/// prefix — none of it on the returned envelope or on the written line.
+#[test]
+fn an_emitter_redacts_every_value_its_environment_holds_under_a_credential_word() {
+    let words = onemessagebus::CREDENTIAL_WORDS;
+    let secrets: Vec<String> = words
+        .iter()
+        .map(|word| format!("env-held-{}-0987654321", word.to_ascii_lowercase()))
+        .collect();
+    for (word, secret) in words.iter().zip(&secrets) {
+        // nextest runs each test in a process of its own, so the environment
+        // this sets is read by this test's emitter alone.
+        std::env::set_var(format!("OMB_TEST_EMITTER_{word}"), secret);
+    }
+    let prefixed: Vec<String> = CREDENTIAL_PREFIXES
+        .iter()
+        .map(|prefix| format!("{prefix}qrstuvwxyz012345"))
+        .collect();
+    let mut entries: Vec<(&str, Value)> = words
+        .iter()
+        .zip(&secrets)
+        .map(|(word, secret)| (*word, json!(secret)))
+        .collect();
+    for (prefix, token) in CREDENTIAL_PREFIXES.iter().zip(&prefixed) {
+        entries.push((prefix, json!(token)));
+    }
+
+    let sink = Captured::default();
+    let emitter = Emitter::new("s", Source::Vcs, Box::new(sink.clone()));
+    let written = emitter.emit("push", payload(&entries));
+    let line = String::from_utf8(sink.0.lock().expect("sink").clone()).expect("UTF-8");
+    for (key, _) in &entries {
+        assert_eq!(
+            written.payload[*key],
+            json!(REDACTED),
+            "{key} was not redacted on the returned envelope"
+        );
+        assert_eq!(
+            sink.lines()[0].payload[*key],
+            json!(REDACTED),
+            "{key} was not redacted on the written line"
+        );
+    }
+    for secret in secrets.iter().chain(&prefixed) {
+        assert!(!line.contains(secret.as_str()), "{secret} leaked: {line}");
+    }
+}
+
 /// Two shared emitters in one process, on one file, leave one gapless series.
 #[test]
 fn two_shared_emitters_in_one_process_number_one_gapless_series() {

@@ -28,6 +28,72 @@ fn fixture(name: &str) -> String {
         .collect()
 }
 
+/// Every fixture a contract test drives: `envelope`, `filter` and `verbs` here
+/// and in the profile's `tests/contract.rs`, `read-sets` there alone. A fixture
+/// added to the document is added here beside the test that drives it.
+const DRIVEN_FIXTURES: &[&str] = &["envelope", "filter", "read-sets", "verbs"];
+
+/// The name a `<!-- fixture: name -->` line tags, if it is one.
+fn fixture_tag(line: &str) -> Option<&str> {
+    line.trim()
+        .strip_prefix("<!-- fixture: ")
+        .and_then(|rest| rest.strip_suffix(" -->"))
+}
+
+/// A fenced block nobody drives is a shape the document states and no test
+/// holds the crates to, so every block carries a tag, every tag sits on a
+/// block, and every name is one a contract test reads.
+#[test]
+fn every_fenced_block_in_the_contract_is_a_fixture_a_contract_test_drives() {
+    let lines: Vec<&str> = CONTRACT.lines().collect();
+    let mut fenced = Vec::new();
+    let mut inside = false;
+    for (at, line) in lines.iter().enumerate() {
+        if !line.trim_start().starts_with("```") {
+            continue;
+        }
+        inside = !inside;
+        if !inside {
+            continue;
+        }
+        let name = at
+            .checked_sub(1)
+            .and_then(|previous| fixture_tag(lines[previous]))
+            .unwrap_or_else(|| {
+                panic!(
+                    "the fenced block at docs/contract.md:{} has no `<!-- fixture: name -->` tag \
+                     on the line before it; tag it and drive it from a contract test",
+                    at + 1
+                )
+            });
+        assert!(
+            DRIVEN_FIXTURES.contains(&name),
+            "docs/contract.md:{} tags a fixture {name:?} no contract test drives; drive it and \
+             add it to DRIVEN_FIXTURES",
+            at + 1
+        );
+        fenced.push(name);
+    }
+    assert!(!inside, "a fence in docs/contract.md never closes");
+    let tagged: Vec<&str> = lines.iter().filter_map(|line| fixture_tag(line)).collect();
+    assert_eq!(
+        tagged, fenced,
+        "a fixture tag is not on the line before a fence"
+    );
+    let mut names = fenced.clone();
+    names.sort_unstable();
+    assert_eq!(
+        names, DRIVEN_FIXTURES,
+        "each driven fixture is tagged exactly once"
+    );
+    for name in DRIVEN_FIXTURES {
+        assert!(
+            !fixture(name).trim().is_empty(),
+            "the {name} fixture is empty"
+        );
+    }
+}
+
 /// Every `` `backticked` `` token in the contract.
 fn backticked() -> Vec<String> {
     let mut out = Vec::new();

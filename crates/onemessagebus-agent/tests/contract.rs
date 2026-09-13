@@ -366,10 +366,22 @@ fn the_documented_filter_answers_the_table() {
     );
 }
 
-/// Every reserved label the grammar names is matched by exact equality, alone.
+/// Every reserved label the grammar names is matched by exact equality, alone:
+/// its own value matches, another value of that label does not, and an
+/// envelope that did not stamp it does not.
 #[test]
 fn each_reserved_label_matches_by_exact_equality() {
     let stamped = labels("worker", "engineer");
+    // Every reserved text label differs from `stamped`'s, so no ask can match
+    // this envelope by a key it does not name.
+    let different = Labels {
+        run_id: Some("S".to_owned()),
+        node: Some("frontend".to_owned()),
+        step: Some("verify".to_owned()),
+        member: Some("other".to_owned()),
+        persona: Some("other".to_owned()),
+        ..Labels::default()
+    };
     let asks: [(&str, MatchFields); 5] = [
         (
             "run_id",
@@ -417,12 +429,7 @@ fn each_reserved_label_matches_by_exact_equality() {
             "{key} did not match its own value"
         );
         assert!(
-            !filter.admits(
-                Source::Agentgraph,
-                "turn-started",
-                &labels("other", "other"),
-                None
-            ) || matches!(key, "run_id" | "node" | "step"),
+            !filter.admits(Source::Agentgraph, "turn-started", &different, None),
             "{key} matched a different value"
         );
         assert!(

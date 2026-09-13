@@ -86,6 +86,24 @@ fn schema_check_refuses_a_violating_payload_naming_the_id_and_the_pointer() {
     );
     assert!(refused.stderr.contains("/round"), "{}", refused.stderr);
 
+    // The same refusal for the same payload read from a file.
+    let dir = tempfile::tempdir().expect("a temp dir");
+    std::fs::write(dir.path().join("labels.json"), &violating).expect("written");
+    let on_file = run_in(
+        dir.path(),
+        &["schema", "check", "agent.labels@1", "--file", "labels.json"],
+        None,
+        &[],
+    );
+    assert_eq!(on_file.code, 1, "{}", on_file.stderr);
+    assert!(on_file.stdout.is_empty());
+    assert!(
+        on_file.stderr.contains("agent.labels@1"),
+        "{}",
+        on_file.stderr
+    );
+    assert!(on_file.stderr.contains("/round"), "{}", on_file.stderr);
+
     let unknown = run(&["schema", "check", "agent.nothing@1"], Some("{}"));
     assert_eq!(unknown.code, 2);
     assert!(
@@ -244,11 +262,61 @@ fn schema_register_makes_an_id_answer_in_list_and_govern_check_in_a_later_invoca
         None,
         &[],
     );
-    assert!(listed.stdout.lines().any(|line| line == "agent.finding@1"));
-    assert_eq!(listed.stdout.lines().count(), PROFILE_IDS.len() + 1);
+    assert_eq!(listed.code, 0, "{}", listed.stderr);
+    let mut expected: Vec<&str> = PROFILE_IDS.to_vec();
+    expected.push("agent.finding@1");
+    expected.sort_unstable();
+    let mut printed: Vec<&str> = listed.stdout.lines().collect();
+    printed.sort_unstable();
+    assert_eq!(
+        printed, expected,
+        "the profile's ids and the registered one, each once"
+    );
 
-    // And named by the environment variable, governing a check.
+    // Named by the flag, governing a check.
+    let governed = run_in(
+        dir.path(),
+        &[
+            "schema",
+            "check",
+            "agent.finding@1",
+            "--registry",
+            registry_arg,
+        ],
+        Some(r#"{"severity":"high","line":"three"}"#),
+        &[],
+    );
+    assert_eq!(governed.code, 1, "{}", governed.stderr);
+    assert!(
+        governed.stderr.contains("agent.finding@1: at /line"),
+        "{}",
+        governed.stderr
+    );
+    let admitted = run_in(
+        dir.path(),
+        &[
+            "schema",
+            "check",
+            "agent.finding@1",
+            "--registry",
+            registry_arg,
+        ],
+        Some(r#"{"severity":"high","line":3}"#),
+        &[],
+    );
+    assert_eq!(admitted.code, 0, "{}", admitted.stderr);
+
+    // And named by the environment variable, answering in list and governing a
+    // check.
     let env = [("ONEMESSAGEBUS_REGISTRY", registry_arg)];
+    let listed_by_env = run_in(
+        dir.path(),
+        &["schema", "list", "--format", "text"],
+        None,
+        &env,
+    );
+    assert_eq!(listed_by_env.code, 0, "{}", listed_by_env.stderr);
+    assert_eq!(listed_by_env.stdout, listed.stdout);
     let conforming = run_in(
         dir.path(),
         &["schema", "check", "agent.finding@1"],

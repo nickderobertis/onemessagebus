@@ -102,6 +102,48 @@ fn bound_payload_moves_back_to_a_character_boundary() {
     assert_eq!(bounded[TRUNCATED_KEY], json!(true));
 }
 
+/// Two over-long top-level texts in one payload are each cut on their own —
+/// one plainly, one moved back off a straddling character — under one stamp.
+#[test]
+fn bound_payload_cuts_every_over_long_text_and_stamps_truncated_once() {
+    let plain = format!("{}tail", ascii(MAX_PAYLOAD_TEXT_BYTES + 200));
+    // 4095 ASCII bytes, then a two-byte character straddling byte 4096.
+    let straddling = format!("{}é{}", ascii(MAX_PAYLOAD_TEXT_BYTES - 1), ascii(50));
+    let nested = json!({ "inner": ascii(MAX_PAYLOAD_TEXT_BYTES + 9), "n": 1 });
+    let bounded = bound_payload(payload(&[
+        ("stdout", json!(plain)),
+        ("note", json!("short")),
+        ("stderr", json!(straddling)),
+        ("nested", nested.clone()),
+    ]));
+    assert_eq!(bounded["stdout"], json!(ascii(MAX_PAYLOAD_TEXT_BYTES)));
+    assert_eq!(
+        bounded["stderr"],
+        json!(ascii(MAX_PAYLOAD_TEXT_BYTES - 1)),
+        "the straddling character is dropped whole"
+    );
+    assert_eq!(bounded["note"], json!("short"));
+    assert_eq!(
+        bounded["nested"], nested,
+        "a nested object is carried untouched"
+    );
+    assert_eq!(bounded[TRUNCATED_KEY], json!(true));
+    let keys: Vec<&str> = bounded.keys().map(String::as_str).collect();
+    assert_eq!(
+        keys.iter().filter(|key| **key == TRUNCATED_KEY).count(),
+        1,
+        "{keys:?}"
+    );
+    assert_eq!(keys.len(), 5, "four values and one stamp: {keys:?}");
+    assert_eq!(keys.last(), Some(&TRUNCATED_KEY));
+    let written = serde_json::to_string(&bounded).expect("serializes");
+    assert_eq!(
+        written.matches(&format!("\"{TRUNCATED_KEY}\"")).count(),
+        1,
+        "{written}"
+    );
+}
+
 #[test]
 fn bound_detail_collapses_whitespace_and_counts_characters() {
     let (collapsed, cut) = bound_detail("  ran   the\tgate\n\n twice ");
