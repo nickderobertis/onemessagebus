@@ -10,6 +10,8 @@ files:
   # List committed files that shouldn't be judged (lock files, generated output).
   exclude:
     - "**/.git/**"
+    # Recorded producer output, copied byte for byte and never authored: a directive-shaped string inside it is data, not a suppression.
+    - "crates/onemessagebus-agent/tests/recorded/**"
 rationales: true
 # No `agents` block: the harness/model are NOT pinned here. `oneharness.toml`
 # (composed alongside this file) selects them in fallback mode — codex + gpt-5.5

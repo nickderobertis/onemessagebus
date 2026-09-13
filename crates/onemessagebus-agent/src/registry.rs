@@ -8,7 +8,12 @@
 //! reads `[3, 2]` and writes 3; its shape is `onepipeline`'s reply, registered
 //! here as JSON Schema so the profile owns the wire shape while `onepipeline`
 //! keeps owning each command's meaning. `agent.note@1` is the note contract's
-//! message ([`Note`](crate::note::Note)).
+//! message ([`Note`](crate::note::Note)). The planner channel's four record
+//! types are `agent.planner-surface@1`, `agent.queued-reply@1`,
+//! `agent.queued-commands@1` and `agent.command-outcome@1`
+//! ([`channel`](crate::channel)), and the transport plugin protocol's three
+//! shapes are registered under the core's `onemessagebus` namespace so a client
+//! in another language validates against them.
 
 use onemessagebus::{Registry, SchemaId};
 use serde_json::Value;
@@ -89,5 +94,19 @@ pub fn registry() -> Registry {
     registry
         .register::<crate::note::Note>()
         .expect("the note schema registers");
+    registry
+        .register::<crate::channel::Surface>()
+        .expect("the planner surface schema registers");
+    registry
+        .register::<crate::channel::QueuedReply>()
+        .expect("the queued reply schema registers");
+    registry
+        .register::<crate::channel::QueuedCommands>()
+        .expect("the queued commands schema registers");
+    registry
+        .register::<crate::channel::CommandOutcome>()
+        .expect("the command outcome schema registers");
+    onemessagebus::transport::register_protocol(&mut registry)
+        .expect("the transport plugin protocol's schemas register");
     registry
 }

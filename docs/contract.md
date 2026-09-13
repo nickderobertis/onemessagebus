@@ -2,8 +2,9 @@
 
 The approved contract for this repository, committed verbatim below. It is the
 one source of the wire envelope, the filter grammar, the schema registry rules,
-the emitter and reader rules, the inbox, the agent note contract, and the command
-line: the public types are written
+the emitter and reader rules, the inbox, the agent note contract, the transport
+seam, queues with their policies, subscriptions and authors, the configuration
+file, and the command line: the public types are written
 to match this text, and the contract tests — `crates/onemessagebus/tests/contract.rs`
 for the core and `crates/onemessagebus-agent/tests/contract.rs` for the profile —
 drive every fenced block below through those types so the two cannot drift. A
@@ -314,6 +315,212 @@ adopting nodes read them where they read the contract:
    `CAPABILITIES`, so the lost state is observable through the binary;
    `Spool::connect_within` is the library's way.
 
+### Contract T — the transport plugin seam
+
+`docs/transport.md` restates this section in the repository's own voice, with the
+NATS JetStream mapping.
+
+- `trait Transport: Send + Sync + 'static` is the one seam every queue is kept on,
+  **object-safe** (a transport is chosen at runtime from configuration and held
+  as `Arc<dyn Transport>`) and **implementable outside the core** (every type it
+  names is public and constructible). Its methods and their responsibilities:
+  `append` (one record, total order per queue, answering the position after it),
+  `read` (records after a position, oldest first, at most `limit`, each with the
+  position after it, a torn trailing record reported in `Batch::torn`, never
+  dropped and never fatal), `cursor` / `commit` (a named consumer's position),
+  `exclusive` (a section over one queue, its body handed the transport to use
+  inside it), `fingerprint` / `wait_for_change` (a cheap change token and a bounded
+  wait for it to move), `document` / `replace_document` (a small named document,
+  read whole and replaced atomically; a name is one document across the
+  transport, whichever queue names it).
+- `Position` and `Fingerprint` are opaque to consumers, serializable, and built
+  only through a transport (`Position::from_token`, `Fingerprint::from_parts`).
+- `LocalTransport::open(dir)` lays a queue out as below; a position is the byte
+  offset at a record boundary; a fingerprint is each file's length and
+  modification time; an append heals a torn tail back to its record boundary and
+  records the loss in `<queue>.jsonl.torn`. `MemoryTransport::new()` keeps the
+  same promises in memory.
+
+<!-- fixture: transport-layout -->
+```json
+{"records": "<queue>.jsonl", "default cursor": "<queue>-cursor.json", "consumer cursor": "<queue>-cursor.<consumer>.json",
+ "document": "<name>", "exclusive section": ".lock/<queue>.lock"}
+```
+
+- A transport kind resolves **built-in first** (`local`, `memory`), **then
+  registered in-process** (`TransportKinds::register`), **then a plugin
+  executable on `PATH`** named `onemessagebus-transport-<kind>`; a kind none of
+  them serves is refused naming every kind there is.
+
+<!-- fixture: transport-kinds -->
+```json
+{"built-in": ["local", "memory"], "order": ["builtin", "registered", "plugin"], "plugin executable": "onemessagebus-transport-<kind>"}
+```
+
+- A plugin serves one transport over its stdin and stdout, one JSON object per
+  line in each direction, at protocol version 1: the client's first line is a
+  hello naming the protocol, its version and the `transport` block; every later
+  line is a request discriminated by `op`, answered `{"ok": ...}` or
+  `{"error": {kind, message, ...}}`; `exclusive` is `begin_exclusive` …
+  `end_exclusive`. `transport::serve` is a plugin's whole `main`, and
+  `ProcessTransport` the core's client. The three shapes are registered as
+  `onemessagebus.transport-hello@1`, `onemessagebus.transport-request@1` and
+  `onemessagebus.transport-reply@1`.
+
+<!-- fixture: plugin-protocol -->
+```json
+{"hello": {"protocol": "onemessagebus-transport", "version": 1, "config": {"kind": "nats", "dir": "runs/r1/channel", "url": "nats://h:4222"}},
+ "hello-answer": {"ok": {"hello": {"protocol": "onemessagebus-transport", "version": 1}}},
+ "requests": [{"op": "append", "queue": "surfaces", "record": "{\"id\":0}"},
+              {"op": "read", "queue": "surfaces", "from": 9, "limit": 100},
+              {"op": "begin_exclusive", "queue": "surfaces"},
+              {"op": "end_exclusive", "queue": "surfaces", "failed": false}],
+ "replies": [{"ok": {"position": 9}},
+             {"ok": {"batch": {"records": [{"record": "{\"id\":0}", "after": 9}]}}},
+             {"ok": "done"},
+             {"error": {"kind": "past_end", "message": "surfaces: position 12 is past the end of the queue, which ends at 9; the log was replaced or truncated", "queue": "surfaces", "position": 12, "end": 9}}]}
+```
+
+### Contract Q — queues, policies, subscriptions, authors
+
+`docs/queues.md` restates this section in the repository's own voice, with the
+projection's `accounted` and `seal` account.
+
+- `Queue<M: Message>` over a `Transport` with a `Policy` (`delivery`, `ordering`,
+  `supersede_on: Option<Supersede { key: FieldPath, when: Option<Predicate> }>`,
+  `hold_pending`, `blocking_first`, `retention`, `projection:
+  Option<DocumentName>`): `push(record) -> Pushed`, `claim(consumer) ->
+  Option<Claimed<M>>`, `answer(claimed, reply_position)`, `pending(consumer) ->
+  Option<Claimed<M>>`, `waiting() -> Vec<M>`, `unread_count()`. A record pushed onto
+  a typed queue is validated against `M::SCHEMA` before it is appended.
+  `RawQueue` is the same queue over JSON records, as a configuration declares one.
+  A policy asking for none of `hold_pending`, `blocking_first`, `supersede_on` and
+  `projection` is a plain queue, read through consumer cursors; any of them makes
+  an event queue, whose log records every state a record reaches.
+
+<!-- fixture: policy -->
+```json
+{"delivery": "at-least-once", "ordering": "per-queue", "hold_pending": false, "blocking_first": false, "retention": "keep"}
+```
+
+- The projection document, when configured, is the fold of the log with
+  `accounted` (the log bytes it accounts for) and a `seal` (FNV-1a 128 over its
+  waiting records, pending record and `next_id`, then over `accounted`), written
+  exactly as `onepipeline::channel::Queue` writes it: a stamped document that
+  does not seal reads as no document, and the log is folded whole.
+- `Subscription { queue, consumer, lifetime: Lifetime::Session |
+  Lifetime::Durable(Asker) }`: `abandon()` marks what the listener raised and
+  claimed, and has not seen answered, as abandoned (kept, uncounted, still
+  readable); a durable listener on opening `attend`s — takes back — what an
+  earlier listener of the **same** asker abandoned; a session adopts nothing and
+  nothing adopts what it raised. `Asker` is a non-blank Unicode word compared for
+  equality, refused otherwise with `onepipeline`'s two refusals, naming where the
+  value came from.
+- `Author(String)` is open in the core; `Allowlist<Op: Operation>` with
+  `grant(author, op)` and `allows(author, op) -> Result<(), Refusal>` refuses an op
+  not granted **by omission**, naming the author, the op and the reason recorded.
+  The profile's `planner-channel` layout declares the ops, the planner's and the
+  monitor's grants, and each refusal's text as `channel::allows` states it, with
+  `complete` granted or refused for a legacy verdict carrying `completion: true`:
+
+<!-- fixture: planner-channel-grants -->
+```json
+{"planner": ["add", "drop", "reparent", "retry", "cancel", "requeue", "complete", "attest", "finding", "amend", "note", "settle"],
+ "monitor": ["retry", "requeue", "cancel", "finding", "add"],
+ "refused-monitor": {"complete": "whether the run is finished is the planner's verdict, not an observation",
+                     "attest": "a human action is attested by the person who took it, never by a watcher",
+                     "drop": "removing work from the graph is a decomposition decision the planner owns",
+                     "reparent": "rewiring dependencies is a decomposition decision the planner owns",
+                     "amend": "what a node is judged against is a decomposition decision the planner owns",
+                     "note": "a note may bind a criterion the node's judge decides against, which is the planner's decision rather than an observation",
+                     "settle": "settling a node from evidence declares an outcome this run never observed, which is the planner's decision rather than an observation"}}
+```
+
+- The `planner-channel` layout's queues, as declared — the files a directory
+  `onepipeline` 0.28.2 wrote are read by this crate, and those this crate writes
+  are read by 0.28.2:
+
+<!-- fixture: planner-channel -->
+```json
+[{"name": "surfaces",
+  "policy": {"delivery": "at-least-once", "ordering": "per-queue",
+             "supersede_on": {"key": "source", "when": {"field": "source", "equals": "check-in"}},
+             "hold_pending": true, "blocking_first": true, "retention": "keep", "projection": "queue.json"},
+  "schema": "agent.planner-surface@1", "answers": "replies", "consumers": ["default"], "numbered": false},
+ {"name": "replies",
+  "policy": {"delivery": "at-least-once", "ordering": "per-queue", "hold_pending": false, "blocking_first": false, "retention": "keep"},
+  "schema": "agent.queued-reply@1",
+  "claims": {"not": {"all": [{"field": "reply.commands", "non_empty": true},
+                             {"not": {"any": [{"field": "reply.completion", "present": true},
+                                              {"field": "reply.message", "present": true},
+                                              {"field": "reply.reason", "present": true}]}}]}},
+  "consumers": ["default"], "numbered": true},
+ {"name": "commands",
+  "policy": {"delivery": "at-least-once", "ordering": "per-queue", "hold_pending": false, "blocking_first": false, "retention": "keep"},
+  "schema": "agent.queued-commands@1", "consumers": ["default"], "numbered": true},
+ {"name": "command-outcomes",
+  "policy": {"delivery": "at-least-once", "ordering": "per-queue", "hold_pending": false, "blocking_first": false, "retention": "keep"},
+  "schema": "agent.command-outcome@1", "consumers": ["default"], "numbered": false}]
+```
+
+### The configuration file — `onemessagebus.yaml`, version 1
+
+<!-- fixture: config -->
+```yaml
+version: 1
+transport: {kind: local, dir: runs/r1/channel}
+profile: planner-channel
+queues:
+  findings: {policy: {hold_pending: false}}
+authors:
+  monitor: {capabilities: [retry, requeue, cancel, finding]}
+```
+
+- `kind` is `local`, `memory`, or a registered or plugin kind; `profile` names a
+  layout a linked profile declares; `queues` adds queues or overrides a layout's
+  by name; `authors` may narrow a layout author's grants and never widen them.
+- **Two steps, which the types keep apart.** `onemessagebus::Config::load(path)`
+  refuses what the file alone decides, naming the key: YAML that is not one
+  document, an unknown key, a version other than 1, a name, schema id or
+  predicate that does not parse. `Config::resolve(&layouts, &kinds)` refuses what
+  only the linked layouts and transport kinds decide, naming the key: a profile no
+  layout declares, a widened grant, an op that does not exist or an author the
+  layout does not declare (`authors.<author>.capabilities`), a `schema` the layout
+  does not register or an `answers` naming no queue (`queues.<queue>.<key>`), and
+  a transport its kind refuses. A loaded `Config` opens nothing; the `Bus`
+  `resolve` answers is the one type that opens a queue or authors a record.
+- The binary reads it from `--config <path>` or `ONEMESSAGEBUS_CONFIG`, and
+  `--transport-dir <path>` or `ONEMESSAGEBUS_TRANSPORT_DIR` replaces
+  `transport.dir` for one invocation: the flag over the variable, the variable
+  over the file. Its JSON Schema is the SDK bundle's `config` root.
+
+**Departures, ruled by the manager over the ask seam** for Contracts T and Q and
+recorded here so the adopting nodes read them where they read the contract:
+
+1. The surfaces queue supersedes on `source == check-in`, not the `kind ==
+   check-in` Contract Q first stated: that is what 0.28.2's `channel.rs` does, and
+   byte compatibility wins over the wording. The `Supersede { key, when }` shape
+   is unchanged.
+2. The shipped binary reaches a plugin transport through the executable
+   `onemessagebus-transport-<kind>` on `PATH`, over the versioned line-delimited
+   JSON protocol above, whose hello names the version in its first line and whose
+   shapes are registered schemas; resolution is built-in, registered, `PATH`.
+3. A local cursor file holds the number of records before the position, as
+   0.28.2 writes `replies-cursor.json` and `commands-cursor.json`; the position
+   stays the byte offset, converted at the transport boundary.
+4. A queue's declaration carries `schema`, `answers`, `claims`, `consumers` and
+   `numbered` beside its `Policy`, as declaration keys rather than policy fields.
+5. A widened grant is refused by `Config::resolve`, not `Config::load`, since
+   only the linked layouts know a profile's grants; the unresolved `Config` cannot
+   open a queue or author a record.
+6. `answer(claimed, reply_position)` releases the slot once the reply is at
+   `reply_position`, so the reply is appended first, and a position no reply on
+   the `answers` queue ends at is refused; the profile's typed
+   `Channel::answer` releases first and appends after, in 0.28.2's order.
+7. `onepipeline results` at 0.28.2 reads no channel file, so the journey holds
+   `results` over the recorded run root to identical output with the written
+   channel substituted, and compares `next` and `status` with this crate's answers.
+
 ### Contract C — the command line and the capability manifest
 
 - `onemessagebus schema list` (no input; every registered id), `schema check
@@ -354,11 +561,27 @@ adopting nodes read them where they read the contract:
   binding and no declared exclusion fails the build; `tests/library_surface.rs`
   exercises every named library entry. `sdk_schema::bundle()` emits the
   capability manifest beside the schema roots (`envelope`, `filter`,
-  `schema_id`, `registry_document`, and every message the profile registers).
+  `schema_id`, `registry_document`, `config`, and every message the profile
+  registers).
+- `onemessagebus send <queue> [--file <path>]` (a record on stdin or `--file`,
+  shaped and checked by the layout, validated, appended; prints `{queue,
+  position, id}` per record appended), `next <queue> [--consumer <name>]
+  [--asker <word>]` (claims one, blocking-first, and prints `{queue, position,
+  id, record}`; nothing to claim exits 1), `reply <queue> <position> [--file
+  <path>]` (answers the record pending at the position `next` printed with the
+  reply on stdin or `--file`, appended to the queue it answers on; prints
+  `{answered, sent}`), `subscribe <queue> --until <predicate> [--timeout <s>]`
+  (streams the log as `{position, record}` lines, ending on the first the
+  predicate admits), `status [<queue>]` (a list of `{queue, events, records,
+  waiting, pending, pending_position, abandoned, unread, cursors}`) and
+  `transports` (every kind, built-in, registered and plugin). Each queue verb
+  takes `--config` and `--transport-dir`; each is a `Capability` with a library
+  entry (`Bus::send`, `RawQueue::claim`, `RawQueue::answer_at`,
+  `RawQueue::wait_for_change`, `RawQueue::status`, `TransportKinds::kinds`).
 - `--format json|text` on every reading verb; text is a deterministic rendering
   of the same events.
 
 <!-- fixture: verbs -->
 ```json
-["schema list", "schema check", "schema gen", "schema register", "events merge", "events emit", "deliver", "inbox carried"]
+["schema list", "schema check", "schema gen", "schema register", "events merge", "events emit", "deliver", "inbox carried", "send", "next", "reply", "subscribe", "status", "transports"]
 ```

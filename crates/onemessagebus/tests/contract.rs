@@ -29,20 +29,30 @@ fn fixture(name: &str) -> String {
 }
 
 /// Every fixture a contract test drives: `envelope`, `filter` and `verbs` here
-/// and in the profile's `tests/contract.rs`; `read-sets`, the inbox's
-/// `spool-documents` and `carry-store`, and the note contract's `note`,
-/// `accepted` and `note-undelivered` there alone, since each names the agent
-/// profile's message. A fixture added to the document is added here beside the
+/// and in the profile's `tests/contract.rs`; the transport's `transport-layout`,
+/// `transport-kinds` and `plugin-protocol`, the queue `policy` and the `config`
+/// file here, where the core's types read them; and `read-sets`, the inbox's
+/// `spool-documents` and `carry-store`, the note contract's `note`, `accepted`
+/// and `note-undelivered`, and the planner channel's `planner-channel` and
+/// `planner-channel-grants` there alone, since each names the agent profile's
+/// message or layout. A fixture added to the document is added here beside the
 /// test that drives it.
 const DRIVEN_FIXTURES: &[&str] = &[
     "accepted",
     "carry-store",
+    "config",
     "envelope",
     "filter",
     "note",
     "note-undelivered",
+    "planner-channel",
+    "planner-channel-grants",
+    "plugin-protocol",
+    "policy",
     "read-sets",
     "spool-documents",
+    "transport-kinds",
+    "transport-layout",
     "verbs",
 ];
 
@@ -231,6 +241,7 @@ fn the_bundle_emits_the_manifest_and_every_documented_root() {
         "filter",
         "schema_id",
         "registry_document",
+        "config",
         "capabilities",
     ] {
         assert!(document.get(root).is_some(), "the bundle has no {root}");
@@ -354,4 +365,201 @@ fn an_unsupported_language_is_refused_by_name() {
     let untitled = sdk_schema::generate(Lang::Rust, &id, &json!({ "type": "object" }))
         .expect_err("a document with no title cannot name a type");
     assert!(untitled.to_string().contains("title"), "{untitled}");
+}
+
+/// Every file under `dir`, as `/`-separated paths relative to it.
+fn files_under(dir: &std::path::Path) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(at) = pending.pop() {
+        for entry in std::fs::read_dir(&at).expect("a directory") {
+            let path = entry.expect("an entry").path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                let relative = path.strip_prefix(dir).expect("under the directory");
+                found.push(
+                    relative
+                        .components()
+                        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                        .join("/"),
+                );
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+#[test]
+fn the_documented_local_layout_is_the_files_the_local_transport_writes() {
+    use onemessagebus::{ConsumerName, DocumentName, LocalTransport, QueueName, Transport};
+    let layout: Value = serde_json::from_str(&fixture("transport-layout")).expect("JSON");
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let local = LocalTransport::open(dir.path()).expect("opens");
+    let queue: QueueName = "replies".parse().expect("a queue");
+    let watcher: ConsumerName = "watcher".parse().expect("a consumer");
+    let document: DocumentName = "queue.json".parse().expect("a document");
+    let at = local.append(&queue, b"{}").expect("appends");
+    local
+        .commit(&queue, &ConsumerName::default_consumer(), &at)
+        .expect("commits");
+    local.commit(&queue, &watcher, &at).expect("commits");
+    local
+        .replace_document(&queue, &document, b"{}")
+        .expect("replaces");
+    local
+        .exclusive(&queue, &mut |_| Ok(()))
+        .expect("the section runs");
+    let mut documented: Vec<String> = layout
+        .as_object()
+        .expect("an object")
+        .values()
+        .map(|pattern| {
+            pattern
+                .as_str()
+                .expect("a path")
+                .replace("<queue>", "replies")
+                .replace("<consumer>", "watcher")
+                .replace("<name>", "queue.json")
+        })
+        .collect();
+    documented.sort();
+    assert_eq!(
+        files_under(dir.path()),
+        documented,
+        "the local transport's files are not the layout the contract states"
+    );
+}
+
+#[test]
+fn the_documented_transport_kinds_resolve_in_the_documented_order() {
+    use onemessagebus::{MemoryTransport, Transport, TransportKinds};
+    use std::sync::Arc;
+    let documented: Value = serde_json::from_str(&fixture("transport-kinds")).expect("JSON");
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let executable = documented["plugin executable"]
+        .as_str()
+        .expect("a name")
+        .replace("<kind>", "nats");
+    assert_eq!(
+        executable,
+        format!("{}nats", onemessagebus::transport::PLUGIN_PREFIX)
+    );
+    let plugin = dir.path().join(&executable);
+    std::fs::write(&plugin, "#!/bin/sh\n").expect("a plugin file");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&plugin, std::fs::Permissions::from_mode(0o755))
+            .expect("its mode");
+    }
+    let mut kinds = TransportKinds::builtin().searching(vec![dir.path().to_path_buf()]);
+    kinds
+        .register(
+            "shared",
+            Arc::new(|_| Ok(Arc::new(MemoryTransport::new()) as Arc<dyn Transport>)),
+        )
+        .expect("registers");
+    let listed = kinds.kinds();
+    let built_in: Vec<Value> = listed
+        .iter()
+        .filter(|entry| entry.origin == onemessagebus::KindOrigin::Builtin)
+        .map(|entry| json!(entry.kind))
+        .collect();
+    assert_eq!(Value::Array(built_in), documented["built-in"]);
+    let mut order: Vec<Value> = listed
+        .iter()
+        .map(|entry| serde_json::to_value(&entry.origin).expect("JSON"))
+        .collect();
+    order.dedup();
+    assert_eq!(Value::Array(order), documented["order"]);
+}
+
+#[test]
+fn the_documented_plugin_protocol_lines_are_the_protocols_own_shapes() {
+    use onemessagebus::transport::{self, PluginHello, PluginReply, PluginRequest};
+    let documented: Value = serde_json::from_str(&fixture("plugin-protocol")).expect("JSON");
+    let hello: PluginHello =
+        serde_json::from_value(documented["hello"].clone()).expect("the hello reads");
+    assert_eq!(hello.protocol, transport::PROTOCOL);
+    assert_eq!(hello.version, transport::PROTOCOL_VERSION);
+    assert_eq!(
+        serde_json::to_value(&hello).expect("JSON"),
+        documented["hello"]
+    );
+    let mut registry = Registry::new();
+    transport::register_protocol(&mut registry).expect("the protocol registers");
+    registry
+        .check(&transport::HELLO_SCHEMA, &documented["hello"])
+        .expect("the hello conforms");
+    for request in documented["requests"].as_array().expect("requests") {
+        let read: PluginRequest = serde_json::from_value(request.clone()).expect("a request reads");
+        assert_eq!(&serde_json::to_value(&read).expect("JSON"), request);
+        registry
+            .check(&transport::REQUEST_SCHEMA, request)
+            .expect("a request conforms");
+    }
+    let mut replies = vec![documented["hello-answer"].clone()];
+    replies.extend(
+        documented["replies"]
+            .as_array()
+            .expect("replies")
+            .iter()
+            .cloned(),
+    );
+    for reply in &replies {
+        let read: PluginReply = serde_json::from_value(reply.clone()).expect("a reply reads");
+        assert_eq!(&serde_json::to_value(&read).expect("JSON"), reply);
+        registry
+            .check(&transport::REPLY_SCHEMA, reply)
+            .expect("a reply conforms");
+    }
+    let past_end = onemessagebus::TransportError::PastEnd {
+        queue: "surfaces".parse().expect("a queue"),
+        position: onemessagebus::Position::from_token(12),
+        end: onemessagebus::Position::from_token(9),
+    };
+    assert_eq!(
+        documented["replies"][3]["error"]["message"],
+        json!(past_end.to_string()),
+        "the documented refusal is not the transport's own words"
+    );
+}
+
+#[test]
+fn the_documented_default_policy_is_a_plain_queue() {
+    let documented: Value = serde_json::from_str(&fixture("policy")).expect("JSON");
+    assert_eq!(
+        serde_json::to_value(onemessagebus::Policy::default()).expect("JSON"),
+        documented
+    );
+    let read: onemessagebus::Policy = serde_json::from_value(documented).expect("reads");
+    assert!(!read.keeps_events());
+}
+
+#[test]
+fn the_documented_configuration_loads_and_an_unknown_key_in_it_is_refused_by_name() {
+    let text = fixture("config");
+    let config = onemessagebus::Config::parse(&text).expect("the documented configuration loads");
+    assert_eq!(config.version, onemessagebus::CONFIG_VERSION);
+    assert_eq!(config.transport.kind.as_str(), "local");
+    assert_eq!(
+        config.transport.dir.as_deref(),
+        Some(std::path::Path::new("runs/r1/channel"))
+    );
+    assert_eq!(config.profile.as_deref(), Some("planner-channel"));
+    let findings = &config.queues[&"findings".parse().expect("a queue")];
+    assert_eq!(findings.policy.hold_pending, Some(false));
+    assert_eq!(
+        config.authors[&onemessagebus::Author::from("monitor")].capabilities,
+        vec!["retry", "requeue", "cancel", "finding"]
+    );
+    let refused = onemessagebus::Config::parse(&text.replace("queues:", "queus:"))
+        .expect_err("an unknown key is refused by load");
+    assert!(
+        refused.to_string().contains("unknown field `queus`"),
+        "{refused}"
+    );
 }

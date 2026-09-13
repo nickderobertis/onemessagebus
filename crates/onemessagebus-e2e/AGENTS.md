@@ -18,3 +18,12 @@ does not pay for this suite.
 A journey that needs a receiver to die without closing runs this test binary
 as its child and kills that `Child` by the handle that started it — never a
 process found by name, which on a shared host is somebody else's.
+
+`tests/plugin_transport.rs` is the third transport, written outside the core,
+and `src/bin/onemessagebus-transport-dirfiles.rs` compiles that same file into
+the plugin executable the binary finds on `PATH`: the queue table and the binary
+run over one implementation, so change the transport there and nowhere else.
+
+`tests/e2e/onepipeline.rs` is the one journey that is not offline: the 0.28.2
+release's own reader is the only authority on the channel layout, so it needs
+`uv` and, once, the network. Its failure is a layout disagreement, not a flake.

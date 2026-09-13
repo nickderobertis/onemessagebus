@@ -179,21 +179,31 @@ fn the_sdk_bundle_over_the_profile_carries_every_registered_message() {
     assert_eq!(verbs, declared);
 }
 
+/// The agent namespace holds the profile's messages, and the core's
+/// `onemessagebus` namespace the transport plugin protocol's shapes the
+/// profile's registry carries for SDK clients.
 #[test]
-fn every_registered_id_is_in_the_agent_namespace_and_listed_in_order() {
+fn every_registered_id_is_listed_in_order() {
     let registry = registry();
     let ids: Vec<String> = registry.ids().iter().map(ToString::to_string).collect();
     assert_eq!(
         ids,
         [
             "agent.artifact-ref@1",
+            "agent.command-outcome@1",
             "agent.event-envelope@1",
             "agent.event-envelope@2",
             "agent.event-filter@1",
             "agent.labels@1",
             "agent.note@1",
+            "agent.planner-surface@1",
+            "agent.queued-commands@1",
+            "agent.queued-reply@1",
             "agent.reply-envelope@2",
             "agent.reply-envelope@3",
+            "onemessagebus.transport-hello@1",
+            "onemessagebus.transport-reply@1",
+            "onemessagebus.transport-request@1",
         ]
     );
 }

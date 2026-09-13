@@ -1,8 +1,10 @@
 # The command line
 
 `onemessagebus` has the `schema` verbs, over the registry; the `events` verbs,
-over NDJSON streams; and `deliver` and `inbox carried`, over the inbox
-(`docs/inbox.md`). Every verb is a capability in
+over NDJSON streams; `deliver` and `inbox carried`, over the inbox
+(`docs/inbox.md`); and `send`, `next`, `reply`, `subscribe` and `status` over
+queues kept on a transport, with `transports` listing the transport kinds
+(`docs/queues.md`, `docs/transport.md`). Every verb is a capability in
 `onemessagebus::CAPABILITIES`, which is what the SDK clients are generated from
 and what the clap tree is held to, so a verb or flag here exists nowhere the
 manifest does not say.
@@ -33,6 +35,16 @@ cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebu
   content for a person, never separate content.
 - **`--registry <dir>` / `ONEMESSAGEBUS_REGISTRY`** on every `schema` verb names
   a directory of registered documents added to the profile's own.
+- **The queue verbs read one configuration.** `send`, `next`, `reply`,
+  `subscribe` and `status` take `--config <path>` (or `ONEMESSAGEBUS_CONFIG`),
+  the `onemessagebus.yaml` naming the transport, the layout, added or overridden
+  queues and narrowed authors, and `--transport-dir <dir>` (or
+  `ONEMESSAGEBUS_TRANSPORT_DIR`), which replaces the file's `transport.dir` for
+  one invocation: the flag wins over the variable, and the variable over the
+  file. With no configuration at all, `--transport-dir` names the directory the
+  `planner-channel` layout is kept in over a local transport; with neither, the
+  verb is refused. A file with an unknown key, or one widening an author's
+  grants, is refused naming the key.
 
 ## Exit codes
 
@@ -177,3 +189,96 @@ carried, without draining it: JSON is one `{ts, schema, message}` per line, and
 text is `<ts> <schema> <message>` per line. An empty store prints nothing and
 exits 0. A path that is no carry store — nothing there, a directory, a file
 without a carry store's header line — is refused with exit 2, naming it.
+
+## Queues
+
+A queue is a log a transport keeps, read under the policy its layout or
+configuration declares (`docs/queues.md`). Under the `planner-channel` layout the
+queues are `surfaces`, `replies`, `commands` and `command-outcomes`, and their
+files are the ones `onepipeline` keeps in a run's `channel/` directory.
+
+### `send <queue> [--file PATH] [--config PATH] [--transport-dir DIR]`
+
+Append the record on stdin (or in `--file`) to `<queue>`, and print one line of
+JSON per record appended: `{queue, position, id}`. The record is shaped as the
+layout's writers shape it, checked against its author's grants, validated
+against the queue's schema, and given an id where the queue gives one. A reply
+envelope sent to `replies` under `planner-channel` is routed by its halves, as
+`onepipeline` routes it: its commands to `commands`, its verdict to `replies`,
+so one send can print two lines. A queue the configuration does not declare is
+refused with exit 2 naming the queues it does, before stdin is read; a record
+its author may not write, or its schema refuses, exits 1 with nothing appended.
+
+```bash
+$ echo '{"kind":"finding","message":"the base moved","source":"proposal","blocking":true}' | onemessagebus send surfaces --transport-dir runs/r1/channel
+{"queue":"surfaces","position":187,"id":0}
+```
+
+### `next <queue> [--consumer NAME] [--asker WORD] [--format json|text] [--config PATH] [--transport-dir DIR]`
+
+Claim the next record of `<queue>` and print it as `{queue, position, id,
+record}`. The claim is recorded before the record is printed, so two processes
+claiming at once receive different records, and a claimant that dies leaves its
+record claimed rather than handed out again. On a queue that holds claimed
+records pending, the claim is the queue's: a blocking record first, and a
+blocking record claimed stays pending until `reply` answers it. On a plain
+queue it is `--consumer`'s (the `default` consumer when absent), through that
+consumer's cursor. `--asker` makes the claim a listener of that asker: what an
+earlier listener of the same asker abandoned is taken back first. A blank
+`--asker`, or one that is not Unicode, is refused with exit 2. Nothing to claim
+exits 1. Text is `<queue> <position> <record>`.
+
+### `reply <queue> <position> [--file PATH] [--config PATH] [--transport-dir DIR]`
+
+Answer the pending record of `<queue>` that was claimed at `<position>` — the
+position `next` printed — with the reply on stdin (or in `--file`). The reply is
+appended to the queue `<queue>` answers on (`replies` for `surfaces`), shaped
+and checked as `send` does, and the pending record is released. It prints
+`{answered, sent}`: the record answered, and every record appended. A reply that
+carries only commands answers nothing — `answered` is `null` — and the record
+stays pending. A position the pending record was not claimed at, or a queue with
+nothing pending, exits 1 with nothing appended; a queue that answers on no queue
+is refused with exit 2. Of replies racing for one pending record, one answers it;
+each other is appended, answers nothing, and exits 1 saying another reply
+answered the record first.
+
+### `subscribe <queue> --until PREDICATE [--timeout SECONDS] [--format json|text] [--config PATH] [--transport-dir DIR]`
+
+Print every line of `<queue>`'s log, oldest first, as `{position, record}` — on
+a queue that keeps events each line is `{"event": ..., ...record}` — then each
+line as it arrives, and exit 0 after the first line `--until` admits.
+`--until` is a predicate: inline JSON when it starts with `{`, otherwise a path
+to a YAML file — `{"field": "event", "equals": "answered"}`, with `present`,
+`non_empty`, `all`, `any` and `not` as the other forms. With `--timeout`, no
+admitted line within that many seconds exits 1; without it the stream waits for
+as long as it runs. A predicate that does not parse is refused with exit 2. Text
+is `<position> <record>` per line.
+
+```bash
+$ onemessagebus subscribe surfaces --until '{"field":"event","equals":"answered"}' --timeout 600 --transport-dir runs/r1/channel
+```
+
+### `status [<queue>] [--format json|text] [--config PATH] [--transport-dir DIR]`
+
+Report `<queue>`, or every declared queue, as a JSON list of `{queue, events,
+records, waiting, pending, pending_position, abandoned, unread, cursors}`: the
+records waiting to be claimed, the record pending an answer and where it was
+claimed, the records nobody is listening for any more, how many waiting records
+are still owed a reading, and each declared consumer's cursor. It is the read a
+wrapper otherwise takes from `queue.json` by hand. Text is one line per queue,
+`<queue> records=<n> waiting=<n> pending=<id|-> abandoned=<n> unread=<n>`, and one
+`cursor <consumer>=<position|->` line per consumer.
+
+```bash
+$ onemessagebus status surfaces --format text --config onemessagebus.yaml
+```
+
+## `transports`
+
+### `transports [--format json|text]`
+
+List every transport kind this build can open, as JSON `{kind, origin, path}`:
+the built-in `local` and `memory`, then each plugin — an executable named
+`onemessagebus-transport-<kind>` on `PATH` (`docs/transport.md`) — with its path.
+A configuration names a plugin's kind exactly as it names a built-in one. Text is
+`<kind> <origin> [<path>]` per line.

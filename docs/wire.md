@@ -131,4 +131,10 @@ The agent profile registers `agent.event-envelope` at `[2, 1]`,
 registered as JSON Schema so the profile owns the wire shape while the pipeline
 owns each command's meaning), `agent.artifact-ref@1`, `agent.event-filter@1`,
 `agent.labels@1`, and `agent.note@1` — the agent note contract's message, the
-first family carried over the inbox.
+first family carried over the inbox. The planner channel's four record types —
+`agent.planner-surface@1`, `agent.queued-reply@1`, `agent.queued-commands@1` and
+`agent.command-outcome@1`, stated in docs/queues.md — and the transport plugin
+protocol's three shapes — `onemessagebus.transport-hello@1`,
+`onemessagebus.transport-request@1` and `onemessagebus.transport-reply@1`, stated
+in docs/transport.md — are registered beside them, so a client in another
+language validates against the documents this build reads and writes.

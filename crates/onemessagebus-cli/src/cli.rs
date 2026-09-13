@@ -1,5 +1,11 @@
 //! The clap tree and each verb's body.
 //!
+//! The queue verbs — `send`, `next`, `reply`, `subscribe`, `status` — open the
+//! bus a configuration describes: `--config` (or `ONEMESSAGEBUS_CONFIG`) names the
+//! file, loaded and resolved against the layouts this binary links, and
+//! `--transport-dir` (or `ONEMESSAGEBUS_TRANSPORT_DIR`) overrides its transport's
+//! directory — or, with no file, keeps the `planner-channel` layout there.
+//!
 //! Payloads arrive on stdin or `--file` — and `deliver`'s message also through
 //! the named `--message` option, from exactly one of the three — never as a
 //! positional argument: the clap tree admits no positional a payload could be
@@ -11,14 +17,18 @@ use std::fmt::Write as _;
 use std::io::{IsTerminal as _, Read as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use onemessagebus::sdk_schema::{self, Lang, SchemaEntry};
+use onemessagebus::sdk_schema::{self, ClaimedRecord, Lang, LogRecord, Replied, SchemaEntry, Sent};
 use onemessagebus::{
-    Admits, BackendError, Carry, CheckError, Emitter, Filter, Merge, Open, Redactor, SchemaId,
-    Spool, Undelivered, Vocabulary, SPOOL_WAIT,
+    Admits, Asker, BackendError, Bus, BusError, Carry, CheckError, Config, ConsumerName, Emitter,
+    Filter, Layouts, Lifetime, Merge, Open, Position, Predicate, QueueError, QueueName,
+    QueueStatus, Redactor, SchemaId, Spool, Subscription, TransportKinds, Undelivered, Vocabulary,
+    SPOOL_WAIT,
 };
+use onemessagebus_agent::channel::{PlannerChannel, PLANNER_CHANNEL};
 use onemessagebus_agent::Agent;
 use serde_json::{Map, Value};
 
@@ -56,6 +66,119 @@ enum Command {
         #[command(subcommand)]
         verb: InboxVerb,
     },
+    /// Append one record to a queue, validated against its schema, and print
+    /// where it landed.
+    Send(SendArgs),
+    /// Claim the next record of a queue and print it.
+    Next(NextArgs),
+    /// Answer the pending record claimed at a position with a reply.
+    Reply(ReplyArgs),
+    /// Stream a queue's log as it grows, ending on the first record a
+    /// predicate admits.
+    Subscribe(SubscribeArgs),
+    /// What each queue holds: waiting, pending and abandoned records, the
+    /// unread count, and each consumer's cursor.
+    Status(StatusArgs),
+    /// Every transport kind this build can open: built in, and plugins on PATH.
+    Transports {
+        /// How to render the list.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+        format: OutputFormat,
+    },
+}
+
+/// The configuration a queue verb opens its bus with.
+#[derive(Debug, Args)]
+struct BusArgs {
+    /// The configuration file, `onemessagebus.yaml`.
+    #[arg(long, value_name = "PATH", env = "ONEMESSAGEBUS_CONFIG")]
+    config: Option<PathBuf>,
+    /// The directory the transport keeps its queues in, overriding the
+    /// configuration's; with no configuration, the planner-channel layout's.
+    #[arg(long, value_name = "DIR", env = "ONEMESSAGEBUS_TRANSPORT_DIR")]
+    transport_dir: Option<PathBuf>,
+}
+
+/// What `send` takes.
+#[derive(Debug, Args)]
+struct SendArgs {
+    /// The queue to append to.
+    #[arg(value_name = "QUEUE")]
+    queue: String,
+    /// The record file; stdin when absent.
+    #[arg(long, value_name = "PATH")]
+    file: Option<PathBuf>,
+    #[command(flatten)]
+    bus: BusArgs,
+}
+
+/// What `next` takes.
+#[derive(Debug, Args)]
+struct NextArgs {
+    /// The queue to claim from.
+    #[arg(value_name = "QUEUE")]
+    queue: String,
+    /// Who claims: a plain queue keeps a cursor per consumer.
+    #[arg(long, value_name = "NAME")]
+    consumer: Option<String>,
+    /// The asker this claim listens for: what an earlier listener of the same
+    /// asker abandoned is taken back first.
+    #[arg(long, value_name = "WORD")]
+    asker: Option<OsString>,
+    /// How to render the claimed record.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+    format: OutputFormat,
+    #[command(flatten)]
+    bus: BusArgs,
+}
+
+/// What `reply` takes.
+#[derive(Debug, Args)]
+struct ReplyArgs {
+    /// The queue whose pending record is answered.
+    #[arg(value_name = "QUEUE")]
+    queue: String,
+    /// Where the pending record was claimed, as `next` printed it.
+    #[arg(value_name = "POSITION")]
+    position: u64,
+    /// The reply file; stdin when absent.
+    #[arg(long, value_name = "PATH")]
+    file: Option<PathBuf>,
+    #[command(flatten)]
+    bus: BusArgs,
+}
+
+/// What `subscribe` takes.
+#[derive(Debug, Args)]
+struct SubscribeArgs {
+    /// The queue to stream.
+    #[arg(value_name = "QUEUE")]
+    queue: String,
+    /// The predicate that ends the stream: inline JSON, or a path to a YAML
+    /// document.
+    #[arg(long, value_name = "PREDICATE")]
+    until: String,
+    /// Seconds to wait for a record the predicate admits; no bound when absent.
+    #[arg(long, value_name = "SECONDS")]
+    timeout: Option<u64>,
+    /// How to render each record.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+    format: OutputFormat,
+    #[command(flatten)]
+    bus: BusArgs,
+}
+
+/// What `status` takes.
+#[derive(Debug, Args)]
+struct StatusArgs {
+    /// The queue to report; every declared queue when absent.
+    #[arg(value_name = "QUEUE")]
+    queue: Option<String>,
+    /// How to render the report.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+    format: OutputFormat,
+    #[command(flatten)]
+    bus: BusArgs,
 }
 
 /// The registry directory a `schema` verb reads and writes.
@@ -293,6 +416,12 @@ fn dispatch(cli: Cli, out: &mut impl std::io::Write) -> Result<(), Refusal> {
         Command::Inbox {
             verb: InboxVerb::Carried { store, format },
         } => carried(&store, format, out),
+        Command::Send(args) => send(args, out),
+        Command::Next(args) => next(args, out),
+        Command::Reply(args) => reply(args, out),
+        Command::Subscribe(args) => subscribe(args, out),
+        Command::Status(args) => status(args, out),
+        Command::Transports { format } => transports(format, out),
     }
 }
 
@@ -751,6 +880,315 @@ fn shape(value: &Value) -> &'static str {
         Value::Array(_) => "an array",
         Value::Object(_) => "an object",
     }
+}
+
+/// The layouts this binary links, by name: the agent profile's planner channel.
+fn layouts() -> Layouts {
+    Layouts::new().with(Arc::new(PlannerChannel))
+}
+
+/// The bus a queue verb opens: the configuration file loaded and resolved, its
+/// transport directory overridden when one is named — or, with no file, the
+/// planner-channel layout over a local transport in that directory.
+fn open_bus(args: &BusArgs) -> Result<Bus, Refusal> {
+    let config = match (&args.config, &args.transport_dir) {
+        (Some(path), _) => Config::load(path).map_err(|failure| invalid(failure.to_string()))?,
+        (None, Some(dir)) => Config::local(dir, Some(PLANNER_CHANNEL)),
+        (None, None) => {
+            return Err(invalid(
+                "no configuration to open a queue with: pass --config <path> (or set \
+                 ONEMESSAGEBUS_CONFIG), or --transport-dir <dir> (or set \
+                 ONEMESSAGEBUS_TRANSPORT_DIR) for the planner-channel layout over a local \
+                 transport there",
+            ))
+        }
+    };
+    let config = match &args.transport_dir {
+        Some(dir) => config.with_transport_dir(dir),
+        None => config,
+    };
+    config
+        .resolve(&layouts(), &TransportKinds::builtin())
+        .map_err(|failure| invalid(failure.to_string()))
+}
+
+fn parse_queue(text: &str) -> Result<QueueName, Refusal> {
+    text.parse()
+        .map_err(|failure| invalid(format!("{failure}")))
+}
+
+/// A queue's refusal, with the verdict its exit code comes from: a record the
+/// queue will not keep, or a claim it cannot answer, is a well-formed no; a
+/// queue that has no such operation, or no schema registered, refuses the input.
+fn queue_refusal(failure: QueueError) -> Refusal {
+    match failure {
+        QueueError::NotAnEventQueue { .. } | QueueError::Unregistered { .. } => {
+            invalid(failure.to_string())
+        }
+        _ => failed(failure.to_string()),
+    }
+}
+
+fn bus_refusal(failure: BusError) -> Refusal {
+    match failure {
+        BusError::UnknownQueue { .. } => invalid(failure.to_string()),
+        BusError::Refused { .. } => failed(failure.to_string()),
+        BusError::Queue(failure) => queue_refusal(failure),
+    }
+}
+
+fn json_line<T: serde::Serialize>(value: &T) -> Result<String, Refusal> {
+    let mut line = serde_json::to_string(value)
+        .map_err(|failure| failed(format!("cannot render the answer: {failure}")))?;
+    line.push('\n');
+    Ok(line)
+}
+
+fn send(args: SendArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+    let queue = parse_queue(&args.queue)?;
+    let bus = open_bus(&args.bus)?;
+    // Refused before stdin is read, so a mistyped queue costs nothing.
+    bus.queue(&queue).map_err(bus_refusal)?;
+    let record = read_payload(args.file.as_deref())?;
+    let mut text = String::new();
+    for (landed_on, pushed) in bus.send(&queue, record).map_err(bus_refusal)? {
+        text.push_str(&json_line(&Sent {
+            queue: landed_on,
+            position: pushed.position,
+            id: pushed.id,
+        })?);
+    }
+    emit_text(out, &text)
+}
+
+fn next(args: NextArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+    let queue_name = parse_queue(&args.queue)?;
+    let consumer = match &args.consumer {
+        Some(name) => name
+            .parse::<ConsumerName>()
+            .map_err(|failure| invalid(failure.to_string()))?,
+        None => ConsumerName::default_consumer(),
+    };
+    let asker = args
+        .asker
+        .as_deref()
+        .map(|value| Asker::named(value, "--asker"))
+        .transpose()
+        .map_err(|failure| invalid(failure.to_string()))?;
+    let bus = open_bus(&args.bus)?;
+    let queue = bus.queue(&queue_name).map_err(bus_refusal)?;
+    let claimed = match asker {
+        Some(asker) => Subscription::open(queue, consumer, Lifetime::Durable(asker))
+            .and_then(|listener| listener.claim())
+            .map_err(queue_refusal)?,
+        None => queue.claim(&consumer).map_err(queue_refusal)?,
+    };
+    let Some(claimed) = claimed else {
+        return Err(failed(format!("nothing on {queue_name} to claim")));
+    };
+    let claimed = ClaimedRecord {
+        queue: queue_name,
+        position: claimed.position,
+        id: claimed.id,
+        record: claimed.record,
+    };
+    let text = match args.format {
+        OutputFormat::Json => json_line(&claimed)?,
+        OutputFormat::Text => format!(
+            "{} {} {}\n",
+            claimed.queue,
+            claimed.position,
+            serde_json::to_string(&claimed.record).unwrap_or_default()
+        ),
+    };
+    emit_text(out, &text)
+}
+
+fn reply(args: ReplyArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+    let queue_name = parse_queue(&args.queue)?;
+    let bus = open_bus(&args.bus)?;
+    let queue = bus.queue(&queue_name).map_err(bus_refusal)?;
+    let answers = queue.spec().answers.clone().ok_or_else(|| {
+        invalid(format!(
+            "{queue_name} declares no queue its replies are appended to (`answers`), so none of \
+             its records is answered with `reply`"
+        ))
+    })?;
+    // Asked before the reply is read or anything is written: a reply to a record
+    // that is not pending there is refused with nothing appended.
+    let pending = queue
+        .pending_at(&Position::from_token(args.position))
+        .map_err(queue_refusal)?;
+    let record = read_payload(args.file.as_deref())?;
+    let mut sent = Vec::new();
+    let mut reply_position = None;
+    for (target, record) in bus.prepare(&answers, record).map_err(bus_refusal)? {
+        let pushed = bus
+            .queue(&target)
+            .map_err(bus_refusal)?
+            .push(record)
+            .map_err(queue_refusal)?;
+        if target == answers {
+            reply_position = Some(pushed.position);
+        }
+        sent.push(Sent {
+            queue: target,
+            position: pushed.position,
+            id: pushed.id,
+        });
+    }
+    let answered = match reply_position {
+        Some(at) => {
+            // Another reply can release the slot between the check above and
+            // this one; the reply that lost is on the queue but answered nothing.
+            if !queue.answer(&pending, &at).map_err(queue_refusal)? {
+                return Err(failed(format!(
+                    "{queue_name}: the record pending at position {} was answered by another reply \
+                     first; this reply was appended to {answers} at position {at} and answers nothing",
+                    pending.position
+                )));
+            }
+            Some(ClaimedRecord {
+                queue: queue_name,
+                position: pending.position,
+                id: pending.id,
+                record: pending.record,
+            })
+        }
+        None => None,
+    };
+    emit_text(out, &json_line(&Replied { answered, sent })?)
+}
+
+fn subscribe(args: SubscribeArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+    let queue_name = parse_queue(&args.queue)?;
+    let until = Predicate::read(&args.until).map_err(|why| invalid(format!("--until: {why}")))?;
+    let bus = open_bus(&args.bus)?;
+    let queue = bus.queue(&queue_name).map_err(bus_refusal)?;
+    let deadline = args
+        .timeout
+        // A deadline past what `Instant` can represent is no deadline at all.
+        .and_then(|seconds| Instant::now().checked_add(Duration::from_secs(seconds)));
+    let mut from: Option<Position> = None;
+    loop {
+        // Taken before the log is read, so a record appended between the read
+        // and the wait moves it and the wait returns at once.
+        let since = queue.fingerprint().map_err(queue_refusal)?;
+        for (record, position) in queue.log(from.as_ref()).map_err(queue_refusal)? {
+            from = Some(position);
+            let line = LogRecord { position, record };
+            let text = match args.format {
+                OutputFormat::Json => json_line(&line)?,
+                OutputFormat::Text => format!(
+                    "{} {}\n",
+                    line.position,
+                    serde_json::to_string(&line.record).unwrap_or_default()
+                ),
+            };
+            emit_text(out, &text)?;
+            if until.matches(&line.record) {
+                return Ok(());
+            }
+        }
+        let wait = match deadline {
+            Some(deadline) => {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    return Err(failed(format!(
+                        "{queue_name}: no record --until admits arrived within {} seconds",
+                        args.timeout.unwrap_or_default()
+                    )));
+                }
+                left.min(SUBSCRIBE_WAIT)
+            }
+            None => SUBSCRIBE_WAIT,
+        };
+        queue.wait_for_change(&since, wait).map_err(queue_refusal)?;
+    }
+}
+
+/// How long one wait of `subscribe` lasts before it reads the log again.
+const SUBSCRIBE_WAIT: Duration = Duration::from_secs(1);
+
+fn status(args: StatusArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+    let bus = open_bus(&args.bus)?;
+    let names = match &args.queue {
+        Some(name) => vec![parse_queue(name)?],
+        None => bus.queues(),
+    };
+    let mut statuses: Vec<QueueStatus> = Vec::new();
+    for name in &names {
+        let queue = bus.queue(name).map_err(bus_refusal)?;
+        statuses.push(queue.status().map_err(queue_refusal)?);
+    }
+    let text = match args.format {
+        OutputFormat::Json => {
+            let mut text = serde_json::to_string_pretty(&statuses)
+                .map_err(|failure| failed(format!("cannot render the status: {failure}")))?;
+            text.push('\n');
+            text
+        }
+        OutputFormat::Text => {
+            let mut text = String::new();
+            for status in &statuses {
+                let pending = status
+                    .pending
+                    .as_ref()
+                    .and_then(|record| record.get("id"))
+                    .map_or_else(|| "-".to_owned(), ToString::to_string);
+                let _ = writeln!(
+                    text,
+                    "{} records={} waiting={} pending={} abandoned={} unread={}",
+                    status.queue,
+                    status.records,
+                    status.waiting.len(),
+                    pending,
+                    status.abandoned.len(),
+                    status.unread
+                );
+                for (consumer, cursor) in &status.cursors {
+                    let _ = writeln!(
+                        text,
+                        "  cursor {consumer}={}",
+                        cursor.map_or_else(|| "-".to_owned(), |position| position.to_string())
+                    );
+                }
+            }
+            text
+        }
+    };
+    emit_text(out, &text)
+}
+
+fn transports(format: OutputFormat, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+    let kinds = TransportKinds::builtin().kinds();
+    let text = match format {
+        OutputFormat::Json => {
+            let mut text = serde_json::to_string_pretty(&kinds)
+                .map_err(|failure| failed(format!("cannot render the kinds: {failure}")))?;
+            text.push('\n');
+            text
+        }
+        OutputFormat::Text => {
+            let mut text = String::new();
+            for entry in kinds {
+                let origin = serde_json::to_value(&entry.origin)
+                    .ok()
+                    .and_then(|origin| origin.as_str().map(str::to_owned))
+                    .unwrap_or_default();
+                match &entry.path {
+                    Some(path) => {
+                        let _ = writeln!(text, "{} {origin} {}", entry.kind, path.display());
+                    }
+                    None => {
+                        let _ = writeln!(text, "{} {origin}", entry.kind);
+                    }
+                }
+            }
+            text
+        }
+    };
+    emit_text(out, &text)
 }
 
 fn emit_text(out: &mut impl std::io::Write, text: &str) -> Result<(), Refusal> {

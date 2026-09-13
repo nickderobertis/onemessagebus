@@ -20,3 +20,12 @@ Any new path that could leave a sender blocked must end in one of those three �
 `Reply` answers on drop for exactly that reason. The spool's file names and
 documents are held by the profile's `tests/contract.rs` against
 `docs/contract.md` and `docs/inbox.md`; a change to either is a contract change.
+
+The queues (`queue.rs`) fold a log whose bytes other programs read, so a
+record's field order is part of what is written: never take a key out of a
+record's `serde_json::Map` with `remove`, which under `preserve_order` swaps the
+last key into the hole and reorders the record under a different seal — rebuild
+the map (`without_key`). The transport seam's contract (`docs/transport.md`) and
+the queues' (`docs/queues.md`) are held by `tests/contract.rs` against
+`docs/contract.md`, and by the conformance module's queue table, which every
+transport — the local, the memory, and `crates/onemessagebus-e2e`'s plugin — runs.
