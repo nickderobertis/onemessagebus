@@ -535,14 +535,48 @@ fn plugins_on_the_search_path_are_listed_and_a_shadowed_one_is_not() {
         ]
     );
     assert_eq!(
-        kinds.plugin("nats").and_then(|path| path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())),
+        kinds
+            .plugin(&"nats".parse().expect("a transport kind"))
+            .and_then(|path| path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())),
         Some("onemessagebus-transport-nats".to_owned())
     );
     assert!(
-        kinds.plugin("idle").is_none(),
+        kinds
+            .plugin(&"idle".parse().expect("a transport kind"))
+            .is_none(),
         "a file that is not executable is a plugin"
+    );
+}
+
+/// A plugin is looked up by a transport kind, and a kind with a path in it is
+/// refused before any lookup, so no executable outside the search path is
+/// found: `x/../../evil` would otherwise name one beside the search directory.
+#[cfg(unix)]
+#[test]
+fn a_kind_with_a_path_in_it_is_refused_so_no_plugin_is_found_outside_the_search_path() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let search = dir.path().join("search");
+    std::fs::create_dir_all(search.join("onemessagebus-transport-x")).expect("directories");
+    let outside = dir.path().join("evil");
+    std::fs::write(&outside, "#!/bin/sh\n").expect("a file");
+    std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o755)).expect("its mode");
+
+    let refusal = "x/../../evil"
+        .parse::<onemessagebus::TransportKind>()
+        .expect_err("a kind with a path in it");
+    assert!(
+        refusal.to_string().contains("x/../../evil"),
+        "the refusal does not name the kind: {refusal}"
+    );
+
+    let kinds = TransportKinds::builtin().searching(vec![search]);
+    assert_eq!(
+        kinds.plugin(&"evil".parse().expect("a transport kind")),
+        None,
+        "a plugin was found outside the search path"
     );
 }
 

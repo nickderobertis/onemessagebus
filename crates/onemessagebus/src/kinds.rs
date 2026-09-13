@@ -267,12 +267,14 @@ impl TransportKinds {
     }
 
     /// The plugin executable serving `kind`, the first found on the search path.
+    /// A [`TransportKind`] holds no path separator or `.`, so the name it is
+    /// looked up by never reaches outside the directory searched.
     #[must_use]
-    pub fn plugin(&self, kind: &str) -> Option<PathBuf> {
+    pub fn plugin(&self, kind: &TransportKind) -> Option<PathBuf> {
         self.search_dirs()
             .into_iter()
             .flat_map(|dir| {
-                plugin_names(kind)
+                plugin_names(kind.as_str())
                     .into_iter()
                     .map(move |name| dir.join(name))
             })
@@ -290,7 +292,7 @@ impl TransportKinds {
         if let Some((_, factory)) = self.registered.get(config.kind.as_str()) {
             return factory(config);
         }
-        match self.plugin(config.kind.as_str()) {
+        match self.plugin(&config.kind) {
             Some(path) => Ok(Arc::new(ProcessTransport::spawn(&path, config)?)),
             None => Err(TransportError::UnknownKind {
                 kind: config.kind.to_string(),
