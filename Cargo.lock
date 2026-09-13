@@ -818,10 +818,10 @@ dependencies = [
 name = "onemessagebus-cli"
 version = "0.1.0"
 dependencies = [
- "assert_cmd",
  "clap",
  "onemessagebus",
  "onemessagebus-agent",
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",
