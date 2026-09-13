@@ -40,6 +40,7 @@ fn fixture(name: &str) -> String {
 /// that drives it.
 const DRIVEN_FIXTURES: &[&str] = &[
     "accepted",
+    "asked",
     "carry-store",
     "config",
     "envelope",
@@ -58,6 +59,46 @@ const DRIVEN_FIXTURES: &[&str] = &[
     "verbs",
     "verdicts",
 ];
+
+#[test]
+fn the_documented_answers_are_what_ask_prints_and_only_a_reply_carries_a_reply() {
+    use onemessagebus::sdk_schema::Asked;
+    use onemessagebus::{Answer, AskRefusal, RefusalKind};
+    let documented: Value = serde_json::from_str(&fixture("asked")).expect("JSON");
+    let read: Vec<Asked> =
+        serde_json::from_value(documented.clone()).expect("the documented answers read");
+    assert!(
+        matches!(
+            read.as_slice(),
+            [
+                Asked::Reply { .. },
+                Asked::Timeout { .. },
+                Asked::Abandoned { .. },
+                Asked::Refused { .. }
+            ]
+        ),
+        "{read:?}"
+    );
+    assert_eq!(serde_json::to_value(&read).expect("JSON"), documented);
+    let words = [
+        Answer::<Value>::Reply(json!({})).word(),
+        Answer::<Value>::Timeout.word(),
+        Answer::<Value>::Abandoned.word(),
+        Answer::<Value>::Refused(AskRefusal {
+            kind: RefusalKind::Schema,
+            reason: String::new(),
+        })
+        .word(),
+    ];
+    for (answer, word) in documented.as_array().expect("a list").iter().zip(words) {
+        assert_eq!(answer["answer"], json!(word));
+        assert_eq!(
+            answer.get("reply").is_some(),
+            word == "reply",
+            "only a reply carries a reply member: {answer}"
+        );
+    }
+}
 
 fn fixture_tag(line: &str) -> Option<&str> {
     line.trim()

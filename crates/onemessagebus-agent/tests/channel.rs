@@ -573,6 +573,7 @@ fn the_typed_channel_answers_only_a_verdict_and_names_its_ops_by_word() {
             workstream: Some("plan".to_owned()),
             abandoned: false,
             asker: None,
+            correlation: None,
         })
         .expect("queued");
     channel.claim().expect("a claim").expect("claimed");

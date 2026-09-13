@@ -27,9 +27,9 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use onemessagebus::{
-    Allowlist, Asker, Author, ConsumerName, Layout, Message, OpWord, Operation, Policy, Position,
-    Predicate, Pushed, Queue, QueueError, QueueName, QueueSpec, Registry, SchemaId, Supersede,
-    Transport,
+    Allowlist, Asker, Author, ConsumerName, Correlation, Layout, Message, OpWord, Operation,
+    Policy, Position, Predicate, Pushed, Queue, QueueError, QueueName, QueueSpec, Registry, Router,
+    SchemaId, Supersede, Transport,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -129,6 +129,23 @@ pub struct Surface {
         skip_serializing_if = "Option::is_none"
     )]
     pub asker: Option<Asker>,
+    /// The correlation a reply echoes to answer it, when it was raised as a
+    /// question (`onemessagebus::ask`). Omitted while absent, so a surface
+    /// raised any other way is written byte for byte as `onepipeline` writes it.
+    #[serde(
+        default,
+        deserialize_with = "recorded_correlation",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub correlation: Option<Correlation>,
+}
+
+/// A recorded correlation that is not one reads as none, rather than refusing
+/// the record around it, as a recorded asker does.
+fn recorded_correlation<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Correlation>, D::Error> {
+    Ok(Option::<String>::deserialize(deserializer)?.and_then(|text| text.parse().ok()))
 }
 
 impl Message for Surface {
@@ -239,6 +256,14 @@ pub struct QueuedReply {
     pub reply: ReplyEnvelope,
     /// When it was written, in epoch milliseconds.
     pub at: u64,
+    /// The correlation of the question it answers, when it answers one asked
+    /// through `onemessagebus::ask`. Omitted while absent.
+    #[serde(
+        default,
+        deserialize_with = "recorded_correlation",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub correlation: Option<Correlation>,
 }
 
 impl Message for QueuedReply {
@@ -626,6 +651,35 @@ impl PlannerChannel {
     }
 }
 
+/// The planner channel's router: a reply offered to the reply queue is routed
+/// by the halves it carries, as `onepipeline` routes it.
+///
+/// A bare envelope carrying a verdict and edits becomes its commands on
+/// [`COMMANDS`] and its verdict on [`REPLIES`], so it reaches both the pending
+/// ask and the command path; one carrying only commands reaches [`COMMANDS`]
+/// alone, and leaves the pending ask standing. A reply already framed
+/// (`{id, reply, at}`) is checked and kept whole. Every half is checked against
+/// the allowlist first, and what the edits mean stays `onepipeline`'s.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ReplyRouter;
+
+impl Router for ReplyRouter {
+    fn route(
+        &self,
+        queue: &QueueName,
+        record: Value,
+        allowlist: &Allowlist<OpWord>,
+    ) -> Result<Vec<(QueueName, Value)>, String> {
+        match record.get("reply") {
+            Some(envelope) => {
+                PlannerChannel::route_envelope(envelope.clone(), allowlist)?;
+                Ok(vec![(queue.clone(), record)])
+            }
+            None => PlannerChannel::route_envelope(record, allowlist),
+        }
+    }
+}
+
 impl Layout for PlannerChannel {
     fn name(&self) -> &str {
         PLANNER_CHANNEL
@@ -659,22 +713,26 @@ impl Layout for PlannerChannel {
     ) -> Result<Vec<(QueueName, Value)>, String> {
         match queue.as_str() {
             SURFACES => {
-                let Value::Object(mut fields) = record else {
+                let Value::Object(fields) = record else {
                     return Ok(vec![(queue.clone(), record)]);
                 };
+                // What a question is `about` is the node it names, which a
+                // surface carries as its `workstream`. Rebuilt rather than
+                // taken out with `remove`, which reorders the record.
+                let about = fields.get(onemessagebus::ask::ABOUT).cloned();
+                let mut fields: Map<String, Value> = fields
+                    .into_iter()
+                    .filter(|(key, _)| key != onemessagebus::ask::ABOUT)
+                    .collect();
+                if let Some(about) = about {
+                    fields.entry("workstream").or_insert(about);
+                }
                 fields
                     .entry("queued_at")
                     .or_insert_with(|| Value::from(now_millis()));
                 Ok(vec![(queue.clone(), Value::Object(fields))])
             }
-            REPLIES => match record.get("reply") {
-                Some(envelope) => {
-                    let checked = Self::route_envelope(envelope.clone(), allowlist)?;
-                    let _ = checked;
-                    Ok(vec![(queue.clone(), record)])
-                }
-                None => Self::route_envelope(record, allowlist),
-            },
+            REPLIES => ReplyRouter.route(queue, record, allowlist),
             COMMANDS => {
                 let author: ChannelAuthor = record
                     .get("author")
@@ -827,6 +885,7 @@ impl Channel {
             id: 0,
             reply: reply.clone(),
             at,
+            correlation: None,
         })?;
         Ok(pushed.id.unwrap_or_default())
     }

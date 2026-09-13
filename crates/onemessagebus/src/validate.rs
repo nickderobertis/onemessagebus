@@ -28,12 +28,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
+use crate::ask::Correlation;
 use crate::queue::{FieldPath, Predicate};
 use crate::schema::Message;
 use crate::transport::QueueName;
 
 /// The environment variable a command validator is told the queue in.
 pub const VALIDATE_QUEUE_ENV: &str = "ONEMESSAGEBUS_VALIDATE_QUEUE";
+
+/// The environment variable a command validator is told the correlation of the
+/// question the message asks or answers in, when it asks or answers one.
+pub const VALIDATE_CORRELATION_ENV: &str = "ONEMESSAGEBUS_VALIDATE_CORRELATION";
 
 /// The version of the pass record a [`PassCache`] writes.
 pub const PASS_RECORD_VERSION: u32 = 1;
@@ -82,13 +87,27 @@ impl Verdict {
 pub struct ValidationContext {
     /// The queue the message is offered to.
     pub queue: QueueName,
+    /// The correlation of the question the message asks or answers, when it
+    /// asks or answers one.
+    pub correlation: Option<Correlation>,
 }
 
 impl ValidationContext {
     /// The context of a message offered to `queue`.
     #[must_use]
     pub fn new(queue: QueueName) -> Self {
-        Self { queue }
+        Self {
+            queue,
+            correlation: None,
+        }
+    }
+
+    /// The same context, for a message asking or answering the question
+    /// `correlation` names.
+    #[must_use]
+    pub fn with_correlation(mut self, correlation: Correlation) -> Self {
+        self.correlation = Some(correlation);
+        self
     }
 }
 
@@ -417,9 +436,15 @@ impl CommandValidator {
                 reason: ValidatorError::NoCommand.to_string(),
             };
         };
-        let spawned = Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(arguments)
             .env(VALIDATE_QUEUE_ENV, context.queue.as_str())
+            .env_remove(VALIDATE_CORRELATION_ENV);
+        if let Some(correlation) = &context.correlation {
+            command.env(VALIDATE_CORRELATION_ENV, correlation.as_str());
+        }
+        let spawned = command
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())

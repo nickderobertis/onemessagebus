@@ -526,6 +526,55 @@ recorded here so the adopting nodes read them where they read the contract:
    `results` over the recorded run root to identical output with the written
    channel substituted, and compares `next` and `status` with this crate's answers.
 
+### Contract A — ask and answer
+
+`docs/ask.md` restates this section in the repository's own voice.
+
+- `Bus::ask::<Q: Message, R: Message>(&self, queue: &QueueName, question: Q,
+  options: AskOptions) -> Result<Pending<R>, BusError>` raises `question` on
+  `queue` and hands back the handle its answer arrives on, with `AskOptions {
+  blocking: bool, asker: Option<Asker>, about: Option<Address> }`. The question's
+  record carries a minted `Correlation`, and only a reply echoing it answers this
+  ask.
+- `Pending<R>` (its correlation, queue and position): `correlation(&self) ->
+  &Correlation`; `wait(&self, timeout: Duration) -> Answer<R>` blocks up to
+  `timeout`, and a timeout is `Answer::Timeout`, never an `R`; `rearm(&self) ->
+  Result<(), QueueError>` re-arms a listener for the same question after a lost
+  wait — the re-arm `ask-manager.sh` did by hand.
+- `enum Answer<R> { Reply(R), Timeout, Abandoned, Refused(Refusal) }`: a reply
+  echoing this ask's correlation; the wait elapsed and the question stands; the
+  listener was abandoned and nobody re-attended; the bus refused the question or
+  the reply (validator, capability, schema).
+- `Bus::reply(queue, correlation: Option<&Correlation>, reply)` binds a reply to
+  the pending ask whose correlation it echoes. A reply echoing a correlation
+  nothing pending holds is refused naming it — the misrouted-reply guard
+  `channel-reply.sh` implemented by reading `queue.json` — and a reply echoing
+  none binds to the queue's pending ask when exactly one is pending, and is
+  refused otherwise.
+- `Correlation` is minted by the bus (opaque, unique per run root), stamped on the
+  question's record as a reserved field, and required on the reply's; the CLI
+  prints it with the question and accepts `--correlation` on `reply`. **There is
+  no path that turns a timeout, a session bound or an abandoned listener into an
+  `R`**: the `{"completion": false, "reason": "the channel timed out waiting for a
+  verdict"}` ruling `channel serve` synthesized is exactly the shape this type
+  makes unrepresentable. `ask` names every answer on stdout, and only a reply
+  carries a `reply` member:
+
+<!-- fixture: asked -->
+```json
+[{"answer": "reply", "correlation": "c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b", "reply": {"id": 0, "reply": {"version": 3, "completion": true, "reason": "main"}, "at": 1789300000000, "correlation": "c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b"}},
+ {"answer": "timeout", "correlation": "c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b"},
+ {"answer": "abandoned", "correlation": "c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b"},
+ {"answer": "refused", "correlation": "c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b", "reason": "the reply echoing c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b on replies is refused: agent.queued-reply@1: at /reply/completion: \"yes\" is not of type \"boolean\""}]
+```
+
+- Routing by shape stays where `onepipeline` put it: a reply carrying both a
+  verdict and edits reaches both the pending ask and the command path; a
+  commands-only envelope reaches the command path alone and leaves the pending
+  ask standing. The bus expresses this as two queues and a `Router` the profile
+  declares for the planner-channel layout (`onemessagebus_agent::channel::ReplyRouter`);
+  the meaning of the edits stays the consumer's.
+
 ### Contract V — validators
 
 `docs/validators.md` restates this section in the repository's own voice.
@@ -577,6 +626,23 @@ the contract:
    version (held over every registered id and every recorded fixture).
 2. `when` takes `{carries: <field path>}` — the field is present and non-empty —
    or any Contract Q predicate; `carries` is not a form of the predicate grammar.
+3. `Bus` stays the non-generic type over `Arc<dyn Transport>` Contract Q shipped
+   (Contract A wrote `impl<T: Transport> Bus<T>`): `ask`, `listen`, `reply`,
+   `reply_at` and `validate` are its methods.
+4. The ask types live in `onemessagebus::ask` and are re-exported at the root as
+   `Answer`, `Pending`, `AskOptions`, `Correlation`, `Address` and `AskRefusal` —
+   the last because the root's `Refusal` is Contract Q's allowlist refusal, which
+   keeps its name and meaning.
+5. `ask <queue> --correlation <c>` re-attaches to a question already asked
+   (`Bus::listen`), so abandonment and re-arm are reachable through the binary as
+   two processes: under the question's own `--asker` it re-arms it and waits;
+   under none or another it attends nothing, and a question left abandoned
+   answers `abandoned`. An `ask` process — or a listener that re-armed — ending
+   without its answer abandons its question, as `serve`'s stream end does;
+   `Pending::abandon()` is the library's explicit form, with no `Drop` side
+   effect. Abandonment is state on the queue, which `status` reads as nobody
+   waiting now, and an answer arriving for an abandoned question is still matched
+   to it.
 
 ### Contract C — the command line and the capability manifest
 
@@ -640,5 +706,5 @@ the contract:
 
 <!-- fixture: verbs -->
 ```json
-["schema list", "schema check", "schema gen", "schema register", "events merge", "events emit", "deliver", "inbox carried", "send", "next", "reply", "subscribe", "status", "transports", "validate"]
+["schema list", "schema check", "schema gen", "schema register", "events merge", "events emit", "deliver", "inbox carried", "send", "next", "reply", "subscribe", "status", "transports", "validate", "ask"]
 ```

@@ -14,9 +14,8 @@ use std::time::Duration;
 use onemessagebus::sdk_schema::{self, Lang};
 use onemessagebus::{
     Carried, Carry, Changed, Config, ConsumerName, Disposition, Emitter, Inbox, Layouts,
-    MemoryTransport, Merge, Message, Open, Policy, Position, QueueConfig, QueueName, QueueSpec,
-    RawQueue, Reader, Reading, Redactor, Registry, SchemaId, Source, Spool, TransportKinds,
-    CAPABILITIES,
+    MemoryTransport, Merge, Message, Open, Policy, QueueConfig, QueueName, QueueSpec, RawQueue,
+    Reader, Reading, Redactor, Registry, SchemaId, Source, Spool, TransportKinds, CAPABILITIES,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -180,44 +179,48 @@ fn exercised() -> Vec<Exercise> {
             }),
         ),
         (
-            "onemessagebus::RawQueue::answer_at",
+            "onemessagebus::Bus::ask",
             Box::new(|| {
-                let policy = Policy {
-                    hold_pending: true,
-                    ..Policy::default()
-                };
-                let transport: Arc<dyn onemessagebus::Transport> = Arc::new(MemoryTransport::new());
-                let questions = RawQueue::open(
-                    Arc::clone(&transport),
-                    QueueSpec {
-                        answers: Some(queue("replies")),
-                        ..QueueSpec::new(queue("questions"), policy)
-                    },
-                    Arc::new(Registry::new()),
+                let (_dir, bus) = asking_bus();
+                let pending = bus
+                    .ask::<serde_json::Value, serde_json::Value>(
+                        &queue("questions"),
+                        json!({ "text": "go on?" }),
+                        onemessagebus::AskOptions::default(),
+                    )
+                    .expect("asked");
+                assert!(pending.correlation().as_str().starts_with("c-"));
+                assert_eq!(
+                    pending.wait(Duration::from_millis(50)),
+                    onemessagebus::Answer::Timeout
                 );
-                questions
-                    .push(json!({ "blocking": true, "text": "go on?" }))
-                    .expect("queued");
-                let claimed = questions
-                    .claim(&ConsumerName::default_consumer())
-                    .expect("a claim")
-                    .expect("a record");
-                let refused = questions
-                    .answer_at(&claimed.position, &Position::from_token(0))
-                    .expect_err("a position no reply ends at");
-                assert!(
-                    matches!(refused, onemessagebus::QueueError::NoReply { .. }),
-                    "{refused}"
-                );
-                assert!(questions.held().expect("a read").is_some());
-                let reply = transport
-                    .append(&queue("replies"), br#"{"text":"go on"}"#)
-                    .expect("a reply is appended");
-                let answered = questions
-                    .answer_at(&claimed.position, &reply)
-                    .expect("answered");
-                assert_eq!(answered.id, Some(0));
-                assert!(questions.held().expect("a read").is_none());
+            }),
+        ),
+        (
+            "onemessagebus::Bus::reply",
+            Box::new(|| {
+                let (_dir, bus) = asking_bus();
+                let pending = bus
+                    .ask::<serde_json::Value, serde_json::Value>(
+                        &queue("questions"),
+                        json!({ "text": "go on?" }),
+                        onemessagebus::AskOptions::default(),
+                    )
+                    .expect("asked");
+                let bound = bus
+                    .reply(
+                        &queue("questions"),
+                        Some(pending.correlation()),
+                        json!({ "text": "go on" }),
+                    )
+                    .expect("bound");
+                assert!(bound.answered);
+                match pending.wait(Duration::from_secs(10)) {
+                    onemessagebus::Answer::Reply(reply) => {
+                        assert_eq!(reply["text"], json!("go on"))
+                    }
+                    other => panic!("not the reply: {other:?}"),
+                }
             }),
         ),
         (
@@ -308,6 +311,31 @@ impl onemessagebus::Validator<serde_json::Value> for SaysSomething {
             }
         }
     }
+}
+
+/// A bus over a local transport with a queue questions are asked on and the
+/// queue its answers land on.
+fn asking_bus() -> (tempfile::TempDir, onemessagebus::Bus) {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut config = Config::local(dir.path(), None);
+    config.queues.insert(
+        queue("questions"),
+        QueueConfig {
+            policy: onemessagebus::PolicyConfig {
+                hold_pending: Some(true),
+                ..onemessagebus::PolicyConfig::default()
+            },
+            answers: Some(queue("replies")),
+            ..QueueConfig::default()
+        },
+    );
+    config
+        .queues
+        .insert(queue("replies"), QueueConfig::default());
+    let bus = config
+        .resolve(&Layouts::new(), &TransportKinds::builtin())
+        .expect("resolves");
+    (dir, bus)
 }
 
 fn queue(name: &str) -> QueueName {

@@ -117,6 +117,7 @@ fn surface(kind: &str, message: &str, from: &str, blocking: bool, asker: Option<
         workstream: None,
         abandoned: false,
         asker: asker.map(|name| Asker::new(name, "the journey").expect("an asker")),
+        correlation: None,
     }
 }
 

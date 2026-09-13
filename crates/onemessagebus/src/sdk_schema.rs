@@ -14,6 +14,7 @@ use schemars::{schema_for, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::ask::{Address, Correlation};
 use crate::capability::{Capability, CAPABILITIES};
 use crate::carry::CarriedEntry;
 use crate::config::Config;
@@ -238,10 +239,15 @@ pub struct NextOptions {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReplyOptions {
-    /// The queue whose pending record is answered.
+    /// The queue whose pending ask is answered.
     pub queue: QueueName,
-    /// Where that record was claimed, as `next` printed it.
-    pub position: Position,
+    /// Where the pending record was claimed, as `next` printed it; absent, the
+    /// ask `correlation` names, or the one pending.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<Position>,
+    /// The correlation of the ask the reply answers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation: Option<Correlation>,
     /// The reply file; stdin when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
@@ -321,6 +327,72 @@ pub struct ValidateOptions {
     pub transport_dir: Option<String>,
 }
 
+/// The options of `ask`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AskOptions")]
+pub struct AskVerbOptions {
+    /// The queue to ask on.
+    pub queue: QueueName,
+    /// Whether the asker waits on the answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocking: Option<bool>,
+    /// Who asks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asker: Option<Asker>,
+    /// What the question is about.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub about: Option<Address>,
+    /// Seconds to wait for the answer; no bound when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+    /// Listen again for the question this correlation minted, raising nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation: Option<Correlation>,
+    /// The question file; stdin when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// The configuration file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
+    /// The transport directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport_dir: Option<String>,
+}
+
+/// What `ask` answered. Every answer names itself in `answer`, and only a
+/// reply carries a `reply`: a caller reading the reply member of a timeout, an
+/// abandoned listener or a refusal reads nothing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "answer", rename_all = "lowercase")]
+pub enum Asked {
+    /// A reply record echoing the question's correlation.
+    Reply {
+        /// The question's correlation.
+        correlation: Correlation,
+        /// The reply record, as the answer queue holds it.
+        reply: Value,
+    },
+    /// The wait elapsed; the question stands.
+    Timeout {
+        /// The question's correlation.
+        correlation: Correlation,
+    },
+    /// The question was abandoned, and nobody re-attended it.
+    Abandoned {
+        /// The question's correlation.
+        correlation: Correlation,
+    },
+    /// The bus refused the question, or the reply to it.
+    Refused {
+        /// The question's correlation, when the question was asked.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        correlation: Option<Correlation>,
+        /// Why.
+        reason: String,
+    },
+}
+
 /// What `validate` judged: the queue, and the verdict its validators reached.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Validated {
@@ -369,6 +441,9 @@ pub struct Replied {
     /// The pending record answered, or `null` when the reply carried nothing
     /// for its answer queue.
     pub answered: Option<ClaimedRecord>,
+    /// The correlation of the ask the reply bound to, when it carries one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation: Option<Correlation>,
     /// Every record appended, in order.
     pub sent: Vec<Sent>,
 }
@@ -501,6 +576,8 @@ pub struct Bundle {
     pub transport_kinds: Schema,
     /// The output of `validate`: the verdict a queue's validators reached.
     pub validated: Schema,
+    /// The output of `ask`: the answer, named.
+    pub asked: Schema,
     /// The option contracts, by the root each capability names.
     pub options: BTreeMap<&'static str, Schema>,
     /// Every message the registry holds, by id.
@@ -529,6 +606,7 @@ pub fn bundle<V: Vocabulary>(registry: &Registry) -> Bundle {
     options.insert("status_options", schema_for!(StatusOptions));
     options.insert("transports_options", schema_for!(TransportsOptions));
     options.insert("validate_options", schema_for!(ValidateOptions));
+    options.insert("ask_options", schema_for!(AskVerbOptions));
     Bundle {
         capabilities: CAPABILITIES,
         vocabulary: VocabularyManifest {
@@ -556,6 +634,7 @@ pub fn bundle<V: Vocabulary>(registry: &Registry) -> Bundle {
         queue_statuses: schema_for!(Vec<QueueStatus>),
         transport_kinds: schema_for!(Vec<KindEntry>),
         validated: schema_for!(Validated),
+        asked: schema_for!(Asked),
         options,
         messages: registry
             .ids()

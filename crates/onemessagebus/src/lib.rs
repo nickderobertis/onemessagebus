@@ -27,6 +27,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod ask;
 mod author;
 mod bounds;
 mod capability;
@@ -50,6 +51,13 @@ pub mod transport;
 mod validate;
 mod vocabulary;
 
+/// The ask contract's refusal, named apart from the allowlist's [`Refusal`]
+/// where both are in scope.
+pub use ask::Refusal as AskRefusal;
+pub use ask::{
+    Address, AddressError, Answer, AskOptions, Bound, Correlation, CorrelationError, Pending,
+    RefusalKind,
+};
 pub use author::{Allowlist, Author, NarrowingRefused, OpWord, Operation, Refusal, NOT_GRANTED};
 pub use bounds::{
     bound_detail, bound_payload, bound_text, MAX_ACTIVITY_DETAIL_CHARS, MAX_PAYLOAD_TEXT_BYTES,
@@ -62,7 +70,7 @@ pub use carry::{CarriedEntry, Carry, CARRY_SCHEMA_VERSION};
 pub use clock::now_rfc3339;
 pub use config::{
     AuthorConfig, Bus, BusError, CacheConfig, Config, ConfigError, Layout, Layouts, PolicyConfig,
-    QueueConfig, ValidatorConfig, ValidatorKind, CONFIG_VERSION, NARROWED,
+    QueueConfig, Router, ValidatorConfig, ValidatorKind, CONFIG_VERSION, NARROWED,
 };
 pub use emit::{Emitter, EmitterError, Unrecorded};
 pub use envelope::{ArtifactRef, Envelope, Kind, Labels, NoDimensions, Source};
@@ -94,7 +102,7 @@ pub use transport::{
 };
 pub use validate::{
     CommandValidator, OnRecords, PassCache, ValidationContext, Validator, ValidatorError,
-    Validators, Verdict, When, PASS_RECORD_VERSION, VALIDATE_QUEUE_ENV,
+    Validators, Verdict, When, PASS_RECORD_VERSION, VALIDATE_CORRELATION_ENV, VALIDATE_QUEUE_ENV,
 };
 pub use vocabulary::{Admits, Open, Reserved, Vocabulary, Wire};
 

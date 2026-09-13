@@ -2,9 +2,11 @@
 
 `onemessagebus` has the `schema` verbs, over the registry; the `events` verbs,
 over NDJSON streams; `deliver` and `inbox carried`, over the inbox
-(`docs/inbox.md`); and `send`, `next`, `reply`, `subscribe` and `status` over
+(`docs/inbox.md`); `send`, `next`, `reply`, `subscribe` and `status` over
 queues kept on a transport, with `transports` listing the transport kinds
-(`docs/queues.md`, `docs/transport.md`). Every verb is a capability in
+(`docs/queues.md`, `docs/transport.md`); `ask`, a question and the answer that
+echoes its correlation (`docs/ask.md`); and `validate`, a record judged by a
+queue's validators (`docs/validators.md`). Every verb is a capability in
 `onemessagebus::CAPABILITIES`, which is what the SDK clients are generated from
 and what the clap tree is held to, so a verb or flag here exists nowhere the
 manifest does not say.
@@ -35,8 +37,8 @@ cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebu
   content for a person, never separate content.
 - **`--registry <dir>` / `ONEMESSAGEBUS_REGISTRY`** on every `schema` verb names
   a directory of registered documents added to the profile's own.
-- **The queue verbs read one configuration.** `send`, `next`, `reply`,
-  `subscribe` and `status` take `--config <path>` (or `ONEMESSAGEBUS_CONFIG`),
+- **The queue verbs read one configuration.** `send`, `next`, `ask`, `reply`,
+  `subscribe`, `status` and `validate` take `--config <path>` (or `ONEMESSAGEBUS_CONFIG`),
   the `onemessagebus.yaml` naming the transport, the layout, added or overridden
   queues and narrowed authors, and `--transport-dir <dir>` (or
   `ONEMESSAGEBUS_TRANSPORT_DIR`), which replaces the file's `transport.dir` for
@@ -230,17 +232,51 @@ earlier listener of the same asker abandoned is taken back first. A blank
 `--asker`, or one that is not Unicode, is refused with exit 2. Nothing to claim
 exits 1. Text is `<queue> <position> <record>`.
 
-### `reply <queue> <position> [--file PATH] [--config PATH] [--transport-dir DIR]`
+### `ask <queue> [--blocking] [--asker WORD] [--about ADDRESS] [--timeout SECONDS] [--correlation CORRELATION] [--file PATH] [--config PATH] [--transport-dir DIR]`
 
-Answer the pending record of `<queue>` that was claimed at `<position>` — the
-position `next` printed — with the reply on stdin (or in `--file`). The reply is
-appended to the queue `<queue>` answers on (`replies` for `surfaces`), shaped
-and checked as `send` does, and the pending record is released. It prints
-`{answered, sent}`: the record answered, and every record appended. A reply that
-carries only commands answers nothing — `answered` is `null` — and the record
-stays pending. A position the pending record was not claimed at, or a queue with
-nothing pending, exits 1 with nothing appended; a queue that answers on no queue
-is refused with exit 2. Of replies racing for one pending record, one answers it;
+Ask the question on stdin (or in `--file`) on `<queue>` and wait for its answer
+(`docs/ask.md`). The question is stamped with a correlation the bus mints —
+printed on stderr as `correlation: <c>` the moment the question is on the queue —
+and with `--blocking`, `--asker` and `--about`, then shaped, checked and judged
+as `send` does. The answer is one line of JSON on stdout: `{"answer": "reply",
+"correlation", "reply"}` exits 0, carrying the reply record that echoes the
+correlation; `{"answer": "timeout", "correlation"}` when `--timeout` seconds pass
+without one, `{"answer": "abandoned", "correlation"}` when the question is
+abandoned and nobody re-attended it, and `{"answer": "refused", "reason"}` when
+the bus refused the question or the reply, each exit 1 with the reason on stderr.
+Only a reply carries a `reply` member. Without `--timeout` it waits for as long as
+it runs. An `ask` that ends without its answer abandons its question — kept, and
+still answerable — for a later listener of its asker to take back.
+
+With `--correlation` it raises nothing and listens again for the question that
+correlation minted: under the question's own `--asker` it takes the question back
+and waits for its reply; under no asker or another, it attends nothing, and a
+question left abandoned answers `abandoned`. A queue that keeps no events or
+answers on no queue, a blank `--asker`, and a malformed `--about` or
+`--correlation` are refused with exit 2.
+
+```bash
+$ echo '{"kind":"planner-question","message":"which base?","source":"proposal"}' | onemessagebus ask surfaces --blocking --asker worker-1 --timeout 3000 --transport-dir runs/r1/channel
+{"answer":"reply","correlation":"c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b","reply":{"id":0,"reply":{"version":3,"completion":true,"reason":"main"},"at":1789300000000,"correlation":"c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b"}}
+```
+
+### `reply <queue> [<position>] [--correlation CORRELATION] [--file PATH] [--config PATH] [--transport-dir DIR]`
+
+Answer a pending ask of `<queue>` with the reply on stdin (or in `--file`), bound
+one of three ways (`docs/ask.md`): `--correlation` names the ask whose
+correlation `ask` printed; `<position>` names the record claimed there, as `next`
+printed it; with neither, the reply binds to the queue's one pending ask. The
+reply is appended to the queue `<queue>` answers on (`replies` for `surfaces`),
+shaped, checked and judged as `send` does and stamped with the ask's
+correlation, and a question held pending is released. It prints `{answered,
+correlation, sent}`: the question answered, its correlation, and every record
+appended. A reply that carries only commands answers nothing — `answered` is
+`null` — and the ask stays pending. A correlation nothing pending holds (unknown,
+or already answered) exits 1 naming it, as do a reply naming neither when no ask
+or more than one is pending and a position the pending record was not claimed at,
+each with nothing appended. `--correlation` beside `<position>` is a usage error,
+and a malformed correlation, or a queue that answers on no queue, is refused with
+exit 2. Of replies racing for one pending record by position, one answers it;
 each other is appended, answers nothing, and exits 1 saying another reply
 answered the record first.
 

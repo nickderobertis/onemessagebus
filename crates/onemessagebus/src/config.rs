@@ -24,6 +24,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::ask::Correlation;
 use crate::author::{Allowlist, Author, NarrowingRefused, OpWord};
 use crate::kinds::{TransportConfig, TransportKinds};
 use crate::queue::{
@@ -523,6 +524,28 @@ pub trait Layout: Send + Sync + 'static {
     }
 }
 
+/// Where the halves of one offer go: the part of a layout that splits a record
+/// offered to one queue into records on several, by its shape — so that each
+/// half reaches the reader it is for, and a reader never claims a half that is
+/// not its own. A profile declares one for a layout whose offers carry halves
+/// for different readers, and its layout's [`prepare`](Layout::prepare) routes
+/// through it.
+pub trait Router: Send + Sync {
+    /// The records `record`, offered to `queue`, becomes, in the order they are
+    /// pushed, checked against `allowlist`.
+    ///
+    /// # Errors
+    ///
+    /// The refusal, in the router's own words, for a record its author may not
+    /// write or that has no shape the router routes.
+    fn route(
+        &self,
+        queue: &QueueName,
+        record: Value,
+        allowlist: &Allowlist<OpWord>,
+    ) -> Result<Vec<(QueueName, Value)>, String>;
+}
+
 /// The layouts a process links, by name.
 #[derive(Clone, Default)]
 pub struct Layouts(Vec<Arc<dyn Layout>>);
@@ -580,6 +603,22 @@ pub enum BusError {
         /// The queue it was offered to.
         queue: QueueName,
         /// The layout's words.
+        why: String,
+    },
+    /// A queue no question can be asked or answered on.
+    #[error("{queue} is not a queue a question is asked on: {why}")]
+    NotAskable {
+        /// The queue.
+        queue: QueueName,
+        /// Why not.
+        why: String,
+    },
+    /// A reply, or a listener, that binds to no question.
+    #[error("{queue}: {why}")]
+    Unbound {
+        /// The queue whose questions were looked through.
+        queue: QueueName,
+        /// What was looked for, and what is there instead.
         why: String,
     },
     /// The queue refused it, or its transport failed.
@@ -697,14 +736,27 @@ impl Bus {
     /// As [`prepare`](Self::prepare): an unknown queue, or the layout's refusal.
     pub fn validate(&self, queue: &QueueName, record: Value) -> Result<Verdict, BusError> {
         let routed = self.prepare(queue, record.clone())?;
-        Ok(self.judge(queue, &record, &routed))
+        Ok(self.judge(queue, &record, &routed, None))
     }
 
-    /// The verdict on an offer and the records it was routed into.
-    fn judge(&self, queue: &QueueName, offered: &Value, routed: &[(QueueName, Value)]) -> Verdict {
+    /// The verdict on an offer and the records it was routed into, each judged
+    /// in a context naming `correlation` when the offer asks or answers the
+    /// question it names.
+    pub(crate) fn judge(
+        &self,
+        queue: &QueueName,
+        offered: &Value,
+        routed: &[(QueueName, Value)],
+        correlation: Option<&Correlation>,
+    ) -> Verdict {
         let judged_by = |target: &QueueName, record: &Value| {
             self.validators.get(target).map_or(Verdict::Pass, |each| {
-                each.judge(record, &ValidationContext::new(target.clone()))
+                let context = ValidationContext::new(target.clone());
+                let context = match correlation {
+                    Some(correlation) => context.with_correlation(correlation.clone()),
+                    None => context,
+                };
+                each.judge(record, &context)
             })
         };
         combined(
@@ -758,7 +810,7 @@ impl Bus {
         record: Value,
     ) -> Result<Vec<(QueueName, Pushed<Value>)>, BusError> {
         let routed = self.prepare(queue, record.clone())?;
-        QueueError::of_verdict(queue, self.judge(queue, &record, &routed))?;
+        QueueError::of_verdict(queue, self.judge(queue, &record, &routed, None))?;
         let mut pushed = Vec::new();
         for (target, record) in routed {
             let landed = self.queue(&target)?.push_judged(record)?;

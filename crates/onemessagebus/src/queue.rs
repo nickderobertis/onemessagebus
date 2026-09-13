@@ -1792,6 +1792,81 @@ impl RawQueue {
         Ok(recorded.into_iter().map(|(record, _)| record).collect())
     }
 
+    /// Whether the record `id` is marked abandoned now, read off the whole log
+    /// rather than the fold, so a record a claim took out of the fold still
+    /// answers: its latest `abandoned` or `attended` line decides, and a record
+    /// never marked is not abandoned.
+    ///
+    /// # Errors
+    ///
+    /// [`QueueError::NotAnEventQueue`] on a plain queue, or a transport failure.
+    pub(crate) fn is_marked_abandoned(&self, id: u64) -> Result<bool, QueueError> {
+        self.event_queue("abandoned records")?;
+        let batch = self.transport.read(&self.spec.name, None, usize::MAX)?;
+        let mut abandoned = false;
+        for stored in batch.records {
+            let Some((event, record)) = self.parse_line(&stored.bytes) else {
+                continue;
+            };
+            if record_id(&record) != Some(id) {
+                continue;
+            }
+            abandoned = match event {
+                Some(Event::Abandoned) => true,
+                Some(Event::Attended) => false,
+                Some(Event::Queued) | None => is_abandoned(&record),
+                Some(Event::Claimed | Event::Answered) => abandoned,
+            };
+        }
+        Ok(abandoned)
+    }
+
+    /// Mark the record `id` abandoned — or attended again — whether or not the
+    /// fold still holds it, and answer whether a mark was recorded: none is
+    /// when the record already stands so, or the log never queued it.
+    ///
+    /// # Errors
+    ///
+    /// [`QueueError::NotAnEventQueue`] on a plain queue, or a transport failure.
+    pub(crate) fn mark(&self, id: u64, abandoned: bool) -> Result<bool, QueueError> {
+        if self.is_marked_abandoned(id)? == abandoned {
+            return Ok(false);
+        }
+        let batch = self.transport.read(&self.spec.name, None, usize::MAX)?;
+        let Some(logged) = batch
+            .records
+            .iter()
+            .filter_map(|stored| self.parse_line(&stored.bytes))
+            .find(|(event, record)| {
+                record_id(record) == Some(id) && matches!(event, Some(Event::Queued) | None)
+            })
+            .map(|(_, record)| record)
+        else {
+            return Ok(false);
+        };
+        let event = if abandoned {
+            Event::Abandoned
+        } else {
+            Event::Attended
+        };
+        let ((), recorded) = self.record(|folded| {
+            let current = folded
+                .waiting
+                .iter()
+                .chain(folded.pending.iter())
+                .find(|held| record_id(held) == Some(id))
+                .cloned()
+                .unwrap_or(logged);
+            Ok((vec![(event, self.with_abandoned(&current, abandoned))], ()))
+        })?;
+        Ok(!recorded.is_empty())
+    }
+
+    /// The registry the queue's schema is checked against.
+    pub(crate) fn registry(&self) -> &Arc<Registry> {
+        &self.registry
+    }
+
     /// Every line of the log after `from`, parsed, with the position after each:
     /// on an event queue each line is an event (`{"event": ..., ...record}`).
     ///

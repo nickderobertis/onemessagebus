@@ -55,7 +55,9 @@ which are declaration keys rather than policy fields (a manager's ruling):
 
 An event queue owns four fields of its records and names nothing else in them:
 `id`, allocated one past the highest id the log has queued; `blocking`;
-`abandoned`, omitted while false; and `asker`, who raised it. Every other field
+`abandoned`, omitted while false; and `asker`, who raised it. A question asked
+through `Bus::ask` carries two more the bus stamps: `correlation`, which the reply
+answering it echoes, and `about`, what it is about (`docs/ask.md`). Every other field
 is the consumer's, and a typed queue (`Queue<M>`) writes each record in `M`'s
 field order. A record is written in the field order it was given, and a fold of
 the log hands it back in that order.
