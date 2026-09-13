@@ -18,7 +18,18 @@
   "targets": {
     "coverage": {
       "command": "just _coverage",
-      "dependsOn": ["^test"],
+      "dependsOn": [
+        {
+          "projects": [
+            "onemessagebus",
+            "onemessagebus-agent",
+            "onemessagebus-cli",
+            "onemessagebus-e2e",
+            "onemessagebus-repo"
+          ],
+          "target": "test"
+        }
+      ],
       "inputs": ["wholeWorkspace"],
       "cache": false
     },
