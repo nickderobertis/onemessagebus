@@ -17,6 +17,10 @@ homepage.workspace = true
 description = "The onemessagebus command line: schema registry verbs and NDJSON stream verbs over the agent profile."
 publish = false
 
+[lib]
+name = "onemessagebus_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "onemessagebus"
 path = "src/main.rs"
@@ -27,6 +31,7 @@ onemessagebus-agent = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
