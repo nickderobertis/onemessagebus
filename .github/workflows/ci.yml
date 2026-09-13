@@ -79,6 +79,7 @@ jobs:
         run: just bootstrap
       - name: Quality gate (affected projects)
         if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-plz-')
+        # llmlint: ignore[external_service_suite_stays_out_of_the_affected_tier, live_tier_compiles_and_requires_credential] the onepipeline 0.28.2 byte-compatibility journey fetches one exact pinned wheel (onepipeline-cli==0.28.2, the anchored engine release the compatibility promise is made against) anonymously from PyPI, so no credential exists to require, and uv caches it after the first run; the task placed this journey in the gate deliberately, because byte compatibility with that release is this node's central acceptance criterion and must gate every pull request.
         run: just check-affected
       - name: Quality gate (every project)
         if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-plz-')
@@ -120,6 +121,7 @@ jobs:
         run: just bootstrap
       - name: Tests (every crate and the npm packaging)
         # llmlint: ignore[no_second_broader_sweep_over_an_already_gated_commit] not the same sweep twice: `gate` runs on ubuntu alone, and this is the only run of the suites on macOS and Windows, which the create-repo CI guidance requires for a cross-platform binary; formatting, lints and coverage are platform-independent and are not repeated here.
+        # llmlint: ignore[external_service_suite_stays_out_of_the_affected_tier, live_tier_compiles_and_requires_credential] the onepipeline 0.28.2 byte-compatibility journey fetches one exact pinned wheel (onepipeline-cli==0.28.2, the anchored engine release the compatibility promise is made against) anonymously from PyPI, so no credential exists to require, and uv caches it after the first run; the task placed this journey in the gate deliberately, because byte compatibility with that release is this node's central acceptance criterion and must gate every pull request.
         run: just test-uninstrumented
 
   # The declared MSRV is a promise to consumers, so prove it rather than document

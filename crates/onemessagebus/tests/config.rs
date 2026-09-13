@@ -151,6 +151,7 @@ fn load_refuses_an_unknown_key_a_version_and_a_malformed_value_by_name() {
             "exactly one of",
         ),
         ("transport: {kind: local, dir: x}\n", "missing field `version`"),
+        ("version: 1\ntransport: {kind: NATS, dir: x}\n", "is not a transport kind name"),
     ] {
         let path = write(&dir, text);
         match Config::load(&path) {

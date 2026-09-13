@@ -1059,7 +1059,8 @@ fn subscribe(args: SubscribeArgs, out: &mut impl std::io::Write) -> Result<(), R
     let queue = bus.queue(&queue_name).map_err(bus_refusal)?;
     let deadline = args
         .timeout
-        .map(|seconds| Instant::now() + Duration::from_secs(seconds));
+        // A deadline past what `Instant` can represent is no deadline at all.
+        .and_then(|seconds| Instant::now().checked_add(Duration::from_secs(seconds)));
     let mut from: Option<Position> = None;
     loop {
         // Taken before the log is read, so a record appended between the read

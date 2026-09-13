@@ -238,7 +238,7 @@ fn exercised() -> Vec<Exercise> {
                     .searching(Vec::new())
                     .kinds()
                     .into_iter()
-                    .map(|entry| entry.kind)
+                    .map(|entry| entry.kind.to_string())
                     .collect();
                 assert_eq!(kinds, vec!["local", "memory"]);
             }),

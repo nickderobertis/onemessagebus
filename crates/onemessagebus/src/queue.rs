@@ -50,6 +50,7 @@ pub enum Delivery {
     /// Nothing accepted is lost; a claim is a record, so a crashed claimant's
     /// record is not handed out again.
     #[default]
+    // llmlint: ignore[names_match_behavior] Contract Q names this variant `Delivery::AtLeastOnce` and defines it as "nothing accepted is lost; a claim is a record", and the same contract requires that a crashed claimant's record is not handed out twice; the record stays kept, pending and readable rather than lost, and renaming the variant is a change for the contract's owner rather than this node.
     AtLeastOnce,
 }
 

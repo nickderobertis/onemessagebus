@@ -116,7 +116,7 @@ fn surface(kind: &str, message: &str, from: &str, blocking: bool, asker: Option<
         queued_at: 1_789_300_000_000,
         workstream: None,
         abandoned: false,
-        asker: asker.map(str::to_owned),
+        asker: asker.map(|name| Asker::new(name, "the journey").expect("an asker")),
     }
 }
 

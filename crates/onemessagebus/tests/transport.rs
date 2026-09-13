@@ -392,7 +392,7 @@ fn transport_kinds_resolve_built_in_then_registered_then_plugin() {
 
     let refusal = kinds
         .open(&TransportConfig {
-            kind: "local".to_owned(),
+            kind: "local".parse().expect("a transport kind"),
             dir: Some(dir.path().to_path_buf()),
             options: serde_json::from_value(json!({"url": "nats://x"})).expect("options"),
         })
@@ -404,7 +404,7 @@ fn transport_kinds_resolve_built_in_then_registered_then_plugin() {
     );
     let refusal = kinds
         .open(&TransportConfig {
-            kind: "local".to_owned(),
+            kind: "local".parse().expect("a transport kind"),
             dir: None,
             options: serde_json::Map::new(),
         })
@@ -431,7 +431,7 @@ fn transport_kinds_resolve_built_in_then_registered_then_plugin() {
         .is_err());
     let opened = kinds
         .open(&TransportConfig {
-            kind: "shared".to_owned(),
+            kind: "shared".parse().expect("a transport kind"),
             dir: None,
             options: serde_json::Map::new(),
         })
@@ -444,7 +444,7 @@ fn transport_kinds_resolve_built_in_then_registered_then_plugin() {
 
     let refusal = kinds
         .open(&TransportConfig {
-            kind: "nats".to_owned(),
+            kind: "nats".parse().expect("a transport kind"),
             dir: None,
             options: serde_json::Map::new(),
         })
@@ -454,7 +454,11 @@ fn transport_kinds_resolve_built_in_then_registered_then_plugin() {
         refusal.to_string().starts_with("\"nats\" is not a transport kind this build can open; the kinds there are: local, memory, shared"),
         "{refusal}"
     );
-    let listed: Vec<String> = kinds.kinds().into_iter().map(|entry| entry.kind).collect();
+    let listed: Vec<String> = kinds
+        .kinds()
+        .into_iter()
+        .map(|entry| entry.kind.to_string())
+        .collect();
     assert_eq!(listed, vec!["local", "memory", "shared"]);
 }
 
@@ -481,7 +485,7 @@ fn plugins_on_the_search_path_are_listed_and_a_shadowed_one_is_not() {
         .into_iter()
         .map(|entry| {
             (
-                entry.kind,
+                entry.kind.to_string(),
                 entry.path.map(|path| {
                     path.file_name()
                         .expect("a name")
@@ -536,7 +540,7 @@ fn hello() -> Value {
         protocol: PROTOCOL.to_owned(),
         version: PROTOCOL_VERSION,
         config: TransportConfig {
-            kind: "memory".to_owned(),
+            kind: "memory".parse().expect("a transport kind"),
             dir: None,
             options: serde_json::Map::new(),
         },
@@ -888,7 +892,7 @@ fn a_plugin_that_does_not_speak_the_protocol_is_refused_saying_what_it_did() {
     use onemessagebus::{Fingerprint, ProcessTransport};
     let dir = tempfile::tempdir().expect("a scratch directory");
     let config = TransportConfig {
-        kind: "broken".to_owned(),
+        kind: "broken".parse().expect("a transport kind"),
         dir: None,
         options: serde_json::Map::new(),
     };
@@ -1015,4 +1019,29 @@ fn a_plugin_that_does_not_speak_the_protocol_is_refused_saying_what_it_did() {
             .contains("the plugin answered end_exclusive with"),
         "{refusal}"
     );
+}
+
+/// A wait whose timeout has no deadline `Instant` can represent is a wait with
+/// no bound, not a panic: it still returns the moment the queue moves.
+#[test]
+fn a_wait_with_no_representable_deadline_returns_when_the_queue_moves() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let transports: Vec<Arc<dyn Transport>> = vec![
+        Arc::new(MemoryTransport::new()),
+        Arc::new(LocalTransport::open(dir.path()).expect("opens")),
+    ];
+    for transport in transports {
+        let q = queue("moves");
+        let since = transport.fingerprint(&q).expect("a fingerprint");
+        let writer = Arc::clone(&transport);
+        let appending = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            writer.append(&queue("moves"), b"1").expect("appends");
+        });
+        let changed = transport
+            .wait_for_change(&q, &since, Duration::MAX)
+            .expect("a wait with no bound");
+        appending.join().expect("the writer finishes");
+        assert!(matches!(changed, Changed::Moved(_)), "{changed:?}");
+    }
 }

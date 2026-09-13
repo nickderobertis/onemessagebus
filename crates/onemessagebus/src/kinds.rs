@@ -8,7 +8,9 @@
 //! kinds that exist.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
 
 use schemars::JsonSchema;
@@ -16,7 +18,63 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::plugin::{ProcessTransport, PLUGIN_PREFIX};
-use crate::transport::{LocalTransport, MemoryTransport, Transport, TransportError};
+use crate::transport::{LocalTransport, MemoryTransport, NameError, Transport, TransportError};
+
+/// A transport kind: lowercase ASCII letters, digits and `-`, starting with a
+/// letter — `local`, `nats`. A plugin serving it is named
+/// `onemessagebus-transport-<kind>`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, JsonSchema)]
+#[schemars(transparent)]
+pub struct TransportKind(String);
+
+impl TransportKind {
+    /// The kind as its word.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl FromStr for TransportKind {
+    type Err = NameError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let ok = text.starts_with(|ch: char| ch.is_ascii_lowercase())
+            && text
+                .chars()
+                .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-');
+        if ok {
+            Ok(Self(text.to_owned()))
+        } else {
+            Err(NameError {
+                what: "transport kind",
+                text: text.to_owned(),
+                why: "a kind is lowercase ASCII letters, digits and `-`, starting with a letter"
+                    .to_owned(),
+            })
+        }
+    }
+}
+
+impl fmt::Display for TransportKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Serialize for TransportKind {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for TransportKind {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
 
 /// The `transport` block of a configuration: the kind, the directory a
 /// directory-backed transport keeps its queues in, and whatever else the kind
@@ -25,7 +83,7 @@ use crate::transport::{LocalTransport, MemoryTransport, Transport, TransportErro
 pub struct TransportConfig {
     /// The kind: `local`, `memory`, or a kind registered in-process or served
     /// by a plugin.
-    pub kind: String,
+    pub kind: TransportKind,
     /// The directory a directory-backed transport keeps its queues in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dir: Option<PathBuf>,
@@ -40,7 +98,7 @@ impl TransportConfig {
     #[must_use]
     pub fn local(dir: impl Into<PathBuf>) -> Self {
         Self {
-            kind: LOCAL.to_owned(),
+            kind: TransportKind(LOCAL.to_owned()),
             dir: Some(dir.into()),
             options: Map::new(),
         }
@@ -49,7 +107,7 @@ impl TransportConfig {
     fn refuse_options(&self) -> Result<(), TransportError> {
         match self.options.keys().next() {
             Some(key) => Err(TransportError::Config {
-                kind: self.kind.clone(),
+                kind: self.kind.to_string(),
                 why: format!(
                     "transport.{key} is not a key the {} transport takes",
                     self.kind
@@ -87,7 +145,7 @@ pub enum KindOrigin {
 #[serde(deny_unknown_fields)]
 pub struct KindEntry {
     /// The kind.
-    pub kind: String,
+    pub kind: TransportKind,
     /// Where it comes from.
     pub origin: KindOrigin,
     /// The plugin executable, for a kind a plugin serves.
@@ -144,7 +202,7 @@ impl TransportKinds {
         let local: TransportFactory = Arc::new(|config: &TransportConfig| {
             config.refuse_options()?;
             let dir = config.dir.clone().ok_or_else(|| TransportError::Config {
-                kind: config.kind.clone(),
+                kind: config.kind.to_string(),
                 why:
                     "the local transport needs transport.dir, the directory it keeps its queues in"
                         .to_owned(),
@@ -155,7 +213,7 @@ impl TransportKinds {
             config.refuse_options()?;
             if config.dir.is_some() {
                 return Err(TransportError::Config {
-                    kind: config.kind.clone(),
+                    kind: config.kind.to_string(),
                     why: "transport.dir is not a key the memory transport takes".to_owned(),
                 });
             }
@@ -229,18 +287,17 @@ impl TransportKinds {
     /// [`TransportError::UnknownKind`] naming every kind there is, or whatever
     /// opening the kind refused.
     pub fn open(&self, config: &TransportConfig) -> Result<Arc<dyn Transport>, TransportError> {
-        check_kind(&config.kind)?;
-        if let Some((_, factory)) = self.registered.get(&config.kind) {
+        if let Some((_, factory)) = self.registered.get(config.kind.as_str()) {
             return factory(config);
         }
-        match self.plugin(&config.kind) {
+        match self.plugin(config.kind.as_str()) {
             Some(path) => Ok(Arc::new(ProcessTransport::spawn(&path, config)?)),
             None => Err(TransportError::UnknownKind {
-                kind: config.kind.clone(),
+                kind: config.kind.to_string(),
                 known: self
                     .kinds()
                     .into_iter()
-                    .map(|entry| entry.kind)
+                    .map(|entry| entry.kind.to_string())
                     .collect::<Vec<_>>()
                     .join(", "),
             }),
@@ -261,7 +318,7 @@ impl TransportKinds {
                     .filter(|(_, (origin, _))| *origin == KindOrigin::Registered),
             )
             .map(|(kind, (origin, _))| KindEntry {
-                kind: kind.clone(),
+                kind: TransportKind(kind.clone()),
                 origin: origin.clone(),
                 path: None,
             })
@@ -290,7 +347,7 @@ impl TransportKinds {
             }
         }
         entries.extend(plugins.into_iter().map(|(kind, path)| KindEntry {
-            kind,
+            kind: TransportKind(kind),
             origin: KindOrigin::Plugin,
             path: Some(path),
         }));

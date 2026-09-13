@@ -621,7 +621,7 @@ struct Pipe {
 
 impl PluginProcess {
     fn spawn(path: &Path, config: &TransportConfig) -> Result<Self, TransportError> {
-        let kind = config.kind.clone();
+        let kind = config.kind.to_string();
         let backend = |detail: String| TransportError::Backend {
             transport: kind.clone(),
             detail,
@@ -963,9 +963,12 @@ impl PluginProcess {
         since: &Fingerprint,
         timeout: Duration,
     ) -> Result<Changed, TransportError> {
-        let deadline = std::time::Instant::now() + timeout;
+        // A deadline past what `Instant` can represent is no deadline at all.
+        let deadline = std::time::Instant::now().checked_add(timeout);
         loop {
-            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            let left = deadline.map_or(Duration::MAX, |deadline| {
+                deadline.saturating_duration_since(std::time::Instant::now())
+            });
             match self.call_wait_once(holder, queue, since, left)? {
                 Changed::Unchanged(now) if !left.is_zero() && left > REMOTE_WAIT => {
                     let _ = now;

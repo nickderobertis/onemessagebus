@@ -480,6 +480,10 @@ pub enum Changed {
 /// for a change.
 const CHANGE_POLL: Duration = Duration::from_millis(20);
 
+/// How long one wait on the memory transport's condition lasts when the
+/// caller's timeout has no representable deadline: a change still wakes it first.
+const UNBOUNDED_WAIT: Duration = Duration::from_secs(3600);
+
 /// A poisoned lock is state some other thread panicked while holding; what it
 /// guards is plain data with no invariant a panic half-applies, so carry on.
 fn unpoisoned<'a, T>(
@@ -937,13 +941,16 @@ pub fn poll_for_change(
     since: &Fingerprint,
     timeout: Duration,
 ) -> Result<Changed, TransportError> {
-    let deadline = Instant::now() + timeout;
+    // A deadline past what `Instant` can represent is no deadline at all.
+    let deadline = Instant::now().checked_add(timeout);
     loop {
         let now = transport.fingerprint(queue)?;
         if &now != since {
             return Ok(Changed::Moved(now));
         }
-        let left = deadline.saturating_duration_since(Instant::now());
+        let left = deadline.map_or(CHANGE_POLL, |deadline| {
+            deadline.saturating_duration_since(Instant::now())
+        });
         if left.is_zero() {
             return Ok(Changed::Unchanged(now));
         }
@@ -1294,14 +1301,17 @@ impl Transport for MemoryTransport {
         since: &Fingerprint,
         timeout: Duration,
     ) -> Result<Changed, TransportError> {
-        let deadline = Instant::now() + timeout;
+        // A deadline past what `Instant` can represent is no deadline at all.
+        let deadline = Instant::now().checked_add(timeout);
         let mut state = unpoisoned(self.inner.state.lock());
         loop {
             let now = Fingerprint(vec![state.generations.get(queue).copied().unwrap_or(0)]);
             if &now != since {
                 return Ok(Changed::Moved(now));
             }
-            let left = deadline.saturating_duration_since(Instant::now());
+            let left = deadline.map_or(UNBOUNDED_WAIT, |deadline| {
+                deadline.saturating_duration_since(Instant::now())
+            });
             if left.is_zero() {
                 return Ok(Changed::Unchanged(now));
             }

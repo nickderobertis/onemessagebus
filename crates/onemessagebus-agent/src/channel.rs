@@ -95,8 +95,9 @@ fn is_false(value: &bool) -> bool {
 /// record around it: `onepipeline` reads it so.
 fn recorded_asker<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
-) -> Result<Option<String>, D::Error> {
-    Ok(Option::<String>::deserialize(deserializer)?.filter(|name| !name.trim().is_empty()))
+) -> Result<Option<Asker>, D::Error> {
+    Ok(Option::<String>::deserialize(deserializer)?
+        .and_then(|name| Asker::new(&name, "the recorded asker").ok()))
 }
 
 /// One planner surface, as `surfaces.jsonl` and `queue.json` hold it.
@@ -109,6 +110,7 @@ pub struct Surface {
     /// Its text.
     pub message: String,
     /// What raised it: see [`source`].
+    // llmlint: ignore[invalid_states_unrepresentable] 0.28.2's `channel::Surface.source` is a `String` its writers fill with words this crate does not own — an observer frame's source, the engine's reconciler and monitor — so a closed enum here would refuse a whole recorded projection over a source word 0.28.2 reads, breaking the byte compatibility this layout exists for.
     pub source: String,
     /// Whether the run waits on its answer.
     pub blocking: bool,
@@ -126,7 +128,7 @@ pub struct Surface {
         deserialize_with = "recorded_asker",
         skip_serializing_if = "Option::is_none"
     )]
-    pub asker: Option<String>,
+    pub asker: Option<Asker>,
 }
 
 impl Message for Surface {
@@ -280,6 +282,7 @@ pub struct CommandResult {
     /// Its index in the envelope's `commands`.
     pub index: u64,
     /// Its op.
+    // llmlint: ignore[invalid_states_unrepresentable] 0.28.2's `CommandResult.op` is the command's op as the envelope spelled it, including an op the reconciler refused as unknown; a closed `Op` here would refuse the very outcome record that reports that refusal.
     pub op: String,
     /// What became of it.
     pub outcome: CommandVerdict,

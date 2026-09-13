@@ -489,7 +489,7 @@ fn asker(name: &str) -> Asker {
 fn ticket(kind: &str, text: &str, blocking: bool) -> Ticket {
     Ticket {
         id: 0,
-        kind: kind.to_owned(),
+        kind: kind.parse().expect("a transport kind"),
         text: text.to_owned(),
         blocking,
         abandoned: false,
@@ -1316,7 +1316,7 @@ fn desk_bus(
         .expect("the table's kind registers");
     let mut config = Config::local("unused", Some("desk"));
     config.transport = TransportConfig {
-        kind: "table".to_owned(),
+        kind: "table".parse().expect("a transport kind"),
         dir: None,
         options: Map::new(),
     };

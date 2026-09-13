@@ -356,7 +356,7 @@ impl Config {
         let transport = kinds.open(&self.transport)?;
         Ok(Bus {
             transport,
-            kind: self.transport.kind.clone(),
+            kind: self.transport.kind.to_string(),
             layout: layout.cloned(),
             queues: specs,
             allowlist,

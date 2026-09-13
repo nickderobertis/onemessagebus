@@ -75,12 +75,12 @@ impl DirFiles {
     pub fn from_config(config: &TransportConfig) -> Result<Arc<dyn Transport>, TransportError> {
         if let Some(key) = config.options.keys().next() {
             return Err(TransportError::Config {
-                kind: config.kind.clone(),
+                kind: config.kind.to_string(),
                 why: format!("transport.{key} is not a key the {KIND} transport takes"),
             });
         }
         let dir = config.dir.clone().ok_or_else(|| TransportError::Config {
-            kind: config.kind.clone(),
+            kind: config.kind.to_string(),
             why: format!("the {KIND} transport needs transport.dir"),
         })?;
         Ok(Arc::new(Self::open(dir)?))
@@ -528,13 +528,13 @@ mod journeys {
             kinds
                 .kinds()
                 .iter()
-                .any(|entry| entry.kind == KIND && entry.origin == KindOrigin::Registered),
+                .any(|entry| entry.kind.as_str() == KIND && entry.origin == KindOrigin::Registered),
             "the kind is not listed as registered"
         );
         let open = |kind: &str, dir: Option<PathBuf>| -> Arc<dyn Transport> {
             kinds
                 .open(&TransportConfig {
-                    kind: kind.to_owned(),
+                    kind: kind.parse().expect("a transport kind"),
                     dir,
                     options: serde_json::Map::new(),
                 })
@@ -589,7 +589,7 @@ mod journeys {
         );
         assert!(!root.join("surfaces.jsonl").exists());
         let refused = DirFiles::from_config(&TransportConfig {
-            kind: KIND.to_owned(),
+            kind: KIND.parse().expect("a transport kind"),
             dir: Some(root),
             options: serde_json::from_value(json!({"url": "nats://x"})).expect("options"),
         })
@@ -611,13 +611,13 @@ mod journeys {
         let listed = kinds
             .kinds()
             .into_iter()
-            .find(|entry| entry.kind == KIND)
+            .find(|entry| entry.kind.as_str() == KIND)
             .expect("the plugin is listed");
         assert_eq!(listed.origin, KindOrigin::Plugin);
         let fresh = || -> Arc<dyn Transport> {
             kinds
                 .open(&TransportConfig {
-                    kind: KIND.to_owned(),
+                    kind: KIND.parse().expect("a transport kind"),
                     dir: Some(scratch_dir().join("queues")),
                     options: serde_json::Map::new(),
                 })
@@ -632,7 +632,7 @@ mod journeys {
 
         let refused = kinds
             .open(&TransportConfig {
-                kind: KIND.to_owned(),
+                kind: KIND.parse().expect("a transport kind"),
                 dir: None,
                 options: serde_json::Map::new(),
             })

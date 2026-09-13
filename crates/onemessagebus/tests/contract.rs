@@ -544,7 +544,7 @@ fn the_documented_configuration_loads_and_an_unknown_key_in_it_is_refused_by_nam
     let text = fixture("config");
     let config = onemessagebus::Config::parse(&text).expect("the documented configuration loads");
     assert_eq!(config.version, onemessagebus::CONFIG_VERSION);
-    assert_eq!(config.transport.kind, "local");
+    assert_eq!(config.transport.kind.as_str(), "local");
     assert_eq!(
         config.transport.dir.as_deref(),
         Some(std::path::Path::new("runs/r1/channel"))

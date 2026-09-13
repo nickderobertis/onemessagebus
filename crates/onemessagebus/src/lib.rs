@@ -71,7 +71,8 @@ pub use inbox::{
     InboxBackend, Sender, Undelivered,
 };
 pub use kinds::{
-    KindEntry, KindOrigin, TransportConfig, TransportFactory, TransportKinds, LOCAL, MEMORY,
+    KindEntry, KindOrigin, TransportConfig, TransportFactory, TransportKind, TransportKinds, LOCAL,
+    MEMORY,
 };
 pub use queue::{
     Asker, AskerRefused, Claimed, Delivery, FieldPath, FieldPathError, Lifetime, Ordering, Policy,

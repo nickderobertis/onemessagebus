@@ -678,6 +678,23 @@ fn subscribe_streams_until_its_predicate_admits_a_record_and_times_out_otherwise
         "subscribe took a payload: {}",
         as_payload.stdout
     );
+    let unbounded = scratch.bus(
+        &[
+            "subscribe",
+            "surfaces",
+            "--until",
+            r#"{"field":"event","equals":"answered"}"#,
+            "--timeout",
+            "18446744073709551615",
+        ],
+        None,
+    );
+    assert_eq!(
+        unbounded.code, 0,
+        "a timeout past what a deadline can hold: {}",
+        unbounded.stderr
+    );
+
     let bad = scratch.bus(
         &["subscribe", "surfaces", "--until", r#"{"field":"event"}"#],
         None,
