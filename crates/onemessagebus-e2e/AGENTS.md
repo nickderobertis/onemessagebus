@@ -14,3 +14,8 @@ document it regenerates.
 A test about the repository's configuration rather than the binary (the release
 declaration, the toolchain pins) belongs in `crates/onemessagebus-repo`, so it
 does not pay for this suite.
+
+`tests/e2e/inbox.rs`'s `receiver_child` is the child half of the killed-receiver
+journey, re-run from this test binary: it does nothing unless
+`ONEMESSAGEBUS_E2E_RECEIVER_SPOOL` is set. A journey kills only the `Child` it
+spawned.
