@@ -78,7 +78,8 @@ profile's or the directory's — is refused naming the id, and nothing is writte
 **The registry directory** holds one file per schema, named by its id —
 `<dir>/agent.finding@1.json` — each a document `{"id": ..., "schema": ...}`, so
 a file is self-describing and readable with nothing but `cat`. A file whose id
-disagrees with its name is refused.
+disagrees with its name is refused, and so is a `--registry` path that exists
+but is not a directory.
 
 ## `events`
 
@@ -104,7 +105,10 @@ Text format renders one line per envelope:
 Append one envelope to the stream file `<file>` from the payload on stdin (or
 in `--file`), and print the envelope written. The envelope is numbered from the
 file under its lock — `Emitter::shared` — so several processes may append to
-one file at once and leave one gapless series. `--source` defaults to the
+one file at once and leave one gapless series. `--kind` must be kebab-case —
+lowercase ASCII letters and digits in words joined by single hyphens — and any
+other spelling is refused naming it; `events merge` carries whatever kinds a
+stream holds. `--source` defaults to the
 profile's default word (`pipeline` for the agent profile); a word the profile
 does not admit is refused. `--label` stamps a label, typed by what the profile
 says its key admits (`--label round=2` is an integer under the agent profile).

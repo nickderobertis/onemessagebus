@@ -709,6 +709,65 @@ fn events_emit_refuses_an_empty_kind_stream_or_label_key_and_renders_typed_label
     );
 }
 
+/// `events emit` authors a kind, so it refuses one that is not kebab-case by
+/// name and appends nothing, while `events merge` still carries such a kind a
+/// sibling wrote.
+#[test]
+fn events_emit_refuses_a_kind_that_is_not_kebab_case_and_merge_still_carries_one() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    for kind in [
+        "Change-Merged",
+        "change_merged",
+        "change--merged",
+        "-change",
+        "change-",
+        "change merged",
+        "changé",
+    ] {
+        // Joined to its flag, so a kind with a leading hyphen reaches the verb
+        // rather than being read as a flag of its own.
+        let flag = format!("--kind={kind}");
+        let refused = emit_in(dir.path(), &[&flag, "--stream", "s"], Some("{}"), &[]);
+        assert_eq!(refused.code, 2, "{kind}: {}", refused.stderr);
+        assert!(refused.stdout.is_empty(), "{kind}: {}", refused.stdout);
+        assert!(
+            refused.stderr.contains(&format!("--kind `{kind}`")),
+            "{}",
+            refused.stderr
+        );
+        assert!(
+            refused.stderr.contains("not kebab-case"),
+            "{}",
+            refused.stderr
+        );
+    }
+    assert!(
+        !dir.path().join("stream.ndjson").exists(),
+        "nothing was appended"
+    );
+    for kind in ["k", "change-merged", "round-2-done"] {
+        let admitted = emit_in(
+            dir.path(),
+            &["--kind", kind, "--stream", "s"],
+            Some("{}"),
+            &[],
+        );
+        assert_eq!(admitted.code, 0, "{kind}: {}", admitted.stderr);
+        assert_eq!(admitted.lines()[0]["kind"], json!(kind));
+    }
+
+    let relayed = dir.path().join("relayed.ndjson");
+    std::fs::write(
+        &relayed,
+        "{\"v\":1,\"ts\":\"2026-09-13T00:00:00.000Z\",\"stream\":\"x\",\"seq\":1,\"source\":\"vcs\",\"kind\":\"Sibling_Kind\"}\n",
+    )
+    .expect("written");
+    let merged = run(&["events", "merge", relayed.to_str().expect("UTF-8")], None);
+    assert_eq!(merged.code, 0, "{}", merged.stderr);
+    assert!(merged.stderr.is_empty(), "{}", merged.stderr);
+    assert_eq!(merged.lines()[0]["kind"], json!("Sibling_Kind"));
+}
+
 #[test]
 fn events_merge_renders_artifacts_and_reports_a_line_of_another_profile() {
     let dir = tempfile::tempdir().expect("a temp dir");

@@ -447,6 +447,15 @@ fn emit<V: Vocabulary>(request: EmitRequest, out: &mut impl std::io::Write) -> R
     if request.kind.trim().is_empty() {
         return Err(invalid("--kind must name the event's kind"));
     }
+    // Refused here and never on read: this is where a kind is authored, while
+    // `events merge` relays kinds a sibling wrote without interpreting them.
+    if !is_kebab_case(&request.kind) {
+        return Err(invalid(format!(
+            "--kind `{}` is not kebab-case: lowercase ASCII letters and digits in words \
+             joined by single hyphens, e.g. `change-merged`",
+            request.kind
+        )));
+    }
     if request.stream.trim().is_empty() {
         return Err(invalid("--stream must name the producing stream"));
     }
@@ -462,6 +471,15 @@ fn emit<V: Vocabulary>(request: EmitRequest, out: &mut impl std::io::Write) -> R
     };
     text.push('\n');
     emit_text(out, &text)
+}
+
+fn is_kebab_case(kind: &str) -> bool {
+    kind.split('-').all(|word| {
+        !word.is_empty()
+            && word
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    })
 }
 
 /// `--label key=value` pairs as the vocabulary's label set, each value typed

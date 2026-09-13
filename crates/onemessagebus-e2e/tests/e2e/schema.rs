@@ -86,7 +86,6 @@ fn schema_check_refuses_a_violating_payload_naming_the_id_and_the_pointer() {
     );
     assert!(refused.stderr.contains("/round"), "{}", refused.stderr);
 
-    // The same refusal for the same payload read from a file.
     let dir = tempfile::tempdir().expect("a temp dir");
     std::fs::write(dir.path().join("labels.json"), &violating).expect("written");
     let on_file = run_in(
@@ -273,7 +272,6 @@ fn schema_register_makes_an_id_answer_in_list_and_govern_check_in_a_later_invoca
         "the profile's ids and the registered one, each once"
     );
 
-    // Named by the flag, governing a check.
     let governed = run_in(
         dir.path(),
         &[
@@ -306,8 +304,6 @@ fn schema_register_makes_an_id_answer_in_list_and_govern_check_in_a_later_invoca
     );
     assert_eq!(admitted.code, 0, "{}", admitted.stderr);
 
-    // And named by the environment variable, answering in list and governing a
-    // check.
     let env = [("ONEMESSAGEBUS_REGISTRY", registry_arg)];
     let listed_by_env = run_in(
         dir.path(),
@@ -573,8 +569,14 @@ fn a_registry_directory_that_is_not_one_is_refused_naming_the_file() {
     );
     assert_eq!(missing.code, 2);
     assert!(missing.stderr.contains("absent.json"), "{}", missing.stderr);
+}
 
-    // A registry path that is a file: nothing to list, nowhere to write.
+/// A `--registry` path that exists but is not a directory would otherwise read
+/// as a registry holding nothing, so every `schema` verb refuses it by path —
+/// named by the flag or by the environment — before answering or writing.
+#[test]
+fn every_schema_verb_refuses_a_registry_path_that_is_not_a_directory() {
+    let dir = tempfile::tempdir().expect("a temp dir");
     let file = dir.path().join("registry.json");
     std::fs::write(&file, "{}").expect("written");
     std::fs::write(
@@ -582,24 +584,61 @@ fn a_registry_directory_that_is_not_one_is_refused_naming_the_file() {
         json!({ "type": "object" }).to_string(),
     )
     .expect("written");
-    let onto_file = run_in(
+    let file_arg = file.to_str().expect("UTF-8");
+    let verbs: [&[&str]; 4] = [
+        &["schema", "list"],
+        &["schema", "check", "agent.labels@1"],
+        &["schema", "gen", "--lang", "json", "agent.labels@1"],
+        &["schema", "register", "agent.finding@1", "--file", "ok.json"],
+    ];
+    for verb in verbs {
+        let mut by_flag = verb.to_vec();
+        by_flag.extend(["--registry", file_arg]);
+        let flagged = run_in(dir.path(), &by_flag, Some("{}"), &[]);
+        let by_env = run_in(
+            dir.path(),
+            verb,
+            Some("{}"),
+            &[("ONEMESSAGEBUS_REGISTRY", file_arg)],
+        );
+        for refused in [flagged, by_env] {
+            assert_eq!(refused.code, 2, "{verb:?}: {}", refused.stderr);
+            assert!(refused.stdout.is_empty(), "{verb:?}: {}", refused.stdout);
+            assert!(
+                refused
+                    .stderr
+                    .contains(&format!("the registry {file_arg} is not a directory")),
+                "{verb:?}: {}",
+                refused.stderr
+            );
+        }
+    }
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("the file"),
+        "{}",
+        "nothing was written"
+    );
+
+    // A path under a file is neither a directory nor absent: the filesystem's
+    // own answer is the refusal.
+    let under_file = file.join("nested");
+    let beneath = run_in(
         dir.path(),
         &[
             "schema",
-            "register",
-            "agent.finding@1",
-            "--file",
-            "ok.json",
+            "list",
             "--registry",
-            file.to_str().expect("UTF-8"),
+            under_file.to_str().expect("UTF-8"),
         ],
         None,
         &[],
     );
-    assert_eq!(onto_file.code, 2);
+    assert_eq!(beneath.code, 2, "{}", beneath.stderr);
+    assert!(beneath.stdout.is_empty(), "{}", beneath.stdout);
     assert!(
-        onto_file.stderr.contains("registry.json"),
+        beneath.stderr.contains("cannot use the registry directory"),
         "{}",
-        onto_file.stderr
+        beneath.stderr
     );
+    assert!(beneath.stderr.contains("nested"), "{}", beneath.stderr);
 }

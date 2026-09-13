@@ -23,6 +23,14 @@ pub enum RegistryDirError {
         /// What the filesystem said.
         source: std::io::Error,
     },
+    /// The path names something that is not a directory.
+    #[error(
+        "the registry {dir} is not a directory; --registry names a directory of <id>.json documents"
+    )]
+    NotADirectory {
+        /// The path.
+        dir: PathBuf,
+    },
     /// A file in the directory is not a registry document.
     #[error("{path} is not a registry document: {why}")]
     Document {
@@ -63,11 +71,28 @@ impl RegistryDir {
     /// The base registry, plus every document under `dir` when there is one.
     ///
     /// A directory that does not exist yet holds nothing and is not an error:
-    /// `schema register` creates it.
+    /// `schema register` creates it. A path that exists and is not a directory
+    /// is refused, since reading it as an empty registry would answer every
+    /// verb as though the caller had registered nothing.
     pub fn load(base: Registry, dir: Option<&Path>) -> Result<Self, RegistryDirError> {
         let mut registry = base;
         if let Some(dir) = dir {
-            if dir.is_dir() {
+            let exists = match std::fs::metadata(dir) {
+                Ok(metadata) if metadata.is_dir() => true,
+                Ok(_) => {
+                    return Err(RegistryDirError::NotADirectory {
+                        dir: dir.to_path_buf(),
+                    })
+                }
+                Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => false,
+                Err(source) => {
+                    return Err(RegistryDirError::Dir {
+                        dir: dir.to_path_buf(),
+                        source,
+                    })
+                }
+            };
+            if exists {
                 let entries = std::fs::read_dir(dir).map_err(|source| RegistryDirError::Dir {
                     dir: dir.to_path_buf(),
                     source,
