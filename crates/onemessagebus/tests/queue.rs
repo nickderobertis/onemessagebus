@@ -73,6 +73,7 @@ rows!(
     a_numbered_queue_numbers_each_record_by_the_count_before_it,
     a_fingerprint_moves_when_the_queue_does_and_a_wait_sees_it,
     every_method_works_through_the_transport_a_section_lends,
+    a_document_name_is_one_document_across_the_transport,
     an_allowlist_refuses_by_omission_naming_the_author_the_op_and_the_reason,
     a_configuration_narrows_an_author_and_is_refused_widening_one,
 );

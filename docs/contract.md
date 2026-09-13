@@ -331,7 +331,8 @@ NATS JetStream mapping.
   `exclusive` (a section over one queue, its body handed the transport to use
   inside it), `fingerprint` / `wait_for_change` (a cheap change token and a bounded
   wait for it to move), `document` / `replace_document` (a small named document,
-  read whole and replaced atomically).
+  read whole and replaced atomically; a name is one document across the
+  transport, whichever queue names it).
 - `Position` and `Fingerprint` are opaque to consumers, serializable, and built
   only through a transport (`Position::from_token`, `Fingerprint::from_parts`).
 - `LocalTransport::open(dir)` lays a queue out as below; a position is the byte
@@ -513,7 +514,8 @@ recorded here so the adopting nodes read them where they read the contract:
    only the linked layouts know a profile's grants; the unresolved `Config` cannot
    open a queue or author a record.
 6. `answer(claimed, reply_position)` releases the slot once the reply is at
-   `reply_position`, so the reply is appended first; the profile's typed
+   `reply_position`, so the reply is appended first, and a position no reply on
+   the `answers` queue ends at is refused; the profile's typed
    `Channel::answer` releases first and appends after, in 0.28.2's order.
 7. `onepipeline results` at 0.28.2 reads no channel file, so the journey holds
    `results` over the recorded run root to identical output with the written

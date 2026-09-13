@@ -34,9 +34,9 @@ pub const KIND: &str = "dirfiles";
 
 /// A queue per directory: `<root>/<queue>/records/<n>.json` holds the record
 /// after position `n`, `<root>/<queue>/cursors/<consumer>` a consumer's position,
-/// `<root>/<queue>/documents/<name>` a document, `<root>/<queue>/generation`
-/// how many times the queue has changed, and `<root>/<queue>/lock` its
-/// exclusive section. A position's token is the number of records before it.
+/// `<root>/.documents/<name>` a document (one per name across the transport),
+/// `<root>/<queue>/generation` how many times the queue has changed, and
+/// `<root>/<queue>/lock` its exclusive section. A position's token is the number of records before it.
 #[derive(Debug, Clone)]
 pub struct DirFiles {
     root: PathBuf,
@@ -192,14 +192,14 @@ impl DirFiles {
         self.bump(queue)
     }
 
-    fn replace_held(
-        &self,
-        queue: &QueueName,
-        name: &DocumentName,
-        bytes: &[u8],
-    ) -> Result<(), TransportError> {
-        let path = self.queue_dir(queue).join("documents").join(name.as_str());
-        Self::write_atomic(&path, bytes)
+    fn replace_held(&self, name: &DocumentName, bytes: &[u8]) -> Result<(), TransportError> {
+        Self::write_atomic(&self.document_path(name), bytes)
+    }
+
+    /// One document per name across the transport, as Contract T keeps it; a
+    /// queue name cannot start with `.`, so no queue's directory is this one.
+    fn document_path(&self, name: &DocumentName) -> PathBuf {
+        self.root.join(".documents").join(name.as_str())
     }
 
     fn read_records(
@@ -250,12 +250,8 @@ impl DirFiles {
         }
     }
 
-    fn read_document(
-        &self,
-        queue: &QueueName,
-        name: &DocumentName,
-    ) -> Result<Option<Vec<u8>>, TransportError> {
-        let path = self.queue_dir(queue).join("documents").join(name.as_str());
+    fn read_document(&self, name: &DocumentName) -> Result<Option<Vec<u8>>, TransportError> {
+        let path = self.document_path(name);
         match fs::read(&path) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(failure) if failure.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -330,10 +326,10 @@ impl Transport for DirFiles {
 
     fn document(
         &self,
-        queue: &QueueName,
+        _queue: &QueueName,
         name: &DocumentName,
     ) -> Result<Option<Vec<u8>>, TransportError> {
-        self.read_document(queue, name)
+        self.read_document(name)
     }
 
     fn replace_document(
@@ -343,7 +339,7 @@ impl Transport for DirFiles {
         bytes: &[u8],
     ) -> Result<(), TransportError> {
         let _lock = self.lock(queue)?;
-        self.replace_held(queue, name, bytes)
+        self.replace_held(name, bytes)
     }
 }
 
@@ -428,10 +424,10 @@ impl Transport for Held {
 
     fn document(
         &self,
-        queue: &QueueName,
+        _queue: &QueueName,
         name: &DocumentName,
     ) -> Result<Option<Vec<u8>>, TransportError> {
-        self.files.read_document(queue, name)
+        self.files.read_document(name)
     }
 
     fn replace_document(
@@ -441,7 +437,7 @@ impl Transport for Held {
         bytes: &[u8],
     ) -> Result<(), TransportError> {
         if self.held.contains(queue) {
-            self.files.replace_held(queue, name, bytes)
+            self.files.replace_held(name, bytes)
         } else {
             self.files.replace_document(queue, name, bytes)
         }

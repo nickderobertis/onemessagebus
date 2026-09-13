@@ -31,7 +31,7 @@ pub trait Transport: Send + Sync + 'static {
 | `cursor` / `commit` | where a named consumer has read up to, and recording it |
 | `exclusive` | run `body` with nothing else appending to the queue until it returns; `body` is handed the transport to use inside the section |
 | `fingerprint` / `wait_for_change` | a cheap token that moves whenever the queue's records or cursors do, and a bounded wait for it to move |
-| `document` / `replace_document` | a small named document beside a queue, read whole and replaced atomically |
+| `document` / `replace_document` | a small named document beside a queue, read whole and replaced atomically; a name is one document across the transport, whichever queue names it |
 
 The trait is **object-safe**, because a transport is chosen at runtime from
 configuration and held as `Arc<dyn Transport>`, and every type it names can be

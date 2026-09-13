@@ -70,7 +70,9 @@ the log hands it back in that order.
   plain queue it is the consumer's: the first record after its cursor that
   `claims` admits.
 - `answer(claimed, reply_position)` releases the pending slot `claimed` holds,
-  once the reply is at `reply_position` on the `answers` queue. The reply is
+  once the reply is at `reply_position` on the `answers` queue; a position no
+  record there ends at, or a queue that declares no `answers`, is refused with
+  nothing recorded (`QueueError::NoReply`). The reply is
   appended first and the slot released after, where `onepipeline` 0.28.2 releases
   first; the planner channel's typed `Channel::answer` keeps 0.28.2's order.
 - `pending(consumer)` is the record waiting for an answer, abandoned ones passed

@@ -657,6 +657,15 @@ pub enum QueueError {
         /// What was found instead.
         why: String,
     },
+    /// An answer naming a reply position no record on the queue's `answers`
+    /// queue ends at, or asked of a queue that declares no `answers` queue.
+    #[error("{queue}: {why}")]
+    NoReply {
+        /// The queue whose pending slot was to be answered.
+        queue: QueueName,
+        /// Why the position names no reply.
+        why: String,
+    },
 }
 
 /// A record a push appended.
@@ -1474,14 +1483,17 @@ impl RawQueue {
     ///
     /// # Errors
     ///
-    /// [`QueueError::NotAnEventQueue`] on a plain queue, or a transport failure.
+    /// [`QueueError::NoReply`] when no record on the `answers` queue ends at
+    /// `reply_position`, or the queue declares no `answers` queue, with nothing
+    /// recorded; [`QueueError::NotAnEventQueue`] on a plain queue, or a
+    /// transport failure.
     pub fn answer(
         &self,
         claimed: &Claimed<Value>,
         reply_position: &Position,
     ) -> Result<bool, QueueError> {
         self.event_queue("pending slot to answer")?;
-        let _ = reply_position;
+        self.reply_at(reply_position)?;
         let id = claimed.id;
         let (answered, _) = self.record(|folded| {
             Ok(match &folded.pending {
@@ -1492,6 +1504,31 @@ impl RawQueue {
             })
         })?;
         Ok(answered)
+    }
+
+    /// Refuse `reply_position` unless a record on the declaration's `answers`
+    /// queue ends there.
+    fn reply_at(&self, reply_position: &Position) -> Result<(), QueueError> {
+        let Some(answers) = &self.spec.answers else {
+            return Err(QueueError::NoReply {
+                queue: self.spec.name.clone(),
+                why: "it declares no answers queue for a reply to be on; answer_pending releases its slot".to_owned(),
+            });
+        };
+        let batch = self.transport.read(answers, None, usize::MAX)?;
+        if batch
+            .records
+            .iter()
+            .any(|stored| stored.after == *reply_position)
+        {
+            return Ok(());
+        }
+        Err(QueueError::NoReply {
+            queue: self.spec.name.clone(),
+            why: format!(
+                "no reply on {answers} ends at position {reply_position}; append the reply before answering with it"
+            ),
+        })
     }
 
     /// Release whatever the pending slot holds, abandoned or not, and hand back
@@ -1559,7 +1596,8 @@ impl RawQueue {
     /// # Errors
     ///
     /// [`QueueError::NotPending`] when nothing is pending, or the pending record
-    /// was not claimed at `position`; a plain queue, or a transport failure.
+    /// was not claimed at `position`; [`QueueError::NoReply`] as
+    /// [`answer`](Self::answer); a plain queue, or a transport failure.
     pub fn answer_at(
         &self,
         position: &Position,

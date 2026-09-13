@@ -417,6 +417,10 @@ pub const QUEUE_TABLE: &[(&str, Row)] = &[
         every_method_works_through_the_transport_a_section_lends,
     ),
     (
+        "a_document_name_is_one_document_across_the_transport",
+        a_document_name_is_one_document_across_the_transport,
+    ),
+    (
         "an_allowlist_refuses_by_omission_naming_the_author_the_op_and_the_reason",
         an_allowlist_refuses_by_omission_naming_the_author_the_op_and_the_reason,
     ),
@@ -556,7 +560,14 @@ pub fn blocking_first_claims_a_blocking_record_before_an_older_one(fresh: Fresh<
 /// narration leaves it standing; an answer releases it.
 pub fn hold_pending_keeps_one_claimed_blocking_record_pending_until_answered(fresh: Fresh<'_>) {
     let transport = fresh();
-    let queue = tickets(&transport);
+    let queue: Queue<Ticket> = Queue::open(
+        Arc::clone(&transport),
+        QueueSpec {
+            answers: Some(queue_name("ticket-replies")),
+            ..tickets_spec()
+        },
+    )
+    .expect("the tickets queue opens");
     queue
         .push(&ticket("question", "first", true))
         .expect("queued");
@@ -601,21 +612,37 @@ pub fn hold_pending_keeps_one_claimed_blocking_record_pending_until_answered(fre
         "reading narration answered the pending record"
     );
 
+    let reply = transport
+        .append(&queue_name("ticket-replies"), br#"{"text":"an answer"}"#)
+        .expect("a reply is appended");
     assert!(
-        !queue
-            .answer(&first, &Position::from_token(0))
-            .expect("answers"),
+        !queue.answer(&first, &reply).expect("answers"),
         "a record the slot no longer holds was answered"
     );
-    assert!(queue
+    let forged = queue
         .answer(&second, &Position::from_token(0))
-        .expect("answers"));
+        .expect_err("a position no reply ends at is refused");
+    assert!(
+        matches!(forged, QueueError::NoReply { .. })
+            && forged.to_string().contains("ticket-replies"),
+        "{forged}"
+    );
+    assert!(
+        queue.pending(&anyone()).expect("a read").is_some(),
+        "a position no reply ends at released the slot"
+    );
+    assert!(queue.answer(&second, &reply).expect("answers"));
     assert_eq!(queue.pending(&anyone()).expect("a read"), None);
     assert!(
-        !queue
-            .answer(&second, &Position::from_token(0))
-            .expect("answers"),
+        !queue.answer(&second, &reply).expect("answers"),
         "a record was answered twice"
+    );
+    let undeclared = tickets(&transport)
+        .answer(&second, &reply)
+        .expect_err("a queue with no answers queue has no reply to be answered by");
+    assert!(
+        matches!(undeclared, QueueError::NoReply { .. }),
+        "{undeclared}"
     );
 }
 
@@ -1434,6 +1461,31 @@ pub fn a_configuration_narrows_an_author_and_is_refused_widening_one(fresh: Fres
             other => panic!("{authors:?} was not refused as a widening: {other:?}"),
         }
     }
+}
+
+/// A document's name is one document across the transport, whichever queue
+/// names it: what is replaced beside one queue is read beside another, as the
+/// local layout's `<dir>/<name>` keeps it.
+pub fn a_document_name_is_one_document_across_the_transport(fresh: Fresh<'_>) {
+    let transport = fresh();
+    let (left, right) = (queue_name("left"), queue_name("right"));
+    let name: DocumentName = "shared.json".parse().expect("a document name");
+    assert_eq!(transport.document(&right, &name).expect("a read"), None);
+    transport
+        .replace_document(&left, &name, br#"{"by":"left"}"#)
+        .expect("replaced");
+    assert_eq!(
+        transport.document(&right, &name).expect("a read"),
+        Some(br#"{"by":"left"}"#.to_vec()),
+        "a document replaced beside one queue is not the one read beside another"
+    );
+    transport
+        .replace_document(&right, &name, br#"{"by":"right"}"#)
+        .expect("replaced");
+    assert_eq!(
+        transport.document(&left, &name).expect("a read"),
+        Some(br#"{"by":"right"}"#.to_vec())
+    );
 }
 
 /// The transport an exclusive section lends its body is a whole transport: every

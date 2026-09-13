@@ -125,7 +125,10 @@ pub trait Transport: Send + Sync + 'static {
     ) -> Result<Changed, TransportError>;
 
     /// A small named document kept beside a queue (a projection, a
-    /// checkpoint), read whole; `None` where there is none.
+    /// checkpoint), read whole; `None` where there is none. A name is one
+    /// document across the transport, whichever queue names it — the local
+    /// layout keeps it at `<dir>/<name>` — so queues sharing a transport give
+    /// their documents distinct names.
     ///
     /// # Errors
     ///
