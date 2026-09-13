@@ -55,7 +55,8 @@ done
 
 # One scratch file for a probe's stderr, so a failure report can carry the
 # binary's own diagnostic rather than only the assertion that tripped.
-probe_stderr="$(mktemp)"
+probe_stderr="$(mktemp)" || fail "cannot create a scratch file in ${TMPDIR:-/tmp}" \
+  "free space there or point TMPDIR at a writable directory, then re-run"
 trap 'rm -f "$probe_stderr"' EXIT
 
 command -v onemessagebus >/dev/null 2>&1 || fail "no 'onemessagebus' on PATH" \
@@ -113,7 +114,8 @@ fi
 
 # `events emit` then `events merge` needs nothing else installed, so it is what
 # proves the artifact can write and read a stream rather than only its registry.
-work="$(mktemp -d)"
+work="$(mktemp -d)" || fail "cannot create a working directory in ${TMPDIR:-/tmp}" \
+  "free space there or point TMPDIR at a writable directory, then re-run"
 trap 'rm -rf "$work" "$probe_stderr"' EXIT
 if ! why="$(printf '{"smoke":true}' | onemessagebus events emit "$work/smoke.ndjson" --kind smoke --stream smoke --source pipeline 2>&1 >/dev/null)"; then
   fail "'events emit' refused a payload it should write: $why" \

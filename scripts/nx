@@ -19,7 +19,11 @@
 # runs. Each target shells out to the project's own language-native tool.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if ! ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; then
+  echo "nx: cannot resolve the repository root from ${BASH_SOURCE[0]}" >&2
+  echo "ACTION: run scripts/nx by its path inside a checkout whose directories are readable" >&2
+  exit 1
+fi
 cd "$ROOT" || {
   echo "nx: cannot enter the repository root $ROOT" >&2
   echo "ACTION: run this from a checkout whose directories are readable" >&2

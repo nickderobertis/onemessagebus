@@ -90,8 +90,12 @@ fi
 command -v curl >/dev/null 2>&1 || not_answered "no 'curl' on PATH" \
   "install curl — this reads the registries over HTTPS and has no other transport"
 
-body="$(mktemp)"
-curl_err="$(mktemp)"
+no_scratch() {
+  not_answered "cannot create a scratch file in ${TMPDIR:-/tmp}" \
+    "free space there or point TMPDIR at a writable directory, then re-run; this is NOT evidence that nothing is published"
+}
+body="$(mktemp)" || no_scratch
+curl_err="$(mktemp)" || { rm -f "$body"; no_scratch; }
 trap 'rm -f "$body" "$curl_err"' EXIT
 
 # GET `$1`, leaving the response body in `$body` and printing the HTTP status.

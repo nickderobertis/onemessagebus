@@ -297,7 +297,14 @@ function buildLauncher(args) {
 // Dispatched only when run as a script, so importing it for VERSION assembles
 // nothing and exits nothing.
 const invokedAs = process.argv[1];
-if (invokedAs && realpathSync(invokedAs) === realpathSync(fileURLToPath(import.meta.url))) {
+const runAsScript =
+  invokedAs &&
+  attempt(
+    `cannot resolve the path this script was run as (${invokedAs})`,
+    "run it by its path inside a readable checkout: node scripts/npm-build.mjs <platform|launcher> …",
+    () => realpathSync(invokedAs) === realpathSync(fileURLToPath(import.meta.url)),
+  );
+if (runAsScript) {
   const [mode, ...rest] = process.argv.slice(2);
   if (mode === "platform") {
     buildPlatform(parseArgs(rest, ["target", "binary", "version", "out"]));
