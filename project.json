@@ -9,6 +9,7 @@
     "onemessagebus-cli",
     "onemessagebus-e2e",
     "onemessagebus-npm",
+    "onemessagebus-npm-launcher",
     "onemessagebus-npm-e2e",
     "onemessagebus-pypi",
     "onemessagebus-pypi-e2e"

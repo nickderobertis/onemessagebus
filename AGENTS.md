@@ -94,8 +94,10 @@ rationale; the mechanics live in the files named. -->
 - **Projects in the graph:** `onemessagebus` (the core; `type:contract`),
   `onemessagebus-agent` (the profile), `onemessagebus-cli` (the binary,
   unpublished), `onemessagebus-e2e` (the compiled-binary journeys, whose `test`
-  depends on the binary's `build`), `onemessagebus-npm` (the launcher and the
-  release-configuration drift gates), `onemessagebus-npm-e2e` (the launcher's
+  depends on the binary's `build`), `onemessagebus-npm-launcher` (the npm
+  launcher package, a member of the root npm workspace, whose `build` assembles
+  it with its generated platform pins), `onemessagebus-npm` (the npm packaging
+  tests and the release-configuration drift gates), `onemessagebus-npm-e2e` (the launcher's
   install journeys, which pack the built binary and install it the way a user
   does — the costly tier, kept out of the packaging project's own tests),
   `onemessagebus-pypi` (the wheel, whose `build` runs maturin over the root

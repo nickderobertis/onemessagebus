@@ -200,17 +200,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Build the wheel
-        env:
-          RUSTFLAGS: "-D warnings"
-        uses: PyO3/maturin-action@v1
+      - uses: actions/setup-node@v4
         with:
-          args: --release --locked --out dist
-          maturin-version: v1.14.1
-      - name: Install it and smoke-test what it put on PATH
-        run: |
-          pip install --no-index --find-links dist onemessagebus-cli
-          bash scripts/smoke-published.sh --label "the wheel built from this revision"
+          node-version: "22"
+      - uses: ./.github/actions/setup-just
+      - uses: astral-sh/setup-uv@v6
+      # The repository's own wheel journey: onemessagebus-pypi builds the wheel
+      # with maturin, and onemessagebus-pypi-e2e installs it into a fresh
+      # virtualenv and smoke-tests what it put on PATH.
+      - name: Build, install and smoke-test the wheel
+        run: bash scripts/nx run onemessagebus-pypi-e2e:test
 
   # Lint the PR title: under squash-merge it becomes the release-driving commit.
   pr-title:

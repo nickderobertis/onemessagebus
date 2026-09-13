@@ -5,7 +5,7 @@
 //
 //   onemessagebus-cli                 launcher (npm/onemessagebus-cli, committed)
 //     bin/onemessagebus.js            resolves + execs the platform binary
-//     optionalDependencies:           one per Rust target in release.yml's matrix
+//     optionalDependencies:           one per TARGETS entry, generated here
 //       onemessagebus-cli-linux-x64
 //       onemessagebus-cli-linux-arm64
 //       onemessagebus-cli-darwin-x64
@@ -53,8 +53,8 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // Rust target triple -> npm platform package facts. Keys must match the release
 // matrix in .github/workflows/release.yml; the (platform, arch) pair must match
-// the PACKAGES map in npm/onemessagebus-cli/bin/onemessagebus.js and the
-// optionalDependencies in npm/onemessagebus-cli/package.json.
+// the PACKAGES map in npm/onemessagebus-cli/bin/onemessagebus.js. The launcher's
+// optionalDependencies are generated from this table when it is assembled.
 const TARGETS = {
   "x86_64-unknown-linux-gnu": { platform: "linux", arch: "x64", exe: false },
   "aarch64-unknown-linux-gnu": { platform: "linux", arch: "arm64", exe: false },
@@ -271,10 +271,11 @@ function buildLauncher(args) {
     },
   );
 
-  // Stamp the real version into the launcher's own version and every
-  // optionalDependency, so the launcher pins the exact platform packages this
-  // release publishes. The committed manifest carries a placeholder instead: a
-  // real number there would be a second version source to drift.
+  // Stamp the real version, and pin exactly the platform packages this release
+  // publishes, from TARGETS. The committed manifest carries neither: a real
+  // version there would be a second version source, and pins there would name
+  // packages npm cannot resolve until a release publishes them — which is what
+  // lets the launcher be a member of the repository's npm workspace.
   const manifestPath = join(dest, "package.json");
   const manifest = attempt(
     "the committed launcher manifest is missing or is not JSON",
@@ -282,9 +283,12 @@ function buildLauncher(args) {
     () => JSON.parse(readFileSync(manifestPath, "utf8")),
   );
   manifest.version = version;
-  for (const dep of Object.keys(manifest.optionalDependencies || {})) {
-    manifest.optionalDependencies[dep] = version;
-  }
+  manifest.optionalDependencies = Object.fromEntries(
+    Object.values(TARGETS).map(({ platform, arch }) => [
+      `onemessagebus-cli-${platform}-${arch}`,
+      version,
+    ]),
+  );
   writeJson(manifestPath, manifest);
 
   process.stdout.write(`${dest}\n`);

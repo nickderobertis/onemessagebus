@@ -5,22 +5,23 @@
 // Like the PyPI wheels (maturin `bindings = "bin"`, see pyproject.toml), the npm
 // distribution carries the *prebuilt* Rust binary — no Rust toolchain, no
 // compile, no download at install time. The platform-specific binary ships
-// inside a per-platform package (`onemessagebus-cli-<platform>-<arch>`) declared
-// in this package's `optionalDependencies`; npm installs only the one whose
-// `os`/`cpu` match the host, and this shim resolves it and execs it with the
-// caller's argv.
+// inside a per-platform package (`onemessagebus-cli-<platform>-<arch>`) the
+// published package lists in its `optionalDependencies`; npm installs only the
+// one whose `os`/`cpu` match the host, and this shim resolves it and execs it
+// with the caller's argv.
 //
-// This file is committed source; the version and the optionalDependency versions
-// are stamped from Cargo.toml at publish time by scripts/npm-build.mjs, which
-// also generates the per-platform packages from the release binaries.
+// This file is committed source; the version and the optionalDependencies are
+// written at publish time by scripts/npm-build.mjs, from Cargo.toml and its
+// TARGETS table, and that script also generates the per-platform packages from
+// the release binaries.
 
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 // process.platform-process.arch -> the platform package that carries the binary.
-// The keys mirror the Rust target matrix in .github/workflows/release.yml, the
-// TARGETS table in scripts/npm-build.mjs, and the optionalDependencies in
-// package.json; keep the four in lockstep.
+// The keys mirror the Rust target matrix in .github/workflows/release.yml and
+// the TARGETS table in scripts/npm-build.mjs, which generates the published
+// optionalDependencies; npm/test/platform-matrix.test.mjs holds them in lockstep.
 const PACKAGES = {
   "linux-x64": "onemessagebus-cli-linux-x64",
   "linux-arm64": "onemessagebus-cli-linux-arm64",

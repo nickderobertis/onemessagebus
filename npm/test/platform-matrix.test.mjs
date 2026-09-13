@@ -6,21 +6,22 @@
 //   1. `scripts/npm-build.mjs`'s TARGETS (triple -> platform/arch/exe),
 //   2. `npm/onemessagebus-cli/bin/onemessagebus.js`'s PACKAGES (the launcher's
 //      platform-to-package resolution),
-//   3. `npm/onemessagebus-cli/package.json`'s optionalDependencies (what npm
-//      installs),
+//   3. the optionalDependencies of the launcher `npm-build.mjs` assembles (what
+//      npm installs — generated from TARGETS, never committed),
 //   4. the `upload`, `build-wheels`, and `build-npm` matrices in
 //      `.github/workflows/release.yml` (what actually gets built), and
 //   5. `rust-toolchain.toml`'s `targets` (the standard libraries rustup installs
 //      beside the pinned toolchain, so each of those triples builds from it).
 //
-// None can be generated from another — a workflow matrix is YAML a workflow
-// engine reads, npm resolves optionalDependencies before any code runs, the
-// launcher must resolve with no build step, and rustup reads its own file. So the
-// sets are reconciled here instead: add a platform in one place and this fails
-// until it is added in all five. Drift here does not break a build; it 404s an
-// install, on the one platform nobody tested.
+// Only the third is generated from another: a workflow matrix is YAML a workflow
+// engine reads, the launcher must resolve with no build step, and rustup reads its
+// own file. So the rest are reconciled here instead: add a platform in one place
+// and this fails until it is added in all of them. Drift here does not break a
+// build; it 404s an install, on the one platform nobody tested.
 
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -104,12 +105,35 @@ describe("the platform matrix", () => {
   });
 
   it("installs exactly the packages the launcher resolves", () => {
-    const built = facts.map(({ platform, arch }) => `onemessagebus-cli-${platform}-${arch}`).sort();
-    assert.deepEqual(
-      Object.keys(manifest.optionalDependencies).sort(),
-      built,
-      "the launcher's optionalDependencies and the packages a release builds disagree",
+    assert.equal(
+      manifest.optionalDependencies,
+      undefined,
+      "npm/onemessagebus-cli/package.json commits optionalDependencies; scripts/npm-build.mjs generates them from TARGETS",
     );
+    const built = facts.map(({ platform, arch }) => `onemessagebus-cli-${platform}-${arch}`).sort();
+    const out = mkdtempSync(join(tmpdir(), "platform-matrix-"));
+    try {
+      const assembled = execFileSync(
+        process.execPath,
+        [
+          join(REPO_ROOT, "scripts", "npm-build.mjs"),
+          "launcher",
+          "--version",
+          "0.1.0",
+          "--out",
+          out,
+        ],
+        { cwd: REPO_ROOT, encoding: "utf8" },
+      ).trim();
+      const published = JSON.parse(readFileSync(join(assembled, "package.json"), "utf8"));
+      assert.deepEqual(
+        Object.keys(published.optionalDependencies).sort(),
+        built,
+        "the assembled launcher's optionalDependencies and the packages a release builds disagree",
+      );
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
     const resolved = [...objectLiteral(launcher, "PACKAGES").matchAll(/: "([^"]+)"/g)]
       .map((m) => m[1])
       .sort();

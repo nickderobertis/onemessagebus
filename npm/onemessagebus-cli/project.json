@@ -1,0 +1,36 @@
+{
+  "name": "onemessagebus-npm-launcher",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "npm/onemessagebus-cli",
+  "tags": ["scope:packaging", "lang:js", "type:app"],
+  "targets": {
+    "bootstrap": { "executor": "nx:noop" },
+    "build": {
+      "command": "node scripts/npm-build.mjs launcher --out npm/dist",
+      "inputs": [
+        "{projectRoot}/**/*",
+        "{workspaceRoot}/scripts/npm-build.mjs",
+        "{workspaceRoot}/Cargo.toml"
+      ],
+      "outputs": ["{workspaceRoot}/npm/dist/onemessagebus-cli"]
+    },
+    "format": {
+      "command": "node node_modules/@biomejs/biome/bin/biome format --write npm/onemessagebus-cli"
+    },
+    "format-check": {
+      "command": "node node_modules/@biomejs/biome/bin/biome format npm/onemessagebus-cli",
+      "inputs": ["default", "{workspaceRoot}/biome.json"]
+    },
+    "lint": {
+      "command": "node node_modules/@biomejs/biome/bin/biome lint npm/onemessagebus-cli",
+      "inputs": ["default", "{workspaceRoot}/biome.json"]
+    },
+    "test": { "executor": "nx:noop" },
+    "doc": { "executor": "nx:noop" },
+    "check": {
+      "executor": "nx:noop",
+      "dependsOn": ["format-check", "lint", "test"]
+    }
+  }
+}

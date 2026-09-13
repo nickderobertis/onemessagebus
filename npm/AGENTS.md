@@ -8,7 +8,10 @@ it with the caller's argv.
 Five places name that platform matrix and must move together:
 
 1. `bin/onemessagebus.js`'s `PACKAGES` map,
-2. `package.json`'s `optionalDependencies`,
+2. the `optionalDependencies` of the launcher `scripts/npm-build.mjs`
+   assembles — generated from `TARGETS` and never committed, because pins in
+   the committed `package.json` would name packages `npm ci` cannot resolve
+   before a release, and the launcher is a member of the root npm workspace,
 3. `scripts/npm-build.mjs`'s `TARGETS` table,
 4. the `upload`, `build-wheels` and `build-npm` matrices in
    `.github/workflows/release.yml`,

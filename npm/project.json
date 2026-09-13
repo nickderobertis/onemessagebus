@@ -4,18 +4,9 @@
   "projectType": "library",
   "sourceRoot": "npm/onemessagebus-cli",
   "tags": ["scope:packaging", "lang:js", "type:packaging"],
-  "implicitDependencies": ["onemessagebus-cli"],
+  "implicitDependencies": ["onemessagebus-cli", "onemessagebus-npm-launcher"],
   "targets": {
     "bootstrap": { "executor": "nx:noop" },
-    "build": {
-      "command": "node scripts/npm-build.mjs launcher --out npm/dist",
-      "inputs": [
-        "{projectRoot}/onemessagebus-cli/**/*",
-        "{workspaceRoot}/scripts/npm-build.mjs",
-        "{workspaceRoot}/Cargo.toml"
-      ],
-      "outputs": ["{projectRoot}/dist/onemessagebus-cli"]
-    },
     "format": {
       "command": "node node_modules/@biomejs/biome/bin/biome format --write npm scripts"
     },
@@ -32,6 +23,7 @@
       "dependsOn": [{ "projects": ["onemessagebus-cli"], "target": "build" }],
       "inputs": [
         "{projectRoot}/**/*",
+        "^default",
         "{workspaceRoot}/scripts/**/*",
         "{workspaceRoot}/release-targets.toml",
         "{workspaceRoot}/pyproject.toml",
