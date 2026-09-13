@@ -42,10 +42,33 @@ pub struct SchemaIdError {
 }
 
 impl SchemaId {
-    /// An id from its literal parts, checked at compile time only for being
-    /// present: use [`FromStr`] for text from outside.
+    /// An id from its literal parts, held to the grammar [`FromStr`] enforces:
+    /// use [`FromStr`] for text from outside, which refuses rather than panics.
+    ///
+    /// # Panics
+    ///
+    /// When the namespace or the name is empty or carries anything but ASCII
+    /// letters, digits, `-` and `_`, or the version is 0. In a `const` — a
+    /// [`Message::SCHEMA`] — that is a compile error, so a malformed literal
+    /// never reaches a registry:
+    ///
+    /// ```compile_fail
+    /// const EMPTY_NAME: onemessagebus::SchemaId = onemessagebus::SchemaId::literal("billing", "", 1);
+    /// ```
     #[must_use]
     pub const fn literal(namespace: &'static str, name: &'static str, version: u32) -> Self {
+        assert!(
+            is_part(namespace),
+            "SchemaId::literal: the namespace is not a non-empty run of ASCII letters, digits, `-` and `_`"
+        );
+        assert!(
+            is_part(name),
+            "SchemaId::literal: the name is not a non-empty run of ASCII letters, digits, `-` and `_`"
+        );
+        assert!(
+            version > 0,
+            "SchemaId::literal: the version is not a positive integer"
+        );
         Self {
             namespace: Cow::Borrowed(namespace),
             name: Cow::Borrowed(name),
@@ -97,11 +120,22 @@ impl SchemaId {
     }
 }
 
-fn is_part(text: &str) -> bool {
-    !text.is_empty()
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+/// A `while` loop rather than an iterator, because iterators are not callable
+/// in a `const fn` and [`SchemaId::literal`] checks at compile time.
+const fn is_part(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    let mut at = 0;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        if !(byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_') {
+            return false;
+        }
+        at += 1;
+    }
+    true
 }
 
 impl FromStr for SchemaId {

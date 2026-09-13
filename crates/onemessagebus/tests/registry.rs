@@ -53,6 +53,27 @@ fn a_malformed_id_is_refused_naming_the_fault() {
     }
 }
 
+// `black_box` keeps each call out of const evaluation, so these prove the
+// runtime refusal a `const` turns into a compile error.
+
+#[test]
+#[should_panic(expected = "SchemaId::literal: the namespace is not")]
+fn a_literal_with_an_empty_namespace_panics() {
+    let _ = SchemaId::literal(std::hint::black_box(""), "finding", 1);
+}
+
+#[test]
+#[should_panic(expected = "SchemaId::literal: the name is not")]
+fn a_literal_whose_name_carries_a_dot_panics() {
+    let _ = SchemaId::literal("agent", std::hint::black_box("fin.ding"), 1);
+}
+
+#[test]
+#[should_panic(expected = "SchemaId::literal: the version is not a positive integer")]
+fn a_literal_at_version_zero_panics() {
+    let _ = SchemaId::literal("agent", "finding", std::hint::black_box(0));
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Finding {
