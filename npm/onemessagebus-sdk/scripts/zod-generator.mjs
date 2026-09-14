@@ -36,7 +36,7 @@ export class UnsupportedSchema extends Error {}
 
 function refuse(at, what) {
   throw new UnsupportedSchema(
-    `${at}: ${what}; extend scripts/zod-generator.mjs to enforce it (or change the Rust schema), then run \`just sdk-generate\``,
+    `${at}: ${what}; extend scripts/zod-generator.mjs to enforce it (or change the Rust schema), then run \`just node-sdk-generate\``,
   );
 }
 

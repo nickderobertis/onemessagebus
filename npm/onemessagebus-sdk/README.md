@@ -165,8 +165,8 @@ From the repository root, through its command surface:
 
 ```bash
 just bootstrap      # installs this package's locked dependencies with the rest of the tree
-just sdk-generate   # rewrite src/generated from the Rust bundle (runs cargo)
-just sdk-check      # every tier of this package: generate-check, format, lint, typecheck, tests, build
+just node-sdk-generate   # rewrite src/generated from the Rust bundle (runs cargo)
+just node-sdk-check      # every tier of this package: generate-check, format, lint, typecheck, tests, build
 ```
 
 The tests drive the real binary (`cargo build -p onemessagebus-cli --locked`

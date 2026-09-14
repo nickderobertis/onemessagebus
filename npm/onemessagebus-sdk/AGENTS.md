@@ -7,7 +7,7 @@ check.
 
 - **`src/generated/` is the generator's.** `scripts/generate.mjs` renders the
   declarations (`json-schema-to-typescript`) and the Zod schemas from the
-  sdk_bundle example; `just sdk-generate` rewrites them, and this project's
+  sdk_bundle example; `just node-sdk-generate` rewrites them, and this project's
   `lint` fails on a stale copy. A construct the Zod generator does not cover
   fails generation by name.
 - **Casts are typed away, not asserted.** Outputs are parsed by their generated

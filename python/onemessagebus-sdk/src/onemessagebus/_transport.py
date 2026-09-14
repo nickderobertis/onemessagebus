@@ -19,7 +19,7 @@ import os
 from collections import deque
 from collections.abc import AsyncGenerator, Mapping
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, NewType, Protocol, cast
 
 from pydantic import ValidationError
 
@@ -44,6 +44,9 @@ _STOP_WAIT = 10.0
 _PREFIX = "onemessagebus: "
 
 Line = ResidentAnswer | ResidentFailure | ResidentEvent
+# The id a request carries on every resident line about it: its answer, its refusal,
+# its events and its cancel.
+RequestId = NewType("RequestId", int)
 
 
 class Transport(Protocol):
@@ -289,7 +292,7 @@ class ResidentTransport:
         self._writer: asyncio.StreamWriter | None = None
         self._listener: asyncio.Future[None] | None = None
         self._closed: BusError | None = None
-        self._pending: dict[int, asyncio.Queue[Line | BusError]] = {}
+        self._pending: dict[RequestId, asyncio.Queue[Line | BusError]] = {}
         self._ids = itertools.count(1)
         self._process: asyncio.subprocess.Process | None = None
         self._said: deque[str] = deque(maxlen=20)
@@ -443,7 +446,7 @@ class ResidentTransport:
                         | ResidentEvent(id=request_id)
                         | ResidentFailure(id=int(request_id))
                     ):
-                        if (waiter := self._pending.get(request_id)) is not None:
+                        if (waiter := self._pending.get(RequestId(request_id))) is not None:
                             waiter.put_nowait(line)
         except (OSError, ValueError) as error:
             reason = TransportError(f"reading from the resident core on {self._path}: {error}")
@@ -452,7 +455,7 @@ class ResidentTransport:
             for waiter in self._pending.values():
                 waiter.put_nowait(reason)
 
-    def _register(self) -> tuple[int, asyncio.Queue[Line | BusError]]:
+    def _register(self) -> tuple[RequestId, asyncio.Queue[Line | BusError]]:
         if self._writer is None:
             raise TransportError(
                 "the transport is not open; use `async with Client(...)`, or await "
@@ -460,7 +463,7 @@ class ResidentTransport:
             )
         if self._closed is not None:
             raise type(self._closed)(self._closed.message)
-        request_id = next(self._ids)
+        request_id = RequestId(next(self._ids))
         waiter: asyncio.Queue[Line | BusError] = asyncio.Queue()
         self._pending[request_id] = waiter
         return request_id, waiter
@@ -512,7 +515,7 @@ class ResidentTransport:
                 await self._cancel(request_id, waiter)
             self._pending.pop(request_id, None)
 
-    async def _cancel(self, request_id: int, waiter: asyncio.Queue[Line | BusError]) -> None:
+    async def _cancel(self, request_id: RequestId, waiter: asyncio.Queue[Line | BusError]) -> None:
         """Write the cancel line, and wait until the resident says the stream ended."""
         with contextlib.suppress(BusError, asyncio.TimeoutError):
             await self._send(ResidentCancel(id=request_id, cancel=True))
@@ -548,7 +551,7 @@ class ResidentTransport:
 
 
 def _request(
-    request_id: int, method: str, args: Mapping[str, Any], input: str | None
+    request_id: RequestId, method: str, args: Mapping[str, Any], input: str | None
 ) -> ResidentRequest:
     """The request line for one capability, refused by name when the manifest has no such verb.
 

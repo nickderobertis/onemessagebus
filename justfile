@@ -281,11 +281,11 @@ test-uninstrumented:
 # are the verbs a person reaches for by name. What each tier runs is the
 # package's project.json's to say.
 # Regenerate the TypeScript SDK's generated contract from the Rust bundle.
-sdk-generate:
+node-sdk-generate:
     @bun run --cwd npm/onemessagebus-sdk generate
 
 # The TypeScript SDK's tiers: generate-check, format, lint, typecheck, tests, build.
-sdk-check:
+node-sdk-check:
     @bash scripts/nx run onemessagebus-node-sdk:check
 
 # Regenerate the Python SDK's generated models from the Rust bundle.
@@ -321,7 +321,7 @@ node-sdk-dist out:
     fail() { echo "node-sdk-dist: $1" >&2; exit 1; }
     [ -e node_modules/.bin/tsc ] || npm ci --silent --no-audit --no-fund \
       || fail "the npm workspace did not install — run 'npm ci' to see why"
-    bun run --cwd npm/onemessagebus-sdk build >/dev/null || fail "the Node SDK did not build — run 'just sdk-check'"
+    bun run --cwd npm/onemessagebus-sdk build >/dev/null || fail "the Node SDK did not build — run 'just node-sdk-check'"
     sdk="$(node npm/onemessagebus-sdk/scripts/pack.mjs | tail -n1)" \
       || fail "the Node SDK did not pack — run 'node npm/onemessagebus-sdk/scripts/pack.mjs' to see why"
     mkdir -p "{{out}}"

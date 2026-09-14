@@ -32,13 +32,14 @@ class SchemaNamespace:
         registry: StrPath | None = None,
     ) -> str:
         """Register a `Message` type's JSON Schema under its id, or a document under `id`."""
-        if isinstance(schema, Mapping):
-            document = dict(schema)
-        elif issubclass(schema, Message):
-            document = schema.json_schema()
-            id = id or schema.schema_id()
-        else:
-            document = schema.model_json_schema(mode="serialization")
+        match schema:
+            case Mapping():
+                document = dict(schema)
+            case type() if issubclass(schema, Message):
+                document = schema.json_schema()
+                id = id or schema.schema_id()
+            case _:
+                document = schema.model_json_schema(mode="serialization")
         if id is None:
             raise ValueError(
                 "a JSON Schema document that is not a Message type registers under an id; "

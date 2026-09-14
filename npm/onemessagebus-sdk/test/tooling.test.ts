@@ -44,7 +44,7 @@ describe("generate:check", () => {
     expect(run.stderr).toContain("roots/sent.ts is stale (line ");
     expect(run.stderr).toContain("roots/asked.ts is missing");
     expect(run.stderr).toContain("roots/removed.ts is no longer generated");
-    expect(run.stderr).toContain("run `just sdk-generate`");
+    expect(run.stderr).toContain("run `just node-sdk-generate`");
   });
 });
 
@@ -176,9 +176,9 @@ describe("the packer", () => {
       manifestPath,
       readFileSync(manifestPath, "utf8").replace('"version": "0.0.0-dev"', '"version": "1.0.0"'),
     );
-    const version2 = node(["scripts/pack.mjs", "--from", from, "--out", out]);
-    expect(version2.status).toBe(1);
-    expect(version2.stderr).toContain("not the placeholder 0.0.0-dev");
+    const unstamped = node(["scripts/pack.mjs", "--from", from, "--out", out]);
+    expect(unstamped.status).toBe(1);
+    expect(unstamped.stderr).toContain("not the placeholder 0.0.0-dev");
 
     rmSync(join(from, "dist"), { recursive: true });
     mkdirSync(join(from, "dist"));

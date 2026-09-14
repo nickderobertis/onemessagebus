@@ -162,8 +162,8 @@ not a fresh generation.
 
 | to | run |
 | --- | --- |
-| regenerate the TypeScript contract | `just sdk-generate` |
+| regenerate the TypeScript contract | `just node-sdk-generate` |
 | regenerate the Python contract | `just python-sdk-generate` |
-| run a package's tiers | `just sdk-check`, `just python-sdk-check` |
+| run a package's tiers | `just node-sdk-check`, `just python-sdk-check` |
 | check parity | `just sdk-coverage` |
 | regenerate `docs/sdk-parity.md` | `just parity-audit` |
