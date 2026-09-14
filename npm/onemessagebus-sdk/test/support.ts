@@ -1,6 +1,15 @@
 // What every journey needs: the real binary, a scratch directory it owns, and a
 // client over each transport.
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { dlopen, FFIType } from "bun:ffi";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
@@ -46,6 +55,36 @@ export function socketPath(): string {
   const dir = mkdtempSync(join(tmpdir(), "omb-"));
   made.push(dir);
   return join(dir, "bus.sock");
+}
+
+/** flock(2)'s exclusive lock, the one Rust's `File::try_lock` looks for on unix. */
+const LOCK_EX = 2;
+
+/**
+ * A receiver bound to the spool at `dir`, as `docs/inbox.md` lays one out: its
+ * declaration, and `receiver.lock` held exclusively until `release()`. That lock
+ * is what `deliver` reads a taken message by — waited on while it is held, and
+ * abandoned once it is not. Node has no flock binding, so libc's is called
+ * directly; the SDK's journeys run on unix.
+ */
+export function bindSpool(dir: string, schema = "agent.note@1"): { release(): void } {
+  mkdirSync(dir);
+  writeFileSync(join(dir, "spool.json"), JSON.stringify({ schema_version: 1, schema }));
+  const libc = dlopen(process.platform === "darwin" ? "libc.dylib" : "libc.so.6", {
+    flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+  });
+  const lock = openSync(join(dir, "receiver.lock"), "w");
+  if (libc.symbols.flock(lock, LOCK_EX) !== 0) {
+    closeSync(lock);
+    libc.close();
+    throw new Error(`could not lock ${join(dir, "receiver.lock")} as the spool's receiver`);
+  }
+  return {
+    release: () => {
+      closeSync(lock);
+      libc.close();
+    },
+  };
 }
 
 /** The message type the journeys declare in TypeScript and register at run time. */

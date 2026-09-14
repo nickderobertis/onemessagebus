@@ -17,6 +17,7 @@ import {
 import {
   BINARY,
   baseConfig,
+  bindSpool,
   caught,
   caughtAs,
   Greeting,
@@ -299,21 +300,22 @@ for (const transport of TRANSPORTS) {
       );
     });
 
-    test("deliver hands a message to a spool's receiver and resolves its disposition", async () => {
+    test("deliver hands a message to a bound spool's receiver and waits out its answer", async () => {
       const spool = join(dir, `spool-${transport.name}`);
-      const { mkdirSync } = await import("node:fs");
-      mkdirSync(spool);
-      writeFileSync(join(spool, "spool.json"), '{"schema_version":1,"schema":"agent.note@1"}');
-      // The receiver's side of the spool, as a bound courier does it: take the
-      // offer by renaming it, then write the answer beside it.
+      const receiver = bindSpool(spool);
+      // The receiver's courier takes an offer by renaming it, and answers several of
+      // the sender's polls later: while the receiver stays bound, a taken message
+      // is waited on rather than abandoned.
       const courier = setInterval(() => {
         for (const name of readdirSync(spool)) {
           if (!name.endsWith(".offer.json")) continue;
           const offer = name.slice(0, -".offer.json".length);
           renameSync(join(spool, name), join(spool, `${offer}.taken.json`));
-          const staging = join(spool, `${offer}.answer.json.staging`);
-          writeFileSync(staging, '{"schema_version":1,"answer":{"disposition":{"queued":true}}}');
-          renameSync(staging, join(spool, `${offer}.answer.json`));
+          setTimeout(() => {
+            const staging = join(spool, `${offer}.answer.json.staging`);
+            writeFileSync(staging, '{"schema_version":1,"answer":{"disposition":{"queued":true}}}');
+            renameSync(staging, join(spool, `${offer}.answer.json`));
+          }, 100);
         }
       }, 20);
       try {
@@ -322,6 +324,7 @@ for (const transport of TRANSPORTS) {
         ).toEqual({ queued: true });
       } finally {
         clearInterval(courier);
+        receiver.release();
       }
       const nowhere = await refusedWith(BusRefused, () =>
         client.deliver({ address: join(dir, "nowhere"), message: "{}", wait: 1 }),
