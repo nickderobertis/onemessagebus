@@ -1,0 +1,47 @@
+{
+  "name": "onemessagebus-node-sdk",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "npm/onemessagebus-sdk/src",
+  "tags": ["scope:sdk", "lang:ts", "type:packaging"],
+  "implicitDependencies": ["onemessagebus-cli"],
+  "targets": {
+    "bootstrap": {
+      "command": "bun install --cwd npm/onemessagebus-sdk --frozen-lockfile",
+      "cache": false
+    },
+    "format": {
+      "command": "bun run --cwd npm/onemessagebus-sdk format",
+      "cache": false
+    },
+    "format-check": {
+      "command": "bun run --cwd npm/onemessagebus-sdk format:check",
+      "inputs": ["default"]
+    },
+    "lint": {
+      "command": "bun run --cwd npm/onemessagebus-sdk lint && bun run --cwd npm/onemessagebus-sdk typecheck && bun run --cwd npm/onemessagebus-sdk generate:check",
+      "inputs": [
+        "default",
+        "{workspaceRoot}/scripts/sdk-bundle.mjs",
+        "{workspaceRoot}/crates/**/*",
+        "{workspaceRoot}/Cargo.toml",
+        "{workspaceRoot}/Cargo.lock"
+      ]
+    },
+    "test": {
+      "command": "bun run --cwd npm/onemessagebus-sdk test && bun run --cwd npm/onemessagebus-sdk test:package",
+      "dependsOn": [{ "projects": ["onemessagebus-cli"], "target": "build" }],
+      "cache": false
+    },
+    "build": {
+      "command": "bun run --cwd npm/onemessagebus-sdk build",
+      "inputs": ["default"],
+      "outputs": ["{projectRoot}/dist"]
+    },
+    "doc": { "executor": "nx:noop" },
+    "check": {
+      "executor": "nx:noop",
+      "dependsOn": ["format-check", "lint", "test", "build", "doc"]
+    }
+  }
+}
