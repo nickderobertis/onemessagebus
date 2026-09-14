@@ -45,6 +45,7 @@ mod plugin;
 mod queue;
 mod read;
 mod redact;
+pub mod resident;
 mod schema;
 pub mod sdk_schema;
 mod spool;

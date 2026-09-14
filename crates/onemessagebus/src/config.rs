@@ -380,6 +380,54 @@ impl Config {
     /// schema the registry does not hold or an `answers` naming no queue; and
     /// [`ConfigError::Transport`] for a transport its kind refuses.
     pub fn resolve(&self, layouts: &Layouts, kinds: &TransportKinds) -> Result<Bus, ConfigError> {
+        self.resolve_with_registry(layouts, kinds, &Registry::new())
+    }
+
+    /// [`resolve`](Self::resolve), with every schema `added` holds registered
+    /// beside the layout's: how a schema a process registered at run time — a
+    /// type an SDK declared in its own language — becomes one a queue's `schema`
+    /// names and every record pushed onto it is validated against.
+    ///
+    /// # Errors
+    ///
+    /// As [`resolve`](Self::resolve), and [`ConfigError::Queue`] at `registry`
+    /// for an id `added` holds a different document under than the layout does.
+    pub fn resolve_with_registry(
+        &self,
+        layouts: &Layouts,
+        kinds: &TransportKinds,
+        added: &Registry,
+    ) -> Result<Bus, ConfigError> {
+        self.bind(layouts, added, || Ok(kinds.open(&self.transport)?))
+    }
+
+    /// [`resolve_with_registry`](Self::resolve_with_registry) over a transport
+    /// already open, rather than one opened from `transport`: how a process that
+    /// holds its transport open across many operations — the resident core —
+    /// binds each operation's bus over it with the registry as it stands then.
+    ///
+    /// # Errors
+    ///
+    /// As [`resolve_with_registry`](Self::resolve_with_registry), less the
+    /// transport's own refusal: `transport` is open already.
+    pub fn resolve_over(
+        &self,
+        layouts: &Layouts,
+        transport: Arc<dyn Transport>,
+        added: &Registry,
+    ) -> Result<Bus, ConfigError> {
+        self.bind(layouts, added, || Ok(transport))
+    }
+
+    /// The bus this configuration describes, with `added`'s schemas beside the
+    /// layout's, over the transport `open` answers — asked for last, once every
+    /// other key has been checked.
+    fn bind(
+        &self,
+        layouts: &Layouts,
+        added: &Registry,
+        open: impl FnOnce() -> Result<Arc<dyn Transport>, ConfigError>,
+    ) -> Result<Bus, ConfigError> {
         let layout = match &self.profile {
             Some(name) => Some(layouts.get(name).ok_or_else(|| ConfigError::Profile {
                 name: name.clone(),
@@ -417,7 +465,17 @@ impl Config {
                 spec.numbered = numbered;
             }
         }
-        let registry = layout.map(|layout| layout.registry()).unwrap_or_default();
+        let mut registry = layout.map(|layout| layout.registry()).unwrap_or_default();
+        for id in added.ids() {
+            if let Some(document) = added.schema(&id) {
+                registry
+                    .register_schema(id, document.clone())
+                    .map_err(|failure| ConfigError::Queue {
+                        key: "registry".to_owned(),
+                        why: failure.to_string(),
+                    })?;
+            }
+        }
         for spec in specs.values() {
             if let Some(schema) = &spec.schema {
                 if registry.schema(schema).is_none() {
@@ -483,7 +541,7 @@ impl Config {
                     validator,
                 }));
         }
-        let transport = kinds.open(&self.transport)?;
+        let transport = open()?;
         Ok(Bus {
             transport,
             kind: self.transport.kind.to_string(),
