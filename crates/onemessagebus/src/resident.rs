@@ -2,7 +2,7 @@
 //! reads and writes on its unix socket.
 //!
 //! Each request line names a capability by its SDK method and carries that
-//! capability's options — the verb set *is* [`CAPABILITIES`](crate::CAPABILITIES),
+//! capability's options — the verb set *is* [`CAPABILITIES`],
 //! so the parity gate that holds the SDK clients to the manifest holds the socket
 //! to it too. Each request is answered by exactly one [`ResidentAnswer`] or
 //! [`ResidentFailure`] line carrying its id; a `subscribe` request streams
