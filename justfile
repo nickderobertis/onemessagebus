@@ -172,7 +172,7 @@ _crate-test crate:
     @cargo test --doc -p {{crate}} --locked --quiet \
       || { echo "{{crate}}: doctests failed — fix the sample named above, or the README it is compiled from" >&2; exit 1; }
 
-# llmlint: ignore-block[external_service_suite_stays_out_of_the_affected_tier] this recipe's only change here keeps the cross-language journey out (it has its own project); the journey it still selects that reaches PyPI is the onepipeline 0.28.2 byte-compatibility journey, placed in the pull-request gate on purpose by the node that added it, which fetches one exact pinned wheel anonymously so there is no credential to gate it behind — ci.yml's gate step records the same reason. Moving it out of the affected tier would reverse that node's ruling rather than answer anything this diff wired.
+# llmlint: ignore-block[external_service_suite_stays_out_of_the_affected_tier] the one journey this recipe selects that reaches PyPI is the onepipeline 0.28.2 byte-compatibility journey, which fetches a single exact pinned wheel (onepipeline-cli==0.28.2) anonymously, so there is no credential to gate it behind; it runs in the pull-request gate by design, because byte compatibility with that engine release is the promise the journey holds and every change must keep it. ci.yml's gate step records the same reason.
 # The compiled-binary journeys: the binary built instrumented in the coverage
 # target directory, so what the journeys spawn is attributed to the crates it
 # was built from, then the journey crate's tests over it.
