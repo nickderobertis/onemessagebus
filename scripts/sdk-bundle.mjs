@@ -60,7 +60,9 @@ export function schemaBundle({ script, rerun }) {
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (error) {
-    console.error(`${script}: the Rust schema bundle did not build, so there is no contract to read.`);
+    console.error(
+      `${script}: the Rust schema bundle did not build, so there is no contract to read.`,
+    );
     const cause = tail(error.stderr);
     if (cause.length > 0) {
       console.error("  cargo said:");

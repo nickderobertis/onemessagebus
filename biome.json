@@ -6,7 +6,7 @@
       "npm/**/*.mjs",
       "npm/**/*.json",
       "scripts/**/*.mjs",
-      "!npm/onemessagebus-sdk/**"
+      "!npm/onemessagebus-sdk"
     ]
   },
   "formatter": {
