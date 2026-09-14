@@ -16,8 +16,10 @@ knows nothing about agents), the `onemessagebus-agent` crate (the agent stack's
 vocabulary declared over the core's public API, which `oneagentgraph`, `onevcs`
 and `onepipeline` adopt in place of the envelope each copied), and the
 `onemessagebus` binary (crates.io-free: the `onemessagebus-cli` wheel on PyPI,
-the `onemessagebus-cli` launcher on npm, or `cargo install --git`). The Python
-and TypeScript SDK packages are a later node's.
+the `onemessagebus-cli` launcher on npm, or `cargo install --git`). Beside them
+sit the two language SDKs — `onemessagebus` on PyPI and `@onemessagebus/sdk` on
+npm — typed clients over that binary, one-shot or through its resident core
+(`docs/sdk.md`).
 
 [`docs/contract.md`](docs/contract.md) is the approved contract, the one source
 every consumer restates from; [`docs/wire.md`](docs/wire.md) and
@@ -68,11 +70,11 @@ rationale; the mechanics live in the files named. -->
   public surface held by contract tests, semver through release-plz, boundary
   validation, consumer docs — and its llmlint fragment is pinned in
   `llmlint.yml` beside the composed ones.
-- **Language(s):** rust, plus bash for the wrappers and Node for the npm
-  assembler and its tests, as the siblings. Python and TypeScript are the SDK
-  node's (below); today the Python surface is the maturin wheel
-  (`pyproject.toml`, no Python source) and the JavaScript surface is the npm
-  launcher and the packaging tests under `npm/`.
+- **Language(s):** rust; Python for the SDK under `python/onemessagebus-sdk`
+  (uv, its own `pyproject.toml`: ruff, ty, pytest) beside the maturin wheel's
+  root `pyproject.toml`; TypeScript for the SDK under `npm/onemessagebus-sdk`
+  (bun, its own `package.json`: biome, tsc, bun test); bash for the wrappers and
+  Node for the npm assembler, the parity gate and their tests, as the siblings.
 - **References composed:** `base.md`, `project-graph.md`, `shapes/cli.md`,
   `shapes/library.md`, `languages/rust.md`, `intersections/rust-cli.md`,
   `ci.md`, `llmlint.md`, `releasing.md`.
@@ -82,15 +84,13 @@ rationale; the mechanics live in the files named. -->
   and printed `base.md, project-graph.md, shapes/cli.md, languages/rust.md,
   languages/python.md, languages/typescript.md, intersections/rust-cli.md,
   intersections/python-cli.md, ci.md, llmlint.md, releasing.md` (it takes one
-  shape; `shapes/library.md` was applied by hand, above). `languages/python.md`,
-  `languages/typescript.md` and `intersections/python-cli.md` are **deferred to
-  the SDK node** (`bus-sdks-resident`), which adds the Python and TypeScript
-  source they govern: their gates (a uv workspace with `ruff`/`ty`/`pytest`,
-  bun with `tsc`) and their structural invariants judge source this tree does
-  not have, and recording them as composed here would have the buildout tier
-  fail over Python and TypeScript tooling for a tree with none. Their
-  ongoing llmlint fragments stay pinned in `llmlint.yml` so the rules are in
-  force the day that source lands.
+  shape; `shapes/library.md` was applied by hand, above). `languages/python.md`
+  and `languages/typescript.md` were deferred at buildout, when the tree had no
+  source for them to govern, and now govern the two SDK packages
+  (`bus-sdks-resident` added them): each package carries its language's gates in
+  its own Nx project, and their llmlint fragments were pinned in `llmlint.yml`
+  from the start. `intersections/python-cli.md` stays unapplied: the Python
+  package is a library over the Rust binary, not a Python command line.
 - **Projects in the graph:** `onemessagebus` (the core; `type:contract`),
   `onemessagebus-agent` (the profile), `onemessagebus-cli` (the binary,
   unpublished), `onemessagebus-e2e` (its compiled-binary journeys),
@@ -101,7 +101,13 @@ rationale; the mechanics live in the files named. -->
   `onemessagebus-pypi-e2e` (the install journeys, split from their deliverables
   as the costly tier), `onemessagebus-repo` (tests holding the release
   declaration and toolchain pins to their sources, apart from the journeys so
-  those changes do not pay for them), and the root `workspace` project (the
+  those changes do not pay for them), `onemessagebus-python-sdk` and
+  `onemessagebus-node-sdk` (the two SDK packages, each with its own generate-check,
+  lint, type check, tests and build), `onemessagebus-sdk-parity` (the parity gate
+  and `docs/sdk-parity.md`'s drift check, a project of its own because it reads
+  both SDKs and the manifest), `onemessagebus-sdk-install-e2e` (both SDKs packed,
+  installed beside the binary the way a user installs them, and smoke-tested),
+  and the root `workspace` project (the
   coverage floor and the supply-chain check). The binary is its own `publish = false` crate because
   it links the agent profile so `--profile` defaults to it, and the profile
   depends on the core — so it can live in neither library; the manager ruled
@@ -110,10 +116,11 @@ rationale; the mechanics live in the files named. -->
   committed lockfiles already pin everything. **A curl-pipe installer and a
   composite action** — every documented install surface is a registry or
   `cargo install --git`, so nothing constructs a release asset's name and no
-  asset-naming contract can drift. **bun** — the Node use is the Nx
-  orchestrator and the launcher's own `node --test` suite, which the siblings
-  run with npm and a committed `package-lock.json`; bun arrives with the
-  TypeScript SDK if that node wants it. **A `published-smoke` workflow** — the
+  asset-naming contract can drift. **bun outside the TypeScript SDK** — the
+  root Node use is the Nx orchestrator and the launcher's own `node --test`
+  suite, which the siblings run with npm and a committed `package-lock.json`;
+  bun is the TypeScript SDK's own runtime, with its own `bun.lock`, and CI pins
+  its version. **A `published-smoke` workflow** — the
   post-release registry watch the siblings carry is a follow-up once the first
   release exists to watch.
 - **Buildout exception, authorized by the manager:** the skill's buildout rules
@@ -151,6 +158,15 @@ you:
   attributed to binaries that no longer exist — and `check-affected` runs the
   whole test set whenever the diff reaches a crate, because the floor is over
   the union.
+- **Where an SDK touches the wire, it is generated.** The sdk_bundle example
+  (`scripts/sdk-bundle.mjs` runs it) is the one source: `just sdk-generate` and
+  `just python-sdk-generate` rewrite each package's generated contract, each
+  package's lint fails on a stale one, and `just sdk-coverage` fails on a
+  capability with no client method or a method with no capability. A new verb
+  is a capability, then a method in both clients, then `just parity-audit`.
+- **A resident core is stopped by removing its socket**, which ends it with a
+  normal exit. A journey or SDK test that kills one instead loses its coverage
+  profile, and leaves a stale socket for the next start to take over.
 - **Affected selection fails closed** (`scripts/nx-affected.sh`): with no
   derivable merge base it runs everything, because a speed optimisation that
   can silently skip a check is a correctness hole.
@@ -164,7 +180,8 @@ you:
 - **All gating checks are required**, by the context each reports: `gate`,
   `changes`, `cross (macos-latest)`, `cross (windows-latest)`, `msrv`, `deny`,
   `install (ubuntu-latest)`, `install (macos-latest)`, `install (windows-latest)`,
-  `wheel`, `pr-title`, and `llmlint`. A matrix job reports one context per
+  `wheel`, `sdk-install (ubuntu-latest)`, `sdk-install (macos-latest)`,
+  `pr-title`, and `llmlint`. A matrix job reports one context per
   platform, and `changes` is required because the jobs it gates are skipped —
   which counts as passing — when it fails. `install-documented.yml` runs
   on a push to `main`, never on a pull request, so it cannot be required. `notignored` is deliberately
@@ -191,13 +208,17 @@ you:
   so a surface break bumps whatever the type said.
 - **One version source.** `Cargo.toml`'s `[workspace.package]` is it, inherited
   by every crate: both published crates move on one release, the wheel takes it
-  via maturin's `dynamic = ["version"]`, and the npm packages via
-  `scripts/npm-build.mjs`. Never write a version into `pyproject.toml` or
-  `npm/onemessagebus-cli/package.json`.
+  via maturin's `dynamic = ["version"]`, the npm packages via
+  `scripts/npm-build.mjs`, and each SDK through its packer, which stamps its own
+  version and the exact `onemessagebus-cli` it pins over committed placeholders.
+  Never write a version into `pyproject.toml`, `npm/onemessagebus-cli/package.json`
+  or either SDK's manifest.
 - **What this repository publishes is declared in `release-targets.toml`, and
-  answered by `scripts/release-probe.sh`.** Four targets — the two crates, the
-  wheel, the npm launcher (covering its five platform packages) — at schema
-  version 3. `crates/onemessagebus-repo/tests/release_declaration.rs` holds the
+  answered by `scripts/release-probe.sh`.** Six targets — the two crates, the
+  wheel, the npm launcher (covering its five platform packages), and the two
+  SDKs (`pypi:onemessagebus`, and `npm:@onemessagebus/sdk`, the one scoped name,
+  which needs the `@onemessagebus` npm organization to exist before it can
+  publish) — at schema version 3. `crates/onemessagebus-repo/tests/release_declaration.rs` holds the
   document to the schema through `onevcs`'s own reader, and
   `npm/test/release-targets.test.mjs` holds it to the release configuration in
   both directions, so a new artifact fails the gate rather than going
