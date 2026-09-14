@@ -274,9 +274,6 @@ fn the_configuration_schema_accepts_the_documented_file_and_refuses_an_unknown_k
     );
 }
 
-/// Every policy key and every declaration key a configuration sets reaches the
-/// queue it names, a layout that shapes nothing offers each record as it is, and
-/// a key a built-in transport does not take is refused.
 /// A schema registered at run time is one a queue's `schema` may name, and every
 /// record pushed onto that queue is validated against it; one the layout already
 /// holds under a different document is refused naming the key.
@@ -404,6 +401,9 @@ fn resolve_over_binds_each_bus_over_the_transport_held_open() {
     assert!(Arc::ptr_eq(first.transport(), second.transport()));
 }
 
+/// Every policy key and every declaration key a configuration sets reaches the
+/// queue it names, a layout that shapes nothing offers each record as it is, and
+/// a key a built-in transport does not take is refused.
 #[test]
 fn a_configuration_sets_every_policy_and_declaration_key_on_a_queue() {
     use onemessagebus::{Delivery, Ordering, Retention};
