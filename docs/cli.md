@@ -407,7 +407,7 @@ refused with exit 1, naming that resident's pid, which each resident records in
 `PATH.pid`; a socket nobody answers on is a stale one, and is taken over. The
 resident listens on a unix socket, and a platform without one refuses
 `--resident` with exit 2. `schema gen --lang json bus.resident-protocol@1` prints
-the protocol's schema, and `docs/sdk.md` is the SDKs' account of it.
+the protocol's schema.
 
 ```bash
 $ onemessagebus serve --resident --socket bus.sock --config onemessagebus.yaml &

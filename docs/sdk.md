@@ -8,10 +8,6 @@ reaches over IPC: a one-shot verb spawns the binary, and subscriptions and hot
 paths speak to a resident core over a unix socket. Dispatch, validation, storage
 and delivery stay the core's, whichever language a message type was declared in.
 
-`docs/cli.md` is the account of the verbs themselves, `docs/sdk-parity.md` the
-generated table of which method reaches which verb, and `docs/contract.md`
-(Contracts S and P) the approved contract both packages hold to.
-
 ## One client, one method per capability
 
 Every capability of the binary — `onemessagebus::CAPABILITIES` — is exactly one

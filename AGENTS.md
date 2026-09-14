@@ -107,6 +107,8 @@ rationale; the mechanics live in the files named. -->
   and `docs/sdk-parity.md`'s drift check, a project of its own because it reads
   both SDKs and the manifest), `onemessagebus-sdk-install-e2e` (both SDKs packed,
   installed beside the binary the way a user installs them, and smoke-tested),
+  `onemessagebus-cross-language-e2e` (the journey across Rust, Python and
+  TypeScript, apart from the Rust journeys with edges to both SDKs),
   and the root `workspace` project (the
   coverage floor and the supply-chain check). The binary is its own `publish = false` crate because
   it links the agent profile so `--profile` defaults to it, and the profile
@@ -164,9 +166,6 @@ you:
   package's lint fails on a stale one, and `just sdk-coverage` fails on a
   capability with no client method or a method with no capability. A new verb
   is a capability, then a method in both clients, then `just parity-audit`.
-- **A resident core is stopped by removing its socket**, which ends it with a
-  normal exit. A journey or SDK test that kills one instead loses its coverage
-  profile, and leaves a stale socket for the next start to take over.
 - **Affected selection fails closed** (`scripts/nx-affected.sh`): with no
   derivable merge base it runs everything, because a speed optimisation that
   can silently skip a check is a correctness hole.

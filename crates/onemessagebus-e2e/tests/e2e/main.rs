@@ -14,6 +14,9 @@ mod queues;
 // The resident core listens on a unix socket, which only a unix build has.
 #[cfg(unix)]
 mod resident;
+// Where there is no unix socket, the resident core is refused by name.
+#[cfg(not(unix))]
+mod resident_unavailable;
 mod rich;
 mod schema;
 mod serve;

@@ -145,6 +145,36 @@ struct ServeArgs {
     bus: BusArgs,
 }
 
+/// The two things `serve` runs, as its arguments name them.
+enum ServeMode<'a> {
+    /// A codec session over a queue.
+    Codec {
+        /// The queue, as given.
+        queue: &'a str,
+        /// The codec's name, as given.
+        codec: &'a str,
+    },
+    /// The resident core, on a unix socket.
+    Resident(&'a Path),
+}
+
+impl ServeArgs {
+    /// The mode these arguments name, or `None` for a combination that names
+    /// neither whole — which clap refuses before a `ServeArgs` exists.
+    fn mode(&self) -> Option<ServeMode<'_>> {
+        match (
+            self.resident,
+            self.socket.as_deref(),
+            self.queue.as_deref(),
+            self.codec.as_deref(),
+        ) {
+            (true, Some(socket), None, None) => Some(ServeMode::Resident(socket)),
+            (false, None, Some(queue), Some(codec)) => Some(ServeMode::Codec { queue, codec }),
+            _ => None,
+        }
+    }
+}
+
 /// What `validate` takes.
 #[derive(Debug, Args)]
 struct ValidateArgs {
@@ -1621,16 +1651,18 @@ fn transports(format: OutputFormat, out: &mut impl std::io::Write) -> Result<(),
 }
 
 fn serve(args: ServeArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {
-    // clap takes `--resident` only beside `--socket`.
-    if let (true, Some(socket)) = (args.resident, args.socket.as_deref()) {
-        return resident_core(socket, &args);
-    }
-    // clap requires both unless `--resident` is given.
-    let queue = parse_queue(args.queue.as_deref().unwrap_or_default())?;
-    let name: CodecName = args
-        .codec
-        .as_deref()
-        .unwrap_or_default()
+    let (queue, codec) = match args.mode() {
+        Some(ServeMode::Resident(socket)) => return resident_core(socket, &args),
+        Some(ServeMode::Codec { queue, codec }) => (queue, codec),
+        None => {
+            return Err(invalid(
+                "serve: name a queue and --codec for a codec session, or --resident --socket \
+                 <path> for the resident core",
+            ))
+        }
+    };
+    let queue = parse_queue(queue)?;
+    let name: CodecName = codec
         .parse()
         .map_err(|failure| invalid(format!("--codec: {failure}")))?;
     if !CODECS.contains(&name) {

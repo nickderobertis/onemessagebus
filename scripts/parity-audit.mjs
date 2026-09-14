@@ -107,6 +107,9 @@ function main() {
     );
   } catch (error) {
     console.error(`parity-audit: ${error.message}`);
+    console.error(
+      `  fix: restore the client the message names (${CLIENTS.typescript} or ${CLIENTS.python}), then rerun \`just parity-audit\``,
+    );
     process.exit(1);
   }
   const path = resolve(ROOT, OUTPUT);

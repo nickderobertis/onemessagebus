@@ -27,3 +27,11 @@ run over one implementation, so change the transport there and nowhere else.
 `tests/e2e/onepipeline.rs` is the one journey that is not offline: the 0.28.2
 release's own reader is the only authority on the channel layout, so it needs
 `uv` and, once, the network. Its failure is a layout disagreement, not a flake.
+
+## The resident core
+
+A resident core a journey starts is stopped by removing its socket, which ends
+it with a normal exit. Killing one instead loses its coverage profile — the
+resident's lines then count as missed — and leaves a stale socket for the next
+start to take over. The one journey that kills a resident does so to make that
+stale socket.

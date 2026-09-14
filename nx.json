@@ -28,7 +28,7 @@
       "type:contract": [],
       "type:profile": ["type:contract"],
       "type:app": ["type:contract", "type:profile"],
-      "type:e2e": ["type:contract", "type:profile", "type:app", "type:packaging"],
+      "type:e2e": ["type:contract", "type:profile", "type:app", "type:packaging", "type:parity"],
       "type:packaging": ["type:app"],
       "type:parity": ["type:contract", "type:app", "type:packaging"],
       "type:repo": [],
@@ -41,6 +41,7 @@
     "format-check": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
     "lint": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
     "doc": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
+    "typecheck": { "cache": true },
     "build": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
     "test": {
       "cache": false,
@@ -49,7 +50,7 @@
     },
     "check": {
       "cache": false,
-      "dependsOn": ["format-check", "lint", "test", "doc"]
+      "dependsOn": ["format-check", "lint", "typecheck", "test", "doc"]
     }
   }
 }

@@ -65,7 +65,7 @@ _ensure-tool tool:
 # The tiers run in fail-fast order as dependencies, each fanned across every
 # project by Nx, then the aggregate coverage floor over every project's run.
 # Deterministic quality gate, every project.
-check: fmt-check lint test doc coverage
+check: fmt-check lint typecheck test doc coverage
     @echo "check: ok"
 
 # The complete pre-push bar: the deterministic gate plus the LLM-judge tier scoped
@@ -82,7 +82,7 @@ gate base="origin/main": check (lint-llm-diff base)
 # with no derivable merge base it runs everything.
 # Deterministic quality gate, affected projects only.
 check-affected:
-    @bash scripts/nx-affected.sh -t format-check lint doc build
+    @bash scripts/nx-affected.sh -t format-check lint typecheck doc build
     @rm -f {{profraw-root}}/*.profraw
     @if [ "$(just affected-crate)" = "true" ]; then bash scripts/nx run workspace:coverage; \
       else bash scripts/nx-affected.sh -t test; fi
@@ -118,6 +118,11 @@ format:
 # Lint every project with its own linter; any warning is an error.
 lint:
     @bash scripts/nx run-many -t lint
+
+# Every project with a type checker of its own beside its compiler: ty and tsc.
+# Type-check every project that has one.
+typecheck:
+    @bash scripts/nx run-many -t typecheck
 
 # Every project's test suite, each writing its coverage profile for `coverage`.
 test:
@@ -169,7 +174,7 @@ _crate-test crate:
 # was built from, then the journey crate's tests over it.
 _e2e-test:
     @cargo llvm-cov --no-report run -p onemessagebus-cli --bin onemessagebus --locked -- --version >/dev/null
-    @cargo llvm-cov --no-report nextest -p onemessagebus-e2e --locked --status-level fail --final-status-level fail \
+    @cargo llvm-cov --no-report nextest -p onemessagebus-e2e --locked -E 'not binary(cross_language)' --status-level fail --final-status-level fail \
       || { echo "onemessagebus-e2e: journeys failed — fix the failures named above" >&2; exit 1; }
 
 # Pinned to the maturin CI's `wheel` job builds with, so a wheel that builds here
@@ -230,6 +235,8 @@ _sdk-install-test:
     bun install --cwd npm/onemessagebus-sdk --frozen-lockfile >/dev/null \
       || fail "the Node SDK's dependencies did not install — run 'just sdk-check' to see why"
     bun run --cwd npm/onemessagebus-sdk build >/dev/null || fail "the Node SDK did not build — run 'just sdk-check'"
+    bun run --cwd npm/onemessagebus-sdk test:package \
+      || fail "the Node SDK's packed tarball did not install and run — its output is above"
     sdk="$(node npm/onemessagebus-sdk/scripts/pack.mjs | tail -n1)" \
       || fail "the Node SDK did not pack — run 'node npm/onemessagebus-sdk/scripts/pack.mjs' to see why"
     for dir in "$platform" "$launcher" "$sdk"; do
@@ -242,6 +249,14 @@ _sdk-install-test:
     cp "$root/sdk-install/smoke.mjs" "$work/app/smoke.mjs"
     (cd "$work/app" && node smoke.mjs "$version") \
       || fail "the installed Node SDK failed its smoke run — its output is above"
+
+# The cross-language journey, apart from the Rust journeys because it also runs
+# uv, Python, bun and both SDKs: the binary built instrumented, then only
+# crates/onemessagebus-e2e/tests/cross_language.rs over it.
+_cross-language-test:
+    @cargo llvm-cov --no-report run -p onemessagebus-cli --bin onemessagebus --locked -- --version >/dev/null
+    @cargo llvm-cov --no-report nextest -p onemessagebus-e2e --locked --test cross_language --status-level fail --final-status-level fail \
+      || { echo "onemessagebus-cross-language-e2e: the journey failed — fix the failures named above (it needs uv and bun on PATH, and both SDKs bootstrapped)" >&2; exit 1; }
 
 # The aggregate report over every project's profiles, enforced once. The
 # conformance table is test support published for profile crates, exercised by

@@ -114,6 +114,9 @@ function main() {
     found = disagreements(capabilities, { typescript, python });
   } catch (error) {
     console.error(`sdk-coverage: ${error.message}`);
+    console.error(
+      `  fix: name client files that exist and declare the client (the defaults are ${CLIENTS.typescript} and ${CLIENTS.python}), then rerun \`just sdk-coverage\``,
+    );
     process.exit(1);
   }
   if (found.length > 0) {
