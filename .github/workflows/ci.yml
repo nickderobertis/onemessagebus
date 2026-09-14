@@ -256,6 +256,9 @@ jobs:
         with:
           bun-version-file: .bun-version
       - name: Pack, install and smoke-test both SDKs
+        # A release-plz PR's gate runs `just check`, which already ran this journey
+        # on Ubuntu for the same commit; only the macOS leg is new there.
+        if: matrix.os != 'ubuntu-latest' || !startsWith(github.head_ref, 'release-plz-')
         run: just nx run onemessagebus-sdk-install-e2e:test
   # llmlint: ignore-end[live_tier_compiles_and_requires_credential, external_service_suite_stays_out_of_the_affected_tier]
 

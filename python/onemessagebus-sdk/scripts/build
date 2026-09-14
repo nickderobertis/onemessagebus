@@ -1,27 +1,53 @@
 #!/usr/bin/env bash
-# Build the publishable package and prove it installs: pack a copy with every
-# placeholder version stamped from Cargo.toml, build its sdist and wheel with uv
-# into dist/packages, install the wheel into a fresh virtualenv beside pydantic
-# (the onemessagebus-cli pin is the release's, installed by a user's resolver), and
-# import it. Quiet on success but for one line.
+# Build the publishable package and prove it installs: `just python-sdk-dist` packs a
+# copy with every placeholder version stamped from Cargo.toml and builds its sdist
+# and wheel into dist/packages; the wheel is installed into a fresh virtualenv beside
+# pydantic (the onemessagebus-cli pin is the release's, installed by a user's
+# resolver) and imported. Quiet on success but for one line.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
 unset VIRTUAL_ENV
-packed="$(uv run --quiet --no-project python scripts/pack.py | tail -n1)"
 rm -rf "$here/dist/packages" "$here/dist/smoke-venv"
-uv build --quiet --out-dir "$here/dist/packages" "$packed"
+just python-sdk-dist "$here/dist/packages"
 wheel="$(ls "$here"/dist/packages/onemessagebus-*.whl)"
 uv venv --quiet "$here/dist/smoke-venv"
 uv pip install --quiet --python "$here/dist/smoke-venv/bin/python" --no-deps "$wheel"
 uv pip install --quiet --python "$here/dist/smoke-venv/bin/python" "pydantic>=2.7,<3"
 "$here/dist/smoke-venv/bin/python" - <<'EOF'
+import json
+import sys
+from pathlib import Path
+
 import onemessagebus
 from onemessagebus import models
 from onemessagebus._manifest import CAPABILITIES
 
-assert onemessagebus.__version__ == onemessagebus.CLI_VERSION != "0.0.0.dev0", onemessagebus.__version__
-assert len(CAPABILITIES) == 17, "the wheel carries the capability manifest"
-assert models.PlannerSurface.__name__ == "Surface"
-print(f"build: onemessagebus {onemessagebus.__version__} wheel installs and imports")
+
+def refuse(problem: str, action: str) -> None:
+    sys.exit(f"build: {problem}\n  fix: {action}")
+
+
+stamped = onemessagebus.__version__
+if stamped != onemessagebus.CLI_VERSION or stamped == "0.0.0.dev0":
+    refuse(
+        f"the wheel's __version__ is {stamped} and its CLI_VERSION {onemessagebus.CLI_VERSION}, "
+        "not one stamped version",
+        "run `uv run --no-project python scripts/pack.py` and restore the placeholder it names",
+    )
+generated = Path("src/onemessagebus/_generated/capabilities.json").read_text(encoding="utf-8")
+checkout = {entry["method"] for entry in json.loads(generated)}
+if set(CAPABILITIES) != checkout:
+    refuse(
+        "the wheel's capability manifest and the checkout's differ by "
+        f"{sorted(set(CAPABILITIES) ^ checkout)}",
+        "run `just python-sdk-generate`, then build again",
+    )
+if models.PlannerSurface.__name__ != "Surface":
+    refuse(
+        f"the wheel's models.PlannerSurface is {models.PlannerSurface.__name__}, "
+        "not the generated Surface model",
+        "run `just python-sdk-generate`, then build again",
+    )
+print(f"build: onemessagebus {stamped} wheel installs and imports")
 EOF
