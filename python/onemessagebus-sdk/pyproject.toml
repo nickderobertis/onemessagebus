@@ -1,0 +1,93 @@
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
+
+[project]
+name = "onemessagebus"
+version = "0.0.0.dev0"
+description = "Typed async Python SDK for the onemessagebus message bus"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Nick DeRobertis" }]
+keywords = ["ndjson", "events", "message-bus", "queue", "schema"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+# The onemessagebus-cli pin is a placeholder version: scripts/pack.py stamps the
+# workspace version into a publishable copy, so the SDK and the binary it drives
+# always release as one version.
+dependencies = ["pydantic>=2.7,<3", "onemessagebus-cli==0.0.0.dev0"]
+
+[project.urls]
+Homepage = "https://github.com/nickderobertis/onemessagebus"
+Repository = "https://github.com/nickderobertis/onemessagebus"
+
+[tool.uv.build-backend]
+module-name = "onemessagebus"
+module-root = "src"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "ASYNC", "S", "RUF", "SIM", "PT"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/**" = [
+    "S603", # The generator and the packer run cargo, ruff and uv with fixed argument vectors.
+    "S607", # Those tools are resolved from the pinned toolchain on PATH.
+]
+"src/onemessagebus/_transport.py" = [
+    "S603", # Spawning the onemessagebus binary with a manifest-rendered argv is the transport's job.
+]
+"tests/**" = [
+    "S101", # Assertions are the test contract.
+    "S603", # The tests drive the real binary and the package scripts as subprocesses.
+    "S607", # cargo and uv are resolved from the pinned toolchain on PATH.
+]
+
+[tool.ty.environment]
+python-version = "3.10"
+
+[[tool.ty.overrides]]
+include = ["src/onemessagebus/_generated/**"]
+
+[tool.ty.overrides.rules]
+# datamodel-code-generator writes a schema's default as its raw JSON value (`{}`
+# for a model-typed `labels`) beside `validate_default=True`, which Pydantic turns
+# into the model at class creation and ty cannot follow; and it spells a
+# `propertyNames` pattern as a `constr(...)` dict key, a call in a type
+# expression. Both are the generator's rendering of the Rust bundle, and the
+# models are exercised by the suite; any other rule stays an error here.
+invalid-assignment = "ignore"
+invalid-type-form = "ignore"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+asyncio_default_test_loop_scope = "function"
+filterwarnings = ["error"]
+pythonpath = ["src", "."]
+
+[tool.coverage.run]
+source_pkgs = ["onemessagebus"]
+# The generated models are the Rust contract restated by datamodel-code-generator;
+# what they cover is the bundle's business, and `generate.py --check` holds them.
+omit = ["*/onemessagebus/_generated/*"]
+
+[tool.coverage.report]
+fail_under = 95
+show_missing = true
+skip_covered = true

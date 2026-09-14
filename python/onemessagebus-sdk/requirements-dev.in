@@ -1,0 +1,13 @@
+# The development environment, compiled to requirements-dev.txt by
+#   bash python/onemessagebus-sdk/scripts/lock
+# The package's own runtime dependency on onemessagebus-cli is a placeholder no
+# index serves, so the package is never installed here: the tools run with
+# `src/` on the path (scripts/run) and drive target/debug/onemessagebus.
+pydantic>=2.7,<3
+coverage==7.16.1
+datamodel-code-generator==0.81.0
+pytest==9.1.1
+pytest-asyncio==1.4.0
+ruff==0.16.7
+ty==0.0.80
+uv-build>=0.11,<0.12

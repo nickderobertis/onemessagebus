@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Run one development command in the package's pinned environment, from any
+# directory: `bash python/onemessagebus-sdk/scripts/run pytest`.
+#
+# The environment is the package's own .venv, synced to requirements-dev.txt on
+# every run (a no-op when nothing moved) over the Python .python-version names,
+# with `src/` on the path rather than the package installed: its
+# onemessagebus-cli dependency is a placeholder until scripts/pack.py stamps it,
+# so no resolver can install it here. A real virtualenv rather than a uv overlay,
+# because ty reads the site-packages of the environment it finds and follows no
+# overlay. An activated virtualenv of the caller's is ignored.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if ! command -v uv >/dev/null 2>&1; then
+  echo "onemessagebus-sdk: uv is not on PATH; install it (https://docs.astral.sh/uv/) and re-run" >&2
+  exit 1
+fi
+cd "$here"
+unset VIRTUAL_ENV
+if [ ! -x .venv/bin/python ]; then
+  uv venv --quiet .venv
+fi
+uv pip sync --quiet --python .venv/bin/python requirements-dev.txt
+export VIRTUAL_ENV="$here/.venv"
+export PATH="$here/.venv/bin:$PATH"
+export PYTHONPATH="$here/src${PYTHONPATH:+:$PYTHONPATH}"
+exec "$@"
