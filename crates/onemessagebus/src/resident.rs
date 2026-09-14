@@ -19,6 +19,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::capability::{Capability, CAPABILITIES};
 use crate::schema::{Message, SchemaId};
 
 /// The id the resident protocol's document is registered under.
@@ -51,9 +52,8 @@ impl Message for ResidentLine {
 pub struct ResidentRequest {
     /// Chosen by the client and echoed on every line answering this request.
     pub id: u64,
-    /// The capability's SDK method, camelCase, as the manifest names it.
-    // llmlint: ignore[invalid_states_unrepresentable] the verb set is the capability manifest, which is data the resident reads at run time and the SDKs generate from; a closed Rust enum here would be a second list of the same methods for the manifest to drift from, and the resident refuses a method the manifest does not name by name, listing the ones it does.
-    pub verb: String,
+    /// The capability to run, by its SDK method: one of the manifest's and no other.
+    pub verb: ResidentVerb,
     /// The capability's options, keyed as its options root keys them (camelCase).
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub args: Map<String, Value>,
@@ -61,6 +61,84 @@ pub struct ResidentRequest {
     /// message or a codec's frames.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<String>,
+}
+
+/// A capability a request runs, named by its SDK method: one of
+/// [`CAPABILITIES`] and no other, so the verb set of the resident core is the
+/// manifest's, and a method the manifest does not name is refused where the line
+/// is read, naming the methods it does.
+#[derive(Debug, Clone, Copy)]
+pub struct ResidentVerb(&'static Capability);
+
+impl ResidentVerb {
+    /// The capability whose SDK method is `method`, if the manifest has one.
+    #[must_use]
+    pub fn named(method: &str) -> Option<Self> {
+        CAPABILITIES
+            .iter()
+            .find(|capability| capability.method == method)
+            .map(Self)
+    }
+
+    /// The capability.
+    #[must_use]
+    pub const fn capability(self) -> &'static Capability {
+        self.0
+    }
+
+    /// Its SDK method, camelCase.
+    #[must_use]
+    pub const fn method(self) -> &'static str {
+        self.0.method
+    }
+}
+
+impl PartialEq for ResidentVerb {
+    fn eq(&self, other: &Self) -> bool {
+        self.method() == other.method()
+    }
+}
+
+impl Eq for ResidentVerb {}
+
+impl Serialize for ResidentVerb {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.method())
+    }
+}
+
+impl<'de> Deserialize<'de> for ResidentVerb {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let method = String::deserialize(deserializer)?;
+        Self::named(&method).ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "`{method}` is not a verb of the resident core; it answers each capability's method: {}",
+                CAPABILITIES
+                    .iter()
+                    .map(|capability| capability.method)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        })
+    }
+}
+
+impl JsonSchema for ResidentVerb {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("ResidentVerb")
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let methods: Vec<&str> = CAPABILITIES
+            .iter()
+            .map(|capability| capability.method)
+            .collect();
+        schemars::json_schema!({
+            "type": "string",
+            "enum": methods,
+            "description": "A capability's SDK method, camelCase, as the capability manifest names it."
+        })
+    }
 }
 
 /// Stop the streaming request `id` names.

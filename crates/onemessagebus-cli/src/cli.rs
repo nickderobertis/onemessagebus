@@ -595,6 +595,7 @@ fn dispatch(cli: Cli, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refu
 /// streaming verb has been asked to stop.
 struct Io {
     input: Input,
+    #[cfg(unix)]
     held: Option<Arc<Held>>,
     cancel: Option<Arc<AtomicBool>>,
 }
@@ -604,27 +605,15 @@ enum Input {
     /// This process's own stdin.
     Process,
     /// The bytes a resident request carried as its `input`; nothing when it
-    /// carried none.
-    #[cfg_attr(
-        not(unix),
-        allow(
-            dead_code,
-            reason = "only the resident core, a unix build's, hands a verb its input"
-        )
-    )]
+    /// carried none. Only the resident core, a unix build's, hands one over.
+    #[cfg(unix)]
     Given(Option<String>),
 }
 
 /// What a resident core holds for the requests that name no configuration,
 /// transport directory or registry of their own: its own, and the transport it
 /// opened from them.
-#[cfg_attr(
-    not(unix),
-    allow(
-        dead_code,
-        reason = "only the resident core, a unix build's, holds a transport"
-    )
-)]
+#[cfg(unix)]
 struct Held {
     config: Option<PathBuf>,
     transport_dir: Option<PathBuf>,
@@ -637,6 +626,7 @@ impl Io {
     const fn process() -> Self {
         Self {
             input: Input::Process,
+            #[cfg(unix)]
             held: None,
             cancel: None,
         }
@@ -654,8 +644,31 @@ impl Io {
                     })?;
                 Ok(text)
             }
+            #[cfg(unix)]
             Input::Given(text) => Ok(text.clone().unwrap_or_default()),
         }
+    }
+
+    /// The configuration and transport a resident core holds open, when the verb
+    /// names the configuration and transport directory it was started with.
+    #[cfg(unix)]
+    fn held_transport(
+        &self,
+        args: &BusArgs,
+    ) -> Option<(Config, Arc<dyn onemessagebus::Transport>)> {
+        let held = self.held.as_ref()?;
+        let (config, transport) = held.bound.as_ref()?;
+        (held.config == args.config && held.transport_dir == args.transport_dir)
+            .then(|| (config.clone(), Arc::clone(transport)))
+    }
+
+    /// No transport is held where no resident core runs.
+    #[cfg(not(unix))]
+    fn held_transport(
+        &self,
+        _args: &BusArgs,
+    ) -> Option<(Config, Arc<dyn onemessagebus::Transport>)> {
+        None
     }
 
     /// Whether a streaming verb has been asked to stop.
@@ -867,6 +880,7 @@ fn message_text(args: &DeliverArgs, io: &Io) -> Result<String, Refusal> {
 /// whitespace.
 fn piped_stdin(io: &Io) -> Result<Option<String>, Refusal> {
     let text = match &io.input {
+        #[cfg(unix)]
         Input::Given(text) => text.clone().unwrap_or_default(),
         Input::Process => {
             let stdin = std::io::stdin();
@@ -1147,12 +1161,8 @@ fn configured(
     args: &BusArgs,
     io: &Io,
 ) -> Result<(Config, Option<Arc<dyn onemessagebus::Transport>>), Refusal> {
-    if let Some(held) = &io.held {
-        if let Some((config, transport)) = &held.bound {
-            if held.config == args.config && held.transport_dir == args.transport_dir {
-                return Ok((config.clone(), Some(Arc::clone(transport))));
-            }
-        }
+    if let Some((config, transport)) = io.held_transport(args) {
+        return Ok((config, Some(transport)));
     }
     Ok((configuration(args)?, None))
 }
@@ -1611,8 +1621,9 @@ fn transports(format: OutputFormat, out: &mut impl std::io::Write) -> Result<(),
 }
 
 fn serve(args: ServeArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {
-    if args.resident {
-        return resident_core(&args);
+    // clap takes `--resident` only beside `--socket`.
+    if let (true, Some(socket)) = (args.resident, args.socket.as_deref()) {
+        return resident_core(socket, &args);
     }
     // clap requires both unless `--resident` is given.
     let queue = parse_queue(args.queue.as_deref().unwrap_or_default())?;
@@ -1715,6 +1726,7 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), 
         )?)),
         None => match &io.input {
             Input::Process => Box::new(std::io::BufReader::new(std::io::stdin())),
+            #[cfg(unix)]
             Input::Given(frames) => Box::new(std::io::Cursor::new(
                 frames.clone().unwrap_or_default().into_bytes(),
             )),
@@ -1753,13 +1765,13 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), 
 
 /// `serve --resident`, where there is a unix socket to listen on.
 #[cfg(unix)]
-fn resident_core(args: &ServeArgs) -> Result<(), Refusal> {
-    resident::serve(args)
+fn resident_core(socket: &Path, args: &ServeArgs) -> Result<(), Refusal> {
+    resident::serve(socket, args)
 }
 
 /// `serve --resident`, refused where there is no unix socket to listen on.
 #[cfg(not(unix))]
-fn resident_core(_: &ServeArgs) -> Result<(), Refusal> {
+fn resident_core(_: &Path, _: &ServeArgs) -> Result<(), Refusal> {
     Err(invalid(
         "serve --resident listens on a unix socket, which this platform does not have; run \
          each verb as its own invocation instead",

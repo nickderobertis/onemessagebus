@@ -605,7 +605,9 @@ fn a_line_the_protocol_does_not_admit_is_refused_by_name_and_the_connection_goes
     assert!(refused(&client.read(), 2).contains("a cancel line's `cancel` is `true`"));
 
     let unknown = client.call(4, "publish", json!({}), None);
-    assert!(refused(&unknown, 2).starts_with("`publish` is not a verb of the resident core"));
+    assert!(refused(&unknown, 2).starts_with(
+        "the line is not a request of bus.resident-protocol@1: `publish` is not a verb of the resident core; it answers each capability's method: schemaList, "
+    ));
 
     let option = client.call(5, "status", json!({"queues": "greetings"}), None);
     assert!(refused(&option, 2).starts_with("`queues` is not an option of status"));
@@ -826,4 +828,235 @@ fn schema_gen_prints_the_protocol_under_its_id_and_refuses_a_bare_word() {
     );
     assert_eq!(bare.code, 2);
     assert!(bare.stderr.contains("resident-protocol"), "{}", bare.stderr);
+}
+
+/// Wait until something accepts on `socket`.
+fn listening(socket: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while UnixStream::connect(socket).is_err() {
+        assert!(
+            Instant::now() < deadline,
+            "nothing listened on {}",
+            socket.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// The transport a resident opens is the one every request runs over: a memory
+/// transport keeps between two requests what a transport opened again for each
+/// would have forgotten, and a one-shot verb over the same configuration opens a
+/// transport of its own that holds none of it.
+#[test]
+fn a_resident_holds_the_transport_it_opened_across_requests() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let config = dir.path().join("memory.yaml");
+    std::fs::write(
+        &config,
+        "version: 1\ntransport: {kind: memory}\nqueues:\n  notes: {}\n",
+    )
+    .expect("a config");
+    let config = config.to_str().expect("a UTF-8 path").to_owned();
+    let socket = dir.path().join("bus.sock");
+    let mut child = onemessagebus()
+        .args(["serve", "--resident", "--socket"])
+        .arg(&socket)
+        .args(["--config", &config])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the resident spawns");
+    listening(&socket);
+    let mut client = Client::connect(&socket);
+    let sent = client.call(
+        1,
+        "send",
+        json!({"queue": "notes"}),
+        Some(r#"{"text":"kept"}"#),
+    );
+    assert_eq!(ok(&sent)[0]["queue"], json!("notes"), "{sent}");
+    let held = client.call(2, "status", json!({"queue": "notes"}), None);
+    assert_eq!(ok(&held)[0]["records"], json!(1), "{held}");
+    assert_eq!(ok(&held)[0]["waiting"], json!([{"text": "kept"}]), "{held}");
+
+    let one_shot = run_in(
+        dir.path(),
+        &["status", "notes", "--config", &config],
+        None,
+        &[],
+    );
+    assert_eq!(one_shot.code, 0, "{}", one_shot.stderr);
+    let statuses: Vec<Value> = serde_json::from_str(&one_shot.stdout).expect("a JSON list");
+    assert_eq!(statuses[0]["records"], json!(0));
+
+    drop(client);
+    std::fs::remove_file(&socket).expect("the socket is removed");
+    assert_eq!(wait(&mut child, Duration::from_secs(20)), Some(0));
+}
+
+/// A socket path the resident cannot use is refused before it listens, naming
+/// what went wrong: a path beneath a file, a pid it cannot record, a directory it
+/// may not bind in, and a stale socket it may not remove.
+#[test]
+fn a_resident_refuses_a_socket_path_it_cannot_inspect_bind_or_record_a_pid_beside() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let scratch = Scratch::new();
+    let said = |socket: &Path| {
+        let output = resident_command(&scratch, socket)
+            .output()
+            .expect("the resident runs");
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    let file = scratch.path("plain");
+    std::fs::write(&file, "").expect("a file");
+    let (code, stderr) = said(&file.join("bus.sock"));
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains("serve --resident: cannot inspect"),
+        "{stderr}"
+    );
+
+    std::fs::create_dir(scratch.path("pidless.sock.pid")).expect("a directory where the pid goes");
+    let (code, stderr) = said(&scratch.path("pidless.sock"));
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("cannot record this resident's pid in"),
+        "{stderr}"
+    );
+
+    // A resident killed where it stood leaves its socket behind in a directory
+    // that is then closed to writing.
+    let locked = scratch.path("locked");
+    std::fs::create_dir(&locked).expect("a directory");
+    let stale = locked.join("bus.sock");
+    let mut killed = resident_command(&scratch, &stale)
+        .spawn()
+        .expect("the resident spawns");
+    listening(&stale);
+    killed
+        .kill()
+        .expect("this journey's own resident is killed");
+    killed.wait().expect("it ends");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555))
+        .expect("the directory is closed to writing");
+    let stale_refused = said(&stale);
+    let fresh_refused = said(&locked.join("fresh.sock"));
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755))
+        .expect("the directory is opened again");
+
+    let (code, stderr) = stale_refused;
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("serve --resident: cannot remove the stale socket"),
+        "{stderr}"
+    );
+    let (code, stderr) = fresh_refused;
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains("serve --resident: cannot listen on"),
+        "{stderr}"
+    );
+}
+
+/// A live resident is refused as live even when its pid file is gone, saying the
+/// pid is not recorded rather than guessing one.
+#[test]
+fn a_live_resident_whose_pid_file_is_gone_is_still_refused_as_live() {
+    let scratch = Scratch::new();
+    let first = Resident::start(&scratch);
+    let recorded = scratch.path("bus.sock.pid");
+    std::fs::remove_file(&recorded).expect("the pid file is removed");
+    let second = resident_command(&scratch, &scratch.socket())
+        .output()
+        .expect("the second resident runs");
+    assert_eq!(second.status.code(), Some(1));
+    let said = String::from_utf8_lossy(&second.stderr);
+    assert!(
+        said.contains(&format!(
+            "is held by a live resident whose pid {} does not record",
+            recorded.display()
+        )),
+        "{said}"
+    );
+    first.stop();
+}
+
+/// One connection's lines: a blank one is nothing, a second request under an id
+/// still running is refused, a switch and a boolean reach the verb as its flags
+/// take them, and a line that is not UTF-8 ends the connection — cancelling what
+/// it left running — while the core goes on accepting others.
+#[test]
+fn a_connection_refuses_a_running_id_and_ends_on_a_line_that_is_not_text() {
+    use std::io::Read as _;
+    let scratch = Scratch::new();
+    let resident = Resident::start(&scratch);
+    let mut client = resident.client();
+    client.write("");
+    // The configuration names demo.greeting@1, and a bus over it opens only once
+    // the schema is registered.
+    ok(&client.call(
+        9,
+        "schemaRegister",
+        json!({"id": "demo.greeting@1", "file": scratch.text("greeting.json")}),
+        None,
+    ));
+    client.write(
+        &json!({"id": 5, "verb": "subscribe", "args": {"queue": "commands", "until": r#"{"field":"never","present":true}"#}})
+            .to_string(),
+    );
+    let duplicate = client.call(5, "transports", json!({}), None);
+    assert_eq!(
+        refused(&duplicate, 2),
+        "request 5 is still running on this connection; give each request an id of its own"
+    );
+
+    let question =
+        json!({"kind": "finding", "message": "anyone?", "source": "proposal", "blocking": false});
+    for (id, blocking) in [(6, false), (7, true)] {
+        let asked = client.call(
+            id,
+            "ask",
+            json!({"queue": "surfaces", "blocking": blocking, "timeout": 1}),
+            Some(&question.to_string()),
+        );
+        refused(&asked, 1);
+        assert_eq!(
+            asked["error"]["output"]["answer"],
+            json!("timeout"),
+            "{asked}"
+        );
+    }
+    let boolean = client.call(
+        8,
+        "deliver",
+        json!({"address": "spool", "wait": true}),
+        None,
+    );
+    assert!(
+        refused(&boolean, 2).contains("invalid value 'true' for '--wait"),
+        "{boolean}"
+    );
+
+    client
+        .writer
+        .write_all(b"\xff\xfe\n")
+        .expect("the line is written");
+    let mut rest = String::new();
+    client
+        .reader
+        .read_to_string(&mut rest)
+        .expect("the resident closes the connection");
+    // The subscription the connection left running is cancelled, and its answer
+    // is the last thing written before the connection closes.
+    assert_eq!(rest.trim(), r#"{"id":5,"ok":"cancelled"}"#);
+
+    let mut again = resident.client();
+    ok(&again.call(1, "transports", json!({}), None));
+    drop((client, again));
+    resident.stop();
 }

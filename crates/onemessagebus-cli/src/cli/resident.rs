@@ -28,7 +28,7 @@ use onemessagebus::resident::{
     ResidentAnswer, ResidentCancel, ResidentEvent, ResidentExit, ResidentFailure, ResidentLine,
     ResidentRefusal, ResidentRequest,
 };
-use onemessagebus::{Capability, FlagKind, StdoutShape, TransportKinds, CAPABILITIES};
+use onemessagebus::{Capability, FlagKind, StdoutShape, TransportKinds};
 use serde_json::{Map, Value};
 
 use super::{
@@ -43,14 +43,8 @@ type Running = Arc<Mutex<BTreeMap<u64, Arc<AtomicBool>>>>;
 /// The write half of one connection, shared by every request running on it.
 type Writer = Arc<Mutex<UnixStream>>;
 
-/// Run the resident core until the process is stopped.
-pub(super) fn serve(args: &ServeArgs) -> Result<(), Refusal> {
-    let Some(socket) = args.socket.as_deref() else {
-        // clap requires `--socket` beside `--resident`.
-        return Err(invalid(
-            "serve --resident: --socket names the unix socket the resident core listens on",
-        ));
-    };
+/// Run the resident core on `socket` until the process is stopped.
+pub(super) fn serve(socket: &Path, args: &ServeArgs) -> Result<(), Refusal> {
     // The configuration and the registry directory are refused here, before the
     // socket is claimed, exactly as a one-shot verb would refuse them.
     let bound = if args.bus.config.is_some() || args.bus.transport_dir.is_some() {
@@ -356,21 +350,7 @@ fn answer(
     cancel: &Arc<AtomicBool>,
 ) -> ResidentLine {
     let id = request.id;
-    let Some(capability) = CAPABILITIES.iter().find(|c| c.method == request.verb) else {
-        return refusal(
-            Some(id),
-            ResidentExit::Invalid,
-            format!(
-                "`{}` is not a verb of the resident core; it answers each capability's method: {}",
-                request.verb,
-                CAPABILITIES
-                    .iter()
-                    .map(|c| c.method)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        );
-    };
+    let capability = request.verb.capability();
     let argv = match argv(capability, &request.args) {
         Ok(argv) => argv,
         Err(why) => return refusal(Some(id), ResidentExit::Invalid, why),
@@ -636,5 +616,77 @@ impl Write for Events {
 
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The argv a manifest binding renders, for the kinds the journeys cannot reach
+    //! through the binary: no capability binds a repeated option today, and the
+    //! renderer is the one every future capability's options go through.
+
+    use std::ffi::OsString;
+
+    use onemessagebus::{Capability, FlagKind, OptionBinding, StdoutShape};
+    use serde_json::{json, Map, Value};
+
+    use super::argv;
+
+    const TAGGED: Capability = Capability {
+        method: "tagged",
+        verb: &["events", "merge"],
+        options: None,
+        stdout: StdoutShape::Text,
+        stdin: false,
+        library_entry: "none",
+        bindings: &[
+            OptionBinding {
+                option: "tags",
+                kind: FlagKind::Repeated("--tag"),
+            },
+            OptionBinding {
+                option: "loud",
+                kind: FlagKind::Switch("--loud"),
+            },
+        ],
+        uncovered: &[],
+    };
+
+    fn args(value: Value) -> Map<String, Value> {
+        value.as_object().cloned().expect("an object")
+    }
+
+    #[test]
+    fn a_repeated_option_renders_its_flag_once_per_element_and_refuses_a_scalar() {
+        let rendered = argv(
+            &TAGGED,
+            &args(json!({"tags": ["a", 2, true], "loud": false})),
+        )
+        .expect("the options render");
+        assert_eq!(
+            rendered,
+            [
+                "onemessagebus",
+                "events",
+                "merge",
+                "--tag",
+                "a",
+                "--tag",
+                "2",
+                "--tag",
+                "true"
+            ]
+            .map(OsString::from)
+        );
+        let loud = argv(&TAGGED, &args(json!({"loud": true}))).expect("the options render");
+        assert_eq!(loud.last(), Some(&OsString::from("--loud")));
+        assert_eq!(
+            argv(&TAGGED, &args(json!({"tags": "a"}))).expect_err("a scalar is no list"),
+            "tagged: `tags` is a list, not a string"
+        );
+        assert_eq!(
+            argv(&TAGGED, &args(json!({"tags": [["a"]]}))).expect_err("a list of lists"),
+            "tagged: `tags` takes a string, a number or a boolean, not an array"
+        );
     }
 }

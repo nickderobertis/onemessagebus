@@ -5,9 +5,9 @@
 
 use onemessagebus::resident::{
     ResidentAnswer, ResidentCancel, ResidentEvent, ResidentExit, ResidentFailure, ResidentLine,
-    ResidentRefusal, ResidentRequest, True, RESIDENT_PROTOCOL,
+    ResidentRefusal, ResidentRequest, ResidentVerb, True, RESIDENT_PROTOCOL,
 };
-use onemessagebus::Registry;
+use onemessagebus::{Registry, CAPABILITIES};
 use serde_json::{json, Value};
 
 fn line(text: &str) -> ResidentLine {
@@ -29,7 +29,7 @@ fn each_line_reads_back_as_the_kind_of_line_it_is_and_writes_the_same_bytes() {
             r#"{"id":1,"verb":"send","args":{"queue":"greetings"},"input":"{\"text\":\"hi\"}"}"#,
             ResidentLine::Request(ResidentRequest {
                 id: 1,
-                verb: "send".to_owned(),
+                verb: ResidentVerb::named("send").expect("a capability"),
                 args: json!({"queue": "greetings"})
                     .as_object()
                     .cloned()
@@ -41,7 +41,7 @@ fn each_line_reads_back_as_the_kind_of_line_it_is_and_writes_the_same_bytes() {
             r#"{"id":2,"verb":"transports"}"#,
             ResidentLine::Request(ResidentRequest {
                 id: 2,
-                verb: "transports".to_owned(),
+                verb: ResidentVerb::named("transports").expect("a capability"),
                 args: serde_json::Map::new(),
                 input: None,
             }),
@@ -143,4 +143,37 @@ fn a_line_no_side_writes_is_refused_by_the_reader_and_the_document_alike() {
         }
     }
     assert_eq!(RESIDENT_PROTOCOL.to_string(), "bus.resident-protocol@1");
+}
+
+/// A request names a capability of the manifest, and a method the manifest does
+/// not name is refused by the reader and the registered document alike, naming
+/// the methods there are.
+#[test]
+fn a_request_names_a_capability_of_the_manifest_and_no_other() {
+    let methods: Vec<&str> = CAPABILITIES.iter().map(|c| c.method).collect();
+    let schema = schemars::schema_for!(ResidentVerb);
+    assert_eq!(schema.as_value()["enum"], json!(methods));
+    for method in &methods {
+        let verb = ResidentVerb::named(method).expect("a capability");
+        assert_eq!(verb.method(), *method);
+        assert_eq!(verb.capability().method, *method);
+        assert_eq!(
+            serde_json::to_value(verb).expect("serializes"),
+            json!(method)
+        );
+    }
+    assert_eq!(ResidentVerb::named("publish"), None);
+    let refused = serde_json::from_str::<ResidentRequest>(r#"{"id":1,"verb":"publish"}"#)
+        .expect_err("publish is no capability")
+        .to_string();
+    assert!(
+        refused.starts_with(&format!(
+            "`publish` is not a verb of the resident core; it answers each capability's method: {}",
+            methods.join(", ")
+        )),
+        "{refused}"
+    );
+    assert!(registry()
+        .check(&RESIDENT_PROTOCOL, &json!({"id": 1, "verb": "publish"}))
+        .is_err());
 }
