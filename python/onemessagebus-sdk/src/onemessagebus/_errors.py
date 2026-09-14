@@ -7,12 +7,17 @@ type and reads the same message a person at the command line would.
 
 from __future__ import annotations
 
+from enum import IntEnum
 from typing import Any
 
-# The code the command line exits with for well-formed input whose answer is no.
-FAILED = 1
-# The code the command line exits with for input it refuses.
-REFUSED = 2
+
+class Exit(IntEnum):
+    """The command line's exit codes a refusal is typed by."""
+
+    # Well-formed input whose answer is no.
+    FAILED = 1
+    # Input the verb refuses.
+    REFUSED = 2
 
 
 class BusError(Exception):
@@ -34,14 +39,14 @@ class BusFailed(BusError):
     """Exit 1: well-formed input whose answer is no."""
 
     def __init__(self, message: str, *, output: Any = None) -> None:
-        super().__init__(message, exit=FAILED, output=output)
+        super().__init__(message, exit=Exit.FAILED, output=output)
 
 
 class BusRefused(BusError):
     """Exit 2: input the verb refuses."""
 
     def __init__(self, message: str, *, output: Any = None) -> None:
-        super().__init__(message, exit=REFUSED, output=output)
+        super().__init__(message, exit=Exit.REFUSED, output=output)
 
 
 class ContractError(BusError):
@@ -63,8 +68,10 @@ class TransportError(BusError):
 
 def refusal(exit: int, message: str, output: Any = None) -> BusError:
     """The typed error for a refusal the binary gave with `exit`."""
-    if exit == FAILED:
-        return BusFailed(message, output=output)
-    if exit == REFUSED:
-        return BusRefused(message, output=output)
-    return BusError(message, exit=exit, output=output)
+    match exit:
+        case Exit.FAILED:
+            return BusFailed(message, output=output)
+        case Exit.REFUSED:
+            return BusRefused(message, output=output)
+        case _:
+            return BusError(message, exit=exit, output=output)

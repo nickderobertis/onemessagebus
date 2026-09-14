@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import signal
 import sys
@@ -27,6 +28,7 @@ from onemessagebus import (
     ContractError,
     ResidentTransport,
     Transport,
+    TransportError,
 )
 from onemessagebus._errors import refusal
 from onemessagebus._manifest import capability
@@ -185,3 +187,34 @@ async def test_a_started_resident_that_outlives_its_socket_and_sigterm_is_killed
     assert resident.returncode == -signal.SIGKILL
     assert not transport.started
     assert not (scratch / "bus.sock").exists()
+
+
+# A resident double that reports the pinned version, records its pid, and never
+# listens — nor exits within any wait this test allows: a start that hangs, as the
+# transport sees one.
+SILENT_RESIDENT = """#!/bin/sh
+if [ "$1" = --version ]; then echo "onemessagebus {version}"; exit 0; fi
+echo $$ > "{pid}"
+exec sleep 600
+"""
+
+
+async def test_a_started_resident_that_never_listens_is_stopped_and_the_wait_named(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    scratch = tmp_path_factory.mktemp("silent")
+    binary = scratch / "onemessagebus"
+    recorded = scratch / "pid"
+    binary.write_text(
+        SILENT_RESIDENT.format(version=pinned_cli_version(), pid=recorded), encoding="utf-8"
+    )
+    binary.chmod(0o755)
+    transport = ResidentTransport(scratch / "bus.sock", start_timeout=0.3, stop_timeout=0.3)
+    async with Client(ClientConfig(binary=binary), transport) as client:
+        # Bounded well inside the double's own life: a transport that waited it out
+        # rather than stopping it would time out here instead of refusing.
+        with pytest.raises(TransportError, match=r"did not listen on .* within 0\.3 seconds"):
+            await asyncio.wait_for(client.transports(), 10)
+        assert not transport.started
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(recorded.read_text(encoding="utf-8")), 0)

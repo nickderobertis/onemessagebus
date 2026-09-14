@@ -284,3 +284,91 @@ describe("who owns a resident", () => {
     }
   }, 60_000);
 });
+
+/** Whether a process is still there; signal 0 delivers nothing. */
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A resident double: it listens on its socket, records its pid beside it as a
+ * resident does, answers every request with an empty list, and ignores both the
+ * removal of its socket and SIGTERM.
+ */
+const STUBBORN_RESIDENT = [
+  'const { writeFileSync } = require("node:fs");',
+  'const { createServer } = require("node:net");',
+  'const { createInterface } = require("node:readline");',
+  'process.on("SIGTERM", () => {});',
+  'const socket = process.argv[process.argv.indexOf("--socket") + 1];',
+  "const server = createServer((connection) => {",
+  '  createInterface({ input: connection }).on("line", (line) => {',
+  '    connection.write(JSON.stringify({ id: JSON.parse(line).id, ok: [] }) + "\\n");',
+  "  });",
+  "});",
+  'server.listen(socket, () => writeFileSync(socket + ".pid", process.pid + "\\n"));',
+  "",
+].join("\n");
+
+describe("a started resident that will not stop", () => {
+  test("one that outlives its socket's removal and SIGTERM is killed when the transport closes", async () => {
+    const dir = scratch("resident-stubborn");
+    const socket = socketPath();
+    const script = join(dir, "resident.cjs");
+    writeFileSync(script, STUBBORN_RESIDENT);
+    // The real binary answers the version check, so the double is the pinned version.
+    const binary = wrapper(
+      join(dir, "onemessagebus"),
+      `if [ "$1" = --version ]; then exec "${BINARY}" --version; fi\nexec node "${script}" "$@"`,
+    );
+    const transport = new ResidentTransport({ socket });
+    const client = new Client({ config: { binary }, transport });
+    let pid: number | undefined;
+    try {
+      expect(await client.transports()).toEqual([]);
+      expect(transport.started).toBe(true);
+      pid = Number.parseInt(await Bun.file(`${socket}.pid`).text(), 10);
+      expect(alive(pid)).toBe(true);
+      await transport.close();
+      expect(alive(pid)).toBe(false);
+      expect(existsSync(socket)).toBe(false);
+    } finally {
+      if (pid !== undefined && alive(pid)) process.kill(pid, "SIGKILL");
+      await transport.close();
+    }
+  }, 60_000);
+
+  test("one that never listens is killed, and the call names the wait it outlasted", async () => {
+    const dir = scratch("resident-silent");
+    const socket = socketPath();
+    const recorded = join(dir, "pid");
+    const binary = wrapper(
+      join(dir, "onemessagebus"),
+      `if [ "$1" = --version ]; then exec "${BINARY}" --version; fi\necho $$ > "${recorded}"\nexec sleep 30`,
+    );
+    const transport = new ResidentTransport({ socket, startTimeout: 300 });
+    const client = new Client({ config: { binary }, transport });
+    let pid: number | undefined;
+    try {
+      const error = await caught(() => client.transports());
+      expect(error).toBeInstanceOf(TransportError);
+      expect(error.message).toContain(
+        `the resident started on ${socket} did not listen within 300ms`,
+      );
+      pid = Number.parseInt(await Bun.file(recorded).text(), 10);
+      for (let tries = 0; alive(pid); tries += 1) {
+        expect(tries).toBeLessThan(200);
+        await sleep(10);
+      }
+      expect(transport.started).toBe(false);
+    } finally {
+      if (pid !== undefined && alive(pid)) process.kill(pid, "SIGKILL");
+      await transport.close();
+    }
+  }, 60_000);
+});

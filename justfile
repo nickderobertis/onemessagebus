@@ -78,14 +78,17 @@ gate base="origin/main": check (lint-llm-diff base)
 # What PR CI runs: the same tiers, scoped to the projects this branch's diff can
 # reach. The coverage floor is over the union of every crate's run, so when the
 # diff reaches a crate at all every test target runs and the floor is enforced;
-# when it reaches none, only the affected non-Rust tests run. Fails closed —
-# with no derivable merge base it runs everything.
+# when it reaches none, only the affected non-Rust tests run. The SDK install
+# journey is never among them: it resolves the SDKs' third-party dependencies from
+# the public registries, so pull requests run it from CI's own `sdk-install` job
+# and `check` sweeps it with everything else. Fails closed — with no derivable
+# merge base it runs everything.
 # Deterministic quality gate, affected projects only.
 check-affected:
     @bash scripts/nx-affected.sh -t format-check lint typecheck doc build
     @rm -f {{profraw-root}}/*.profraw
     @if [ "$(just affected-crate)" = "true" ]; then bash scripts/nx run workspace:coverage; \
-      else bash scripts/nx-affected.sh -t test; fi
+      else bash scripts/nx-affected.sh -t test --exclude=onemessagebus-sdk-install-e2e; fi
     @echo "check-affected: ok"
 
 # `true` when this branch's diff can reach a Rust crate project, so CI can skip
@@ -217,10 +220,7 @@ _sdk-install-test:
     mkdir -p "$work/wheels" "$work/npm" "$work/tarballs" "$work/app"
     cp dist/wheels/*.whl "$work/wheels/" 2>/dev/null \
       || fail "no binary wheel in dist/wheels — run 'just nx run onemessagebus-pypi:build' first"
-    pack="$(uv run --no-project python python/onemessagebus-sdk/scripts/pack.py | tail -n1)" \
-      || fail "the Python SDK did not pack — run 'uv run --no-project python python/onemessagebus-sdk/scripts/pack.py' to see why"
-    uv build --quiet --wheel --out-dir "$work/wheels" "$pack" \
-      || fail "the packed Python SDK at $pack did not build — the uv output above says why"
+    just python-sdk-dist "$work/wheels" || fail "the Python SDK did not build — its output is above"
     uv venv --quiet "$work/venv" || fail "cannot create a virtualenv — install uv (https://docs.astral.sh/uv/)"
     # The binary's wheel by path first, so the index's release of the same version
     # cannot stand in for this revision's; then the SDK, which pins it exactly.
@@ -234,12 +234,10 @@ _sdk-install-test:
     target="$(rustc -vV | sed -n 's/^host: //p')"
     platform="$(node scripts/npm-build.mjs platform --target "$target" --binary target/release/onemessagebus --out "$work/npm")"
     launcher="$(node scripts/npm-build.mjs launcher --out "$work/npm")"
-    bun run --cwd npm/onemessagebus-sdk build >/dev/null || fail "the Node SDK did not build — run 'just sdk-check'"
+    just node-sdk-dist "$work/tarballs" || fail "the Node SDK did not build — its output is above"
     bun run --cwd npm/onemessagebus-sdk test:package \
       || fail "the Node SDK's packed tarball did not install and run — its output is above"
-    sdk="$(node npm/onemessagebus-sdk/scripts/pack.mjs | tail -n1)" \
-      || fail "the Node SDK did not pack — run 'node npm/onemessagebus-sdk/scripts/pack.mjs' to see why"
-    for dir in "$platform" "$launcher" "$sdk"; do
+    for dir in "$platform" "$launcher"; do
       (cd "$dir" && npm pack --silent --pack-destination "$work/tarballs" >/dev/null) || fail "cannot pack $dir"
     done
     (cd "$work/app" && npm init -y >/dev/null && npm install --silent --no-audit --no-fund "$work"/tarballs/*.tgz) \
@@ -301,6 +299,34 @@ python-sdk-check:
 # Re-resolve uv.lock, the Python workspace's lockfile the SDK's environment syncs from.
 python-sdk-lock:
     @uv lock --quiet
+
+# The publishable copy is stamped by scripts/pack.py from Cargo.toml's version;
+# release.yml and the SDK install journey both build it through here.
+# Build the Python SDK's publishable sdist and wheel, at the workspace version, into OUT.
+python-sdk-dist out:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fail() { echo "python-sdk-dist: $1" >&2; exit 1; }
+    pack="$(uv run --no-project python python/onemessagebus-sdk/scripts/pack.py | tail -n1)" \
+      || fail "the Python SDK did not pack — run 'uv run --no-project python python/onemessagebus-sdk/scripts/pack.py' to see why"
+    uv build --quiet --out-dir "{{out}}" "$pack" \
+      || fail "the packed Python SDK at $pack did not build — the uv output above says why"
+
+# The publishable copy is stamped by scripts/pack.mjs from Cargo.toml's version;
+# release.yml and the SDK install journey both build it through here.
+# Build the Node SDK's publishable npm tarball, at the workspace version, into OUT.
+node-sdk-dist out:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fail() { echo "node-sdk-dist: $1" >&2; exit 1; }
+    [ -e node_modules/.bin/tsc ] || npm ci --silent --no-audit --no-fund \
+      || fail "the npm workspace did not install — run 'npm ci' to see why"
+    bun run --cwd npm/onemessagebus-sdk build >/dev/null || fail "the Node SDK did not build — run 'just sdk-check'"
+    sdk="$(node npm/onemessagebus-sdk/scripts/pack.mjs | tail -n1)" \
+      || fail "the Node SDK did not pack — run 'node npm/onemessagebus-sdk/scripts/pack.mjs' to see why"
+    mkdir -p "{{out}}"
+    out="$(cd "{{out}}" && pwd)"
+    (cd "$sdk" && npm pack --silent --pack-destination "$out" >/dev/null) || fail "cannot pack $sdk into $out"
 
 # Every capability, one method in each SDK client, and no method beside them.
 sdk-coverage:

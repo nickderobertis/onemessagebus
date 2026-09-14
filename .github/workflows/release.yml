@@ -543,10 +543,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      - uses: ./.github/actions/setup-just
       - name: Pack and build the Python SDK
-        run: |
-          pkgdir="$(uv run --no-project python python/onemessagebus-sdk/scripts/pack.py | tail -n1)"
-          uv build --out-dir python-sdk-dist "$pkgdir"
+        run: just python-sdk-dist python-sdk-dist
       - uses: actions/upload-artifact@v4
         with:
           name: python-sdk
@@ -597,13 +596,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version
+      - uses: ./.github/actions/setup-just
       - name: Build and pack the Node SDK
-        run: |
-          npm ci --no-audit --no-fund
-          bun run --cwd npm/onemessagebus-sdk build
-          pkgdir="$(node npm/onemessagebus-sdk/scripts/pack.mjs | tail -n1)"
-          mkdir -p node-sdk-artifact
-          (cd "$pkgdir" && npm pack --pack-destination "$GITHUB_WORKSPACE/node-sdk-artifact")
+        run: just node-sdk-dist node-sdk-artifact
       - uses: actions/upload-artifact@v4
         with:
           name: node-sdk
