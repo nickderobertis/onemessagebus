@@ -143,11 +143,12 @@ just python-sdk-check      # generate --check, format, ruff, ty, tests with the 
 just typecheck             # ty here, beside every other project's type check
 ```
 
-Each recipe runs the package's pinned environment (`requirements-dev.txt` in its
-own `.venv`, `src/` on the path: the `onemessagebus-cli` dependency is a
-placeholder no resolver can install until it is stamped). The tests drive the
-checkout's `target/debug/onemessagebus`, which `python-sdk-check` builds first.
-Re-resolving that environment is a deliberate dependency change, made with
+Each recipe runs the package's pinned environment: the repository's uv workspace,
+synced from the root `uv.lock` into the root `.venv`, with this package installed
+editable and its `onemessagebus-cli` dependency — the workspace's own
+distribution — left unbuilt. The tests drive the checkout's
+`target/debug/onemessagebus`, which `python-sdk-check` builds first. Re-resolving
+that environment is a deliberate dependency change, made with
 `just python-sdk-lock` and reviewed as one.
 
 `_generated/` is never edited by hand: it is datamodel-code-generator's rendering

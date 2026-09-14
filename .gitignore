@@ -15,8 +15,9 @@
 /npm/onemessagebus-sdk/node_modules
 /npm/onemessagebus-sdk/dist
 /npm/onemessagebus-sdk/coverage
-/python/onemessagebus-sdk/.venv
 /python/onemessagebus-sdk/dist
+# The uv workspace's environment, synced from the root uv.lock.
+/.venv
 __pycache__/
 .pytest_cache/
 .ruff_cache/

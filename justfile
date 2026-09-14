@@ -300,9 +300,9 @@ python-sdk-generate:
 python-sdk-check:
     @bash scripts/nx run onemessagebus-python-sdk:check
 
-# Re-resolve the Python SDK's development lockfile, requirements-dev.txt.
+# Re-resolve uv.lock, the Python workspace's lockfile the SDK's environment syncs from.
 python-sdk-lock:
-    @bash python/onemessagebus-sdk/scripts/lock
+    @uv lock --quiet
 
 # Every capability, one method in each SDK client, and no method beside them.
 sdk-coverage:

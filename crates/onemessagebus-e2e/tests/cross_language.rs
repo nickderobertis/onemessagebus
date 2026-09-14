@@ -190,8 +190,8 @@ impl Config {
     fn python(&self, scratch: &Scratch, name: &str, source: &str) -> Said {
         let script = scratch.path(&format!("{name}.py"));
         std::fs::write(&script, source).expect("the program is written");
-        // The package's own development environment, synced from its lockfile with
-        // its source on the path: what its tests run under.
+        // The package's development environment, synced from the uv workspace's
+        // lockfile with the package installed editable: what its tests run under.
         tool(
             "uv",
             "install uv (https://docs.astral.sh/uv/) — CI's gate job installs it",

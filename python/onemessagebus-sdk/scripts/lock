@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-# Re-resolve requirements-dev.txt from requirements-dev.in: the one lockfile the
-# package's development environment is installed from.
-set -euo pipefail
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$here"
-exec env -u VIRTUAL_ENV uv pip compile --quiet --universal --python-version 3.10 \
-  --output-file requirements-dev.txt requirements-dev.in
