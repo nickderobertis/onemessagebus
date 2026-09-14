@@ -37,6 +37,7 @@
       "Bash(just sdk-check)",
       "Bash(just python-sdk-generate)",
       "Bash(just python-sdk-check)",
+      "Bash(just python-sdk-lock)",
       "Bash(just sdk-coverage)",
       "Bash(just parity-audit)",
       "Bash(just nx show projects)",

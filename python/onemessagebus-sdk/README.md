@@ -148,7 +148,7 @@ own `.venv`, `src/` on the path: the `onemessagebus-cli` dependency is a
 placeholder no resolver can install until it is stamped). The tests drive the
 checkout's `target/debug/onemessagebus`, which `python-sdk-check` builds first.
 Re-resolving that environment is a deliberate dependency change, made with
-`scripts/lock` and reviewed as one.
+`just python-sdk-lock` and reviewed as one.
 
 `_generated/` is never edited by hand: it is datamodel-code-generator's rendering
 of the schema bundle the Rust build prints, plus the capability manifest as data.
