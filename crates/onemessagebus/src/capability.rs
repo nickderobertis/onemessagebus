@@ -201,7 +201,8 @@ const fn bind(option: &'static str, kind: FlagKind) -> OptionBinding {
     OptionBinding { option, kind }
 }
 
-/// The registry directory every `schema` verb takes: the same binding on each.
+/// The registry directory every `schema` verb and every queue verb takes: the
+/// same binding on each.
 const REGISTRY: OptionBinding = bind("registry", FlagKind::Value("--registry"));
 
 /// Every verb the binary has, and no other. The clap walk holds both
@@ -333,6 +334,7 @@ pub const CAPABILITIES: &[Capability] = &[
             bind("file", FlagKind::Value("--file")),
             CONFIG,
             TRANSPORT_DIR,
+            REGISTRY,
         ],
         uncovered: &[],
     },
@@ -350,6 +352,7 @@ pub const CAPABILITIES: &[Capability] = &[
             bind("format", FlagKind::Value("--format")),
             CONFIG,
             TRANSPORT_DIR,
+            REGISTRY,
         ],
         uncovered: &[],
     },
@@ -367,6 +370,7 @@ pub const CAPABILITIES: &[Capability] = &[
             bind("file", FlagKind::Value("--file")),
             CONFIG,
             TRANSPORT_DIR,
+            REGISTRY,
         ],
         uncovered: &[],
     },
@@ -384,6 +388,7 @@ pub const CAPABILITIES: &[Capability] = &[
             bind("format", FlagKind::Value("--format")),
             CONFIG,
             TRANSPORT_DIR,
+            REGISTRY,
         ],
         uncovered: &[],
     },
@@ -399,6 +404,7 @@ pub const CAPABILITIES: &[Capability] = &[
             bind("format", FlagKind::Value("--format")),
             CONFIG,
             TRANSPORT_DIR,
+            REGISTRY,
         ],
         uncovered: &[],
     },
@@ -424,6 +430,7 @@ pub const CAPABILITIES: &[Capability] = &[
             bind("file", FlagKind::Value("--file")),
             CONFIG,
             TRANSPORT_DIR,
+            REGISTRY,
         ],
         uncovered: &[],
     },
@@ -444,6 +451,7 @@ pub const CAPABILITIES: &[Capability] = &[
             bind("file", FlagKind::Value("--file")),
             CONFIG,
             TRANSPORT_DIR,
+            REGISTRY,
         ],
         uncovered: &[],
     },
@@ -462,8 +470,18 @@ pub const CAPABILITIES: &[Capability] = &[
             bind("file", FlagKind::Value("--file")),
             CONFIG,
             TRANSPORT_DIR,
+            REGISTRY,
         ],
-        uncovered: &[],
+        uncovered: &[
+            UncoveredFlag {
+                flag: "--resident",
+                reason: "runs the resident core rather than a codec session: an SDK starts it through its resident transport, which spawns `serve --resident --socket <path>` itself, and each request to the core names the capability it runs rather than a flag of this one",
+            },
+            UncoveredFlag {
+                flag: "--socket",
+                reason: "the unix socket the resident core listens on, taken only beside `--resident`; an SDK's resident transport passes it when it starts the core",
+            },
+        ],
     },
 ];
 

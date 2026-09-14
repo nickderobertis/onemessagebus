@@ -17,6 +17,7 @@ use std::fmt::Write as _;
 use std::io::{IsTerminal as _, Read as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -40,6 +41,10 @@ use serde_json::{Map, Value};
 use crate::profile::Profile;
 use crate::registry_dir::RegistryDir;
 use crate::{EXIT_FAILED, EXIT_INVALID, EXIT_OK};
+
+/// `serve --resident`: the resident core, over a unix socket.
+#[cfg(unix)]
+mod resident;
 
 /// A typed NDJSON message bus: schema registry verbs, stream verbs, and an
 /// inbox into a running process.
@@ -98,7 +103,8 @@ enum Command {
     /// verdict.
     Validate(ValidateArgs),
     /// Serve a member's judge side: frames of a codec's protocol in, one
-    /// response per frame out, over a queue.
+    /// response per frame out, over a queue — or, with `--resident`, hold the
+    /// configured transport open and answer every capability over a unix socket.
     Serve(ServeArgs),
 }
 
@@ -106,11 +112,23 @@ enum Command {
 #[derive(Debug, Args)]
 struct ServeArgs {
     /// The queue the codec raises and asks on.
-    #[arg(value_name = "QUEUE")]
-    queue: String,
+    #[arg(value_name = "QUEUE", required_unless_present = "resident")]
+    queue: Option<String>,
     /// The codec the frames are read with.
-    #[arg(long, value_name = "NAME")]
-    codec: String,
+    #[arg(long, value_name = "NAME", required_unless_present = "resident")]
+    codec: Option<String>,
+    /// Run the resident core instead: hold the configured transport open and
+    /// answer every capability, one request line at a time, on the unix socket
+    /// `--socket` names.
+    #[arg(
+        long,
+        requires = "socket",
+        conflicts_with_all = ["queue", "codec", "session_seconds", "asker", "file"]
+    )]
+    resident: bool,
+    /// The unix socket the resident core listens on.
+    #[arg(long, value_name = "PATH", requires = "resident")]
+    socket: Option<PathBuf>,
     /// Seconds the session serves before it stops of its own accord, leaving
     /// what it asked counted; read from the codec's session variable when
     /// absent, and no bound when neither is set.
@@ -150,6 +168,11 @@ struct BusArgs {
     /// configuration's; with no configuration, the planner-channel layout's.
     #[arg(long, value_name = "DIR", env = "ONEMESSAGEBUS_TRANSPORT_DIR")]
     transport_dir: Option<PathBuf>,
+    /// A directory of registered documents, one `<id>.json` per schema, added
+    /// to the profile's own: the schemas a queue's `schema` may name, and every
+    /// record pushed onto it is validated against.
+    #[arg(long, value_name = "DIR", env = "ONEMESSAGEBUS_REGISTRY")]
+    registry: Option<PathBuf>,
 }
 
 /// What `send` takes.
@@ -495,7 +518,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         }
     };
     let mut stdout = std::io::stdout().lock();
-    match dispatch(cli, &mut stdout) {
+    match dispatch(cli, &mut stdout, &Io::process()) {
         Ok(()) => ExitCode::from(EXIT_OK),
         Err(refusal) => {
             eprintln!("onemessagebus: {}", refusal.message);
@@ -547,23 +570,99 @@ fn usage_refusal(verb: &str, usage: &clap::Error) -> String {
     )
 }
 
-fn dispatch(cli: Cli, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+fn dispatch(cli: Cli, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {
     match cli.command {
-        Command::Schema { verb } => schema(verb, out),
-        Command::Events { verb } => events(verb, out),
-        Command::Deliver(args) => deliver(args, out),
+        Command::Schema { verb } => schema(verb, out, io),
+        Command::Events { verb } => events(verb, out, io),
+        Command::Deliver(args) => deliver(args, out, io),
         Command::Inbox {
             verb: InboxVerb::Carried { store, format },
         } => carried(&store, format, out),
-        Command::Send(args) => send(args, out),
-        Command::Next(args) => next(args, out),
-        Command::Ask(args) => ask(args, out),
-        Command::Reply(args) => reply(args, out),
-        Command::Subscribe(args) => subscribe(args, out),
-        Command::Status(args) => status(args, out),
+        Command::Send(args) => send(args, out, io),
+        Command::Next(args) => next(args, out, io),
+        Command::Ask(args) => ask(args, out, io),
+        Command::Reply(args) => reply(args, out, io),
+        Command::Subscribe(args) => subscribe(args, out, io),
+        Command::Status(args) => status(args, out, io),
         Command::Transports { format } => transports(format, out),
-        Command::Validate(args) => validate(args, out),
-        Command::Serve(args) => serve(args, out),
+        Command::Validate(args) => validate(args, out, io),
+        Command::Serve(args) => serve(args, out, io),
+    }
+}
+
+/// What one invocation of a verb reads beyond its arguments: where its stdin
+/// comes from, the transport a resident core holds open for it, and whether a
+/// streaming verb has been asked to stop.
+struct Io {
+    input: Input,
+    held: Option<Arc<Held>>,
+    cancel: Option<Arc<AtomicBool>>,
+}
+
+/// Where a verb's stdin comes from.
+enum Input {
+    /// This process's own stdin.
+    Process,
+    /// The bytes a resident request carried as its `input`; nothing when it
+    /// carried none.
+    #[cfg_attr(
+        not(unix),
+        allow(
+            dead_code,
+            reason = "only the resident core, a unix build's, hands a verb its input"
+        )
+    )]
+    Given(Option<String>),
+}
+
+/// What a resident core holds for the requests that name no configuration,
+/// transport directory or registry of their own: its own, and the transport it
+/// opened from them.
+#[cfg_attr(
+    not(unix),
+    allow(
+        dead_code,
+        reason = "only the resident core, a unix build's, holds a transport"
+    )
+)]
+struct Held {
+    config: Option<PathBuf>,
+    transport_dir: Option<PathBuf>,
+    registry: Option<PathBuf>,
+    bound: Option<(Config, Arc<dyn onemessagebus::Transport>)>,
+}
+
+impl Io {
+    /// A verb run by this process's own command line.
+    const fn process() -> Self {
+        Self {
+            input: Input::Process,
+            held: None,
+            cancel: None,
+        }
+    }
+
+    /// Everything stdin carries.
+    fn stdin_text(&self) -> Result<String, Refusal> {
+        match &self.input {
+            Input::Process => {
+                let mut text = String::new();
+                std::io::stdin()
+                    .read_to_string(&mut text)
+                    .map_err(|failure| {
+                        invalid(format!("cannot read the payload on stdin: {failure}"))
+                    })?;
+                Ok(text)
+            }
+            Input::Given(text) => Ok(text.clone().unwrap_or_default()),
+        }
+    }
+
+    /// Whether a streaming verb has been asked to stop.
+    fn cancelled(&self) -> bool {
+        self.cancel
+            .as_ref()
+            .is_some_and(|cancel| cancel.load(AtomicOrdering::SeqCst))
     }
 }
 
@@ -573,26 +672,20 @@ fn parse_id(text: &str) -> Result<SchemaId, Refusal> {
 }
 
 fn load_registry(registry: &RegistryArgs) -> Result<RegistryDir, Refusal> {
-    RegistryDir::load(
-        onemessagebus_agent::registry(),
-        registry.registry.as_deref(),
-    )
-    .map_err(|failure| invalid(failure.to_string()))
+    load_registry_dir(registry.registry.as_deref())
 }
 
-fn read_payload(file: Option<&Path>) -> Result<Value, Refusal> {
+/// The binary's own schemas, and every document the registry directory `dir`
+/// holds.
+fn load_registry_dir(dir: Option<&Path>) -> Result<RegistryDir, Refusal> {
+    RegistryDir::load(crate::registry(), dir).map_err(|failure| invalid(failure.to_string()))
+}
+
+fn read_payload(file: Option<&Path>, io: &Io) -> Result<Value, Refusal> {
     let text = match file {
         Some(path) => std::fs::read_to_string(path)
             .map_err(|failure| invalid(format!("cannot read {}: {failure}", path.display())))?,
-        None => {
-            let mut text = String::new();
-            std::io::stdin()
-                .read_to_string(&mut text)
-                .map_err(|failure| {
-                    invalid(format!("cannot read the payload on stdin: {failure}"))
-                })?;
-            text
-        }
+        None => io.stdin_text()?,
     };
     serde_json::from_str(&text).map_err(|failure| {
         invalid(format!(
@@ -601,7 +694,7 @@ fn read_payload(file: Option<&Path>) -> Result<Value, Refusal> {
     })
 }
 
-fn schema(verb: SchemaVerb, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+fn schema(verb: SchemaVerb, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {
     match verb {
         SchemaVerb::List { registry, format } => {
             let registry = load_registry(&registry)?;
@@ -629,7 +722,7 @@ fn schema(verb: SchemaVerb, out: &mut impl std::io::Write) -> Result<(), Refusal
         SchemaVerb::Check { id, file, registry } => {
             let id = parse_id(&id)?;
             let registry = load_registry(&registry)?;
-            let payload = read_payload(file.as_deref())?;
+            let payload = read_payload(file.as_deref(), io)?;
             match registry.registry().check(&id, &payload) {
                 Ok(()) => Ok(()),
                 Err(CheckError::Violation(violation)) => Err(failed(violation.to_string())),
@@ -667,7 +760,7 @@ fn schema(verb: SchemaVerb, out: &mut impl std::io::Write) -> Result<(), Refusal
     }
 }
 
-fn events(verb: EventsVerb, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+fn events(verb: EventsVerb, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {
     match verb {
         EventsVerb::Merge {
             files,
@@ -698,15 +791,15 @@ fn events(verb: EventsVerb, out: &mut impl std::io::Write) -> Result<(), Refusal
                 format,
             };
             match Profile::select(profile.as_deref()).map_err(invalid)? {
-                Profile::Agent => emit::<Agent>(request, out),
-                Profile::Open => emit::<Open>(request, out),
+                Profile::Agent => emit::<Agent>(request, out, io),
+                Profile::Open => emit::<Open>(request, out, io),
             }
         }
     }
 }
 
-fn deliver(args: DeliverArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
-    let text = message_text(&args)?;
+fn deliver(args: DeliverArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {
+    let text = message_text(&args, io)?;
     let message: Value = serde_json::from_str(&text)
         .map_err(|failure| invalid(format!("the message is not JSON: {failure}")))?;
     // Checked before anything is offered, where the spool says what its receiver
@@ -739,8 +832,8 @@ fn deliver(args: DeliverArgs, out: &mut impl std::io::Write) -> Result<(), Refus
 }
 
 /// The message `deliver` was given, from exactly one of its three sources.
-fn message_text(args: &DeliverArgs) -> Result<String, Refusal> {
-    let stdin = piped_stdin()?;
+fn message_text(args: &DeliverArgs, io: &Io) -> Result<String, Refusal> {
+    let stdin = piped_stdin(io)?;
     let mut given = Vec::new();
     if stdin.is_some() {
         given.push("stdin");
@@ -772,16 +865,21 @@ fn message_text(args: &DeliverArgs) -> Result<String, Refusal> {
 
 /// What stdin carries, when it is not a terminal and carries anything but
 /// whitespace.
-fn piped_stdin() -> Result<Option<String>, Refusal> {
-    let stdin = std::io::stdin();
-    if stdin.is_terminal() {
-        return Ok(None);
-    }
-    let mut text = String::new();
-    stdin
-        .lock()
-        .read_to_string(&mut text)
-        .map_err(|failure| invalid(format!("cannot read the message on stdin: {failure}")))?;
+fn piped_stdin(io: &Io) -> Result<Option<String>, Refusal> {
+    let text = match &io.input {
+        Input::Given(text) => text.clone().unwrap_or_default(),
+        Input::Process => {
+            let stdin = std::io::stdin();
+            if stdin.is_terminal() {
+                return Ok(None);
+            }
+            let mut text = String::new();
+            stdin.lock().read_to_string(&mut text).map_err(|failure| {
+                invalid(format!("cannot read the message on stdin: {failure}"))
+            })?;
+            text
+        }
+    };
     Ok((!text.trim().is_empty()).then_some(text))
 }
 
@@ -878,7 +976,11 @@ struct EmitRequest {
     format: OutputFormat,
 }
 
-fn emit<V: Vocabulary>(request: EmitRequest, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+fn emit<V: Vocabulary>(
+    request: EmitRequest,
+    out: &mut impl std::io::Write,
+    io: &Io,
+) -> Result<(), Refusal> {
     let word = request.source.as_deref().unwrap_or(V::DEFAULT_SOURCE);
     let source: V::Source =
         serde_json::from_value(Value::String(word.to_owned())).map_err(|_| {
@@ -888,7 +990,7 @@ fn emit<V: Vocabulary>(request: EmitRequest, out: &mut impl std::io::Write) -> R
             ))
         })?;
     let labels = parse_labels::<V>(&request.labels)?;
-    let payload = match read_payload(request.file.as_deref())? {
+    let payload = match read_payload(request.file.as_deref(), io)? {
         Value::Object(payload) => payload,
         other => {
             return Err(invalid(format!(
@@ -1031,9 +1133,48 @@ fn layouts() -> Layouts {
 
 /// The bus a queue verb opens: the configuration file loaded and resolved, its
 /// transport directory overridden when one is named — or, with no file, the
-/// planner-channel layout over a local transport in that directory.
-fn open_bus(args: &BusArgs) -> Result<Bus, Refusal> {
-    resolved(configuration(args)?)
+/// planner-channel layout over a local transport in that directory — with the
+/// registry directory's schemas beside the layout's.
+fn open_bus(args: &BusArgs, io: &Io) -> Result<Bus, Refusal> {
+    let (config, held) = configured(args, io)?;
+    bind(&config, held, args)
+}
+
+/// The configuration a queue verb opens its bus with, and the transport a
+/// resident core holds open for it, when the verb names the configuration and
+/// transport directory the resident was started with.
+fn configured(
+    args: &BusArgs,
+    io: &Io,
+) -> Result<(Config, Option<Arc<dyn onemessagebus::Transport>>), Refusal> {
+    if let Some(held) = &io.held {
+        if let Some((config, transport)) = &held.bound {
+            if held.config == args.config && held.transport_dir == args.transport_dir {
+                return Ok((config.clone(), Some(Arc::clone(transport))));
+            }
+        }
+    }
+    Ok((configuration(args)?, None))
+}
+
+/// `config` bound to the layouts this binary links, with the schemas this binary
+/// and the registry directory register, over the transport held open or one
+/// opened from `config`.
+fn bind(
+    config: &Config,
+    held: Option<Arc<dyn onemessagebus::Transport>>,
+    args: &BusArgs,
+) -> Result<Bus, Refusal> {
+    let registry = load_registry_dir(args.registry.as_deref())?;
+    match held {
+        Some(transport) => config.resolve_over(&layouts(), transport, registry.registry()),
+        None => config.resolve_with_registry(
+            &layouts(),
+            &TransportKinds::builtin(),
+            registry.registry(),
+        ),
+    }
+    .map_err(|failure| invalid(failure.to_string()))
 }
 
 /// The configuration a queue verb opens its bus with, loaded and checked but
@@ -1071,14 +1212,6 @@ fn linked_codecs() -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-/// `config` bound to the layouts this binary links and the transports it can
-/// open.
-fn resolved(config: Config) -> Result<Bus, Refusal> {
-    config
-        .resolve(&layouts(), &TransportKinds::builtin())
-        .map_err(|failure| invalid(failure.to_string()))
 }
 
 fn parse_queue(text: &str) -> Result<QueueName, Refusal> {
@@ -1119,12 +1252,12 @@ fn json_line<T: serde::Serialize>(value: &T) -> Result<String, Refusal> {
     Ok(line)
 }
 
-fn send(args: SendArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+fn send(args: SendArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {
     let queue = parse_queue(&args.queue)?;
-    let bus = open_bus(&args.bus)?;
+    let bus = open_bus(&args.bus, io)?;
     // Refused before stdin is read, so a mistyped queue costs nothing.
     bus.queue(&queue).map_err(bus_refusal)?;
-    let record = read_payload(args.file.as_deref())?;
+    let record = read_payload(args.file.as_deref(), io)?;
     let mut text = String::new();
     for (landed_on, pushed) in bus.send(&queue, record).map_err(bus_refusal)? {
         text.push_str(&json_line(&Sent {
@@ -1136,7 +1269,7 @@ fn send(args: SendArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
     emit_text(out, &text)
 }
 
-fn next(args: NextArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+fn next(args: NextArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {
     let queue_name = parse_queue(&args.queue)?;
     let consumer = match &args.consumer {
         Some(name) => name
@@ -1150,7 +1283,7 @@ fn next(args: NextArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
         .map(|value| Asker::named(value, "--asker"))
         .transpose()
         .map_err(|failure| invalid(failure.to_string()))?;
-    let bus = open_bus(&args.bus)?;
+    let bus = open_bus(&args.bus, io)?;
     let queue = bus.queue(&queue_name).map_err(bus_refusal)?;
     let claimed = match asker {
         Some(asker) => Subscription::open(queue, consumer, Lifetime::Durable(asker))
@@ -1179,14 +1312,14 @@ fn next(args: NextArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
     emit_text(out, &text)
 }
 
-fn reply(args: ReplyArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+fn reply(args: ReplyArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {
     let queue_name = parse_queue(&args.queue)?;
     let correlation = args
         .correlation
         .as_deref()
         .map(parse_correlation)
         .transpose()?;
-    let bus = open_bus(&args.bus)?;
+    let bus = open_bus(&args.bus, io)?;
     let queue = bus.queue(&queue_name).map_err(bus_refusal)?;
     if queue.spec().answers.is_none() {
         return Err(invalid(format!(
@@ -1200,7 +1333,7 @@ fn reply(args: ReplyArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> 
     if let Some(position) = &position {
         queue.pending_at(position).map_err(queue_refusal)?;
     }
-    let record = read_payload(args.file.as_deref())?;
+    let record = read_payload(args.file.as_deref(), io)?;
     let bound = match &position {
         Some(position) => bus.reply_at(&queue_name, position, record),
         None => bus.reply(&queue_name, correlation.as_ref(), record),
@@ -1231,7 +1364,7 @@ fn reply(args: ReplyArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> 
     )
 }
 
-fn ask(args: AskArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+fn ask(args: AskArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {
     let queue = parse_queue(&args.queue)?;
     let asker = args
         .asker
@@ -1250,7 +1383,7 @@ fn ask(args: AskArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
         .as_deref()
         .map(parse_correlation)
         .transpose()?;
-    let bus = open_bus(&args.bus)?;
+    let bus = open_bus(&args.bus, io)?;
     // Refused before stdin is read, so a mistyped queue costs nothing.
     bus.queue(&queue).map_err(bus_refusal)?;
     let (pending, owned): (Pending<Value>, bool) = match &correlation {
@@ -1269,7 +1402,7 @@ fn ask(args: AskArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
             (pending, owned)
         }
         None => {
-            let question = read_payload(args.file.as_deref())?;
+            let question = read_payload(args.file.as_deref(), io)?;
             let options = AskOptions {
                 blocking: args.blocking,
                 asker,
@@ -1342,10 +1475,10 @@ fn ask(args: AskArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
     }
 }
 
-fn subscribe(args: SubscribeArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+fn subscribe(args: SubscribeArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {
     let queue_name = parse_queue(&args.queue)?;
     let until = Predicate::read(&args.until).map_err(|why| invalid(format!("--until: {why}")))?;
-    let bus = open_bus(&args.bus)?;
+    let bus = open_bus(&args.bus, io)?;
     let queue = bus.queue(&queue_name).map_err(bus_refusal)?;
     let deadline = args
         .timeout
@@ -1353,6 +1486,10 @@ fn subscribe(args: SubscribeArgs, out: &mut impl std::io::Write) -> Result<(), R
         .and_then(|seconds| Instant::now().checked_add(Duration::from_secs(seconds)));
     let mut from: Option<Position> = None;
     loop {
+        // A resident client that cancelled, or went away, ends the stream here.
+        if io.cancelled() {
+            return Ok(());
+        }
         // Taken before the log is read, so a record appended between the read
         // and the wait moves it and the wait returns at once.
         let since = queue.fingerprint().map_err(queue_refusal)?;
@@ -1392,8 +1529,8 @@ fn subscribe(args: SubscribeArgs, out: &mut impl std::io::Write) -> Result<(), R
 /// How long one wait of `subscribe` lasts before it reads the log again.
 const SUBSCRIBE_WAIT: Duration = Duration::from_secs(1);
 
-fn status(args: StatusArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
-    let bus = open_bus(&args.bus)?;
+fn status(args: StatusArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {
+    let bus = open_bus(&args.bus, io)?;
     let names = match &args.queue {
         Some(name) => vec![parse_queue(name)?],
         None => bus.queues(),
@@ -1473,10 +1610,16 @@ fn transports(format: OutputFormat, out: &mut impl std::io::Write) -> Result<(),
     emit_text(out, &text)
 }
 
-fn serve(args: ServeArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
-    let queue = parse_queue(&args.queue)?;
+fn serve(args: ServeArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {
+    if args.resident {
+        return resident_core(&args);
+    }
+    // clap requires both unless `--resident` is given.
+    let queue = parse_queue(args.queue.as_deref().unwrap_or_default())?;
     let name: CodecName = args
         .codec
+        .as_deref()
+        .unwrap_or_default()
         .parse()
         .map_err(|failure| invalid(format!("--codec: {failure}")))?;
     if !CODECS.contains(&name) {
@@ -1485,7 +1628,7 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> 
             linked_codecs()
         )));
     }
-    let config = configuration(&args.bus)?;
+    let (config, held) = configured(&args.bus, io)?;
     let settings = config.codecs.get(&name).cloned().unwrap_or_default();
     if let Some(configured) = &settings.queue {
         if configured != &queue {
@@ -1570,9 +1713,14 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> 
         Some(path) => Box::new(std::io::BufReader::new(std::fs::File::open(path).map_err(
             |failure| invalid(format!("cannot read {}: {failure}", path.display())),
         )?)),
-        None => Box::new(std::io::BufReader::new(std::io::stdin())),
+        None => match &io.input {
+            Input::Process => Box::new(std::io::BufReader::new(std::io::stdin())),
+            Input::Given(frames) => Box::new(std::io::Cursor::new(
+                frames.clone().unwrap_or_default().into_bytes(),
+            )),
+        },
     };
-    let bus = resolved(config)?;
+    let bus = bind(&config, held, &args.bus)?;
     bus.queue(&queue).map_err(bus_refusal)?;
     let mut codec = Onejudge::new()
         .with_run_env(run_env.clone(), optional_env_text(run_env.as_str())?)
@@ -1603,6 +1751,21 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> 
     }
 }
 
+/// `serve --resident`, where there is a unix socket to listen on.
+#[cfg(unix)]
+fn resident_core(args: &ServeArgs) -> Result<(), Refusal> {
+    resident::serve(args)
+}
+
+/// `serve --resident`, refused where there is no unix socket to listen on.
+#[cfg(not(unix))]
+fn resident_core(_: &ServeArgs) -> Result<(), Refusal> {
+    Err(invalid(
+        "serve --resident listens on a unix socket, which this platform does not have; run \
+         each verb as its own invocation instead",
+    ))
+}
+
 fn optional_env_text(name: &str) -> Result<Option<String>, Refusal> {
     std::env::var_os(name)
         .map(|value| {
@@ -1615,12 +1778,12 @@ fn optional_env_text(name: &str) -> Result<Option<String>, Refusal> {
         .transpose()
 }
 
-fn validate(args: ValidateArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+fn validate(args: ValidateArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {
     let queue = parse_queue(&args.queue)?;
-    let bus = open_bus(&args.bus)?;
+    let bus = open_bus(&args.bus, io)?;
     // Refused before stdin is read, so a mistyped queue costs nothing.
     bus.queue(&queue).map_err(bus_refusal)?;
-    let record = read_payload(args.file.as_deref())?;
+    let record = read_payload(args.file.as_deref(), io)?;
     let verdict = bus.validate(&queue, record).map_err(bus_refusal)?;
     let judged = Validated {
         queue: queue.clone(),

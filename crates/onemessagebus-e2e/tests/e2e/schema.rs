@@ -4,8 +4,8 @@ use serde_json::{json, Value};
 
 use crate::support::{fixture, run, run_in};
 
-/// The ids the profile registers, which `schema list` prints with nothing
-/// else.
+/// The ids the binary registers — the profile's, and the resident protocol's —
+/// which `schema list` prints with nothing else.
 const PROFILE_IDS: &[&str] = &[
     "agent.artifact-ref@1",
     "agent.command-outcome@1",
@@ -24,6 +24,7 @@ const PROFILE_IDS: &[&str] = &[
     "agent.queued-reply@1",
     "agent.reply-envelope@2",
     "agent.reply-envelope@3",
+    "bus.resident-protocol@1",
     "onemessagebus.transport-hello@1",
     "onemessagebus.transport-reply@1",
     "onemessagebus.transport-request@1",

@@ -352,11 +352,11 @@ fn resolve_with_registry_validates_a_queue_against_a_schema_registered_at_run_ti
         &added,
     )
     .expect_err("the layout holds another document under the id");
+    assert!(conflict.to_string().starts_with("registry: "), "{conflict}");
     assert!(
-        conflict.to_string().starts_with("registry: "),
+        conflict.to_string().contains("demo.greeting@1"),
         "{conflict}"
     );
-    assert!(conflict.to_string().contains("demo.greeting@1"), "{conflict}");
 }
 
 /// A transport held open is what two binds share: a record one bus appended over

@@ -48,7 +48,10 @@ fn each_line_reads_back_as_the_kind_of_line_it_is_and_writes_the_same_bytes() {
         ),
         (
             r#"{"id":2,"cancel":true}"#,
-            ResidentLine::Cancel(ResidentCancel { id: 2, cancel: True }),
+            ResidentLine::Cancel(ResidentCancel {
+                id: 2,
+                cancel: True,
+            }),
         ),
         (
             r#"{"id":3,"ok":[{"queue":"greetings","position":"1"}]}"#,
@@ -105,7 +108,10 @@ fn each_line_reads_back_as_the_kind_of_line_it_is_and_writes_the_same_bytes() {
 fn a_line_no_side_writes_is_refused_by_the_reader_and_the_document_alike() {
     let registry = registry();
     for (text, why) in [
-        (r#"{"id":1,"cancel":false}"#, "a cancel line's `cancel` is `true`"),
+        (
+            r#"{"id":1,"cancel":false}"#,
+            "a cancel line's `cancel` is `true`",
+        ),
         (
             r#"{"id":1,"error":{"exit":3,"message":"m"}}"#,
             "3 is not an exit code a refusal carries",
@@ -118,7 +124,10 @@ fn a_line_no_side_writes_is_refused_by_the_reader_and_the_document_alike() {
             registry.check(&RESIDENT_PROTOCOL, &value).is_err(),
             "the document admits {text}"
         );
-        assert!(serde_json::from_value::<ResidentLine>(value).is_err(), "{text}");
+        assert!(
+            serde_json::from_value::<ResidentLine>(value).is_err(),
+            "{text}"
+        );
         // An untagged read names no variant's own reason; each literal type does.
         if !why.is_empty() {
             let direct = if text.contains("cancel") {

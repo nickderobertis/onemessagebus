@@ -47,7 +47,11 @@ cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebu
   file. With no configuration at all, `--transport-dir` names the directory the
   `planner-channel` layout is kept in over a local transport; with neither, the
   verb is refused. A file with an unknown key, or one widening an author's
-  grants, is refused naming the key.
+  grants, is refused naming the key. Each takes `--registry <dir>` (or
+  `ONEMESSAGEBUS_REGISTRY`) too: the schemas that directory holds are registered
+  beside the layout's, so a queue's `schema` may name one `schema register`
+  recorded — a type an SDK declared in its own language — and every record pushed
+  onto that queue is validated against it.
 
 ## Exit codes
 
@@ -208,7 +212,7 @@ configuration declares (`docs/queues.md`). Under the `planner-channel` layout th
 queues are `surfaces`, `replies`, `commands` and `command-outcomes`, and their
 files are the ones `onepipeline` keeps in a run's `channel/` directory.
 
-### `send <queue> [--file PATH] [--config PATH] [--transport-dir DIR]`
+### `send <queue> [--file PATH] [--config PATH] [--transport-dir DIR] [--registry DIR]`
 
 Append the record on stdin (or in `--file`) to `<queue>`, and print one line of
 JSON per record appended: `{queue, position, id}`. The record is shaped as the
@@ -229,7 +233,7 @@ $ echo '{"kind":"finding","message":"the base moved","source":"proposal","blocki
 {"queue":"surfaces","position":187,"id":0}
 ```
 
-### `next <queue> [--consumer NAME] [--asker WORD] [--format json|text] [--config PATH] [--transport-dir DIR]`
+### `next <queue> [--consumer NAME] [--asker WORD] [--format json|text] [--config PATH] [--transport-dir DIR] [--registry DIR]`
 
 Claim the next record of `<queue>` and print it as `{queue, position, id,
 record}`. The claim is recorded before the record is printed, so two processes
@@ -243,7 +247,7 @@ earlier listener of the same asker abandoned is taken back first. A blank
 `--asker`, or one that is not Unicode, is refused with exit 2. Nothing to claim
 exits 1. Text is `<queue> <position> <record>`.
 
-### `ask <queue> [--blocking] [--asker WORD] [--about ADDRESS] [--timeout SECONDS] [--correlation CORRELATION] [--file PATH] [--config PATH] [--transport-dir DIR]`
+### `ask <queue> [--blocking] [--asker WORD] [--about ADDRESS] [--timeout SECONDS] [--correlation CORRELATION] [--file PATH] [--config PATH] [--transport-dir DIR] [--registry DIR]`
 
 Ask the question on stdin (or in `--file`) on `<queue>` and wait for its answer
 (`docs/ask.md`). The question is stamped with a correlation the bus mints —
@@ -273,7 +277,7 @@ $ echo '{"kind":"planner-question","message":"which base?","source":"proposal"}'
 {"answer":"reply","correlation":"c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b","reply":{"id":0,"reply":{"version":3,"completion":true,"reason":"main"},"at":1789300000000,"correlation":"c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b"}}
 ```
 
-### `reply <queue> [<position>] [--correlation CORRELATION] [--file PATH] [--config PATH] [--transport-dir DIR]`
+### `reply <queue> [<position>] [--correlation CORRELATION] [--file PATH] [--config PATH] [--transport-dir DIR] [--registry DIR]`
 
 Answer a pending ask of `<queue>` with the reply on stdin (or in `--file`), bound
 one of three ways (`docs/ask.md`): `--correlation` names the ask whose
@@ -294,7 +298,7 @@ the reply is bound and with nothing appended. Of replies racing for one pending 
 each other is appended, answers nothing, and exits 1 saying another reply
 answered the record first.
 
-### `subscribe <queue> --until PREDICATE [--timeout SECONDS] [--format json|text] [--config PATH] [--transport-dir DIR]`
+### `subscribe <queue> --until PREDICATE [--timeout SECONDS] [--format json|text] [--config PATH] [--transport-dir DIR] [--registry DIR]`
 
 Print every line of `<queue>`'s log, oldest first, as `{position, record}` — on
 a queue that keeps events each line is `{"event": ..., ...record}` — then each
@@ -310,7 +314,7 @@ is `<position> <record>` per line.
 $ onemessagebus subscribe surfaces --until '{"field":"event","equals":"answered"}' --timeout 600 --transport-dir runs/r1/channel
 ```
 
-### `status [<queue>] [--format json|text] [--config PATH] [--transport-dir DIR]`
+### `status [<queue>] [--format json|text] [--config PATH] [--transport-dir DIR] [--registry DIR]`
 
 Report `<queue>`, or every declared queue, as a JSON list of `{queue, events,
 records, waiting, pending, pending_position, abandoned, unread, cursors}`: the
@@ -325,7 +329,7 @@ wrapper otherwise takes from `queue.json` by hand. Text is one line per queue,
 $ onemessagebus status surfaces --format text --config onemessagebus.yaml
 ```
 
-### `validate <queue> [--file PATH] [--config PATH] [--transport-dir DIR]`
+### `validate <queue> [--file PATH] [--config PATH] [--transport-dir DIR] [--registry DIR]`
 
 Judge the record on stdin (or in `--file`) exactly as `send` would judge it, and
 append nothing: by the validators the configuration declares for `<queue>`, and
@@ -345,7 +349,7 @@ $ onemessagebus validate replies --file reply.json --config onemessagebus.yaml
 {"queue":"replies","verdict":"refuse","reason":"an `add` states task prose the bar refuses\n"}
 ```
 
-### `serve <queue> --codec NAME [--session-seconds SECONDS] [--asker WORD] [--file PATH] [--config PATH] [--transport-dir DIR]`
+### `serve <queue> --codec NAME [--session-seconds SECONDS] [--asker WORD] [--file PATH] [--config PATH] [--transport-dir DIR] [--registry DIR]`
 
 Serve a member's judge side (`docs/codecs.md`): read the frames of the `--codec`
 protocol one line at a time from stdin (or `--file`), and write each frame's
@@ -369,9 +373,46 @@ names the reply window, the queue and the variables read; a codec — by
 `--codec` or as a key of `codecs` — this build does not link, a session bound, an asker or a queue it cannot take, and a frame naming no run, are refused
 with exit 2.
 
+With `--resident --socket <path>` in place of a queue and a codec, `serve` runs
+the resident core instead, described below. `--registry` is the queue verbs' own.
+
 ```bash
 $ onemessagebus serve surfaces --codec onejudge --config onemessagebus.yaml < frame.json
 {"completion":false,"message":"Your turn was taken and no planner surface was raised for it: …","reason":"the monitor took its turn; a report reaches the planner as a finding"}
+```
+
+### `serve --resident --socket PATH [--config PATH] [--transport-dir DIR] [--registry DIR]`
+
+Run the resident core: open the configured transport once, and answer the
+resident protocol (`bus.resident-protocol@1`) on the unix socket at `PATH` until
+that socket is removed — the clean way to stop it, which exits 0 once the core
+notices, within a fraction of a second — or the process is killed. A request is
+one line, `{"id": <n>, "verb": "<method>",
+"args": {...}, "input": "<stdin>"}`: `verb` is a capability's SDK method
+(`schemaList`, `send`, `next`, …), `args` its options keyed as its options root
+keys them, and `input` the bytes the verb would read on stdin. It is answered by
+one `{"id": <n>, "ok": <output>}` line — the document, the list of lines or the
+text the one-shot verb would print — or one `{"id": <n>, "error": {"exit": 1|2,
+"message": "...", "output": ...}}` line, carrying the exit code and refusal the
+one-shot verb would give and, for `ask` and `validate`, the document it printed. A
+`subscribe` request streams `{"id": <n>, "event": {"position", "record"}}` lines
+first and ends with `"ok": "until"` when its predicate holds, or `"ok":
+"cancelled"` once `{"id": <n>, "cancel": true}` names it or its connection closes.
+
+A request naming no `config`, `transportDir` or `registry` takes the resident's
+own, and runs over the transport the resident holds open. The registry directory
+is read again for every request, so a schema registered after the core started is
+one the next `send` validates by. A socket another live resident answers on is
+refused with exit 1, naming that resident's pid, which each resident records in
+`PATH.pid`; a socket nobody answers on is a stale one, and is taken over. The
+resident listens on a unix socket, and a platform without one refuses
+`--resident` with exit 2. `schema gen --lang json bus.resident-protocol@1` prints
+the protocol's schema, and `docs/sdk.md` is the SDKs' account of it.
+
+```bash
+$ onemessagebus serve --resident --socket bus.sock --config onemessagebus.yaml &
+$ printf '%s\n' '{"id":1,"verb":"next","args":{"queue":"surfaces"}}' | nc -U bus.sock
+{"id":1,"error":{"exit":1,"message":"nothing on surfaces to claim"}}
 ```
 
 ## `transports`
