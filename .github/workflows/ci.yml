@@ -79,7 +79,7 @@ jobs:
       # onepipeline-cli 0.28.2 wheel's reader through `uv tool run`.
       - uses: astral-sh/setup-uv@v6
       # The TypeScript SDK's tiers run under bun, and the cross-language journey
-      # spawns bun and uv beside the binary. Pinned: the SDK's lockfile is bun's.
+      # spawns bun and uv beside the binary. Its version is .bun-version's.
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version

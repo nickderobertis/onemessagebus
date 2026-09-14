@@ -6,10 +6,7 @@
   "tags": ["scope:sdk", "lang:ts", "type:packaging"],
   "implicitDependencies": ["onemessagebus-cli"],
   "targets": {
-    "bootstrap": {
-      "command": "bun install --cwd npm/onemessagebus-sdk --frozen-lockfile",
-      "cache": false
-    },
+    "bootstrap": { "executor": "nx:noop" },
     "format": {
       "command": "bun run --cwd npm/onemessagebus-sdk format",
       "cache": false

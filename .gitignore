@@ -10,9 +10,8 @@
 # npm/onemessagebus-cli/ and pyproject.toml.
 /npm/dist
 /dist
-# The language SDK packages' own installs, builds and test caches; each package's
-# committed sources, lockfile and generated contract are what is tracked.
-/npm/onemessagebus-sdk/node_modules
+# The language SDK packages' builds and test caches; each package's committed
+# sources and generated contract are what is tracked.
 /npm/onemessagebus-sdk/dist
 /npm/onemessagebus-sdk/coverage
 /python/onemessagebus-sdk/dist

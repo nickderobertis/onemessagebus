@@ -109,7 +109,8 @@ writeFileSync(
       "@onemessagebus/sdk": `file:../${pack(sdkDir)}`,
       "onemessagebus-cli": `file:../${pack(launcherDir)}`,
       [platformName]: `file:../${pack(platformDir)}`,
-      zod: `file:../${pack(join(PACKAGE, "node_modules/zod"))}`,
+      // The zod this package resolves, wherever the npm workspace installed it.
+      zod: `file:../${pack(dirname(fileURLToPath(import.meta.resolve("zod/package.json"))))}`,
     },
   })}\n`,
 );

@@ -214,12 +214,13 @@ impl Config {
         let package = root().join("npm/onemessagebus-sdk");
         let script = scratch.path(&format!("{name}.ts"));
         // The program imports the SDK and zod by absolute path, since it runs from
-        // the scratch directory rather than from inside the package.
+        // the scratch directory rather than from inside the package; zod is the
+        // copy the root npm workspace installed for the SDK.
         let source = source
             .replace("@SDK@", &package.join("src/index.ts").display().to_string())
             .replace(
                 "@ZOD@",
-                &package
+                &root()
                     .join("node_modules/zod/index.js")
                     .display()
                     .to_string(),

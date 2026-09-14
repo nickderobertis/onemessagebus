@@ -15,9 +15,14 @@ check.
   generated runtime's `contract<T>`, sound because a schema and its type come
   from one document.
 - **Versions are stamped, never written.** `SDK_VERSION`, `CLI_VERSION` and the
-  `onemessagebus-cli` peer stay at `0.0.0-dev`; `scripts/pack.mjs` stamps the
-  workspace version into a publishable copy, which
+  manifest's version stay at `0.0.0-dev`, and the manifest names no
+  `onemessagebus-cli`; `scripts/pack.mjs` stamps the workspace version and adds
+  the exact CLI dependency in a publishable copy, which
   `onemessagebus-sdk-install-e2e` installs and drives.
+- **One npm workspace.** The package resolves from the root `package-lock.json`
+  (`npm install` at the root after changing its dependencies); bun runs its
+  scripts and tests, and `nx.includedScripts` is empty so its `package.json`
+  scripts add no targets beside `project.json`'s.
 - **One method per capability, and no other public method on `Client`.** The
   parity gate reads `export class Client`'s members at two spaces: `client.schema`
   is a field, private helpers are `#private`, and disposal is

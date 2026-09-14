@@ -120,9 +120,11 @@ rationale; the mechanics live in the files named. -->
   `cargo install --git`, so nothing constructs a release asset's name and no
   asset-naming contract can drift. **bun outside the TypeScript SDK** — the
   root Node use is the Nx orchestrator and the launcher's own `node --test`
-  suite, which the siblings run with npm and a committed `package-lock.json`;
-  bun is the TypeScript SDK's own runtime, with its own `bun.lock`, and CI pins
-  its version. **A `published-smoke` workflow** — the
+  suite, which the siblings run with npm and a committed `package-lock.json`.
+  The TypeScript SDK is a member of that npm workspace and resolves from the same
+  lock; bun is only its script and test runtime, pinned by `.bun-version`. The
+  Python SDK is likewise the one member of the uv workspace rooted at
+  `pyproject.toml`, resolved from `uv.lock`. **A `published-smoke` workflow** — the
   post-release registry watch the siblings carry is a follow-up once the first
   release exists to watch.
 - **Buildout exception, authorized by the manager:** the skill's buildout rules

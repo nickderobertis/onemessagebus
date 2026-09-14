@@ -120,9 +120,16 @@ describe("the packer", () => {
     const from = scratch("pack-from");
     cpSync(join(PACKAGE, "package.json"), join(from, "package.json"));
     cpSync(join(PACKAGE, "README.md"), join(from, "README.md"));
+    // Wherever the npm workspace installed TypeScript, as the package's own import would find it.
     const build = spawnSync(
-      join(PACKAGE, "node_modules/.bin/tsc"),
-      ["-p", "tsconfig.build.json", "--outDir", join(from, "dist")],
+      "node",
+      [
+        Bun.resolveSync("typescript/bin/tsc", PACKAGE),
+        "-p",
+        "tsconfig.build.json",
+        "--outDir",
+        join(from, "dist"),
+      ],
       { cwd: PACKAGE, encoding: "utf8" },
     );
     expect(build.stdout + build.stderr).toBe("");

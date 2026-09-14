@@ -234,8 +234,6 @@ _sdk-install-test:
     target="$(rustc -vV | sed -n 's/^host: //p')"
     platform="$(node scripts/npm-build.mjs platform --target "$target" --binary target/release/onemessagebus --out "$work/npm")"
     launcher="$(node scripts/npm-build.mjs launcher --out "$work/npm")"
-    bun install --cwd npm/onemessagebus-sdk --frozen-lockfile >/dev/null \
-      || fail "the Node SDK's dependencies did not install — run 'just sdk-check' to see why"
     bun run --cwd npm/onemessagebus-sdk build >/dev/null || fail "the Node SDK did not build — run 'just sdk-check'"
     bun run --cwd npm/onemessagebus-sdk test:package \
       || fail "the Node SDK's packed tarball did not install and run — its output is above"

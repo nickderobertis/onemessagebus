@@ -174,8 +174,9 @@ builds it). Packing and the installed-package journey belong to the
 `onemessagebus-sdk-install-e2e` project, which stamps this package with
 `scripts/pack.mjs`, installs the tarball beside the CLI and drives it under node.
 
-In a checkout the `onemessagebus-cli` dependency is an optional peer pinned to
-the placeholder, so installing does not fetch a version that does not exist;
-`scripts/pack.mjs` replaces it with an exact dependency on the stamped version.
+In a checkout the package is a member of the root npm workspace, installed from
+its one `package-lock.json`, and declares no `onemessagebus-cli` dependency — it
+drives the built binary — so installing never fetches an unreleased version;
+`scripts/pack.mjs` adds an exact dependency on the stamped version.
 A generated-schema construct the Zod generator does not enforce fails generation
 by keyword and JSON pointer rather than being dropped.

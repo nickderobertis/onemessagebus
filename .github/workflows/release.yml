@@ -599,7 +599,7 @@ jobs:
           bun-version-file: .bun-version
       - name: Build and pack the Node SDK
         run: |
-          bun install --cwd npm/onemessagebus-sdk --frozen-lockfile
+          npm ci --no-audit --no-fund
           bun run --cwd npm/onemessagebus-sdk build
           pkgdir="$(node npm/onemessagebus-sdk/scripts/pack.mjs | tail -n1)"
           mkdir -p node-sdk-artifact

@@ -68,13 +68,6 @@ if (manifest.version !== PLACEHOLDER) {
     `set it back to ${PLACEHOLDER}; the version comes from Cargo.toml`,
   );
 }
-if (manifest.peerDependencies?.["onemessagebus-cli"] !== PLACEHOLDER) {
-  fail(
-    `package.json's onemessagebus-cli peer dependency is ${JSON.stringify(manifest.peerDependencies?.["onemessagebus-cli"])}, not the placeholder ${PLACEHOLDER}`,
-    `set it back to ${PLACEHOLDER}; the packer pins the exact version`,
-  );
-}
-
 let versionModule = readFileSync(built, "utf8");
 for (const name of ["SDK_VERSION", "CLI_VERSION"]) {
   const literal = new RegExp(
@@ -92,12 +85,6 @@ for (const name of ["SDK_VERSION", "CLI_VERSION"]) {
 }
 
 manifest.version = version;
-delete manifest.peerDependencies["onemessagebus-cli"];
-if (Object.keys(manifest.peerDependencies).length === 0) delete manifest.peerDependencies;
-if (manifest.peerDependenciesMeta) {
-  delete manifest.peerDependenciesMeta["onemessagebus-cli"];
-  if (Object.keys(manifest.peerDependenciesMeta).length === 0) delete manifest.peerDependenciesMeta;
-}
 manifest.dependencies = { ...manifest.dependencies, "onemessagebus-cli": version };
 delete manifest.scripts;
 delete manifest.devDependencies;
