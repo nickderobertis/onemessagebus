@@ -552,9 +552,10 @@ fn rearm_after_a_lost_wait_receives_the_eventual_reply() {
 #[test]
 fn a_question_the_bus_refuses_answers_refused_with_no_reply_and_appends_nothing() {
     let scratch = Scratch::new();
+    // Well-formed, and a no: a surface its schema refuses for naming no kind.
     let refused = scratch.bus(
         &["ask", "surfaces"],
-        Some(r#"["is", "the", "base", "right?"]"#),
+        Some(&json!({"message": "is the base right?", "source": "proposal"}).to_string()),
     );
     assert_eq!(refused.code, 1, "{}", refused.stderr);
     let answer = one(&refused);
@@ -564,7 +565,10 @@ fn a_question_the_bus_refuses_answers_refused_with_no_reply_and_appends_nothing(
         "a refused question carried a reply or a correlation: {answer}"
     );
     let reason = answer["reason"].as_str().expect("a reason");
-    assert!(reason.contains("is a JSON object"), "{reason}");
+    assert!(
+        reason.contains("agent.planner-surface@1") && reason.contains("\"kind\""),
+        "{reason}"
+    );
     assert!(
         !refused.stderr.contains("correlation:"),
         "a refused question printed a correlation: {}",
@@ -574,6 +578,143 @@ fn a_question_the_bus_refuses_answers_refused_with_no_reply_and_appends_nothing(
         scratch.lines("surfaces.jsonl").is_empty(),
         "a refused question was appended"
     );
+}
+
+/// Refused input, as the exit-code table gives it: exit 2, the problem on
+/// stderr, nothing on stdout — and, for a refusal `onemessagebus` makes itself
+/// rather than clap, `onemessagebus: ` before it.
+fn assert_refused_input(run: &Run, problem: &str) {
+    assert_eq!(
+        run.code, 2,
+        "{problem}: stdout {}\nstderr {}",
+        run.stdout, run.stderr
+    );
+    assert_eq!(run.stdout, "", "{problem}");
+    assert!(run.stderr.contains(problem), "{problem}: {}", run.stderr);
+    assert!(
+        !run.stderr
+            .lines()
+            .any(|line| line.starts_with("correlation: ")),
+        "refused input printed a correlation: {}",
+        run.stderr
+    );
+}
+
+#[test]
+fn ask_refuses_input_it_cannot_take_with_exit_two_and_raises_nothing() {
+    let scratch = Scratch::new();
+    let asked = question("which base?");
+    let too_long = format!("c-{}", "0".repeat(200));
+    for (args, stdin, problem) in [
+        (
+            vec!["ask", "surfaces", "--timeout", "1"],
+            r#"["is", "the", "base", "right?"]"#,
+            "onemessagebus: surfaces: a record on this queue is a JSON object, and this is an array",
+        ),
+        (
+            vec!["ask", "surfaces", "--timeout", "1"],
+            r#""is the base right?""#,
+            "onemessagebus: surfaces: a record on this queue is a JSON object, and this is a string",
+        ),
+        (
+            vec!["ask", "surfaces", "--timeout", "1"],
+            "is the base right?",
+            "onemessagebus: the payload is not JSON",
+        ),
+        (
+            vec!["ask", "surfaces", "--correlation", "not a correlation"],
+            "",
+            "onemessagebus: --correlation: \"not a correlation\" is not a correlation",
+        ),
+        (
+            vec!["ask", "surfaces", "--correlation", too_long.as_str()],
+            "",
+            "onemessagebus: --correlation:",
+        ),
+        (
+            vec!["ask", "surfaces", "--about", " ", "--timeout", "1"],
+            asked.as_str(),
+            "onemessagebus: --about:",
+        ),
+        (
+            vec!["ask", "surfaces", "--timeout", "soon"],
+            asked.as_str(),
+            "--timeout",
+        ),
+    ] {
+        let refused = scratch.bus(&args, Some(stdin));
+        assert_refused_input(&refused, problem);
+    }
+    assert!(
+        scratch.lines("surfaces.jsonl").is_empty(),
+        "refused input raised a question"
+    );
+}
+
+#[test]
+fn reply_refuses_input_it_cannot_take_with_exit_two_appending_nothing_and_the_ask_stands() {
+    let scratch = Scratch::new();
+    let mut asking = scratch.ask(&["--timeout", "30"], Some(&question("which base?")));
+    let correlation = asking.correlation.clone();
+    let answer = verdict("main");
+    let too_long = format!("c-{}", "0".repeat(200));
+    for (args, stdin, problem) in [
+        // An array once read as an envelope field by field — `[3]` as version 3 —
+        // and answered the ask with it.
+        (
+            vec!["reply", "surfaces", "--correlation", correlation.as_str()],
+            "[3]",
+            "onemessagebus: replies: a record on this queue is a JSON object, and this is an array",
+        ),
+        (
+            vec!["reply", "surfaces"],
+            r#""main""#,
+            "onemessagebus: replies: a record on this queue is a JSON object, and this is a string",
+        ),
+        (
+            vec!["reply", "surfaces", "--correlation", correlation.as_str()],
+            r#"{"version": 3,"#,
+            "onemessagebus: the payload is not JSON",
+        ),
+        (
+            vec!["reply", "surfaces", "--correlation", too_long.as_str()],
+            answer.as_str(),
+            "onemessagebus: --correlation:",
+        ),
+        (
+            vec![
+                "reply",
+                "surfaces",
+                "0",
+                "--correlation",
+                correlation.as_str(),
+            ],
+            answer.as_str(),
+            "--correlation",
+        ),
+    ] {
+        let refused = scratch.bus(&args, Some(stdin));
+        assert_refused_input(&refused, problem);
+    }
+    assert!(
+        scratch.lines("replies.jsonl").is_empty(),
+        "a refused reply was appended"
+    );
+    assert!(
+        scratch.lines("commands.jsonl").is_empty(),
+        "a refused reply was routed"
+    );
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(asking.waiting(), "refused input answered the ask");
+
+    let replied = scratch.bus(
+        &["reply", "surfaces", "--correlation", &correlation],
+        Some(&answer),
+    );
+    assert_eq!(replied.code, 0, "{}", replied.stderr);
+    let answered = asking.finish();
+    assert_eq!(answered.code, 0, "{}", answered.stderr);
+    assert_eq!(one(&answered)["reply"]["reply"]["reason"], json!("main"));
 }
 
 #[test]

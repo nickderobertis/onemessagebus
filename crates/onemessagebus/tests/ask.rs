@@ -441,6 +441,68 @@ fn a_reply_binds_by_correlation_is_refused_unbound_and_binds_the_one_pending_ask
 }
 
 #[test]
+fn a_record_that_is_not_an_object_is_refused_before_it_is_bound_judged_or_appended() {
+    let rig = Rig::new();
+    let bus = rig.bus();
+    let not_an_object =
+        |failure: &BusError| matches!(failure, BusError::Queue(QueueError::NotAnObject { .. }));
+    // Nothing is pending, and the shape is what is refused, not the binding.
+    let shapeless = bus
+        .reply(&queue("questions"), None, json!(["to", "whichever"]))
+        .expect_err("not an object");
+    assert!(not_an_object(&shapeless), "{shapeless}");
+
+    let pending = bus
+        .ask::<Question, Ruling>(&queue("questions"), question("one"), AskOptions::default())
+        .expect("asked");
+    for reply in [json!([true, "one"]), json!("one"), Value::Null] {
+        let refused = bus
+            .reply(
+                &queue("questions"),
+                Some(pending.correlation()),
+                reply.clone(),
+            )
+            .expect_err("not an object");
+        assert!(
+            not_an_object(&refused) && refused.to_string().starts_with("replies: "),
+            "{reply}: {refused}"
+        );
+    }
+    let noted = bus
+        .send(&queue("notes"), json!({"note": "a plain log"}))
+        .expect("sent")
+        .remove(0)
+        .1;
+    let at = bus
+        .reply_at(&queue("questions"), &noted.position, json!([1]))
+        .expect_err("not an object");
+    assert!(not_an_object(&at), "{at}");
+    for refused in [
+        bus.validate(&queue("questions"), json!(["one"]))
+            .expect_err("not an object"),
+        bus.send(&queue("questions"), json!(1))
+            .expect_err("not an object"),
+    ] {
+        assert!(
+            not_an_object(&refused) && refused.to_string().starts_with("questions: "),
+            "{refused}"
+        );
+    }
+    // A plain log keeps whatever JSON it is given.
+    assert_eq!(
+        bus.validate(&queue("notes"), json!(["one"]))
+            .expect("judged"),
+        Verdict::Pass
+    );
+
+    assert!(
+        rig.lines("replies").is_empty(),
+        "a refused reply was appended"
+    );
+    assert!(matches!(pending.wait(SHORT), Answer::Timeout));
+}
+
+#[test]
 fn a_blocking_question_held_pending_is_released_by_its_reply_by_correlation_or_by_position() {
     let rig = Rig::new();
     let bus = rig.bus();

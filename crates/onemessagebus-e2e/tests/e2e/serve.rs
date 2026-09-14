@@ -606,6 +606,25 @@ fn serve_refuses_what_it_cannot_serve_before_it_reads_a_frame() {
         "{}",
         elsewhere.stderr
     );
+
+    std::fs::write(
+        scratch.config(),
+        format!(
+            "version: 1\ntransport: {{kind: local, dir: {}}}\nprofile: planner-channel\ncodecs:\n  onepipeline: {{reply_window_seconds: 5}}\n",
+            serde_json::to_string(&scratch.channel()).expect("a path")
+        ),
+    )
+    .expect("written");
+    let unlinked = scratch.serve(&[], &frame, &[]);
+    assert_eq!(unlinked.code, 2, "{}", unlinked.stdout);
+    assert_eq!(unlinked.stdout, "");
+    assert!(
+        unlinked.stderr.contains(
+            "onemessagebus: codecs.onepipeline: `onepipeline` is not a codec this build links; it links: onejudge"
+        ),
+        "{}",
+        unlinked.stderr
+    );
     assert!(scratch.queued().is_empty());
 }
 

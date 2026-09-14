@@ -614,6 +614,11 @@ impl PlannerChannel {
         envelope: Value,
         allowlist: &Allowlist<O>,
     ) -> Result<Vec<(QueueName, Value)>, String> {
+        // Checked first: serde reads an array into a struct field by field, so
+        // `[3]` would otherwise pass as an envelope of version 3.
+        if !envelope.is_object() {
+            return Err("the reply is malformed: a reply envelope is a JSON object".to_owned());
+        }
         let envelope: ReplyEnvelope = serde_json::from_value(envelope)
             .map_err(|failure| format!("the reply is malformed: {failure}"))?;
         let author = envelope.author.author();

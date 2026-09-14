@@ -83,6 +83,9 @@ A `Pending` is a listener, and a listener can go away without its answer.
   `queue.json`, made the bus's.
 - A reply naming none binds to the queue's pending ask when exactly one is
   pending, and is refused otherwise, naming how many are and which.
+- A reply is a JSON object on every answer queue, since the correlation it is
+  bound by is one of its members; one that is not is refused before it is bound,
+  with nothing appended.
 
 The reply is shaped by the layout as an offer to the answer queue, the record
 that lands there is stamped with the correlation, the offer is judged by the
@@ -118,6 +121,10 @@ pending question's correlation on the reply where it carries one.
 - `reply <queue> --correlation <c>` binds the reply on stdin to that ask;
   `reply <queue>` with neither a correlation nor a position binds to the one
   pending ask; `reply <queue> <position>` answers the record claimed there.
+- Input either verb refuses — a document that is not JSON or not a JSON object,
+  a malformed or over-long correlation, a usage error — exits 2 with the problem
+  on stderr and nothing on stdout, as `docs/cli.md`'s exit codes give it; a
+  well-formed question or reply the bus says no to exits 1.
 
 ## What the wrappers measured
 

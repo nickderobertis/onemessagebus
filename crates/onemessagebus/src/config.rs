@@ -29,8 +29,8 @@ use crate::author::{Allowlist, Author, NarrowingRefused, OpWord};
 use crate::codec::{CodecConfig, CodecName};
 use crate::kinds::{TransportConfig, TransportKinds};
 use crate::queue::{
-    Delivery, Ordering, Policy, Predicate, Pushed, QueueError, QueueSpec, RawQueue, Retention,
-    Supersede,
+    shape_word, Delivery, Ordering, Policy, Predicate, Pushed, QueueError, QueueSpec, RawQueue,
+    Retention, Supersede,
 };
 use crate::schema::{Message, Registry, SchemaId};
 use crate::transport::{ConsumerName, DocumentName, QueueName, Transport, TransportError};
@@ -783,13 +783,23 @@ impl Bus {
     ///
     /// # Errors
     ///
-    /// [`BusError::UnknownQueue`], or [`BusError::Refused`] in the layout's words.
+    /// [`BusError::UnknownQueue`]; [`QueueError::NotAnObject`] for a record
+    /// that is not a JSON object offered to a queue whose records are objects —
+    /// one that keeps events or numbers its records — before the layout reads
+    /// it; or [`BusError::Refused`] in the layout's words.
     pub fn prepare(
         &self,
         queue: &QueueName,
         record: Value,
     ) -> Result<Vec<(QueueName, Value)>, BusError> {
-        self.queue(queue)?;
+        let spec = self.queue(queue)?.spec().clone();
+        if (spec.policy.keeps_events() || spec.numbered) && !record.is_object() {
+            return Err(QueueError::NotAnObject {
+                queue: queue.clone(),
+                shape: shape_word(&record),
+            }
+            .into());
+        }
         match &self.layout {
             Some(layout) => layout
                 .prepare(queue, record, &self.allowlist)

@@ -48,7 +48,8 @@ codecs:
 
 The block is generic: every key names a constant a host configures, and no
 protocol's word is in it. Which codec names there are is the binary's to say —
-`serve` refuses one it does not link, naming the ones it does — and every key of
+it refuses one it does not link, whether `serve --codec` names it or it is a key
+of `codecs`, naming the ones it does — and every key of
 a codec's block is refused by name when unknown, at `Config::load`. The flag wins
 over the variable, and a variable set to a value the key does not take is refused
 naming the variable, before the first frame is read.

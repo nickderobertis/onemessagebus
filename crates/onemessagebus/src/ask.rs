@@ -26,7 +26,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::config::{Bus, BusError};
-use crate::queue::{Asker, Claimed, Lifetime, Pushed, QueueError, RawQueue};
+use crate::queue::{shape_word, Asker, Claimed, Lifetime, Pushed, QueueError, RawQueue};
 use crate::schema::{CheckError, Message, Registry};
 use crate::transport::{Position, QueueName};
 use crate::validate::Verdict;
@@ -605,6 +605,18 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// `record` with `correlation` set: in place where it has one, last where not.
+/// A reply is a JSON object on every answer queue, whatever that queue keeps:
+/// the correlation it is bound by is one of its members.
+fn a_reply_object(answers: &RawQueue, reply: &Value) -> Result<(), QueueError> {
+    if reply.is_object() {
+        return Ok(());
+    }
+    Err(QueueError::NotAnObject {
+        queue: answers.name().clone(),
+        shape: shape_word(reply),
+    })
+}
+
 fn stamped(record: Value, correlation: &Correlation) -> Value {
     match record {
         Value::Object(mut fields) => {
@@ -724,7 +736,7 @@ impl Bus {
         let Value::Object(mut fields) = value else {
             return Err(QueueError::NotAnObject {
                 queue: queue.clone(),
-                shape: "not an object",
+                shape: shape_word(&value),
             }
             .into());
         };
@@ -836,10 +848,11 @@ impl Bus {
     ///
     /// # Errors
     ///
-    /// [`BusError::Unbound`] for a correlation nothing pending holds, naming
-    /// it, or — naming none — for a queue with no pending ask or more than one;
-    /// an unaskable queue; the layout's refusal; a validator's refusal or an
-    /// unjudged verdict. Nothing is appended.
+    /// [`QueueError::NotAnObject`] for a reply that is not a JSON object, before
+    /// it is bound; [`BusError::Unbound`] for a correlation nothing pending
+    /// holds, naming it, or — naming none — for a queue with no pending ask or
+    /// more than one; an unaskable queue; the layout's refusal; a validator's
+    /// refusal or an unjudged verdict. Nothing is appended.
     pub fn reply(
         &self,
         queue: &QueueName,
@@ -847,6 +860,7 @@ impl Bus {
         reply: Value,
     ) -> Result<Bound, BusError> {
         let (questions, answers) = self.askable(queue)?;
+        a_reply_object(&answers, &reply)?;
         let replied: BTreeSet<Correlation> = replies_on(&answers)?
             .into_iter()
             .map(|(correlation, _)| correlation)
@@ -922,6 +936,7 @@ impl Bus {
         reply: Value,
     ) -> Result<Bound, BusError> {
         let (questions, answers) = self.askable(queue)?;
+        a_reply_object(&answers, &reply)?;
         let answered_first = |held: &Claimed<Value>, at: &Position| {
             BusError::Unbound {
             queue: queue.clone(),

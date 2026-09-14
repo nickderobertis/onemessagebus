@@ -713,6 +713,15 @@ fn a_framed_reply_is_checked_and_kept_whole_and_a_surface_that_is_not_an_object_
         refused.starts_with("declaring the run complete is not something the monitor may do"),
         "{refused}"
     );
+    for shapeless in [json!([3]), json!({"id": 0, "reply": [3], "at": 5})] {
+        assert_eq!(
+            layout
+                .prepare(&queue(REPLIES), shapeless.clone(), &grants)
+                .expect_err("an array is no envelope"),
+            "the reply is malformed: a reply envelope is a JSON object",
+            "{shapeless}"
+        );
+    }
     assert_eq!(
         layout
             .prepare(&queue(SURFACES), json!("text"), &grants)

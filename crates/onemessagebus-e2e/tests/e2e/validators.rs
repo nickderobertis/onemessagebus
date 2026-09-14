@@ -185,6 +185,52 @@ fn verdict(run: &Run) -> Value {
 }
 
 #[test]
+fn validate_refuses_a_record_that_is_not_json_or_not_an_object_with_exit_two_judging_nothing() {
+    let scratch = Scratch::new();
+    scratch.configure(&format!(
+        "profile: planner-channel\nvalidators:\n  - {{on: replies, kind: command, command: {command}}}\n  - {{on: surfaces, kind: command, command: {command}}}\n",
+        command = scratch.command()
+    ));
+    // Were the command reached, it would refuse, and the verb would exit 1.
+    scratch.script(
+        json!({"exit": 1, "stderr": "judged what it should never have been handed"}),
+        json!({"exit": 0, "stdout": "bar-1"}),
+    );
+    for (queue, stdin, problem) in [
+        (
+            "replies",
+            "[3]",
+            "onemessagebus: replies: a record on this queue is a JSON object, and this is an array",
+        ),
+        (
+            "surfaces",
+            r#""the base moved""#,
+            "onemessagebus: surfaces: a record on this queue is a JSON object, and this is a string",
+        ),
+        (
+            "replies",
+            r#"{"version": 3,"#,
+            "onemessagebus: the payload is not JSON",
+        ),
+    ] {
+        let refused = scratch.bus(&["validate", queue], Some(stdin));
+        assert_eq!(refused.code, 2, "{problem}: {}", refused.stderr);
+        assert_eq!(refused.stdout, "", "{problem}");
+        assert!(refused.stderr.contains(problem), "{problem}: {}", refused.stderr);
+    }
+    let usage = scratch.bus(&["validate", "replies", "--verdict", "pass"], Some("{}"));
+    assert_eq!(usage.code, 2, "{}", usage.stderr);
+    assert_eq!(usage.stdout, "");
+    assert!(
+        scratch.ran("validate").is_empty(),
+        "a validator judged refused input"
+    );
+    assert!(
+        scratch.lines("replies.jsonl").is_empty() && scratch.lines("surfaces.jsonl").is_empty()
+    );
+}
+
+#[test]
 fn validate_prints_each_verdict_the_scripted_command_reaches_and_appends_nothing() {
     let scratch = Scratch::new();
     scratch.configure(&format!(

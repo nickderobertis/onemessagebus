@@ -907,7 +907,7 @@ fn asker_of(record: &Value) -> Option<&str> {
         .filter(|name| !name.trim().is_empty())
 }
 
-fn shape_word(value: &Value) -> &'static str {
+pub(crate) fn shape_word(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",
         Value::Bool(_) => "a boolean",

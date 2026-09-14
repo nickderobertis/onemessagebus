@@ -209,8 +209,10 @@ against the queue's schema, and given an id where the queue gives one. A reply
 envelope sent to `replies` under `planner-channel` is routed by its halves, as
 `onepipeline` routes it: its commands to `commands`, its verdict to `replies`,
 so one send can print two lines. A queue the configuration does not declare is
-refused with exit 2 naming the queues it does, before stdin is read; a record
-its author may not write, its schema refuses, or a validator refuses or cannot
+refused with exit 2 naming the queues it does, before stdin is read, and a
+record that is not JSON, or not a JSON object on a queue whose records are
+objects — one that keeps events or numbers its records — is refused with exit 2
+with nothing appended; a record its author may not write, its schema refuses, or a validator refuses or cannot
 judge (`validate`) exits 1 with nothing appended anywhere, the validator's reason
 on stderr unaltered.
 
@@ -252,9 +254,11 @@ still answerable — for a later listener of its asker to take back.
 With `--correlation` it raises nothing and listens again for the question that
 correlation minted: under the question's own `--asker` it takes the question back
 and waits for its reply; under no asker or another, it attends nothing, and a
-question left abandoned answers `abandoned`. A queue that keeps no events or
-answers on no queue, a blank `--asker`, and a malformed `--about` or
-`--correlation` are refused with exit 2.
+question left abandoned answers `abandoned`. A question that is not JSON or not a JSON object,
+a queue that keeps no events or answers on no queue, a blank `--asker`, and a
+malformed or over-long `--about` or `--correlation` are refused with exit 2:
+nothing is raised, nothing is printed on stdout, and the problem is named on
+stderr.
 
 ```bash
 $ echo '{"kind":"planner-question","message":"which base?","source":"proposal"}' | onemessagebus ask surfaces --blocking --asker worker-1 --timeout 3000 --transport-dir runs/r1/channel
@@ -276,8 +280,9 @@ appended. A reply that carries only commands answers nothing — `answered` is
 or already answered) exits 1 naming it, as do a reply naming neither when no ask
 or more than one is pending and a position the pending record was not claimed at,
 each with nothing appended. `--correlation` beside `<position>` is a usage error,
-and a malformed correlation, or a queue that answers on no queue, is refused with
-exit 2. Of replies racing for one pending record by position, one answers it;
+and a reply that is not JSON or not a JSON object, a malformed or over-long
+correlation, or a queue that answers on no queue, is refused with exit 2, before
+the reply is bound and with nothing appended. Of replies racing for one pending record by position, one answers it;
 each other is appended, answers nothing, and exits 1 saying another reply
 answered the record first.
 
@@ -322,7 +327,9 @@ each record the layout routes to another queue by that queue's
 pass, is the validator's own words, unaltered — and exits 0 for a pass and 1 for
 either other verdict, saying the reason on stderr as well. An unjudged record is
 never a pass. A queue the configuration does not declare is refused with exit 2
-before stdin is read; a queue with no validators passes every record. A pass a
+before stdin is read, and a record that is not JSON, or not a JSON object on a
+queue whose records are objects, with exit 2 before any validator judges it; a
+queue with no validators passes every record. A pass a
 validator's cache records is recorded here as it would be on a send.
 
 ```bash
@@ -350,8 +357,8 @@ its own accord after that many seconds with exit 0, leaving what it asked counte
 and saying so on stderr; when the frame stream ends instead, what it asked and
 nobody answered is marked abandoned. `--asker` (or the codec's asker variable)
 names who the session listens for. The configuration's `codecs.onejudge` block
-names the reply window, the queue and the variables read; a codec, a session
-bound, an asker or a queue it cannot take, and a frame naming no run, are refused
+names the reply window, the queue and the variables read; a codec — by
+`--codec` or as a key of `codecs` — this build does not link, a session bound, an asker or a queue it cannot take, and a frame naming no run, are refused
 with exit 2.
 
 ```bash

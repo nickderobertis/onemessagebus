@@ -1003,10 +1003,26 @@ fn configuration(args: &BusArgs) -> Result<Config, Refusal> {
             ))
         }
     };
+    // The configuration's codec names are the binary's to say, as `--codec`'s are.
+    if let Some(name) = config.codecs.keys().find(|name| !CODECS.contains(name)) {
+        return Err(invalid(format!(
+            "codecs.{name}: `{name}` is not a codec this build links; it links: {}",
+            linked_codecs()
+        )));
+    }
     Ok(match &args.transport_dir {
         Some(dir) => config.with_transport_dir(dir),
         None => config,
     })
+}
+
+/// The codecs this build links, comma-separated.
+fn linked_codecs() -> String {
+    CODECS
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// `config` bound to the layouts this binary links and the transports it can
@@ -1024,12 +1040,13 @@ fn parse_queue(text: &str) -> Result<QueueName, Refusal> {
 
 /// A queue's refusal, with the verdict its exit code comes from: a record the
 /// queue will not keep, or a claim it cannot answer, is a well-formed no; a
-/// queue that has no such operation, or no schema registered, refuses the input.
+/// document that is not the JSON object the queue's records are, a queue that
+/// has no such operation, or no schema registered, refuses the input.
 fn queue_refusal(failure: QueueError) -> Refusal {
     match failure {
-        QueueError::NotAnEventQueue { .. } | QueueError::Unregistered { .. } => {
-            invalid(failure.to_string())
-        }
+        QueueError::NotAnObject { .. }
+        | QueueError::NotAnEventQueue { .. }
+        | QueueError::Unregistered { .. } => invalid(failure.to_string()),
         _ => failed(failure.to_string()),
     }
 }
@@ -1417,11 +1434,7 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> 
     if !CODECS.contains(&name) {
         return Err(invalid(format!(
             "--codec: `{name}` is not a codec this build links; it links: {}",
-            CODECS
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ")
+            linked_codecs()
         )));
     }
     let config = configuration(&args.bus)?;
