@@ -1,6 +1,6 @@
 // The package's own tooling: the generator's drift gate and its loud refusals, the
 // packer's stamp, and defineMessage's contract.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   cpSync,
@@ -15,7 +15,9 @@ import { join } from "node:path";
 import { z } from "zod";
 import { expression, UnsupportedSchema, zodDeclarations } from "../scripts/zod-generator.mjs";
 import { BusFailed, defineMessage, type MessageType } from "../src/index.js";
-import { PACKAGE, scratch } from "./support.js";
+import { PACKAGE, removeScratch, scratch } from "./support.js";
+
+afterAll(removeScratch);
 
 function node(args: string[]) {
   return spawnSync(process.execPath === "bun" ? "node" : "node", args, {

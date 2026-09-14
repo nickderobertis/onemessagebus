@@ -1,6 +1,6 @@
 // The manifest is how a call is rendered: every binding of every capability must
 // reach the command line from the client method that owns it.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -13,7 +13,9 @@ import {
   renderArgv,
   type Transport,
 } from "../src/index.js";
-import { caught, PACKAGE } from "./support.js";
+import { caught, PACKAGE, removeScratch } from "./support.js";
+
+afterAll(removeScratch);
 
 /** A value for every option any capability binds, each one the option's schema admits. */
 const VALUES: Record<string, unknown> = {

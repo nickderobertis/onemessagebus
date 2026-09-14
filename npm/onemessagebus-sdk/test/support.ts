@@ -1,6 +1,5 @@
 // What every journey needs: the real binary, a scratch directory it owns, and a
 // client over each transport.
-import { afterAll } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -18,9 +17,16 @@ if (!existsSync(BINARY)) {
 }
 
 const made: string[] = [];
-afterAll(() => {
+
+/**
+ * Remove every directory `scratch` and `socketPath` made so far. This module is
+ * imported once for the whole run, so each test file registers
+ * `afterAll(removeScratch)` itself: a hook registered here would belong to
+ * whichever file loaded it first.
+ */
+export function removeScratch(): void {
   for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true });
-});
+}
 
 /** A fresh directory this test file owns, removed after it. */
 export function scratch(label: string): string {

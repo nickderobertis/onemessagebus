@@ -86,9 +86,23 @@ violation is a `BusFailed` naming the id and the JSON pointer:
 `demo.greeting@1: at /text: ...`. `.jsonSchema()` is the canonical draft 2020-12
 document (from `z.toJSONSchema`), `.parse(value)` validates.
 
-The messages the Rust registry already holds are generated too:
-`messages.AgentPlannerSurfaceV1` (a definition), `messages.AgentPlannerSurfaceV1Schema`
-and the type `messages.AgentPlannerSurfaceV1`, and `messages.MESSAGES` by id.
+The messages the Rust registry already holds are generated too, as definitions
+you pass as `type`. `schemas` names each by its family without the namespace, at
+its latest version and at every version:
+
+```ts
+import { schemas, type MessageType } from "@onemessagebus/sdk";
+
+const claimed = await client.next("surfaces", { type: schemas.PlannerSurface }); // agent.planner-surface@1
+type Surface = MessageType<typeof schemas.PlannerSurface>;
+schemas.EventEnvelope;    // agent.event-envelope@2; schemas.EventEnvelopeV1 is @1
+schemas.PlannerSurface.schema; // the Zod schema itself
+```
+
+`type` also takes a bare Zod schema; a violation is then reported as the
+payload's (`payload: at /kind: ...`). `messages.AgentPlannerSurfaceV1`,
+`messages.AgentPlannerSurfaceV1Schema` and `messages.MESSAGES` (by id) are the
+same definitions by their full names.
 
 ## Transports
 

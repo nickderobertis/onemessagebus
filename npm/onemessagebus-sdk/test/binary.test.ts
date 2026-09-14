@@ -1,5 +1,5 @@
 // Which binary a client runs, and the version pin it holds that binary to.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
@@ -12,7 +12,9 @@ import {
   VersionMismatch,
   verifyVersion,
 } from "../src/index.js";
-import { BINARY, caught, PACKAGE, ROOT, scratch } from "./support.js";
+import { BINARY, caught, PACKAGE, ROOT, removeScratch, scratch } from "./support.js";
+
+afterAll(removeScratch);
 
 const WORKSPACE_VERSION = checkoutVersion(ROOT);
 

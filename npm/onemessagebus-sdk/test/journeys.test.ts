@@ -13,7 +13,18 @@ import {
   messages,
   schemas,
 } from "../src/index.js";
-import { BINARY, baseConfig, caught, Greeting, SURFACE, scratch, TRANSPORTS } from "./support.js";
+import {
+  BINARY,
+  baseConfig,
+  caught,
+  Greeting,
+  removeScratch,
+  SURFACE,
+  scratch,
+  TRANSPORTS,
+} from "./support.js";
+
+afterAll(removeScratch);
 
 async function refusedWith<E extends BusError>(
   kind: new (...args: never[]) => E,

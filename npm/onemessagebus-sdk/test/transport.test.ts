@@ -1,6 +1,6 @@
 // The transports' own behaviour: what the resident does with a shared connection,
 // who stops a resident, and how a bus that cannot be reached is reported.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { existsSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -11,7 +11,18 @@ import {
   ResidentTransport,
   TransportError,
 } from "../src/index.js";
-import { BINARY, baseConfig, caught, Greeting, SURFACE, scratch, socketPath } from "./support.js";
+import {
+  BINARY,
+  baseConfig,
+  caught,
+  Greeting,
+  removeScratch,
+  SURFACE,
+  scratch,
+  socketPath,
+} from "./support.js";
+
+afterAll(removeScratch);
 
 describe("the resident transport", () => {
   test("starts a resident, shares one connection among concurrent calls and a subscription, and stops only what it started", async () => {
