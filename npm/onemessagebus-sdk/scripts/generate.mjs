@@ -66,12 +66,12 @@ async function generate(bundle) {
   for (const capability of bundle.capabilities) {
     if (capability.options !== null && !(capability.options in bundle.options)) {
       throw new Error(
-        `capability ${capability.method} names option root ${capability.options}, which the bundle does not carry`,
+        `capability ${capability.method} names option root ${capability.options}, which the bundle does not carry; register that root in sdk_schema::bundle() or correct the capability in crates/onemessagebus/src/capability.rs, then rerun \`${RERUN}\``,
       );
     }
     if (capability.output !== null && !roots.includes(capability.output)) {
       throw new Error(
-        `capability ${capability.method} names output root ${capability.output}, which the bundle does not carry`,
+        `capability ${capability.method} names output root ${capability.output}, which the bundle does not carry; register that root in sdk_schema::bundle() or correct the capability in crates/onemessagebus/src/capability.rs, then rerun \`${RERUN}\``,
       );
     }
   }

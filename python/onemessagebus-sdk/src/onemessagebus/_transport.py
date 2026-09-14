@@ -427,18 +427,24 @@ class ResidentTransport:
                         f"does not admit: {raw[:200]!r}"
                     )
                     break
-                if isinstance(line, (ResidentRequest, ResidentCancel)):
-                    reason = ContractError(
-                        f"the resident core on {self._path} wrote a client's line: {raw[:200]!r}"
-                    )
-                    break
-                if line.id is None:
-                    reason = ContractError(
-                        f"the resident core refused a line this client wrote: {raw[:200]!r}"
-                    )
-                    break
-                if (waiter := self._pending.get(line.id)) is not None:
-                    waiter.put_nowait(line)
+                match line:
+                    case ResidentRequest() | ResidentCancel():
+                        reason = ContractError(
+                            f"the resident core on {self._path} wrote a client's line: {raw[:200]!r}"
+                        )
+                        break
+                    case ResidentFailure(id=None):
+                        reason = ContractError(
+                            f"the resident core refused a line this client wrote: {raw[:200]!r}"
+                        )
+                        break
+                    case (
+                        ResidentAnswer(id=request_id)
+                        | ResidentEvent(id=request_id)
+                        | ResidentFailure(id=int(request_id))
+                    ):
+                        if (waiter := self._pending.get(request_id)) is not None:
+                            waiter.put_nowait(line)
         except (OSError, ValueError) as error:
             reason = TransportError(f"reading from the resident core on {self._path}: {error}")
         finally:
@@ -555,11 +561,13 @@ def _request(
 
 
 def _answer(line: ResidentAnswer | ResidentFailure | BusError) -> Any:
-    if isinstance(line, BusError):
-        raise type(line)(line.message)
-    if isinstance(line, ResidentFailure):
-        raise refusal(line.error.exit, line.error.message, line.error.output)
-    return line.ok
+    match line:
+        case BusError():
+            raise type(line)(line.message)
+        case ResidentFailure(error=error):
+            raise refusal(error.exit, error.message, error.output)
+        case ResidentAnswer(ok=ok):
+            return ok
 
 
 def _owner(socket: Path) -> int | None:

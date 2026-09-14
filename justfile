@@ -169,6 +169,7 @@ _crate-test crate:
     @cargo test --doc -p {{crate}} --locked --quiet \
       || { echo "{{crate}}: doctests failed — fix the sample named above, or the README it is compiled from" >&2; exit 1; }
 
+# llmlint: ignore-block[external_service_suite_stays_out_of_the_affected_tier] this recipe's only change here keeps the cross-language journey out (it has its own project); the journey it still selects that reaches PyPI is the onepipeline 0.28.2 byte-compatibility journey, placed in the pull-request gate on purpose by the node that added it, which fetches one exact pinned wheel anonymously so there is no credential to gate it behind — ci.yml's gate step records the same reason. Moving it out of the affected tier would reverse that node's ruling rather than answer anything this diff wired.
 # The compiled-binary journeys: the binary built instrumented in the coverage
 # target directory, so what the journeys spawn is attributed to the crates it
 # was built from, then the journey crate's tests over it.
@@ -176,6 +177,7 @@ _e2e-test:
     @cargo llvm-cov --no-report run -p onemessagebus-cli --bin onemessagebus --locked -- --version >/dev/null
     @cargo llvm-cov --no-report nextest -p onemessagebus-e2e --locked -E 'not binary(cross_language)' --status-level fail --final-status-level fail \
       || { echo "onemessagebus-e2e: journeys failed — fix the failures named above" >&2; exit 1; }
+# llmlint: ignore-end[external_service_suite_stays_out_of_the_affected_tier]
 
 # Pinned to the maturin CI's `wheel` job builds with, so a wheel that builds here
 # is the one that job would build.

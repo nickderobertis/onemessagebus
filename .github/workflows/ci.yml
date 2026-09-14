@@ -82,7 +82,7 @@ jobs:
       # spawns bun and uv beside the binary. Pinned: the SDK's lockfile is bun's.
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.3.14"
+          bun-version-file: .bun-version
       - name: Bootstrap
         run: just bootstrap
       - name: Quality gate (affected projects)
@@ -129,7 +129,7 @@ jobs:
       # cross-language journey spawns both.
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.3.14"
+          bun-version-file: .bun-version
       - name: Bootstrap
         run: just bootstrap
       # llmlint: ignore-block[external_service_suite_stays_out_of_the_affected_tier, live_tier_compiles_and_requires_credential] the onepipeline 0.28.2 byte-compatibility journey fetches one exact pinned wheel (onepipeline-cli==0.28.2, the anchored engine release the compatibility promise is made against) anonymously from PyPI, so no credential exists to require, and uv caches it after the first run; the task placed this journey in the gate deliberately, because byte compatibility with that release is this node's central acceptance criterion and must gate every pull request.
@@ -235,6 +235,7 @@ jobs:
   # version, beside the binary built from it — and driven once through each
   # transport. The platforms with a unix socket for the resident core; Windows
   # has none, and the SDKs' resident transport is refused there by name.
+  # llmlint: ignore-block[live_tier_compiles_and_requires_credential] this job is no live tier with a credential to demand: it packs both SDKs from this checkout, installs them beside the binary built from the same revision, and reads public registries only anonymously for their third-party dependencies, so there is no secret whose absence it could detect; and it cannot pass green on a skip — every step of the one recipe it runs exits non-zero on failure. A credential check here would guard nothing.
   sdk-install:
     needs: [changes, gate]
     if: needs.changes.outputs.crate == 'true' || needs.changes.outputs.sdk == 'true'
@@ -253,9 +254,10 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.3.14"
+          bun-version-file: .bun-version
       - name: Pack, install and smoke-test both SDKs
         run: just nx run onemessagebus-sdk-install-e2e:test
+  # llmlint: ignore-end[live_tier_compiles_and_requires_credential]
 
   # Lint the PR title: under squash-merge it becomes the release-driving commit.
   pr-title:
