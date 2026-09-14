@@ -13,7 +13,10 @@
     "onemessagebus-npm-e2e",
     "onemessagebus-pypi",
     "onemessagebus-pypi-e2e",
-    "onemessagebus-repo"
+    "onemessagebus-repo",
+    "onemessagebus-node-sdk",
+    "onemessagebus-python-sdk",
+    "onemessagebus-sdk-parity"
   ],
   "targets": {
     "coverage": {

@@ -30,8 +30,9 @@
       "type:app": ["type:contract", "type:profile"],
       "type:e2e": ["type:contract", "type:profile", "type:app", "type:packaging"],
       "type:packaging": ["type:app"],
+      "type:parity": ["type:contract", "type:app", "type:packaging"],
       "type:repo": [],
-      "type:workspace": ["type:contract", "type:profile", "type:app", "type:e2e", "type:packaging", "type:repo"]
+      "type:workspace": ["type:contract", "type:profile", "type:app", "type:e2e", "type:packaging", "type:parity", "type:repo"]
     }
   },
   "targetDefaults": {

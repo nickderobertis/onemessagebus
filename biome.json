@@ -6,6 +6,10 @@
       "npm/**/*.mjs",
       "npm/**/*.json",
       "scripts/**/*.mjs",
+      "parity/**/*.mjs",
+      "parity/**/*.json",
+      "sdk-install/**/*.mjs",
+      "sdk-install/**/*.json",
       "!npm/onemessagebus-sdk"
     ]
   },

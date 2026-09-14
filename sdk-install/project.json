@@ -1,0 +1,44 @@
+{
+  "name": "onemessagebus-sdk-install-e2e",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "sdk-install",
+  "tags": ["scope:e2e", "lang:js", "type:e2e"],
+  "implicitDependencies": [
+    "onemessagebus-cli",
+    "onemessagebus-pypi",
+    "onemessagebus-python-sdk",
+    "onemessagebus-node-sdk"
+  ],
+  "targets": {
+    "bootstrap": { "executor": "nx:noop" },
+    "format": {
+      "command": "node node_modules/@biomejs/biome/bin/biome format --write sdk-install"
+    },
+    "format-check": {
+      "command": "node node_modules/@biomejs/biome/bin/biome format sdk-install",
+      "inputs": ["default", "{workspaceRoot}/biome.json"]
+    },
+    "lint": {
+      "command": "node node_modules/@biomejs/biome/bin/biome lint sdk-install",
+      "inputs": ["default", "{workspaceRoot}/biome.json"]
+    },
+    "test": {
+      "command": "just _sdk-install-test",
+      "dependsOn": [{ "projects": ["onemessagebus-pypi"], "target": "build" }],
+      "inputs": [
+        "{projectRoot}/**/*",
+        "^default",
+        "^crateSource",
+        "{workspaceRoot}/scripts/npm-build.mjs",
+        "sharedGlobals"
+      ],
+      "outputs": []
+    },
+    "doc": { "executor": "nx:noop" },
+    "check": {
+      "executor": "nx:noop",
+      "dependsOn": ["format-check", "lint", "test"]
+    }
+  }
+}

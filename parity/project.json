@@ -1,0 +1,54 @@
+{
+  "name": "onemessagebus-sdk-parity",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "parity",
+  "tags": ["scope:sdk", "lang:js", "type:parity"],
+  "implicitDependencies": [
+    "onemessagebus",
+    "onemessagebus-cli",
+    "onemessagebus-node-sdk",
+    "onemessagebus-python-sdk"
+  ],
+  "targets": {
+    "bootstrap": { "executor": "nx:noop" },
+    "format": {
+      "command": "node node_modules/@biomejs/biome/bin/biome format --write parity"
+    },
+    "format-check": {
+      "command": "node node_modules/@biomejs/biome/bin/biome format parity",
+      "inputs": ["default", "{workspaceRoot}/biome.json"]
+    },
+    "lint": {
+      "command": "node scripts/sdk-coverage.mjs && node scripts/parity-audit.mjs --check",
+      "inputs": [
+        "default",
+        "^default",
+        "^crateSource",
+        "{workspaceRoot}/scripts/sdk-bundle.mjs",
+        "{workspaceRoot}/scripts/sdk-coverage.mjs",
+        "{workspaceRoot}/scripts/parity-audit.mjs",
+        "{workspaceRoot}/docs/sdk-parity.md",
+        "sharedGlobals"
+      ]
+    },
+    "test": {
+      "command": "node --test parity/*.test.mjs",
+      "inputs": [
+        "default",
+        "^default",
+        "^crateSource",
+        "{workspaceRoot}/scripts/sdk-bundle.mjs",
+        "{workspaceRoot}/scripts/sdk-coverage.mjs",
+        "{workspaceRoot}/scripts/parity-audit.mjs",
+        "sharedGlobals"
+      ],
+      "outputs": []
+    },
+    "doc": { "executor": "nx:noop" },
+    "check": {
+      "executor": "nx:noop",
+      "dependsOn": ["format-check", "lint", "test"]
+    }
+  }
+}
