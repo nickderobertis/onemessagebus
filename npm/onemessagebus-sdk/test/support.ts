@@ -8,13 +8,17 @@ import { Client, type ClientConfig, defineMessage, ResidentTransport } from "../
 
 export const PACKAGE = resolve(import.meta.dir, "..");
 export const ROOT = resolve(PACKAGE, "../..");
-export const BINARY = resolve(ROOT, "target/debug/onemessagebus");
-
-if (!existsSync(BINARY)) {
-  throw new Error(
-    `these tests drive the real binary at ${BINARY}, which is not built; build it with \`cargo build -p onemessagebus-cli --locked --quiet\` and rerun`,
-  );
+/** `path`, once it is a binary to drive; a run without one fails saying how to build it. */
+export function requireBinary(path: string): string {
+  if (!existsSync(path)) {
+    throw new Error(
+      `these tests drive the real binary at ${path}, which is not built; build it with \`cargo build -p onemessagebus-cli --locked --quiet\` and rerun`,
+    );
+  }
+  return path;
 }
+
+export const BINARY = requireBinary(resolve(ROOT, "target/debug/onemessagebus"));
 
 const made: string[] = [];
 

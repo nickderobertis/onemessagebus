@@ -105,14 +105,14 @@ function run(binary: Binary, args: readonly string[], config: ClientConfig): Pro
           reject(
             new TransportError(
               `could not run ${describeBinary(binary)}: ${error.message}; install onemessagebus-cli, or name the binary with ClientConfig.binary or ONEMESSAGEBUS_BIN`,
-              { cause: error },
+              error,
             ),
           );
         } else if (error) {
           reject(
             new TransportError(
               `${describeBinary(binary)} --version failed: ${stderr.trim() || error.message}; check that it is an onemessagebus binary`,
-              { cause: error },
+              error,
             ),
           );
         } else resolve(stdout);

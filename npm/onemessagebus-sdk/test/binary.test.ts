@@ -12,7 +12,7 @@ import {
   VersionMismatch,
   verifyVersion,
 } from "../src/index.js";
-import { BINARY, caught, PACKAGE, ROOT, removeScratch, scratch } from "./support.js";
+import { BINARY, caught, PACKAGE, ROOT, removeScratch, requireBinary, scratch } from "./support.js";
 
 afterAll(removeScratch);
 
@@ -117,5 +117,15 @@ describe("resolving the binary", () => {
       `${process.execPath} launcher.js`,
     );
     expect(childEnv({ env: { EXTRA: "1" } }).EXTRA).toBe("1");
+  });
+});
+
+describe("the test support's own guard", () => {
+  test("a run with no built binary is refused with the command that builds it", () => {
+    const missing = join(scratch("unbuilt"), "onemessagebus");
+    expect(() => requireBinary(missing)).toThrow(
+      `these tests drive the real binary at ${missing}, which is not built; build it with \`cargo build -p onemessagebus-cli --locked --quiet\` and rerun`,
+    );
+    expect(requireBinary(BINARY)).toBe(BINARY);
   });
 });

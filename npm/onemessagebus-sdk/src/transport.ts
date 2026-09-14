@@ -151,7 +151,7 @@ function readStdout(capability: CapabilityMethod, args: Args, stdout: string): u
 function spawnFailure(binary: Binary, error: Error): TransportError {
   return new TransportError(
     `could not start ${describeBinary(binary)}: ${error.message}; install onemessagebus-cli, or name the binary with ClientConfig.binary or ONEMESSAGEBUS_BIN`,
-    { cause: error },
+    error,
   );
 }
 
@@ -570,7 +570,7 @@ export class ResidentTransport implements Transport {
       if (!this.#start || (code !== "ENOENT" && code !== "ECONNREFUSED")) {
         throw new TransportError(
           `nothing answers on ${this.socket} (${(error as Error).message}); start a resident with \`onemessagebus serve --resident --socket ${this.socket}\`, or let this transport start one with start: true`,
-          { cause: error },
+          error,
         );
       }
       socket = await this.#startResident();
@@ -642,7 +642,6 @@ export class ResidentTransport implements Transport {
         const said = Buffer.concat(stderr).toString("utf8");
         throw new TransportError(
           `${describeBinary(binary)} ${argv.join(" ")} exited ${exit.code} before listening: ${refusalText(said, exit.code ?? 1)}`,
-          { exit: exit.code ?? undefined },
         );
       }
       if (Date.now() > deadline) {

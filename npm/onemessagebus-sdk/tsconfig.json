@@ -9,9 +9,6 @@
     "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true,
     "resolveJsonModule": true,
-    "allowJs": true,
-    "checkJs": false,
-    "skipLibCheck": true,
     "declaration": true,
     "outDir": "dist",
     "types": ["node", "bun"]

@@ -107,7 +107,7 @@ function parseOutput<M extends CapabilityMethod>(method: M, value: unknown): unk
   if (!parsed.success) {
     throw new ContractError(
       `${method}: the binary's output does not match the generated ${CAPABILITIES[method].output} contract — ${violation(CAPABILITIES[method].output ?? method, parsed.error)}`,
-      { output: value },
+      value,
     );
   }
   return parsed.data;
@@ -219,7 +219,7 @@ export class Client {
     if (!parsed.success) {
       throw new ContractError(
         `next: the record claimed from ${queue} is not a ${definition.id}: ${violation(definition.id, parsed.error)}`,
-        { output: claimed },
+        claimed,
       );
     }
     return { ...(claimed as ClaimedRecord), record: parsed.data };
@@ -360,7 +360,7 @@ export class Client {
       if (!Array.isArray(raw)) {
         throw new ContractError(
           `${method}: expected the lines the verb printed, and the bus answered ${JSON.stringify(raw)}`,
-          { output: raw },
+          raw,
         );
       }
       return raw.map((line) => parseOutput(method, line));

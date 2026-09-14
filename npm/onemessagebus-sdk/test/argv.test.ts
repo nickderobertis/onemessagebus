@@ -1,6 +1,7 @@
 // The manifest is how a call is rendered: every binding of every capability must
 // reach the command line from the client method that owns it.
 import { afterAll, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -13,7 +14,7 @@ import {
   renderArgv,
   type Transport,
 } from "../src/index.js";
-import { caught, PACKAGE, removeScratch } from "./support.js";
+import { caught, PACKAGE, ROOT, removeScratch } from "./support.js";
 
 afterAll(removeScratch);
 
@@ -60,10 +61,12 @@ class Recording implements Transport {
     this.calls.push({ capability, args });
     throw new Stop();
   }
-  // biome-ignore lint/correctness/useYield: a stream that ends before it yields
-  async *stream(capability: CapabilityMethod, args: Args): AsyncGenerator<unknown> {
+  /** A stream that fails before its first line, as one whose process never started does. */
+  stream(capability: CapabilityMethod, args: Args): AsyncIterable<unknown> {
     this.calls.push({ capability, args });
-    throw new Stop();
+    return {
+      [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(new Stop()) }),
+    };
   }
   async close(): Promise<void> {}
 }
@@ -336,10 +339,23 @@ describe("the client's validation of options", () => {
 });
 
 describe("the parity gate's reading of the client", () => {
-  test("finds exactly one method per capability, and no other", async () => {
-    const gate = await import("../../../scripts/sdk-coverage.mjs");
-    const defined: Set<string> = gate.definedMethods("typescript", join(PACKAGE, "src/client.ts"));
-    expect([...defined].sort()).toEqual([...METHODS].sort());
+  test("finds exactly one method per capability, and no other", () => {
+    // The gate is the repository's script, run as it runs in CI: in its own process.
+    const gate = join(ROOT, "scripts/sdk-coverage.mjs");
+    const run = spawnSync(
+      "node",
+      [
+        "--input-type=module",
+        "-e",
+        `import { definedMethods } from ${JSON.stringify(gate)};
+process.stdout.write(JSON.stringify([...definedMethods("typescript", process.argv[1])]));`,
+        join(PACKAGE, "src/client.ts"),
+      ],
+      { encoding: "utf8" },
+    );
+    expect(run.stderr).toBe("");
+    const defined: string[] = JSON.parse(run.stdout);
+    expect(defined.sort()).toEqual([...METHODS].sort());
     expect(readFileSync(join(PACKAGE, "src/client.ts"), "utf8")).toContain("export class Client {");
   });
 });

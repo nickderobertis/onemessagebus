@@ -13,7 +13,6 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { expression, UnsupportedSchema, zodDeclarations } from "../scripts/zod-generator.mjs";
 import { BusFailed, defineMessage, type MessageType } from "../src/index.js";
 import { PACKAGE, removeScratch, scratch } from "./support.js";
 
@@ -50,66 +49,31 @@ describe("generate:check", () => {
 });
 
 describe("the zod generator", () => {
+  const run = node(["test/zod-generator-cases.mjs"]);
+  const cases: {
+    refusals: { expected: string; refused: boolean; named?: boolean; message?: string }[];
+    parses: boolean[];
+  } = JSON.parse(run.stdout || "{}");
+
+  test("runs its cases cleanly", () => {
+    expect(run.stderr).toBe("");
+    expect(run.status).toBe(0);
+  });
+
   test("refuses a construct it does not enforce, by keyword and pointer", () => {
-    expect(() => expression({ type: "string", format: "email" }, "root")).toThrow(
-      UnsupportedSchema,
-    );
-    expect(() => expression({ type: "array", uniqueItems: true, items: true }, "root")).toThrow(
-      "root/uniqueItems: the keyword `uniqueItems`",
-    );
-    expect(() => expression({ $ref: "other.json#/x" }, "root")).toThrow(
-      "outside the document's $defs",
-    );
-    expect(() => expression({ const: "a", type: "integer" }, "root")).toThrow(
-      "is not of type integer",
-    );
-    expect(() => expression({ oneOf: [], type: "object" }, "root")).toThrow("an empty branch list");
-    expect(() => expression({ type: "string", pattern: "(?<" }, "root")).toThrow(
-      "not a JavaScript regular expression",
-    );
-    expect(() =>
-      expression({ type: "object", additionalProperties: false, oneOf: [true] }, "root"),
-    ).toThrow("a closed object");
+    expect(cases.refusals).toHaveLength(7);
+    for (const refusal of cases.refusals) {
+      expect(refusal.refused, `not refused as unsupported: ${refusal.expected}`).toBe(true);
+      expect(refusal.message).toContain(refusal.expected);
+      expect(refusal.message).toContain("extend scripts/zod-generator.mjs");
+    }
   });
 
   test("emits schemas that hold the constraints the Rust validator does", () => {
-    const module = zodDeclarations(
-      {
-        type: "object",
-        properties: {
-          name: { type: "string", minLength: 1, maxLength: 2 },
-          count: { type: ["integer", "null"], format: "uint64", minimum: 0 },
-          any: {},
-          tagged: { oneOf: [{ const: "a" }, { const: "b" }] },
-          map: { type: "object", additionalProperties: { $ref: "#/$defs/Word" } },
-        },
-        required: ["name", "any"],
-        additionalProperties: false,
-        $defs: { Word: { enum: ["x", "y"] } },
-      },
-      { exportName: "ThingSchema", typeName: "unknown", at: "thing" },
-    );
-    const build = new Function(
-      "z",
-      "anyOf",
-      "oneOf",
-      `${module
-        .replace("export const", "const")
-        .replaceAll(": z.ZodType =", " =")
-        .replace(/ as unknown as z\.ZodType<unknown>;$/u, ";")}\nreturn ThingSchema;`,
-    );
-    const anyOf = (branches: z.ZodType[]) =>
-      branches.length === 1 ? branches[0] : z.union(branches as [z.ZodType, z.ZodType]);
-    const schema = build(z, anyOf, anyOf) as z.ZodType;
-    expect(schema.safeParse({ name: "😀😀", any: null, count: 3, map: { k: "x" } }).success).toBe(
-      true,
-    );
-    expect(schema.safeParse({ name: "", any: 1 }).success).toBe(false);
-    expect(schema.safeParse({ name: "abc", any: 1 }).success).toBe(false);
-    expect(schema.safeParse({ name: "a" }).success).toBe(false);
-    expect(schema.safeParse({ name: "a", any: 1, count: -1 }).success).toBe(false);
-    expect(schema.safeParse({ name: "a", any: 1, extra: true }).success).toBe(false);
-    expect(schema.safeParse({ name: "a", any: 1, map: { k: "z" } }).success).toBe(false);
+    // a two-astral-character name passes (code points, not UTF-16 units); then an empty
+    // name, a long one, a missing required key, a negative uint, an unknown key, and
+    // a map value outside its enum are each refused
+    expect(cases.parses).toEqual([true, false, false, false, false, false, false]);
   });
 });
 

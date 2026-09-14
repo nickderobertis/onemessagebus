@@ -18,9 +18,26 @@ export interface ResidentRequest {
    */
   id: number;
   /**
-   * The capability's SDK method, camelCase, as the manifest names it.
+   * The capability to run, by its SDK method: one of the manifest's and no other.
    */
-  verb: string;
+  verb:
+    | "schemaList"
+    | "schemaCheck"
+    | "schemaGen"
+    | "schemaRegister"
+    | "eventsMerge"
+    | "eventsEmit"
+    | "deliver"
+    | "inboxCarried"
+    | "send"
+    | "next"
+    | "reply"
+    | "subscribe"
+    | "status"
+    | "transports"
+    | "validate"
+    | "ask"
+    | "serve";
   /**
    * The capability's options, keyed as its options root keys them (camelCase).
    */
@@ -108,10 +125,30 @@ export interface ResidentEvent {
 
 const $ResidentRequest: z.ZodType = z.strictObject({
   id: z.int().gte(0),
-  verb: z.string(),
+  verb: z.lazy(() => $ResidentVerb),
   args: z.looseObject({}).optional(),
   input: anyOf([z.string(), z.null()]).optional(),
 });
+
+const $ResidentVerb: z.ZodType = z.union([
+  z.literal("schemaList"),
+  z.literal("schemaCheck"),
+  z.literal("schemaGen"),
+  z.literal("schemaRegister"),
+  z.literal("eventsMerge"),
+  z.literal("eventsEmit"),
+  z.literal("deliver"),
+  z.literal("inboxCarried"),
+  z.literal("send"),
+  z.literal("next"),
+  z.literal("reply"),
+  z.literal("subscribe"),
+  z.literal("status"),
+  z.literal("transports"),
+  z.literal("validate"),
+  z.literal("ask"),
+  z.literal("serve"),
+]);
 
 const $ResidentCancel: z.ZodType = z.strictObject({ id: z.int().gte(0), cancel: z.literal(true) });
 
@@ -185,8 +222,9 @@ export const BusResidentProtocolV1 = registeredMessage(
             description: "Chosen by the client and echoed on every line answering this request.",
           },
           verb: {
-            type: "string",
-            description: "The capability's SDK method, camelCase, as the manifest names it.",
+            $ref: "#/$defs/ResidentVerb",
+            description:
+              "The capability to run, by its SDK method: one of the manifest's and no other.",
           },
           args: {
             type: "object",
@@ -202,6 +240,29 @@ export const BusResidentProtocolV1 = registeredMessage(
         },
         required: ["id", "verb"],
         description: "Run one capability, as its SDK method, with its options.",
+      },
+      ResidentVerb: {
+        type: "string",
+        enum: [
+          "schemaList",
+          "schemaCheck",
+          "schemaGen",
+          "schemaRegister",
+          "eventsMerge",
+          "eventsEmit",
+          "deliver",
+          "inboxCarried",
+          "send",
+          "next",
+          "reply",
+          "subscribe",
+          "status",
+          "transports",
+          "validate",
+          "ask",
+          "serve",
+        ],
+        description: "A capability's SDK method, camelCase, as the capability manifest names it.",
       },
       ResidentCancel: {
         type: "object",

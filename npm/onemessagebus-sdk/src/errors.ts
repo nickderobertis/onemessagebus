@@ -35,10 +35,9 @@ export class BusRefused extends BusError {
 
 /** A response the generated schema rejects: the binary and this SDK disagree on the contract. */
 export class ContractError extends BusError {
-  // Declared, not inherited: bun's coverage never attributes a synthesized constructor.
-  // biome-ignore lint/complexity/noUselessConstructor: see above
-  constructor(message: string, options: { output?: unknown; cause?: unknown } = {}) {
-    super(message, options);
+  /** `output` is the response the schema rejected, kept for a caller to inspect. */
+  constructor(message: string, output?: unknown) {
+    super(message, { output });
   }
 }
 
@@ -56,13 +55,12 @@ export class VersionMismatch extends BusError {
 
 /** The bus could not be reached: a binary that would not spawn, a socket nothing answers. */
 export class TransportError extends BusError {
-  // Declared, not inherited: bun's coverage never attributes a synthesized constructor.
-  // biome-ignore lint/complexity/noUselessConstructor: see above
-  constructor(
-    message: string,
-    options: { exit?: number | undefined; output?: unknown; cause?: unknown } = {},
-  ) {
-    super(message, options);
+  /**
+   * `cause` is the system error underneath (a spawn or socket failure). A transport
+   * failure carries no exit code: the bus never answered, so there is no refusal.
+   */
+  constructor(message: string, cause?: unknown) {
+    super(message, { cause });
   }
 }
 
