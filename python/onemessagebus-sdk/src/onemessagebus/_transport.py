@@ -19,7 +19,7 @@ import os
 from collections import deque
 from collections.abc import AsyncGenerator, Mapping
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from pydantic import ValidationError
 
@@ -134,15 +134,15 @@ async def _spawn(
         ) from error
 
 
-async def _stop(process: asyncio.subprocess.Process) -> None:
-    """End a process this transport spawned, if it is still running."""
+async def _stop(process: asyncio.subprocess.Process, wait: float = _STOP_WAIT) -> None:
+    """End a process this transport spawned: SIGTERM, then SIGKILL once `wait` seconds pass."""
     if process.returncode is not None:
         return
     with contextlib.suppress(ProcessLookupError):
         process.terminate()
     try:
-        await asyncio.wait_for(process.wait(), _STOP_WAIT)
-    except asyncio.TimeoutError:  # pragma: no cover - a binary that ignores SIGTERM
+        await asyncio.wait_for(process.wait(), wait)
+    except asyncio.TimeoutError:
         with contextlib.suppress(ProcessLookupError):
             process.kill()
         await process.wait()
@@ -212,9 +212,9 @@ class CliTransport:
         config, binary = self._bound()
         process = await _spawn(binary, argv, config, stdin=input is not None)
         self._running.add(process)
-        stdout, stderr = process.stdout, process.stderr
-        if stdout is None or stderr is None:  # pragma: no cover - both are pipes
-            raise TransportError("the spawned binary has no output pipes")
+        # _spawn opens stdout and stderr as pipes, so neither is None.
+        stdout = cast("asyncio.StreamReader", process.stdout)
+        stderr = cast("asyncio.StreamReader", process.stderr)
         # stderr is drained beside stdout: a filled pipe would stall the verb.
         errors = asyncio.ensure_future(stderr.read())
         try:
@@ -267,15 +267,22 @@ class ResidentTransport:
     true, that first call starts `onemessagebus serve --resident --socket
     <socket>` with the client configuration's config, transport directory and
     registry, and `close` stops that resident — and only a resident this
-    transport started — by removing its socket.
+    transport started — by removing its socket, ending it with SIGTERM and then
+    SIGKILL should it outlive `stop_timeout` seconds after each.
     """
 
     def __init__(
-        self, socket: str | os.PathLike[str], *, start: bool = True, start_timeout: float = 20.0
+        self,
+        socket: str | os.PathLike[str],
+        *,
+        start: bool = True,
+        start_timeout: float = 20.0,
+        stop_timeout: float = _STOP_WAIT,
     ) -> None:
         self._socket = socket
         self._start = start
         self._start_timeout = start_timeout
+        self._stop_timeout = stop_timeout
         self._config: ClientConfig | None = None
         self._binary: str | None = None
         self._path: Path | None = None
@@ -311,30 +318,29 @@ class ResidentTransport:
         async with self._connecting:
             if self._writer is not None:
                 return
-            if self._binary is None:
+            if self._binary is None or self._config is None or self._path is None:
                 raise TransportError(
                     "the transport is not open; use `async with Client(...)`, or await "
                     "transport.open(config) first"
                 )
-            await self._connect(self._binary)
+            await self._connect(self._binary, self._config, self._path)
 
-    async def _connect(self, binary: str) -> None:
+    async def _connect(self, binary: str, config: ClientConfig, path: Path) -> None:
         try:
             reader, writer = await self._dial()
         except OSError as error:
             if not self._start:
                 raise TransportError(
-                    f"nothing answers on {self._path}: {error.strerror or error}; start a resident "
-                    f"with `onemessagebus serve --resident --socket {self._path}`, or pass start=True"
+                    f"nothing answers on {path}: {error.strerror or error}; start a resident "
+                    f"with `onemessagebus serve --resident --socket {path}`, or pass start=True"
                 ) from error
-            reader, writer = await self._launch(binary)
+            reader, writer = await self._launch(binary, config, path)
         self._writer, self._closed = writer, None
         self._listener = asyncio.ensure_future(self._listen(reader))
 
-    async def _launch(self, binary: str) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-        config, path = self._config, self._path
-        if config is None or path is None:  # pragma: no cover - open sets both first
-            raise TransportError("the transport is not open")
+    async def _launch(
+        self, binary: str, config: ClientConfig, path: Path
+    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
         argv = ["serve", "--resident", "--socket", str(path)]
         defaults = {
             "config": config.config,
@@ -377,9 +383,8 @@ class ResidentTransport:
             return connection
 
     async def _gather(self, process: asyncio.subprocess.Process) -> None:
-        if process.stderr is None:  # pragma: no cover - stderr is a pipe
-            return
-        async for raw in process.stderr:
+        # _spawn opens stderr as a pipe, so it is not None.
+        async for raw in cast("asyncio.StreamReader", process.stderr):
             self._said.append(raw.decode("utf-8", "replace").rstrip("\r\n"))
 
     async def _forget(self) -> None:
@@ -450,9 +455,7 @@ class ResidentTransport:
         await self._connected()
         request_id, waiter = self._register()
         try:
-            await self._send(
-                ResidentRequest(id=request_id, verb=capability, args=dict(args), input=input)
-            )
+            await self._send(_request(request_id, capability, args, input))
             line = await waiter.get()
         finally:
             self._pending.pop(request_id, None)
@@ -469,9 +472,7 @@ class ResidentTransport:
         request_id, waiter = self._register()
         finished = False
         try:
-            await self._send(
-                ResidentRequest(id=request_id, verb=capability, args=dict(args), input=input)
-            )
+            await self._send(_request(request_id, capability, args, input))
             while True:
                 line = await waiter.get()
                 if isinstance(line, ResidentEvent):
@@ -513,10 +514,24 @@ class ResidentTransport:
             with contextlib.suppress(FileNotFoundError):
                 self._path.unlink()
         try:
-            await asyncio.wait_for(process.wait(), _STOP_WAIT)
-        except asyncio.TimeoutError:  # pragma: no cover - a resident that never notices
-            await _stop(process)
+            await asyncio.wait_for(process.wait(), self._stop_timeout)
+        except asyncio.TimeoutError:
+            # A resident that never notices its socket went is ended as any process is.
+            await _stop(process, self._stop_timeout)
         await self._forget()
+
+
+def _request(
+    request_id: int, method: str, args: Mapping[str, Any], input: str | None
+) -> ResidentRequest:
+    """The request line for one capability, refused by name when the manifest has no such verb.
+
+    Validated rather than constructed: the generated line types the verb as the
+    protocol does, and a verb is only known to be one once the manifest says so.
+    """
+    capability(method)
+    fields = {"id": request_id, "verb": method, "args": dict(args), "input": input}
+    return ResidentRequest.model_validate(fields)
 
 
 def _answer(line: ResidentAnswer | ResidentFailure | BusError) -> Any:

@@ -1,6 +1,7 @@
 """Generate the SDK's wire types and capability manifest from the Rust bundle.
 
-`python scripts/generate.py` rewrites `src/onemessagebus/_generated/`;
+`python scripts/generate.py` rewrites `src/onemessagebus/_generated/` and
+`src/onemessagebus/models.py`;
 `--check` writes nothing and exits 1 with a unified diff when the committed copy
 differs from a fresh generation. Every model is datamodel-code-generator's
 rendering of a schema the Rust build owns, so no wire shape is restated by hand:
@@ -33,11 +34,12 @@ import sys
 import tempfile
 import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 PACKAGE = Path(__file__).resolve().parents[1]
 ROOT = PACKAGE.parents[1]
-OUTPUT = PACKAGE / "src" / "onemessagebus" / "_generated"
+# The package directory whose `_generated/` and `models.py` the generator owns.
+OUTPUT = PACKAGE / "src" / "onemessagebus"
 BUNDLE_ARGS = ["run", "-q", "--locked", "-p", "onemessagebus-cli", "--example", "sdk_bundle"]
 BUNDLE_TARGET = ROOT / "target" / "sdk-bundle"
 RERUN = "bash python/onemessagebus-sdk/scripts/run python scripts/generate.py"
@@ -69,7 +71,7 @@ HEADER = (
 CAUSE_LINES = 20
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> NoReturn:
     """Print a bounded diagnostic and exit 1: a stack trace is noise to a gate's reader."""
     print(f"generate.py: {message}", file=sys.stderr)
     raise SystemExit(1)
@@ -77,17 +79,22 @@ def fail(message: str) -> None:
 
 def read_bundle() -> dict[str, Any]:
     """The bundle, from the Rust build that owns it."""
+    cargo = shutil.which("cargo")
+    if cargo is None:
+        fail("cargo is not on PATH; install the pinned toolchain with `just bootstrap`.")
     try:
         run = subprocess.run(
-            ["cargo", *BUNDLE_ARGS],
+            [cargo, *BUNDLE_ARGS],
             cwd=ROOT,
             env={**os.environ, "CARGO_TARGET_DIR": str(BUNDLE_TARGET)},
             capture_output=True,
             text=True,
             check=False,
         )
-    except FileNotFoundError:
-        fail("cargo is not on PATH; install the pinned toolchain with `just bootstrap`.")
+    except OSError as error:
+        fail(
+            f"{cargo} could not be run ({error}); install the pinned toolchain with `just bootstrap`."
+        )
     if run.returncode != 0:
         cause = [line for line in run.stderr.splitlines() if line.strip()][-CAUSE_LINES:]
         said = "\n".join(f"    {line}" for line in cause)
@@ -104,7 +111,6 @@ def read_bundle() -> dict[str, Any]:
             f"the bundle example ran but did not print JSON ({error}); `sdk_bundle` must "
             "print the bundle and nothing else."
         )
-    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def pascal(word: str) -> str:
@@ -230,28 +236,51 @@ def render(document: dict[str, Any], class_name: str | None, destination: Path) 
             use_field_description=True,
             use_double_quotes=True,
             field_constraints=True,
-            use_annotated=True,
+            # Defaults as `Field(default, ...)` rather than a raw JSON value assigned
+            # beside `Annotated[...]`, which no type checker can hold to the field's type.
+            use_annotated=False,
             class_name=class_name,
             custom_file_header=HEADER,
             collapse_root_models=True,
-            use_default_factory_for_optional_nested_models=True,
             formatters=[Formatter.BUILTIN],
         )
+    destination.write_text(typeable(destination.read_text(encoding="utf-8")), encoding="utf-8")
+
+
+# datamodel-code-generator spells a `propertyNames` pattern as a `constr(...)` dict key.
+CONSTR = re.compile(r'constr\((pattern=r?"(?:[^"\\]|\\.)*")\)')
+FUTURE = "from __future__ import annotations\n"
+
+
+def typeable(source: str) -> str:
+    """`source` with every `constr(pattern=...)` spelled as the type it returns.
+
+    A call is not a type expression, so a checker refuses `dict[constr(...), V]`;
+    pydantic's `constr(pattern=p)` is exactly `Annotated[str, StringConstraints(pattern=p)]`,
+    which is one. The imports it needs are added, and the formatting pass sorts them.
+    """
+    rewritten, count = CONSTR.subn(r"Annotated[str, StringConstraints(\1)]", source)
+    if count == 0:
+        return source
+    imports = "\nfrom typing import Annotated\n\nfrom pydantic import StringConstraints\n"
+    return rewritten.replace(FUTURE, FUTURE + imports, 1)
 
 
 def models_module(entries: list[tuple[str, str, str]]) -> str:
-    """Every message's model under its family's name, without the namespace.
+    """`onemessagebus.models`: every message's model under its family's name.
 
     `agent.planner-surface@1` is `PlannerSurfaceV1`, and `PlannerSurface` is the
     latest version of that family the registry holds. Two families that would
-    share a name fail here rather than shadow one another.
+    share a name fail here rather than shadow one another. Every name is an
+    explicit import or assignment listed in `__all__`.
     """
     families: dict[str, list[tuple[int, str, str, str]]] = {}
     for schema_id, module, class_name in entries:
         family, version = schema_id.rsplit("@", 1)
         public = pascal(family.split(".", 1)[1])
         families.setdefault(public, []).append((int(version), family, module, class_name))
-    lines: list[str] = []
+    imports: list[str] = []
+    latest: list[str] = []
     exported: list[str] = []
     for public in sorted(families):
         versions = sorted(families[public])
@@ -259,25 +288,34 @@ def models_module(entries: list[tuple[str, str, str]]) -> str:
         if len(named_families) != 1:
             raise RuntimeError(f"{public} would name more than one family: {named_families}")
         for version, _, module, class_name in versions:
-            lines.append(f"{public}V{version} = {module}.{class_name}")
+            imports.append(
+                f"from ._generated.messages.{module} import {class_name} as {public}V{version}"
+            )
             exported.append(f"{public}V{version}")
-        lines.append(f"{public} = {public}V{versions[-1][0]}")
+        latest.append(f"{public} = {public}V{versions[-1][0]}")
         exported.append(public)
-    modules = sorted({module for _, module, _ in entries})
     names = "".join(f'    "{name}",\n' for name in exported)
     return (
-        f'{HEADER}\n"""Every registered message\'s model, by its family\'s name."""\n\n'
-        f"from .messages import {', '.join(modules)}\n\n"
-        + "\n".join(lines)
+        f'{HEADER}\n"""The generated model of every message the registry holds, by its family\'s '
+        "name.\n\n`PlannerSurface` is `agent.planner-surface@1`'s model at the latest version "
+        "the registry\nholds, and `PlannerSurfaceV1` names that version; `messages.MESSAGES` "
+        'maps each id\nto its model.\n"""\n\n'
+        + "\n".join(imports)
+        + "\n\n"
+        + "\n".join(latest)
         + f"\n\n__all__ = [\n{names}]\n"
     )
 
 
 def generated_files(bundle: dict[str, Any]) -> dict[str, bytes]:
-    """Every file of `_generated/`, by its path relative to it, formatted as the gate formats."""
+    """Every file the generator owns, by its path below the package, formatted as the gate formats.
+
+    That is all of `_generated/`, and the public `models.py` re-exporting its models.
+    """
     with tempfile.TemporaryDirectory(prefix="onemessagebus-generate-") as scratch:
-        out = Path(scratch)
-        (out / "messages").mkdir()
+        package = Path(scratch)
+        out = package / "_generated"
+        (out / "messages").mkdir(parents=True)
         (out / "__init__.py").write_text(
             f'{HEADER}\n"""The Rust-owned contract, rendered for Python."""\n', encoding="utf-8"
         )
@@ -297,7 +335,7 @@ def generated_files(bundle: dict[str, Any]) -> dict[str, bytes]:
             f"MESSAGES: dict[str, type[BaseModel]] = {{\n{mapping}\n}}\n",
             encoding="utf-8",
         )
-        (out / "models.py").write_text(models_module(entries), encoding="utf-8")
+        (package / "models.py").write_text(models_module(entries), encoding="utf-8")
         (out / "capabilities.json").write_text(
             json.dumps(bundle["capabilities"], indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
@@ -308,20 +346,15 @@ def generated_files(bundle: dict[str, Any]) -> dict[str, bytes]:
             ["format", "--quiet", "--config", config],
         ):
             subprocess.run([sys.executable, "-m", "ruff", *command, scratch], check=True)
-        return {
-            path.relative_to(out).as_posix(): path.read_bytes()
-            for path in sorted(out.rglob("*"))
-            if path.is_file() and "__pycache__" not in path.parts
-        }
+        return owned_files(package)
 
 
-def committed_files(output: Path) -> dict[str, bytes]:
-    """What `output` holds now."""
-    if not output.is_dir():
-        return {}
+def owned_files(package: Path) -> dict[str, bytes]:
+    """What `package` holds of the generator's: all of `_generated/`, and `models.py`."""
+    paths = [*sorted((package / "_generated").rglob("*")), package / "models.py"]
     return {
-        path.relative_to(output).as_posix(): path.read_bytes()
-        for path in sorted(output.rglob("*"))
+        path.relative_to(package).as_posix(): path.read_bytes()
+        for path in paths
         if path.is_file() and "__pycache__" not in path.parts
     }
 
@@ -332,8 +365,8 @@ def diff(name: str, committed: bytes | None, fresh: bytes | None) -> str:
         difflib.unified_diff(
             (committed or b"").decode("utf-8").splitlines(keepends=True),
             (fresh or b"").decode("utf-8").splitlines(keepends=True),
-            fromfile=f"_generated/{name} (committed)" if committed is not None else "/dev/null",
-            tofile=f"_generated/{name} (generated)" if fresh is not None else "/dev/null",
+            fromfile=f"{name} (committed)" if committed is not None else "/dev/null",
+            tofile=f"{name} (generated)" if fresh is not None else "/dev/null",
         )
     )
 
@@ -345,7 +378,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=OUTPUT, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     fresh = generated_files(read_bundle())
-    committed = committed_files(args.output)
+    committed = owned_files(args.output)
     stale = sorted(
         name for name in fresh.keys() | committed.keys() if fresh.get(name) != committed.get(name)
     )
@@ -367,7 +400,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(fresh[name])
-    for directory in sorted(args.output.rglob("__pycache__")):
+    for directory in sorted((args.output / "_generated").rglob("__pycache__")):
         shutil.rmtree(directory)
     return 0
 

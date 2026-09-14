@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -21,7 +21,7 @@ class QueuedCommands(BaseModel):
     """
     The commands, each an object naming its `op`.
     """
-    id: Annotated[int, Field(ge=0)]
+    id: int = Field(..., ge=0)
     """
     The number of envelopes before it.
     """

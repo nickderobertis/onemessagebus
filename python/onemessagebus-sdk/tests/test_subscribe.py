@@ -46,11 +46,11 @@ async def test_a_subscription_that_times_out_or_cannot_parse_its_predicate_raise
         async for _ in client.subscribe(
             "commands", until={"field": "x", "present": True}, timeout=1
         ):
-            pass  # pragma: no cover - nothing arrives
+            pass
     assert lapsed.value.message == "commands: no record --until admits arrived within 1 seconds"
     with pytest.raises(BusRefused, match='--until: "not json" is neither inline JSON'):
         async for _ in client.subscribe("commands", until="not json", timeout=1):
-            pass  # pragma: no cover - refused before any line
+            pass
 
 
 async def test_closing_a_subscription_early_stops_it(client: Client) -> None:

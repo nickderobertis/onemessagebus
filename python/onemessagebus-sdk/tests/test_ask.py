@@ -32,7 +32,7 @@ async def queued(client: Client) -> None:
         if (await client.status("surfaces"))[0].records:
             return
         await asyncio.sleep(0.02)
-    raise AssertionError("the question never reached surfaces")  # pragma: no cover
+    raise AssertionError("the question never reached surfaces")
 
 
 async def test_an_ask_answers_the_reply_a_concurrent_reply_gives(channel: Client) -> None:

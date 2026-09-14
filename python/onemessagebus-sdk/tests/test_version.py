@@ -37,7 +37,7 @@ async def test_a_binary_of_another_version_is_refused_naming_both(
     transport = make_transport(transport_kind, scratch)
     with pytest.raises(VersionMismatch) as refused:
         async with Client(ClientConfig(binary=other), transport):
-            pass  # pragma: no cover - the client refuses before it is entered
+            pass
     assert refused.value.message == (
         f"this onemessagebus SDK drives onemessagebus-cli {CHECKOUT_VERSION}, and {other} reports "
         f"9.9.9; install onemessagebus-cli=={CHECKOUT_VERSION}"
@@ -63,7 +63,7 @@ async def test_the_binary_is_config_then_the_environment_then_path(
     nowhere = ClientConfig(env={"PATH": str(tmp_path / "empty"), "ONEMESSAGEBUS_BIN": ""})
     with pytest.raises(TransportError, match="no onemessagebus binary to drive") as missing:
         async with Client(nowhere):
-            pass  # pragma: no cover - refused on entry
+            pass
     assert f"install onemessagebus-cli=={CHECKOUT_VERSION}" in missing.value.message
 
 
@@ -77,12 +77,12 @@ async def test_a_binary_that_cannot_run_or_does_not_report_a_version_is_refused(
 ) -> None:
     with pytest.raises(TransportError, match=r"cannot run .*missing"):
         async with Client(ClientConfig(binary=tmp_path / "missing")):
-            pass  # pragma: no cover - refused on entry
+            pass
     silent = shutil.which("true")
     assert silent is not None
     with pytest.raises(TransportError, match="which is not `onemessagebus <version>`"):
         async with Client(ClientConfig(binary=silent)):
-            pass  # pragma: no cover - refused on entry
+            pass
 
 
 def test_the_pin_is_the_stamped_version_else_the_checkout_version(tmp_path: Path) -> None:

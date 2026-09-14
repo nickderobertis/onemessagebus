@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+import signal
+import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -27,7 +30,8 @@ from onemessagebus import (
 )
 from onemessagebus._errors import refusal
 from onemessagebus._manifest import capability
-from onemessagebus._transport import _failure, _owner, _parse, refusal_text
+from onemessagebus._pin import pinned_cli_version
+from onemessagebus._transport import _failure, _owner, _parse, _spawn, _stop, refusal_text
 from tests.conftest import bus_config
 
 # What the staged peer writes back for the request line it read.
@@ -126,3 +130,55 @@ async def test_answers_the_models_reject_are_contract_errors(binary: Path, scrat
             await client.schema_gen("demo.greeting@1", "json")
         with pytest.raises(ContractError, match=r"answered request \d+ \(status\) with an event"):
             await client.status()
+
+
+async def test_a_process_that_ignores_sigterm_is_killed_once_its_wait_passes() -> None:
+    shell = shutil.which("sh")
+    assert shell is not None
+    stubborn = await _spawn(
+        shell, ["-c", "trap '' TERM; echo ready; exec sleep 30"], ClientConfig(), stdin=False
+    )
+    assert stubborn.stdout is not None
+    assert await stubborn.stdout.readline() == b"ready\n", "SIGTERM is ignored from here on"
+    await _stop(stubborn, wait=0.3)
+    assert stubborn.returncode == -signal.SIGKILL
+
+
+# A resident double from a binary path this test controls: it reports the pinned
+# version, answers every request with an empty list, and ignores both the removal
+# of its socket and SIGTERM.
+STUBBORN_RESIDENT = """#!{python}
+import json, signal, socket, sys
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+if sys.argv[1:] == ["--version"]:
+    print("onemessagebus {version}")
+    sys.exit(0)
+listener = socket.socket(socket.AF_UNIX)
+listener.bind(sys.argv[sys.argv.index("--socket") + 1])
+listener.listen()
+while True:
+    connection, _ = listener.accept()
+    for line in connection.makefile("r"):
+        answer = {{"id": json.loads(line)["id"], "ok": []}}
+        connection.sendall((json.dumps(answer) + "\\n").encode())
+"""
+
+
+async def test_a_started_resident_that_outlives_its_socket_and_sigterm_is_killed(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    scratch = tmp_path_factory.mktemp("stubborn")
+    binary = scratch / "onemessagebus"
+    binary.write_text(
+        STUBBORN_RESIDENT.format(python=sys.executable, version=pinned_cli_version()),
+        encoding="utf-8",
+    )
+    binary.chmod(0o755)
+    transport = ResidentTransport(scratch / "bus.sock", stop_timeout=0.3)
+    async with Client(ClientConfig(binary=binary), transport) as client:
+        assert await client.transports() == []
+        resident = transport._process
+        assert resident is not None
+    assert resident.returncode == -signal.SIGKILL
+    assert not transport.started
+    assert not (scratch / "bus.sock").exists()

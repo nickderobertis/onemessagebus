@@ -3,13 +3,13 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 
 class Correlation(RootModel[str]):
-    root: Annotated[str, Field(pattern="^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]
+    root: str = Field(..., pattern="^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
     """
     Which question a reply answers: the token the bus minted when it was asked.
     """
@@ -47,7 +47,7 @@ class ReplyEnvelope(BaseModel):
     """
     Why the author reached that verdict.
     """
-    version: Annotated[int | None, Field(ge=0)] = None
+    version: int | None = Field(None, ge=0)
     """
     The version it was written against, read at [`REPLY_ENVELOPE_VERSION`].
     """
@@ -58,7 +58,7 @@ class QueuedReply(BaseModel):
     One reply as `replies.jsonl` holds it.
     """
 
-    at: Annotated[int, Field(ge=0)]
+    at: int = Field(..., ge=0)
     """
     When it was written, in epoch milliseconds.
     """
@@ -67,7 +67,7 @@ class QueuedReply(BaseModel):
     The correlation of the question it answers, when it answers one asked
     through `onemessagebus::ask`. Omitted while absent.
     """
-    id: Annotated[int, Field(ge=0)]
+    id: int = Field(..., ge=0)
     """
     The number of replies before it.
     """

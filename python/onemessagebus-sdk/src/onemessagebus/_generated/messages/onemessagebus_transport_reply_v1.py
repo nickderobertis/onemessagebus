@@ -3,13 +3,13 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 
 class FingerprintItem(RootModel[int]):
-    root: Annotated[int, Field(ge=0)]
+    root: int = Field(..., ge=0)
 
 
 class Hello(BaseModel):
@@ -20,7 +20,7 @@ class Hello(BaseModel):
     """
     Always [`PROTOCOL`].
     """
-    version: Annotated[int, Field(ge=0)]
+    version: int = Field(..., ge=0)
     """
     The version the plugin speaks.
     """
@@ -137,7 +137,7 @@ class PluginErrorRefused(BaseModel):
 
 
 class Position(RootModel[int]):
-    root: Annotated[int, Field(ge=0)]
+    root: int = Field(..., ge=0)
     """
     Where in a queue a record ends: opaque to consumers, and meaningful only to
     the transport that handed it out.
@@ -159,7 +159,7 @@ class PluginAnswer2(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    position: Annotated[int, Field(ge=0)]
+    position: int = Field(..., ge=0)
     """
     Where in a queue a record ends: opaque to consumers, and meaningful only to
     the transport that handed it out.
@@ -197,7 +197,7 @@ class PluginErrorNotABoundary(BaseModel):
     """
     What the plugin said.
     """
-    position: Annotated[int, Field(ge=0)]
+    position: int = Field(..., ge=0)
     """
     The position asked for.
     """
@@ -215,7 +215,7 @@ class PluginErrorPastEnd(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    end: Annotated[int, Field(ge=0)]
+    end: int = Field(..., ge=0)
     """
     Where the queue ends.
     """
@@ -224,7 +224,7 @@ class PluginErrorPastEnd(BaseModel):
     """
     What the plugin said.
     """
-    position: Annotated[int, Field(ge=0)]
+    position: int = Field(..., ge=0)
     """
     The position asked for.
     """
@@ -242,7 +242,7 @@ class PluginStored(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    after: Annotated[int, Field(ge=0)]
+    after: int = Field(..., ge=0)
     """
     The position after it.
     """
@@ -260,11 +260,11 @@ class PluginTorn(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    at: Annotated[int, Field(ge=0)]
+    at: int = Field(..., ge=0)
     """
     Where it starts.
     """
-    bytes: Annotated[int, Field(ge=0)]
+    bytes: int = Field(..., ge=0)
     """
     How many bytes of it there are.
     """
@@ -337,7 +337,7 @@ class PluginReply2(BaseModel):
 
 
 class PluginReply(RootModel[PluginReply1 | PluginReply2]):
-    root: Annotated[PluginReply1 | PluginReply2, Field(title="PluginReply")]
+    root: PluginReply1 | PluginReply2 = Field(..., title="PluginReply")
     """
     One reply: what was asked for, or why not.
     """

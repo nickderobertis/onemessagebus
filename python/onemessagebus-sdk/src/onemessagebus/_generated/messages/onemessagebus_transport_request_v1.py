@@ -3,17 +3,17 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 
 class FingerprintItem(RootModel[int]):
-    root: Annotated[int, Field(ge=0)]
+    root: int = Field(..., ge=0)
 
 
 class Position(RootModel[int]):
-    root: Annotated[int, Field(ge=0)]
+    root: int = Field(..., ge=0)
     """
     Where in a queue a record ends: opaque to consumers, and meaningful only to
     the transport that handed it out.
@@ -69,7 +69,7 @@ class PluginRequestCommit(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    at: Annotated[int, Field(ge=0)]
+    at: int = Field(..., ge=0)
     """
     Where it has read up to.
     """
@@ -164,11 +164,11 @@ class PluginRequestRead(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    from_: Annotated[Position | None, Field(alias="from")] = None
+    from_: Position | None = Field(None, alias="from")
     """
     Read after this position; from the start when absent.
     """
-    limit: Annotated[int, Field(ge=0)]
+    limit: int = Field(..., ge=0)
     """
     At most this many records.
     """
@@ -219,7 +219,7 @@ class PluginRequestWaitForChange(BaseModel):
     """
     The fingerprint to wait for it to move from.
     """
-    timeout_ms: Annotated[int, Field(ge=0)]
+    timeout_ms: int = Field(..., ge=0)
     """
     How long to wait, in milliseconds.
     """
@@ -239,7 +239,7 @@ class PluginRequest(
         | PluginRequestReplaceDocument
     ]
 ):
-    root: Annotated[
+    root: (
         PluginRequestAppend
         | PluginRequestRead
         | PluginRequestCursor
@@ -249,9 +249,8 @@ class PluginRequest(
         | PluginRequestFingerprint
         | PluginRequestWaitForChange
         | PluginRequestDocument
-        | PluginRequestReplaceDocument,
-        Field(title="PluginRequest"),
-    ]
+        | PluginRequestReplaceDocument
+    ) = Field(..., title="PluginRequest")
     """
     One request after the hello, discriminated by `op`: one per [`Transport`]
     method, with `exclusive` split into its opening and its end.

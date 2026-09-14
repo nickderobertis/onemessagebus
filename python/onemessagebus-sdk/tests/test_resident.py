@@ -88,7 +88,7 @@ async def test_a_resident_that_goes_away_ends_what_ran_over_it(binary: Path, scr
 
             async def listen() -> None:
                 async for _ in stream:
-                    pass  # pragma: no cover - nothing arrives
+                    pass
 
             listening = asyncio.ensure_future(listen())
             await asyncio.sleep(0.3)

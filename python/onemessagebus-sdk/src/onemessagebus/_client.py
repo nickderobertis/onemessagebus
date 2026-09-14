@@ -143,9 +143,6 @@ class Client:
         """`values`, keyed as the manifest keys `method`'s options, with the config's defaults."""
         entry = capability(method)
         names = {snake_case(binding.option): binding.option for binding in entry.bindings}
-        unbound = set(values) - set(names)
-        if unbound:  # pragma: no cover - the parity tests hold every method to its bindings
-            raise AssertionError(f"{method}: {sorted(unbound)} are not options of the capability")
         args: dict[str, Any] = {}
         for name, option in names.items():
             value = values.get(name)

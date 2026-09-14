@@ -3,19 +3,28 @@
 from __future__ import annotations
 
 import inspect
+import json
 import re
 import types
 import typing
 from collections.abc import AsyncGenerator, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import BaseModel
 
-from onemessagebus import BusRefused, Client, ClientConfig, Identity, render_argv
+from onemessagebus import BusRefused, Client, ClientConfig, ContractError, Identity, render_argv
 from onemessagebus._generated import contract
-from onemessagebus._manifest import CAPABILITIES, Binding, Capability, snake_case
+from onemessagebus._manifest import (
+    CAPABILITIES,
+    KINDS,
+    RENDERERS,
+    Binding,
+    Capability,
+    read_manifest,
+    snake_case,
+)
 from onemessagebus._pin import pinned_cli_version
 
 CLIENT_SOURCE = Path(__file__).resolve().parents[1] / "src" / "onemessagebus" / "_client.py"
@@ -102,7 +111,8 @@ class RecordingTransport:
         self, capability: str, args: Mapping[str, Any], input: str | None
     ) -> AsyncGenerator[Any, None]:
         raise Recorded(capability, args, input)
-        yield  # pragma: no cover - makes this an async generator
+        # The yield after the raise is what makes this an async generator.
+        yield
 
     async def close(self) -> None:
         return None
@@ -149,8 +159,7 @@ async def test_every_bound_option_renders_its_flag_or_positional(method: str) ->
 
     async def drive() -> None:
         if method == "subscribe":
-            async for _ in call(**values):
-                pass  # pragma: no cover - the transport answers nothing
+            assert [line async for line in call(**values)] == []
         else:
             await call(**values)
 
@@ -233,6 +242,16 @@ def test_a_repeated_binding_renders_its_flag_once_per_value(
         stdin=False,
         bindings=(Binding("tags", "--tag", "repeated"),),
     )
-    monkeypatch.setitem(CAPABILITIES, "tagged", entry)  # type: ignore[arg-type]
+    monkeypatch.setitem(cast("dict[str, Capability]", CAPABILITIES), "tagged", entry)
     assert render_argv("tagged", {"tags": ["a", "b"]}) == ["tagged", "--tag", "a", "--tag", "b"]
     assert render_argv("tagged", {"tags": "one"}) == ["tagged", "--tag", "one"]
+
+
+def test_the_manifest_refuses_a_binding_kind_it_has_no_renderer_for() -> None:
+    text = (CLIENT_SOURCE.parent / "_generated" / "capabilities.json").read_text(encoding="utf-8")
+    assert read_manifest(text) == CAPABILITIES
+    assert set(RENDERERS) == KINDS
+    entries = json.loads(text)
+    entries[0]["bindings"][0]["kind"] = "counted"
+    with pytest.raises(ContractError, match="the manifest binds `registry` as a 'counted' flag"):
+        read_manifest(json.dumps(entries))

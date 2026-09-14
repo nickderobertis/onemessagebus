@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-from typing import Annotated
-
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -46,7 +44,7 @@ class PluginHello(BaseModel):
     """
     Always [`PROTOCOL`].
     """
-    version: Annotated[int, Field(ge=0)]
+    version: int = Field(..., ge=0)
     """
     The version the client speaks: [`PROTOCOL_VERSION`].
     """

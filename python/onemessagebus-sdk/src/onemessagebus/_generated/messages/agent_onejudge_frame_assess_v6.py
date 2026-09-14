@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,7 +16,7 @@ class ToolEvent(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    index: Annotated[int | None, Field(ge=0)] = 0
+    index: int | None = Field(0, ge=0)
     """
     Its position within the run.
     """

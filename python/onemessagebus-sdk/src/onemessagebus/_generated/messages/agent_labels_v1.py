@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-from typing import Annotated
-
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -32,7 +30,7 @@ class Labels(BaseModel):
     """
     The persona that member is running under.
     """
-    round: Annotated[int | None, Field(ge=0)] = None
+    round: int | None = Field(None, ge=0)
     """
     The round within the run.
     """

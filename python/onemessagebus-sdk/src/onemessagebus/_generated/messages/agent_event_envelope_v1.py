@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,7 +17,7 @@ class ArtifactRef(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    bytes: Annotated[int, Field(ge=0)]
+    bytes: int = Field(..., ge=0)
     """
     Size of the stored artifact.
     """
@@ -55,7 +55,7 @@ class Labels(BaseModel):
     """
     The persona that member is running under.
     """
-    round: Annotated[int | None, Field(ge=0)] = None
+    round: int | None = Field(None, ge=0)
     """
     The round within the run.
     """
@@ -84,7 +84,7 @@ class Envelope(BaseModel):
     does not admit, and a missing required field — each by name.
     """
 
-    artifacts: Annotated[list[ArtifactRef] | None, Field(validate_default=True)] = []
+    artifacts: list[ArtifactRef] | None = Field([], validate_default=True)
     """
     Evidence stored by the producing library and referenced by id.
     """
@@ -92,7 +92,7 @@ class Envelope(BaseModel):
     """
     What happened, as its producer named it.
     """
-    labels: Annotated[Labels | None, Field(validate_default=True)] = {}
+    labels: Labels | None = Field({}, validate_default=True)
     """
     The reserved keys the vocabulary declares plus free-form extras.
     Producers stamp what they know; enrichers never rewrite.
@@ -108,7 +108,7 @@ class Envelope(BaseModel):
     Which part of a change's life the event belongs to, as its producer
     classified it.
     """
-    seq: Annotated[int, Field(ge=0)]
+    seq: int = Field(..., ge=0)
     """
     Monotonic per [`stream`](Self::stream).
     """
@@ -124,7 +124,7 @@ class Envelope(BaseModel):
     """
     RFC 3339, millisecond precision, UTC.
     """
-    v: Annotated[Literal[1], Field(ge=0)]
+    v: Literal[1] = Field(..., ge=0)
     """
     The envelope schema version the producer wrote against.
     """

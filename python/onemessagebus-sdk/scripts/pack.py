@@ -20,6 +20,7 @@ import re
 import shutil
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 PACKAGE = Path(__file__).resolve().parents[1]
 ROOT = PACKAGE.parents[1]
@@ -28,7 +29,7 @@ PLACEHOLDER = "0.0.0.dev0"
 SHIPPED = ("pyproject.toml", "README.md", "src")
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> NoReturn:
     print(f"pack.py: {message}", file=sys.stderr)
     raise SystemExit(1)
 
@@ -45,7 +46,6 @@ def cargo_version(manifest: Path) -> str:
         ):
             return found.group(1)
     fail(f"{manifest} declares no [workspace.package] version to stamp")
-    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def stamp(path: Path, placeholder: str, stamped: str) -> None:

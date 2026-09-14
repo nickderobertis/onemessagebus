@@ -14,6 +14,7 @@ import json
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Literal, cast
 
 import pytest
 
@@ -133,7 +134,7 @@ def answer_one(directory: Path, disposition: object) -> None:
     """Take the one offer that arrives and answer it, the courier's renames and all."""
     deadline = time.monotonic() + 30
     while not (offers := sorted(directory.glob("*.offer.json"))):
-        if time.monotonic() > deadline:  # pragma: no cover - the sender never offered
+        if time.monotonic() > deadline:
             raise AssertionError(f"no offer reached {directory}")
         time.sleep(0.02)
     offer = offers[0]
@@ -180,7 +181,7 @@ async def test_the_queue_verbs(client: Client, scratch: Path) -> None:
     ]
     assert (await client.transports(format="text")).startswith("local builtin")
     with pytest.raises(BusRefused, match="invalid value 'bogus'"):
-        await client.transports(format="bogus")  # ty: ignore[no-matching-overload]
+        await client.transports(format=cast(Literal["json"], "bogus"))
 
     sent = await client.send("surfaces", SURFACE)
     assert [(record.queue, record.id) for record in sent] == [("surfaces", 0)]

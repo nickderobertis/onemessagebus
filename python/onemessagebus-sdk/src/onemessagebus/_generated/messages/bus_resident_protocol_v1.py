@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
@@ -16,7 +16,7 @@ class ResidentAnswer(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    id: Annotated[int, Field(ge=0)]
+    id: int = Field(..., ge=0)
     """
     The request answered.
     """
@@ -40,7 +40,7 @@ class ResidentCancel(BaseModel):
     """
     Always `true`.
     """
-    id: Annotated[int, Field(ge=0)]
+    id: int = Field(..., ge=0)
     """
     The request to stop.
     """
@@ -59,7 +59,7 @@ class ResidentEvent(BaseModel):
     The line, as the verb prints it: a `{position, record}` log record, or its
     text rendering under `--format text`.
     """
-    id: Annotated[int, Field(ge=0)]
+    id: int = Field(..., ge=0)
     """
     The streaming request.
     """
@@ -88,33 +88,6 @@ class ResidentRefusal(BaseModel):
     """
 
 
-class ResidentRequest(BaseModel):
-    """
-    Run one capability, as its SDK method, with its options.
-    """
-
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    args: dict[str, Any] | None = None
-    """
-    The capability's options, keyed as its options root keys them (camelCase).
-    """
-    id: Annotated[int, Field(ge=0)]
-    """
-    Chosen by the client and echoed on every line answering this request.
-    """
-    input: str | None = None
-    """
-    The bytes the verb would read on stdin: a payload, a question, a reply, a
-    message or a codec's frames.
-    """
-    verb: str
-    """
-    The capability's SDK method, camelCase, as the manifest names it.
-    """
-
-
 class ResidentFailure(BaseModel):
     """
     A request the resident refused, in the command line's own words.
@@ -127,19 +100,63 @@ class ResidentFailure(BaseModel):
     """
     Why.
     """
-    id: Annotated[int | None, Field(ge=0)] = None
+    id: int | None = Field(None, ge=0)
     """
     The request refused; `null` for a line that named no id to answer.
+    """
+
+
+class ResidentRequest(BaseModel):
+    """
+    Run one capability, as its SDK method, with its options.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    args: dict[str, Any] | None = None
+    """
+    The capability's options, keyed as its options root keys them (camelCase).
+    """
+    id: int = Field(..., ge=0)
+    """
+    Chosen by the client and echoed on every line answering this request.
+    """
+    input: str | None = None
+    """
+    The bytes the verb would read on stdin: a payload, a question, a reply, a
+    message or a codec's frames.
+    """
+    verb: Literal[
+        "schemaList",
+        "schemaCheck",
+        "schemaGen",
+        "schemaRegister",
+        "eventsMerge",
+        "eventsEmit",
+        "deliver",
+        "inboxCarried",
+        "send",
+        "next",
+        "reply",
+        "subscribe",
+        "status",
+        "transports",
+        "validate",
+        "ask",
+        "serve",
+    ]
+    """
+    The capability to run, by its SDK method: one of the manifest's and no other.
     """
 
 
 class ResidentLine(
     RootModel[ResidentRequest | ResidentCancel | ResidentAnswer | ResidentFailure | ResidentEvent]
 ):
-    root: Annotated[
-        ResidentRequest | ResidentCancel | ResidentAnswer | ResidentFailure | ResidentEvent,
-        Field(title="ResidentLine"),
-    ]
+    root: ResidentRequest | ResidentCancel | ResidentAnswer | ResidentFailure | ResidentEvent = (
+        Field(..., title="ResidentLine")
+    )
     """
     One line of the resident protocol, in either direction.
     """

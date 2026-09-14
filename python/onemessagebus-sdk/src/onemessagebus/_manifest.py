@@ -11,12 +11,16 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from importlib import resources
-from typing import Any
+from typing import Any, Literal, cast, get_args
 
-from ._errors import BusRefused
+from ._errors import BusRefused, ContractError
+
+#: How a binding renders: the closed set this SDK renders, refused past at load.
+Kind = Literal["positional", "value", "repeated", "switch", "key-value"]
+KINDS: frozenset[str] = frozenset(get_args(Kind))
 
 
 @dataclass(frozen=True)
@@ -25,7 +29,7 @@ class Binding:
 
     option: str
     flag: str
-    kind: str
+    kind: Kind
 
 
 @dataclass(frozen=True)
@@ -46,12 +50,19 @@ def snake_case(name: str) -> str:
     return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
 
 
-def _load() -> dict[str, Capability]:
-    text = (
-        resources.files("onemessagebus._generated")
-        .joinpath("capabilities.json")
-        .read_text(encoding="utf-8")
-    )
+def _binding(method: str, declared: Mapping[str, str]) -> Binding:
+    kind = declared["kind"]
+    if kind not in KINDS:
+        raise ContractError(
+            f"{method}: the manifest binds `{declared['option']}` as a {kind!r} flag, which this "
+            f"SDK does not render; it renders {', '.join(sorted(KINDS))}. Regenerate the SDK "
+            "from the bundle of the binary it drives"
+        )
+    return Binding(declared["option"], declared["flag"], cast("Kind", kind))
+
+
+def read_manifest(text: str) -> dict[str, Capability]:
+    """The capabilities a manifest declares, by method; a binding kind it cannot render is refused."""
     return {
         entry["method"]: Capability(
             method=entry["method"],
@@ -60,14 +71,18 @@ def _load() -> dict[str, Capability]:
             output=entry["output"],
             stdout=entry["stdout"],
             stdin=entry["stdin"],
-            bindings=tuple(Binding(b["option"], b["flag"], b["kind"]) for b in entry["bindings"]),
+            bindings=tuple(_binding(entry["method"], b) for b in entry["bindings"]),
         )
         for entry in json.loads(text)
     }
 
 
 #: Every capability, by its camelCase method.
-CAPABILITIES: Mapping[str, Capability] = _load()
+CAPABILITIES: Mapping[str, Capability] = read_manifest(
+    resources.files("onemessagebus._generated")
+    .joinpath("capabilities.json")
+    .read_text(encoding="utf-8")
+)
 
 
 def capability(method: str) -> Capability:
@@ -99,6 +114,51 @@ def _words(method: str, option: str, value: Any) -> list[str]:
     return [_word(method, option, value)]
 
 
+# A renderer turns one option's value into the flags and the positionals it contributes.
+Renderer = Callable[[str, Binding, Any], tuple[list[str], list[str]]]
+
+
+def _positional(method: str, binding: Binding, value: Any) -> tuple[list[str], list[str]]:
+    return [], _words(method, binding.option, value)
+
+
+def _value(method: str, binding: Binding, value: Any) -> tuple[list[str], list[str]]:
+    return [binding.flag, _word(method, binding.option, value)], []
+
+
+def _repeated(method: str, binding: Binding, value: Any) -> tuple[list[str], list[str]]:
+    words = _words(method, binding.option, value)
+    return [word for item in words for word in (binding.flag, item)], []
+
+
+def _switch(method: str, binding: Binding, value: Any) -> tuple[list[str], list[str]]:
+    if not isinstance(value, bool):
+        raise BusRefused(
+            f"{method}: `{binding.option}` is true or false, not {type(value).__name__}"
+        )
+    return ([binding.flag] if value else []), []
+
+
+def _key_value(method: str, binding: Binding, value: Any) -> tuple[list[str], list[str]]:
+    if not isinstance(value, Mapping):
+        raise BusRefused(
+            f"{method}: `{binding.option}` is a mapping of keys to values, "
+            f"not {type(value).__name__}"
+        )
+    pairs = [f"{key}={_word(method, binding.option, item)}" for key, item in value.items()]
+    return [word for pair in pairs for word in (binding.flag, pair)], []
+
+
+#: The renderer of every kind the manifest may bind; `read_manifest` refuses any other.
+RENDERERS: Mapping[Kind, Renderer] = {
+    "positional": _positional,
+    "value": _value,
+    "repeated": _repeated,
+    "switch": _switch,
+    "key-value": _key_value,
+}
+
+
 def render_argv(capability_method: str, args: Mapping[str, Any]) -> list[str]:
     """The argv after the binary for one call: the verb, every flag, then `--` and positionals.
 
@@ -117,31 +177,9 @@ def render_argv(capability_method: str, args: Mapping[str, Any]) -> list[str]:
         value = args.get(binding.option)
         if value is None:
             continue
-        if binding.kind == "positional":
-            positionals.extend(_words(capability_method, binding.option, value))
-        elif binding.kind == "value":
-            argv += [binding.flag, _word(capability_method, binding.option, value)]
-        elif binding.kind == "repeated":
-            for word in _words(capability_method, binding.option, value):
-                argv += [binding.flag, word]
-        elif binding.kind == "switch":
-            if not isinstance(value, bool):
-                raise BusRefused(
-                    f"{capability_method}: `{binding.option}` is true or false, "
-                    f"not {type(value).__name__}"
-                )
-            if value:
-                argv.append(binding.flag)
-        elif binding.kind == "key-value":
-            if not isinstance(value, Mapping):
-                raise BusRefused(
-                    f"{capability_method}: `{binding.option}` is a mapping of keys to values, "
-                    f"not {type(value).__name__}"
-                )
-            for key, item in value.items():
-                argv += [binding.flag, f"{key}={_word(capability_method, binding.option, item)}"]
-        else:  # pragma: no cover - the generator's manifest names no other kind
-            raise AssertionError(f"{capability_method}: unknown binding kind {binding.kind!r}")
+        flags, words = RENDERERS[binding.kind](capability_method, binding, value)
+        argv += flags
+        positionals += words
     if positionals:
         argv += ["--", *positionals]
     return argv

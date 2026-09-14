@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-from typing import Annotated
-
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -17,7 +15,7 @@ class ArtifactRef(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    bytes: Annotated[int, Field(ge=0)]
+    bytes: int = Field(..., ge=0)
     """
     Size of the stored artifact.
     """

@@ -3,13 +3,11 @@
 
 from __future__ import annotations
 
-from typing import Annotated
-
 from pydantic import BaseModel, Field, RootModel
 
 
 class Correlation(RootModel[str]):
-    root: Annotated[str, Field(pattern="^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]
+    root: str = Field(..., pattern="^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
     """
     Which question a reply answers: the token the bus minted when it was asked.
     """
@@ -38,7 +36,7 @@ class Surface(BaseModel):
     question (`onemessagebus::ask`). Omitted while absent, so a surface
     raised any other way is written byte for byte as `onepipeline` writes it.
     """
-    id: Annotated[int, Field(ge=0)]
+    id: int = Field(..., ge=0)
     """
     Allocated by the queue: one past the highest the log has queued.
     """
@@ -50,7 +48,7 @@ class Surface(BaseModel):
     """
     Its text.
     """
-    queued_at: Annotated[int, Field(ge=0)]
+    queued_at: int = Field(..., ge=0)
     """
     When it was queued, in epoch milliseconds.
     """

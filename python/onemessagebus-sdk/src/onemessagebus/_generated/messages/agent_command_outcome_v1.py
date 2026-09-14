@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -13,7 +13,7 @@ class CommandResult(BaseModel):
     The answer to one command of an envelope.
     """
 
-    index: Annotated[int, Field(ge=0)]
+    index: int = Field(..., ge=0)
     """
     Its index in the envelope's `commands`.
     """
@@ -41,7 +41,7 @@ class CommandOutcome(BaseModel):
     """
     Whether every command in it was applied.
     """
-    id: Annotated[int, Field(ge=0)]
+    id: int = Field(..., ge=0)
     """
     The envelope it answers.
     """

@@ -5,15 +5,15 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, constr
+from pydantic import BaseModel, ConfigDict, Field, RootModel, StringConstraints
 
 
 class Contract(RootModel[Any]):
-    root: Annotated[Any, Field(title="Contract")]
+    root: Any = Field(..., title="Contract")
 
 
 class Address(RootModel[str]):
-    root: Annotated[str, Field(max_length=512, min_length=1)]
+    root: str = Field(..., max_length=512, min_length=1)
     """
     What a question is about, as the consumer names it: one non-blank line.
     """
@@ -28,7 +28,7 @@ class ArtifactRef(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    bytes: Annotated[int, Field(ge=0)]
+    bytes: int = Field(..., ge=0)
     """
     Size of the stored artifact.
     """
@@ -83,7 +83,7 @@ class CodecResponse(BaseModel):
 
 
 class Correlation(RootModel[str]):
-    root: Annotated[str, Field(pattern="^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]
+    root: str = Field(..., pattern="^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
     """
     Which question a reply answers: the token the bus minted when it was asked.
     """
@@ -110,28 +110,28 @@ class DeliverOptions(BaseModel):
     The message, as JSON text. The verb takes its message from exactly one of
     this, `file`, and stdin, and refuses more than one by name.
     """
-    wait: Annotated[int | None, Field(ge=0)] = None
+    wait: int | None = Field(None, ge=0)
     """
     Seconds to wait for the message to be taken before it is withdrawn.
     """
 
 
 class Disposition(RootModel[Any]):
-    root: Annotated[Any, Field(title="Disposition")]
+    root: Any = Field(..., title="Disposition")
     """
     What the receiver answered the message with: any JSON value, in the vocabulary of the message family the spool carries.
     """
 
 
 class EnvName(RootModel[str]):
-    root: Annotated[str, Field(pattern="^[A-Za-z_][A-Za-z0-9_]{0,127}$")]
+    root: str = Field(..., pattern="^[A-Za-z_][A-Za-z0-9_]{0,127}$")
     """
     The name of an environment variable: ASCII letters, digits and `_`, not starting with a digit.
     """
 
 
 class FieldPath(RootModel[str]):
-    root: Annotated[str, Field(pattern="^[^.]+(\\.[^.]+)*$")]
+    root: str = Field(..., pattern="^[^.]+(\\.[^.]+)*$")
     """
     Object keys joined by `.`: the path to one field of a record.
     """
@@ -179,7 +179,7 @@ class Labels(BaseModel):
     """
     The persona that member is running under.
     """
-    round: Annotated[int | None, Field(ge=0)] = None
+    round: int | None = Field(None, ge=0)
     """
     The round within the run.
     """
@@ -194,7 +194,7 @@ class Labels(BaseModel):
 
 
 class Position(RootModel[int]):
-    root: Annotated[int, Field(ge=0)]
+    root: int = Field(..., ge=0)
     """
     Where in a queue a record ends: opaque to consumers, and meaningful only to
     the transport that handed it out.
@@ -236,7 +236,7 @@ class Predicate2(BaseModel):
     """
     The field holds something (true), or not (false).
     """
-    not_: Annotated[Predicate2 | None, Field(alias="not")] = None
+    not_: Predicate2 | None = Field(None, alias="not")
     """
     This does not hold.
     """
@@ -278,11 +278,11 @@ class QueueStatus(BaseModel):
     """
     The queue.
     """
-    records: Annotated[int, Field(ge=0)]
+    records: int = Field(..., ge=0)
     """
     How many records its log holds.
     """
-    unread: Annotated[int, Field(ge=0)]
+    unread: int = Field(..., ge=0)
     """
     How many waiting records somebody is still owed a reading of.
     """
@@ -327,20 +327,18 @@ class ReplyOptions(BaseModel):
     """
     The registry directory whose schemas are registered beside the layout's.
     """
-    transport_dir: Annotated[str | None, Field(alias="transportDir")] = None
+    transport_dir: str | None = Field(None, alias="transportDir")
     """
     The transport directory.
     """
 
 
 class SchemaId(RootModel[str]):
-    root: Annotated[
-        str,
-        Field(
-            pattern="^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$",
-            title="SchemaId",
-        ),
-    ]
+    root: str = Field(
+        ...,
+        pattern="^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$",
+        title="SchemaId",
+    )
     """
     <namespace>.<name>@<version>: which schema a message is.
     """
@@ -377,13 +375,11 @@ class SchemaRegisterOptions(BaseModel):
     """
     The file holding the JSON Schema document.
     """
-    id: Annotated[
-        str,
-        Field(
-            pattern="^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$",
-            title="SchemaId",
-        ),
-    ]
+    id: str = Field(
+        ...,
+        pattern="^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$",
+        title="SchemaId",
+    )
     """
     The id to register under.
     """
@@ -417,7 +413,7 @@ class SendOptions(BaseModel):
     """
     The registry directory whose schemas are registered beside the layout's.
     """
-    transport_dir: Annotated[str | None, Field(alias="transportDir")] = None
+    transport_dir: str | None = Field(None, alias="transportDir")
     """
     The transport directory.
     """
@@ -431,11 +427,11 @@ class Sent(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    id: Annotated[int | None, Field(ge=0)] = None
+    id: int | None = Field(None, ge=0)
     """
     The id it was given, on a queue that gives one.
     """
-    position: Annotated[int, Field(ge=0)]
+    position: int = Field(..., ge=0)
     """
     The position after it.
     """
@@ -457,7 +453,7 @@ class ServeOptions(BaseModel):
     """
     Who the session listens for.
     """
-    codec: Annotated[str, Field(pattern="^[a-z][a-z0-9-]{0,63}$")]
+    codec: str = Field(..., pattern="^[a-z][a-z0-9-]{0,63}$")
     """
     The codec the frames are read with.
     """
@@ -477,11 +473,11 @@ class ServeOptions(BaseModel):
     """
     The registry directory whose schemas are registered beside the layout's.
     """
-    session_seconds: Annotated[int | None, Field(alias="sessionSeconds", ge=1)] = None
+    session_seconds: int | None = Field(None, alias="sessionSeconds", ge=1)
     """
     Seconds the session serves before it stops of its own accord.
     """
-    transport_dir: Annotated[str | None, Field(alias="transportDir")] = None
+    transport_dir: str | None = Field(None, alias="transportDir")
     """
     The transport directory.
     """
@@ -511,7 +507,7 @@ class StatusOptions(BaseModel):
     """
     The registry directory whose schemas are registered beside the layout's.
     """
-    transport_dir: Annotated[str | None, Field(alias="transportDir")] = None
+    transport_dir: str | None = Field(None, alias="transportDir")
     """
     The transport directory.
     """
@@ -541,11 +537,11 @@ class SubscribeOptions(BaseModel):
     """
     The registry directory whose schemas are registered beside the layout's.
     """
-    timeout: Annotated[int | None, Field(ge=0)] = None
+    timeout: int | None = Field(None, ge=0)
     """
     Seconds to wait before giving up; no bound when absent.
     """
-    transport_dir: Annotated[str | None, Field(alias="transportDir")] = None
+    transport_dir: str | None = Field(None, alias="transportDir")
     """
     The transport directory.
     """
@@ -594,7 +590,7 @@ class ValidateOptions(BaseModel):
     """
     The registry directory whose schemas are registered beside the layout's.
     """
-    transport_dir: Annotated[str | None, Field(alias="transportDir")] = None
+    transport_dir: str | None = Field(None, alias="transportDir")
     """
     The transport directory.
     """
@@ -652,14 +648,14 @@ class When1(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    carries: Annotated[str, Field(pattern="^[^.]+(\\.[^.]+)*$")]
+    carries: str = Field(..., pattern="^[^.]+(\\.[^.]+)*$")
     """
     Object keys joined by `.`: the path to one field of a record.
     """
 
 
 class ArrayOfQueueStatus(RootModel[list[QueueStatus]]):
-    root: Annotated[list[QueueStatus], Field(title="Array_of_QueueStatus")]
+    root: list[QueueStatus] = Field(..., title="Array_of_QueueStatus")
 
 
 class AskOptions(BaseModel):
@@ -702,11 +698,11 @@ class AskOptions(BaseModel):
     """
     The registry directory whose schemas are registered beside the layout's.
     """
-    timeout: Annotated[int | None, Field(ge=0)] = None
+    timeout: int | None = Field(None, ge=0)
     """
     Seconds to wait for the answer; no bound when absent.
     """
-    transport_dir: Annotated[str | None, Field(alias="transportDir")] = None
+    transport_dir: str | None = Field(None, alias="transportDir")
     """
     The transport directory.
     """
@@ -718,7 +714,7 @@ class AskedAbandoned(BaseModel):
     """
 
     answer: Literal["abandoned"]
-    correlation: Annotated[str, Field(pattern="^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]
+    correlation: str = Field(..., pattern="^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
     """
     The question's correlation.
     """
@@ -746,7 +742,7 @@ class AskedReply(BaseModel):
     """
 
     answer: Literal["reply"]
-    correlation: Annotated[str, Field(pattern="^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]
+    correlation: str = Field(..., pattern="^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
     """
     The question's correlation.
     """
@@ -762,7 +758,7 @@ class AskedTimeout(BaseModel):
     """
 
     answer: Literal["timeout"]
-    correlation: Annotated[str, Field(pattern="^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]
+    correlation: str = Field(..., pattern="^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
     """
     The question's correlation.
     """
@@ -780,14 +776,12 @@ class CarriedEntry(BaseModel):
     """
     The message.
     """
-    schema_: Annotated[
-        str,
-        Field(
-            alias="schema",
-            pattern="^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$",
-            title="SchemaId",
-        ),
-    ]
+    schema_: str = Field(
+        ...,
+        alias="schema",
+        pattern="^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$",
+        title="SchemaId",
+    )
     """
     The schema the message is.
     """
@@ -805,11 +799,11 @@ class ClaimedRecord(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    id: Annotated[int | None, Field(ge=0)] = None
+    id: int | None = Field(None, ge=0)
     """
     The record's id, on a queue that gives one.
     """
-    position: Annotated[int, Field(ge=0)]
+    position: int = Field(..., ge=0)
     """
     Where the claim was recorded: what `reply` names the record by.
     """
@@ -846,7 +840,7 @@ class CodecConfig(BaseModel):
     The queue the codec raises and asks on; `serve <queue>` must name the
     same one.
     """
-    reply_window_seconds: Annotated[int | None, Field(ge=1)] = None
+    reply_window_seconds: int | None = Field(None, ge=1)
     """
     Whole seconds a question the codec asks waits for its ruling before the
     codec answers without one.
@@ -877,7 +871,7 @@ class Envelope(BaseModel):
     does not admit, and a missing required field — each by name.
     """
 
-    artifacts: Annotated[list[ArtifactRef] | None, Field(validate_default=True)] = []
+    artifacts: list[ArtifactRef] | None = Field([], validate_default=True)
     """
     Evidence stored by the producing library and referenced by id.
     """
@@ -885,7 +879,7 @@ class Envelope(BaseModel):
     """
     What happened, as its producer named it.
     """
-    labels: Annotated[Labels | None, Field(validate_default=True)] = {}
+    labels: Labels | None = Field({}, validate_default=True)
     """
     The reserved keys the vocabulary declares plus free-form extras.
     Producers stamp what they know; enrichers never rewrite.
@@ -901,7 +895,7 @@ class Envelope(BaseModel):
     Which part of a change's life the event belongs to, as its producer
     classified it.
     """
-    seq: Annotated[int, Field(ge=0)]
+    seq: int = Field(..., ge=0)
     """
     Monotonic per [`stream`](Self::stream).
     """
@@ -917,7 +911,7 @@ class Envelope(BaseModel):
     """
     RFC 3339, millisecond precision, UTC.
     """
-    v: Annotated[int, Field(ge=0)]
+    v: int = Field(..., ge=0)
     """
     The envelope schema version the producer wrote against.
     """
@@ -1021,7 +1015,7 @@ class LogRecord(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    position: Annotated[int, Field(ge=0)]
+    position: int = Field(..., ge=0)
     """
     The position after it.
     """
@@ -1104,7 +1098,7 @@ class NextOptions(BaseModel):
     """
     The registry directory whose schemas are registered beside the layout's.
     """
-    transport_dir: Annotated[str | None, Field(alias="transportDir")] = None
+    transport_dir: str | None = Field(None, alias="transportDir")
     """
     The transport directory.
     """
@@ -1138,7 +1132,7 @@ class Predicate(BaseModel):
     """
     The field holds something (true), or not (false).
     """
-    not_: Annotated[Predicate2 | None, Field(default_factory=Predicate2, alias="not")]
+    not_: Predicate2 | None = Field(None, alias="not")
     """
     This does not hold.
     """
@@ -1156,17 +1150,15 @@ class RegistryDocument(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    id: Annotated[
-        str,
-        Field(
-            pattern="^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$",
-            title="SchemaId",
-        ),
-    ]
+    id: str = Field(
+        ...,
+        pattern="^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$",
+        title="SchemaId",
+    )
     """
     The id the document is registered under.
     """
-    schema_: Annotated[Any, Field(alias="schema")]
+    schema_: Any = Field(..., alias="schema")
     """
     The JSON Schema document.
     """
@@ -1209,13 +1201,11 @@ class SchemaCheckOptions(BaseModel):
     """
     The payload file; stdin when absent.
     """
-    id: Annotated[
-        str,
-        Field(
-            pattern="^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$",
-            title="SchemaId",
-        ),
-    ]
+    id: str = Field(
+        ...,
+        pattern="^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$",
+        title="SchemaId",
+    )
     """
     The id to check against.
     """
@@ -1241,17 +1231,15 @@ class SchemaEntry(BaseModel):
     """
     The id without its version.
     """
-    id: Annotated[
-        str,
-        Field(
-            pattern="^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$",
-            title="SchemaId",
-        ),
-    ]
+    id: str = Field(
+        ...,
+        pattern="^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$",
+        title="SchemaId",
+    )
     """
     The full id.
     """
-    version: Annotated[int, Field(ge=0)]
+    version: int = Field(..., ge=0)
     """
     The version.
     """
@@ -1265,13 +1253,11 @@ class SchemaGenOptions(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    id: Annotated[
-        str,
-        Field(
-            pattern="^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$",
-            title="SchemaId",
-        ),
-    ]
+    id: str = Field(
+        ...,
+        pattern="^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$",
+        title="SchemaId",
+    )
     """
     The id to render.
     """
@@ -1298,11 +1284,11 @@ class Supersede(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    key: Annotated[str, Field(pattern="^[^.]+(\\.[^.]+)*$")]
+    key: str = Field(..., pattern="^[^.]+(\\.[^.]+)*$")
     """
     The field whose equal values replace one another.
     """
-    when: Annotated[Predicate | None, Field(default_factory=Predicate)]
+    when: Predicate | None = None
     """
     Which records supersede at all.
     """
@@ -1330,22 +1316,22 @@ class TransportConfig(BaseModel):
 
 
 class Validated(RootModel[ValidatedPass | ValidatedRefuse | ValidatedUnjudged]):
-    root: Annotated[ValidatedPass | ValidatedRefuse | ValidatedUnjudged, Field(title="Validated")]
+    root: ValidatedPass | ValidatedRefuse | ValidatedUnjudged = Field(..., title="Validated")
     """
     What `validate` judged: the queue, and the verdict its validators reached.
     """
 
 
 class ArrayOfKindEntry(RootModel[list[KindEntry]]):
-    root: Annotated[list[KindEntry], Field(title="Array_of_KindEntry")]
+    root: list[KindEntry] = Field(..., title="Array_of_KindEntry")
 
 
 class ArrayOfSchemaEntry(RootModel[list[SchemaEntry]]):
-    root: Annotated[list[SchemaEntry], Field(title="Array_of_SchemaEntry")]
+    root: list[SchemaEntry] = Field(..., title="Array_of_SchemaEntry")
 
 
 class Asked(RootModel[AskedReply | AskedTimeout | AskedAbandoned | AskedRefused]):
-    root: Annotated[AskedReply | AskedTimeout | AskedAbandoned | AskedRefused, Field(title="Asked")]
+    root: AskedReply | AskedTimeout | AskedAbandoned | AskedRefused = Field(..., title="Asked")
     """
     What `ask` answered. Every answer names itself in `answer`, and only a
     reply carries a `reply`: a caller reading the reply member of a timeout, an
@@ -1426,7 +1412,7 @@ class QueueConfig(BaseModel):
     """
     The queue a reply to a pending record is appended to.
     """
-    claims: Annotated[Predicate | None, Field(default_factory=Predicate)]
+    claims: Predicate | None = None
     """
     Which records a claim hands out.
     """
@@ -1438,11 +1424,11 @@ class QueueConfig(BaseModel):
     """
     Whether a push numbers each record.
     """
-    policy: Annotated[PolicyConfig | None, Field(default_factory=PolicyConfig)]
+    policy: PolicyConfig | None = None
     """
     The policy's keys to set.
     """
-    schema_: Annotated[SchemaId | None, Field(alias="schema")] = None
+    schema_: SchemaId | None = Field(None, alias="schema")
     """
     The schema records are validated against.
     """
@@ -1498,7 +1484,10 @@ class Config(BaseModel):
     """
     Authors whose grants the configuration narrows. It may never widen them.
     """
-    codecs: dict[constr(pattern=r"^[a-z][a-z0-9-]{0,63}$"), CodecConfig] | None = None
+    codecs: (
+        dict[Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,63}$")], CodecConfig]
+        | None
+    ) = None
     """
     What a host configures for each codec `serve` runs, by the codec's name.
     Which names there are is the binary's: one no linked codec answers to is
@@ -1509,7 +1498,7 @@ class Config(BaseModel):
     A layout a linked profile declares, by name: its queues, policies,
     authors, operations and schemas.
     """
-    queues: Annotated[dict[str, QueueConfig] | None, Field(default_factory=QueueConfig)]
+    queues: dict[str, QueueConfig] | None = None
     """
     Queues added to the layout's, or overriding one of the layout's by name.
     """
@@ -1522,7 +1511,7 @@ class Config(BaseModel):
     Validators judging what is offered to a queue before anything is
     appended, in the order each queue judges by them.
     """
-    version: Annotated[int, Field(ge=0)]
+    version: int = Field(..., ge=0)
     """
     Always [`CONFIG_VERSION`].
     """
