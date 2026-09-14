@@ -108,6 +108,7 @@ enum Command {
     Serve(ServeArgs),
 }
 
+// llmlint: ignore-block[invalid_states_unrepresentable] `ServeArgs` is clap's derive target, not the domain type: clap's `Args` derive stores flags as struct fields and cannot store mutually exclusive flag sets as an enum without making `serve` take subcommands, which would change the `serve QUEUE --codec NAME` and `serve --resident --socket PATH` command lines docs/cli.md and Contract P fix. A mixed combination is refused at this boundary twice — by clap's `requires` and `conflicts_with_all` before a value exists, then by `mode()` into `ServeMode` — and `serve` matches `mode()` before it reads anything else, so no mixed mode reaches the code past the parse. The previous answer to this finding already moved the domain onto `ServeMode`; storing the struct any other way would break the command-line contract.
 /// What `serve` takes.
 #[derive(Debug, Args)]
 struct ServeArgs {
@@ -144,6 +145,7 @@ struct ServeArgs {
     #[command(flatten)]
     bus: BusArgs,
 }
+// llmlint: ignore-end[invalid_states_unrepresentable]
 
 /// The two things `serve` runs, as its arguments name them.
 enum ServeMode<'a> {

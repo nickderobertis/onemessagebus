@@ -58,11 +58,21 @@ describe("the version pin", () => {
     expect(error.actual).toBe("9.9.9");
   });
 
-  test("the real binary is the pinned version, and the check is made once", async () => {
+  test("the real binary is the pinned version, and a client checks it once however many calls it makes", async () => {
     await verifyVersion({ command: BINARY, prefix: [] });
-    const client = new Client({ config: { binary: BINARY } });
+    // The real binary behind a wrapper that notes each version check it answers.
+    const dir = scratch("counted-bin");
+    const checks = join(dir, "version-checks");
+    const counted = join(dir, "onemessagebus");
+    writeFileSync(
+      counted,
+      `#!/bin/sh\n[ "$1" = --version ] && echo checked >> '${checks}'\nexec '${BINARY}' "$@"\n`,
+    );
+    chmodSync(counted, 0o755);
+    const client = new Client({ config: { binary: counted } });
+    expect((await client.transports()).map((kind) => kind.kind)).toContain("local");
     await client.transports();
-    await client.transports();
+    expect((await Bun.file(checks).text()).trim().split("\n")).toEqual(["checked"]);
   });
 
   test("a program that is not onemessagebus, one that fails, and one that is missing are each named", async () => {

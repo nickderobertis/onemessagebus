@@ -102,8 +102,8 @@ async def test_the_events_verbs(client: Client, scratch: Path) -> None:
     merged = await client.events_merge([stream])
     assert [(envelope.seq, envelope.source) for envelope in merged] == [(1, "pipeline"), (2, "vcs")]
     assert len((await client.events_merge([stream], format="text")).splitlines()) == 2
-    only_vcs = await client.events_merge([stream], filter={"include": [{"run_id": "R"}]})
-    assert [envelope.seq for envelope in only_vcs] == [1]
+    run_r = await client.events_merge([stream], filter={"include": [{"run_id": "R"}]})
+    assert [envelope.seq for envelope in run_r] == [1]
     with pytest.raises(BusRefused, match="the event filter is unusable"):
         await client.events_merge([stream], filter={"nope": 1})
 

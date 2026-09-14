@@ -235,7 +235,7 @@ jobs:
   # version, beside the binary built from it — and driven once through each
   # transport. The platforms with a unix socket for the resident core; Windows
   # has none, and the SDKs' resident transport is refused there by name.
-  # llmlint: ignore-block[live_tier_compiles_and_requires_credential] this job is no live tier with a credential to demand: it packs both SDKs from this checkout, installs them beside the binary built from the same revision, and reads public registries only anonymously for their third-party dependencies, so there is no secret whose absence it could detect; and it cannot pass green on a skip — every step of the one recipe it runs exits non-zero on failure. A credential check here would guard nothing.
+  # llmlint: ignore-block[live_tier_compiles_and_requires_credential, external_service_suite_stays_out_of_the_affected_tier] the suite this job runs tests artifacts built from this checkout — both SDKs packed at this revision and installed beside the binary built from it — and calls no external service: its only network use is the package registries, read anonymously for the SDKs' third-party dependencies (pydantic, zod), the same provisioning `just bootstrap` does in every job. So there is no credential to demand and no absence that could skip it green, since every step of its one recipe exits non-zero on failure. It gates pull requests deliberately: this node's acceptance criteria require the CI matrix to build and smoke-test both packages' install paths on each change, and it is its own job selected by the changes filter, not a target of the affected-tier `check-affected` gate.
   sdk-install:
     needs: [changes, gate]
     if: needs.changes.outputs.crate == 'true' || needs.changes.outputs.sdk == 'true'
@@ -257,7 +257,7 @@ jobs:
           bun-version-file: .bun-version
       - name: Pack, install and smoke-test both SDKs
         run: just nx run onemessagebus-sdk-install-e2e:test
-  # llmlint: ignore-end[live_tier_compiles_and_requires_credential]
+  # llmlint: ignore-end[live_tier_compiles_and_requires_credential, external_service_suite_stays_out_of_the_affected_tier]
 
   # Lint the PR title: under squash-merge it becomes the release-driving commit.
   pr-title:
