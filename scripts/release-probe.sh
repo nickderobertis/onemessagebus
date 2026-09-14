@@ -40,10 +40,13 @@
 # identifiers are its own, and npm/test/release-targets.test.mjs holds that
 # declaration against the release configuration.
 #
-# Scoped npm names (`@scope/name`) are deliberately not recognised: the packages
-# here are unscoped on purpose — a `@scope/` name needs an npm organization a
-# publish token cannot create (see scripts/npm-build.mjs) — so supporting them
-# would add a URL-encoding path nothing in this repository can exercise.
+# One scoped npm name is published here — the Node SDK, `@onemessagebus/sdk` —
+# so `npm:@scope/name` is recognised, and sent as the registry's single path
+# segment with its slash encoded (`@scope%2fname`), the form the registry serves a
+# scoped packument under. A scope on any other registry, or anything else around
+# the name, is not recognised. The binary's own packages stay unscoped on purpose
+# (see scripts/npm-build.mjs): a `@scope/` name needs an npm organization, which
+# a publish token cannot create.
 set -euo pipefail
 
 readonly NOT_ANSWERED=3
@@ -80,11 +83,18 @@ case "$identifier" in
 esac
 
 # The charset every name this repository publishes is drawn from, on all three
-# registries. Anything else is a name this cannot build a URL for without
-# guessing at an encoding, which is not answered rather than probed.
-if ! printf '%s' "$name" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'; then
+# registries — and on npm, the same charset scoped as `@scope/name`. Anything
+# else is a name this cannot build a URL for without guessing at an encoding,
+# which is not answered rather than probed.
+plain='[A-Za-z0-9][A-Za-z0-9._-]{0,127}'
+if [ "$registry" = npm ] && printf '%s' "$name" | grep -Eq "^@${plain}/${plain}\$"; then
+  # A scoped name travels as one path segment, its slash encoded.
+  segment="${name%%/*}%2f${name#*/}"
+elif printf '%s' "$name" | grep -Eq "^${plain}\$"; then
+  segment="$name"
+else
   not_answered "'$name' is not a registry package name this recognises" \
-    "pass a name of letters, digits, '.', '_' and '-' — scoped npm names are not supported"
+    "pass a name of letters, digits, '.', '_' and '-' — or, on npm alone, '@scope/name'"
 fi
 
 command -v curl >/dev/null 2>&1 || not_answered "no 'curl' on PATH" \
@@ -152,9 +162,9 @@ case "$registry" in
   # crates.io's own summary of the crate, which is where "what a `cargo add`
   # resolves" is stated rather than inferred: the sparse index lists every
   # version in publish order, which is not the same question.
-  crate) url="https://crates.io/api/v1/crates/$name" ;;
-  pypi) url="https://pypi.org/pypi/$name/json" ;;
-  npm) url="https://registry.npmjs.org/$name" ;;
+  crate) url="https://crates.io/api/v1/crates/$segment" ;;
+  pypi) url="https://pypi.org/pypi/$segment/json" ;;
+  npm) url="https://registry.npmjs.org/$segment" ;;
   *)
     not_answered "unknown registry '$registry' in '$identifier'" \
       "qualify the name with one of: crate, pypi, npm"
