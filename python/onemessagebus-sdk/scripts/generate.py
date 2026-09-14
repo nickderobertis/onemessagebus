@@ -83,7 +83,7 @@ def read_bundle() -> dict[str, Any]:
     if cargo is None:
         fail("cargo is not on PATH; install the pinned toolchain with `just bootstrap`.")
     try:
-        run = subprocess.run(
+        run = subprocess.run(  # noqa: S603 - argv is cargo as shutil.which resolved it and the constant bundle arguments; a bare name trips S607
             [cargo, *BUNDLE_ARGS],
             cwd=ROOT,
             env={**os.environ, "CARGO_TARGET_DIR": str(BUNDLE_TARGET)},
@@ -345,7 +345,9 @@ def generated_files(bundle: dict[str, Any]) -> dict[str, bytes]:
             ["check", "--fix", "--select", "I,F401,UP,RUF022", "--quiet", "--config", config],
             ["format", "--quiet", "--config", config],
         ):
-            subprocess.run([sys.executable, "-m", "ruff", *command, scratch], check=True)
+            subprocess.run(  # noqa: S603 - argv is this interpreter, the constant ruff command and the generator's own scratch directory
+                [sys.executable, "-m", "ruff", *command, scratch], check=True
+            )
         return owned_files(package)
 
 

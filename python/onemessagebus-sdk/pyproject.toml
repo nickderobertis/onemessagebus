@@ -44,14 +44,8 @@ line-length = 100
 select = ["E4", "E7", "E9", "F", "I", "UP", "B", "ASYNC", "S", "RUF", "SIM", "PT"]
 
 [tool.ruff.lint.per-file-ignores]
-"scripts/generate.py" = [
-    "S603", # cargo (resolved by shutil.which) and `python -m ruff` run with argv built from constants.
-]
 "tests/**" = [
     "S101", # pytest's plain assert is the test contract, as in the sibling SDKs.
-]
-"tests/conftest.py" = [
-    "S603", # The scratch fixture registers its schema through the checkout's built binary.
 ]
 
 [tool.ty.environment]

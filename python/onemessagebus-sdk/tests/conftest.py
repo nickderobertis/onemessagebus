@@ -58,7 +58,7 @@ def scratch(binary: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
     )
     document = directory / "greeting.schema.json"
     document.write_text(json.dumps(Greeting.json_schema()), encoding="utf-8")
-    subprocess.run(
+    subprocess.run(  # noqa: S603 - argv is the checkout's built binary and constant words; a resolved path is never a literal, and a bare name trips S607
         [
             str(binary),
             *("schema", "register", "--file", str(document)),
