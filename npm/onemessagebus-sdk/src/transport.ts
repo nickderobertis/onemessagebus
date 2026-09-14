@@ -43,6 +43,16 @@ export interface Transport {
   close(): Promise<void>;
 }
 
+/** Whether `name` is a capability this build's manifest declares (its own key, not an inherited one). */
+export function isCapability(name: string): name is CapabilityMethod {
+  return Object.hasOwn(CAPABILITIES, name);
+}
+
+/** What went wrong, from whatever was thrown. */
+function reason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function scalar(method: string, option: string, value: unknown): string {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
@@ -56,11 +66,11 @@ function scalar(method: string, option: string, value: unknown): string {
  * manifest's bindings. Positionals go last, after `--`, so a value that starts
  * with a dash is still a positional; an absent or null option renders nothing.
  */
-export function renderArgv(capability: CapabilityMethod, args: Args): string[] {
-  const declared = CAPABILITIES[capability];
-  if (declared === undefined) {
-    throw new BusRefused(`\`${String(capability)}\` is not a capability of onemessagebus`);
+export function renderArgv(capability: string, args: Args): string[] {
+  if (!isCapability(capability)) {
+    throw new BusRefused(`\`${capability}\` is not a capability of onemessagebus`);
   }
+  const declared = CAPABILITIES[capability];
   const bindings: readonly { option: string; flag: string; kind: string }[] = declared.bindings;
   for (const key of Object.keys(args)) {
     if (!bindings.some((binding) => binding.option === key)) {
@@ -131,7 +141,7 @@ function parseJson(capability: CapabilityMethod, text: string): unknown {
     return JSON.parse(text);
   } catch (error) {
     throw new ContractError(
-      `${capability}: the binary printed ${JSON.stringify(text.slice(0, 200))}, which is not JSON (${(error as Error).message})`,
+      `${capability}: the binary printed ${JSON.stringify(text.slice(0, 200))}, which is not JSON (${reason(error)})`,
     );
   }
 }
@@ -148,9 +158,9 @@ function readStdout(capability: CapabilityMethod, args: Args, stdout: string): u
   return parseJson(capability, stdout);
 }
 
-function spawnFailure(binary: Binary, error: Error): TransportError {
+function spawnFailure(binary: Binary, error: unknown): TransportError {
   return new TransportError(
-    `could not start ${describeBinary(binary)}: ${error.message}; install onemessagebus-cli, or name the binary with ClientConfig.binary or ONEMESSAGEBUS_BIN`,
+    `could not start ${describeBinary(binary)}: ${reason(error)}; install onemessagebus-cli, or name the binary with ClientConfig.binary or ONEMESSAGEBUS_BIN`,
     error,
   );
 }
@@ -198,7 +208,7 @@ export class CliTransport implements Transport {
       try {
         child = this.#spawn(capability, args, input);
       } catch (error) {
-        reject(error instanceof BusError ? error : spawnFailure(this.binary, error as Error));
+        reject(error instanceof BusError ? error : spawnFailure(this.binary, error));
         return;
       }
       const stdout: Buffer[] = [];
@@ -252,10 +262,11 @@ export class CliTransport implements Transport {
     });
     if (started !== undefined) throw spawnFailure(this.binary, started);
     const textual = printsText(capability, args);
-    const lines = createInterface({
-      input: child.stdout as NodeJS.ReadableStream,
-      crlfDelay: Infinity,
-    });
+    const { stdout } = child;
+    if (stdout === null) {
+      throw new TransportError(`onemessagebus ${capability} started with no stdout pipe to read`);
+    }
+    const lines = createInterface({ input: stdout, crlfDelay: Infinity });
     let finished = false;
     try {
       for await (const line of lines) {
@@ -516,7 +527,7 @@ export class ResidentTransport implements Transport {
       return;
     }
     const parsed = BusResidentProtocolV1Schema.safeParse(value);
-    const id = (value as { id?: unknown } | null)?.id;
+    const id = typeof value === "object" && value !== null && "id" in value ? value.id : undefined;
     if (!parsed.success || typeof id !== "number") {
       const error =
         parsed.success && "error" in parsed.data
@@ -566,10 +577,10 @@ export class ResidentTransport implements Transport {
     try {
       socket = await attach(this.socket);
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
+      const code = error instanceof Error && "code" in error ? error.code : undefined;
       if (!this.#start || (code !== "ENOENT" && code !== "ECONNREFUSED")) {
         throw new TransportError(
-          `nothing answers on ${this.socket} (${(error as Error).message}); start a resident with \`onemessagebus serve --resident --socket ${this.socket}\`, or let this transport start one with start: true`,
+          `nothing answers on ${this.socket} (${reason(error)}); start a resident with \`onemessagebus serve --resident --socket ${this.socket}\`, or let this transport start one with start: true`,
           error,
         );
       }
@@ -624,7 +635,9 @@ export class ResidentTransport implements Transport {
     });
     // A resident outlives any one call; it is this transport's `close` that ends it.
     child.unref();
-    (child.stderr as { unref?: () => void } | null)?.unref?.();
+    // Node's pipe is a socket that can be unreferenced; a runtime whose pipe is not keeps it.
+    const { stderr: pipe } = child;
+    if (pipe !== null && "unref" in pipe && typeof pipe.unref === "function") pipe.unref();
     const deadline = Date.now() + this.#startTimeout;
     while (true) {
       try {

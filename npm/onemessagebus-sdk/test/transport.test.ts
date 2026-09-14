@@ -76,7 +76,7 @@ describe("the resident transport", () => {
     });
     const error = await caught(() => client.transports());
     expect(error).toBeInstanceOf(TransportError);
-    expect((error as Error).message).toContain(`serve --resident --socket ${socket}`);
+    expect(error.message).toContain(`serve --resident --socket ${socket}`);
   });
 
   test("a resident that refuses to start is reported with its own words", async () => {
@@ -87,20 +87,14 @@ describe("the resident transport", () => {
     });
     const error = await caught(() => client.transports());
     expect(error).toBeInstanceOf(TransportError);
-    expect((error as Error).message).toContain("before listening");
-    expect((error as Error).message).toContain("missing.yaml");
+    expect(error.message).toContain("before listening");
+    expect(error.message).toContain("missing.yaml");
   });
 
   test("a socket path no unix socket address can hold is refused up front", () => {
-    const error = (() => {
-      try {
-        return new ResidentTransport({ socket: `/tmp/${"x".repeat(120)}.sock` });
-      } catch (thrown) {
-        return thrown;
-      }
-    })();
-    expect(error).toBeInstanceOf(TransportError);
-    expect((error as Error).message).toContain("longer than the 103");
+    const socket = `/tmp/${"x".repeat(120)}.sock`;
+    expect(() => new ResidentTransport({ socket })).toThrow(TransportError);
+    expect(() => new ResidentTransport({ socket })).toThrow("longer than the 103");
   });
 
   test("a refusal over the resident is the same typed error the command line gives", async () => {
@@ -113,9 +107,7 @@ describe("the resident transport", () => {
       await client.schema.register(Greeting);
       const error = await caught(() => client.send("nowhere", SURFACE));
       expect(error).toBeInstanceOf(BusRefused);
-      expect((error as Error).message).toContain(
-        "`nowhere` is not a queue this configuration declares",
-      );
+      expect(error.message).toContain("`nowhere` is not a queue this configuration declares");
     } finally {
       await client.transport.close();
     }
@@ -128,7 +120,7 @@ describe("the CLI transport", () => {
     const transport = new CliTransport({ binary: missing });
     const call = await caught(() => transport.call("transports", {}));
     expect(call).toBeInstanceOf(TransportError);
-    expect((call as Error).message).toContain(`could not start ${missing}`);
+    expect(call.message).toContain(`could not start ${missing}`);
     const stream = await caught(async () => {
       for await (const _ of transport.stream("subscribe", { queue: "q", until: "{}" })) {
         // nothing starts
@@ -153,9 +145,7 @@ describe("the CLI transport", () => {
     // Far more than a pipe holds, so the write outlives the process that refused it.
     const error = await caught(() => client.send("nowhere", { text: "x".repeat(4 * 1024 * 1024) }));
     expect(error).toBeInstanceOf(BusRefused);
-    expect((error as Error).message).toContain(
-      "`nowhere` is not a queue this configuration declares",
-    );
+    expect(error.message).toContain("`nowhere` is not a queue this configuration declares");
   });
 });
 
@@ -167,7 +157,7 @@ describe("a bus that cannot be reached, or stops answering", () => {
     const transport = new ResidentTransport({ socket: socketPath(), config: { binary: missing } });
     const error = await caught(() => transport.call("transports", {}));
     expect(error).toBeInstanceOf(TransportError);
-    expect((error as Error).message).toContain(`could not start ${missing}`);
+    expect(error.message).toContain(`could not start ${missing}`);
     await transport.close();
   });
 
@@ -213,7 +203,7 @@ describe("a bus that cannot be reached, or stops answering", () => {
       unlinkSync(socket);
       const error = await subscription;
       expect(error).toBeInstanceOf(TransportError);
-      expect((error as Error).message).toContain("closed the connection");
+      expect(error.message).toContain("closed the connection");
       expect(await exited).toBe(0);
       await client.transport.close();
     } finally {

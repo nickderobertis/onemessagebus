@@ -3,6 +3,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
 import {
   type Answer,
   BusError,
@@ -17,6 +18,7 @@ import {
   BINARY,
   baseConfig,
   caught,
+  caughtAs,
   Greeting,
   removeScratch,
   SURFACE,
@@ -26,14 +28,12 @@ import {
 
 afterAll(removeScratch);
 
-async function refusedWith<E extends BusError>(
-  kind: new (...args: never[]) => E,
-  run: () => unknown,
-): Promise<E> {
-  const error = await caught(run);
-  expect(error).toBeInstanceOf(kind);
-  return error as E;
-}
+const refusedWith = caughtAs;
+
+/** What the ask journey reads of a surface it claims: whether it is the question, and its correlation. */
+const Question = z.looseObject({ kind: z.string(), correlation: z.string().optional() });
+/** What it reads of the reply record the answer carries. */
+const QueuedReply = z.looseObject({ reply: z.looseObject({ reason: z.string() }) });
 
 for (const transport of TRANSPORTS) {
   describe(`over the ${transport.name} transport`, () => {
@@ -53,7 +53,7 @@ for (const transport of TRANSPORTS) {
       expect(kinds.map((kind) => kind.kind)).toContain("local");
       expect(await client.transports({ format: "text" })).toContain("local builtin");
       const refused = await refusedWith(BusRefused, () =>
-        client.transports({ format: "yaml" as "json" }),
+        client.transports(JSON.parse('{"format":"yaml"}')),
       );
       expect(refused.message).toStartWith("transports: `format`");
     });
@@ -126,7 +126,7 @@ for (const transport of TRANSPORTS) {
       expect(violation.message).toContain("/text");
       // the same payload stopped in the SDK, by the same schema, in the same words
       const early = await refusedWith(BusFailed, () =>
-        client.send("greetings", { text: 7 } as unknown as { text: string }, { type: Greeting }),
+        client.send("greetings", JSON.parse('{"text":7}'), { type: Greeting }),
       );
       expect(early.message).toStartWith("demo.greeting@1: at /text:");
 
@@ -234,17 +234,16 @@ for (const transport of TRANSPORTS) {
         { ...SURFACE, kind: "planner-question", message: "which base?", blocking: true },
         { blocking: true, asker: "worker-1", timeout: 30, about: "task-7" },
       );
-      let claimed = await client.next("surfaces");
-      for (
-        let tries = 0;
-        claimed?.record === undefined || !isQuestion(claimed.record);
-        tries += 1
-      ) {
+      let claimed = await client.next("surfaces", { type: Question });
+      let correlation: string | undefined;
+      for (let tries = 0; correlation === undefined; tries += 1) {
         expect(tries).toBeLessThan(200);
-        await new Promise((wake) => setTimeout(wake, 50));
-        claimed = await client.next("surfaces");
+        if (claimed?.record.kind === "planner-question") correlation = claimed.record.correlation;
+        else {
+          await new Promise((wake) => setTimeout(wake, 50));
+          claimed = await client.next("surfaces", { type: Question });
+        }
       }
-      const correlation = (claimed.record as { correlation: string }).correlation;
       const replied = await client.reply("surfaces", correlation, {
         version: 3,
         completion: true,
@@ -256,7 +255,7 @@ for (const transport of TRANSPORTS) {
       expect(answer.answer).toBe("reply");
       if (answer.answer === "reply") {
         expect(answer.correlation).toBe(correlation);
-        expect((answer.reply as { reply: { reason: string } }).reply.reason).toBe("main");
+        expect(QueuedReply.parse(answer.reply).reply.reason).toBe("main");
       }
     });
 
@@ -390,7 +389,7 @@ for (const transport of TRANSPORTS) {
         const bare = await profile.next("surfaces", { type: schemas.PlannerSurface.schema });
         expect(bare?.record.message).toBe("bare");
         const refused = await refusedWith(BusFailed, () =>
-          profile.send("surfaces", { kind: 7 } as unknown as schemas.PlannerSurface, {
+          profile.send("surfaces", JSON.parse('{"kind":7}'), {
             type: schemas.PlannerSurface.schema,
           }),
         );
@@ -401,8 +400,4 @@ for (const transport of TRANSPORTS) {
       }
     });
   });
-}
-
-function isQuestion(record: unknown): boolean {
-  return (record as { kind?: string }).kind === "planner-question";
 }

@@ -13,6 +13,7 @@ import { BusFailed, BusRefused, ContractError } from "./errors.js";
 import {
   CAPABILITIES,
   type CapabilityMethod,
+  type CapabilityOutputs,
   OPTION_SCHEMAS,
   OUTPUT_SCHEMAS,
 } from "./generated/capabilities.js";
@@ -56,8 +57,10 @@ import {
 } from "./message.js";
 import { CliTransport, printsText, type Transport } from "./transport.js";
 
-/** A reading verb's result: text when the options ask for `format: "text"`. */
-export type Reading<O, T> = O extends { format: "text" } ? string : T;
+/** Options asking for the text rendering: the method resolves a `string`. */
+export type AsText<O> = O & { format: "text" };
+/** Options asking for JSON, or leaving the format to its default: the method resolves the document. */
+export type AsJson<O> = O & { format?: "json" | null | undefined };
 
 /** The record `next` claimed, its record typed by the message type it was claimed as. */
 export type Claimed<T = unknown> = Omit<ClaimedRecord, "record"> & { record: T };
@@ -76,6 +79,9 @@ type Without<O, K extends keyof O> = Omit<O, K>;
 /** A message type: a `defineMessage` result or a generated one, or a bare Zod schema. */
 export type MessageTypeLike<T> = MessageDefinition<T> | z.ZodType<T>;
 type Typed<T> = { readonly type?: MessageTypeLike<T> | undefined };
+type NextIn = Without<NextOptions, "queue">;
+type StatusIn = Without<StatusOptions, "queue">;
+type SubscribeIn = Without<SubscribeOptions, "queue" | "until"> & { until: Predicate };
 
 export interface ClientOptions {
   readonly config?: ClientConfig | undefined;
@@ -100,9 +106,15 @@ function describeIssues(method: string, error: z.ZodError): string {
   return `${method}: \`${at}\` ${issue?.message ?? "is invalid"}`;
 }
 
-function parseOutput<M extends CapabilityMethod>(method: M, value: unknown): unknown {
-  const schema = OUTPUT_SCHEMAS[method] as z.ZodType | null;
-  if (schema === null) return value;
+/** One document (or one line) a capability printed, parsed by its generated output schema. */
+function parseOutput<M extends CapabilityMethod>(method: M, value: unknown): CapabilityOutputs[M] {
+  const schema = OUTPUT_SCHEMAS[method];
+  if (schema === null) {
+    throw new ContractError(
+      `${method}: the manifest gives it no output contract to read by`,
+      value,
+    );
+  }
   const parsed = schema.safeParse(value);
   if (!parsed.success) {
     throw new ContractError(
@@ -111,6 +123,17 @@ function parseOutput<M extends CapabilityMethod>(method: M, value: unknown): unk
     );
   }
   return parsed.data;
+}
+
+/** The lines a `jsonl` capability printed, each parsed by its generated output schema. */
+function parseLines<M extends CapabilityMethod>(method: M, value: unknown): CapabilityOutputs[M][] {
+  if (!Array.isArray(value)) {
+    throw new ContractError(
+      `${method}: expected the lines the verb printed, and the bus answered ${JSON.stringify(value)}`,
+      value,
+    );
+  }
+  return value.map((line) => parseOutput(method, line));
 }
 
 function expectText(method: string, value: unknown): string {
@@ -137,44 +160,48 @@ export class Client {
     this.schema = new SchemaApi(this);
   }
 
-  async schemaList<O extends SchemaListOptions>(options?: O): Promise<Reading<O, SchemaList>> {
-    return (await this.#read("schemaList", options ?? {})) as Reading<O, SchemaList>;
+  schemaList(options: AsText<SchemaListOptions>): Promise<string>;
+  schemaList(options?: AsJson<SchemaListOptions>): Promise<SchemaList>;
+  schemaList(options?: SchemaListOptions): Promise<SchemaList | string>;
+  async schemaList(options: SchemaListOptions = {}): Promise<SchemaList | string> {
+    return this.#reading("schemaList", options);
   }
 
   async schemaCheck(options: SchemaCheckOptions, payloadValue?: unknown): Promise<string> {
-    return expectText(
-      "schemaCheck",
-      await this.#read("schemaCheck", options, payload(payloadValue)),
-    );
+    return this.#text("schemaCheck", options, payload(payloadValue));
   }
 
   async schemaGen(options: SchemaGenOptions): Promise<string> {
-    return expectText("schemaGen", await this.#read("schemaGen", options));
+    return this.#text("schemaGen", options);
   }
 
   async schemaRegister(options: SchemaRegisterOptions): Promise<string> {
-    return expectText("schemaRegister", await this.#read("schemaRegister", options));
+    return this.#text("schemaRegister", options);
   }
 
-  async eventsMerge<O extends EventsMergeOptions>(options: O): Promise<Reading<O, Envelope[]>> {
-    return (await this.#read("eventsMerge", options)) as Reading<O, Envelope[]>;
+  eventsMerge(options: AsText<EventsMergeOptions>): Promise<string>;
+  eventsMerge(options: AsJson<EventsMergeOptions>): Promise<Envelope[]>;
+  eventsMerge(options: EventsMergeOptions): Promise<Envelope[] | string>;
+  async eventsMerge(options: EventsMergeOptions): Promise<Envelope[] | string> {
+    return this.#readingLines("eventsMerge", options);
   }
 
-  async eventsEmit<O extends EventsEmitOptions>(
-    options: O,
-    payloadValue?: unknown,
-  ): Promise<Reading<O, Envelope>> {
-    return (await this.#read("eventsEmit", options, payload(payloadValue))) as Reading<O, Envelope>;
+  eventsEmit(options: AsText<EventsEmitOptions>, payloadValue?: unknown): Promise<string>;
+  eventsEmit(options: AsJson<EventsEmitOptions>, payloadValue?: unknown): Promise<Envelope>;
+  eventsEmit(options: EventsEmitOptions, payloadValue?: unknown): Promise<Envelope | string>;
+  async eventsEmit(options: EventsEmitOptions, payloadValue?: unknown): Promise<Envelope | string> {
+    return this.#reading("eventsEmit", options, payload(payloadValue));
   }
 
   async deliver(options: DeliverOptions, message?: unknown): Promise<Disposition> {
-    return this.#read("deliver", options, payload(message));
+    return this.#document("deliver", options, payload(message));
   }
 
-  async inboxCarried<O extends InboxCarriedOptions>(
-    options: O,
-  ): Promise<Reading<O, CarriedEntry[]>> {
-    return (await this.#read("inboxCarried", options)) as Reading<O, CarriedEntry[]>;
+  inboxCarried(options: AsText<InboxCarriedOptions>): Promise<string>;
+  inboxCarried(options: AsJson<InboxCarriedOptions>): Promise<CarriedEntry[]>;
+  inboxCarried(options: InboxCarriedOptions): Promise<CarriedEntry[] | string>;
+  async inboxCarried(options: InboxCarriedOptions): Promise<CarriedEntry[] | string> {
+    return this.#readingLines("inboxCarried", options);
   }
 
   async send<T>(
@@ -185,26 +212,24 @@ export class Client {
     const { type, ...rest } = options;
     const body =
       type === undefined || message === undefined ? message : messageOf(type).parse(message);
-    return (await this.#read("send", { ...rest, queue }, payload(body))) as Sent[];
+    return this.#lines("send", { ...rest, queue }, payload(body));
   }
 
-  next(
-    queue: string,
-    options: Without<NextOptions, "queue" | "format"> & { format: "text" },
-  ): Promise<string | undefined>;
+  next(queue: string, options: AsText<NextIn>): Promise<string | undefined>;
   next<T>(
     queue: string,
-    options: Without<NextOptions, "queue"> & { type: MessageTypeLike<T> },
+    options: AsJson<NextIn> & { type: MessageTypeLike<T> },
   ): Promise<Claimed<T> | undefined>;
-  next(queue: string, options?: Without<NextOptions, "queue">): Promise<Claimed | undefined>;
+  next(queue: string, options?: AsJson<NextIn>): Promise<Claimed | undefined>;
+  next(queue: string, options?: NextIn): Promise<Claimed | string | undefined>;
   async next<T>(
     queue: string,
-    options: Without<NextOptions, "queue"> & Typed<T> = {},
-  ): Promise<Claimed<T> | string | undefined> {
+    options: NextIn & Typed<T> = {},
+  ): Promise<Claimed<T> | Claimed | string | undefined> {
     const { type, ...rest } = options;
-    let claimed: unknown;
+    let claimed: ClaimedRecord | string;
     try {
-      claimed = await this.#read("next", { ...rest, queue });
+      claimed = await this.#reading("next", { ...rest, queue });
     } catch (error) {
       // The one refusal that is an answer: an empty queue has nothing to hand out.
       if (error instanceof BusFailed && error.message === `nothing on ${queue} to claim`) {
@@ -212,17 +237,16 @@ export class Client {
       }
       throw error;
     }
-    if (typeof claimed === "string" || type === undefined) return claimed as Claimed<T> | string;
-    const record = (claimed as ClaimedRecord).record;
+    if (typeof claimed === "string" || type === undefined) return claimed;
     const definition = messageOf(type);
-    const parsed = definition.schema.safeParse(record);
+    const parsed = definition.schema.safeParse(claimed.record);
     if (!parsed.success) {
       throw new ContractError(
         `next: the record claimed from ${queue} is not a ${definition.id}: ${violation(definition.id, parsed.error)}`,
         claimed,
       );
     }
-    return { ...(claimed as ClaimedRecord), record: parsed.data };
+    return { ...claimed, record: parsed.data };
   }
 
   async reply(
@@ -231,28 +255,13 @@ export class Client {
     reply: unknown,
     options: Without<ReplyOptions, "queue" | "correlation"> = {},
   ): Promise<Replied> {
-    return (await this.#read(
-      "reply",
-      { ...options, queue, correlation },
-      payload(reply),
-    )) as Replied;
+    return this.#document("reply", { ...options, queue, correlation }, payload(reply));
   }
 
-  subscribe(
-    queue: string,
-    options: Without<SubscribeOptions, "queue" | "until" | "format"> & {
-      until: Predicate;
-      format: "text";
-    },
-  ): AsyncGenerator<string>;
-  subscribe(
-    queue: string,
-    options: Without<SubscribeOptions, "queue" | "until"> & { until: Predicate },
-  ): AsyncGenerator<LogRecord>;
-  async *subscribe(
-    queue: string,
-    options: Without<SubscribeOptions, "queue" | "until"> & { until: Predicate },
-  ): AsyncGenerator<LogRecord | string> {
+  subscribe(queue: string, options: AsText<SubscribeIn>): AsyncGenerator<string>;
+  subscribe(queue: string, options: AsJson<SubscribeIn>): AsyncGenerator<LogRecord>;
+  subscribe(queue: string, options: SubscribeIn): AsyncGenerator<LogRecord | string>;
+  async *subscribe(queue: string, options: SubscribeIn): AsyncGenerator<LogRecord | string> {
     await this.#verify();
     const { until, ...rest } = options;
     const args = this.#args("subscribe", {
@@ -262,19 +271,22 @@ export class Client {
     });
     const textual = printsText("subscribe", args);
     for await (const line of this.transport.stream("subscribe", args)) {
-      yield textual ? expectText("subscribe", line) : (parseOutput("subscribe", line) as LogRecord);
+      yield textual ? expectText("subscribe", line) : parseOutput("subscribe", line);
     }
   }
 
-  async status<O extends Without<StatusOptions, "queue">>(
-    queue?: string,
-    options?: O,
-  ): Promise<Reading<O, QueueStatus[]>> {
-    return (await this.#read("status", { ...options, queue })) as Reading<O, QueueStatus[]>;
+  status(queue: string | undefined, options: AsText<StatusIn>): Promise<string>;
+  status(queue?: string, options?: AsJson<StatusIn>): Promise<QueueStatus[]>;
+  status(queue?: string, options?: StatusIn): Promise<QueueStatus[] | string>;
+  async status(queue?: string, options: StatusIn = {}): Promise<QueueStatus[] | string> {
+    return this.#reading("status", { ...options, queue });
   }
 
-  async transports<O extends TransportsOptions>(options?: O): Promise<Reading<O, TransportKinds>> {
-    return (await this.#read("transports", options ?? {})) as Reading<O, TransportKinds>;
+  transports(options: AsText<TransportsOptions>): Promise<string>;
+  transports(options?: AsJson<TransportsOptions>): Promise<TransportKinds>;
+  transports(options?: TransportsOptions): Promise<TransportKinds | string>;
+  async transports(options: TransportsOptions = {}): Promise<TransportKinds | string> {
+    return this.#reading("transports", options);
   }
 
   async validate(
@@ -283,11 +295,11 @@ export class Client {
     options: Without<ValidateOptions, "queue"> = {},
   ): Promise<Validated> {
     try {
-      return (await this.#read("validate", { ...options, queue }, payload(message))) as Validated;
+      return await this.#document("validate", { ...options, queue }, payload(message));
     } catch (error) {
       // A verdict that is not a pass exits 1 with the verdict printed: it is the answer.
       if (error instanceof BusFailed && error.output !== undefined) {
-        return parseOutput("validate", error.output) as Validated;
+        return parseOutput("validate", error.output);
       }
       throw error;
     }
@@ -299,11 +311,11 @@ export class Client {
     options: Without<AskOptions, "queue"> = {},
   ): Promise<Answer> {
     try {
-      return (await this.#read("ask", { ...options, queue }, payload(question))) as Answer;
+      return await this.#document("ask", { ...options, queue }, payload(question));
     } catch (error) {
       // A timeout, an abandoned question and a refusal exit 1 with the answer printed.
       if (error instanceof BusFailed && error.output !== undefined) {
-        return parseOutput("ask", error.output) as Answer;
+        return parseOutput("ask", error.output);
       }
       throw error;
     }
@@ -317,7 +329,7 @@ export class Client {
       typeof frames === "string" || frames === undefined
         ? frames
         : frames.map((frame) => `${JSON.stringify(frame)}\n`).join("");
-    return (await this.#read("serve", options, input)) as CodecResponse[];
+    return this.#lines("serve", options, input);
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
@@ -339,33 +351,73 @@ export class Client {
     for (const [key, value] of Object.entries(options)) {
       if (value !== undefined && value !== null) args[key] = value;
     }
-    const bound = CAPABILITIES[method].bindings.map((binding) => binding.option as string);
+    const bindings: readonly { readonly option: string }[] = CAPABILITIES[method].bindings;
     for (const key of DEFAULTED) {
       const fallback = this.#config[key];
-      if (bound.includes(key) && args[key] === undefined && fallback !== undefined) {
-        args[key] = fallback;
-      }
+      const binds = bindings.some((binding) => binding.option === key);
+      if (binds && args[key] === undefined && fallback !== undefined) args[key] = fallback;
     }
-    const parsed = (OPTION_SCHEMAS[method] as z.ZodType).safeParse(args);
+    const schema: z.ZodType = OPTION_SCHEMAS[method];
+    const parsed = schema.safeParse(args);
     if (!parsed.success) throw new BusRefused(describeIssues(method, parsed.error));
     return args;
   }
 
-  async #read(method: CapabilityMethod, options: object, input?: string): Promise<unknown> {
+  /** The call itself: the version checked, the options validated, the transport's raw answer. */
+  async #invoke(
+    method: CapabilityMethod,
+    options: object,
+    input: string | undefined,
+  ): Promise<{ args: Record<string, unknown>; raw: unknown }> {
     await this.#verify();
     const args = this.#args(method, options);
-    const raw = await this.transport.call(method, args, input);
-    if (printsText(method, args)) return expectText(method, raw);
-    if (CAPABILITIES[method].stdout === "jsonl") {
-      if (!Array.isArray(raw)) {
-        throw new ContractError(
-          `${method}: expected the lines the verb printed, and the bus answered ${JSON.stringify(raw)}`,
-          raw,
-        );
-      }
-      return raw.map((line) => parseOutput(method, line));
-    }
+    return { args, raw: await this.transport.call(method, args, input) };
+  }
+
+  /** A `json` capability's document, or its text when the options ask for it. */
+  async #reading<M extends CapabilityMethod>(
+    method: M,
+    options: object,
+    input?: string,
+  ): Promise<CapabilityOutputs[M] | string> {
+    const { args, raw } = await this.#invoke(method, options, input);
+    return printsText(method, args) ? expectText(method, raw) : parseOutput(method, raw);
+  }
+
+  /** A `jsonl` capability's lines, or its text when the options ask for it. */
+  async #readingLines<M extends CapabilityMethod>(
+    method: M,
+    options: object,
+    input?: string,
+  ): Promise<CapabilityOutputs[M][] | string> {
+    const { args, raw } = await this.#invoke(method, options, input);
+    return printsText(method, args) ? expectText(method, raw) : parseLines(method, raw);
+  }
+
+  /** A `json` capability that has no text rendering. */
+  async #document<M extends CapabilityMethod>(
+    method: M,
+    options: object,
+    input?: string,
+  ): Promise<CapabilityOutputs[M]> {
+    const { raw } = await this.#invoke(method, options, input);
     return parseOutput(method, raw);
+  }
+
+  /** A `jsonl` capability that has no text rendering. */
+  async #lines<M extends CapabilityMethod>(
+    method: M,
+    options: object,
+    input?: string,
+  ): Promise<CapabilityOutputs[M][]> {
+    const { raw } = await this.#invoke(method, options, input);
+    return parseLines(method, raw);
+  }
+
+  /** A `text` capability's confirmation or rendering. */
+  async #text(method: CapabilityMethod, options: object, input?: string): Promise<string> {
+    const { raw } = await this.#invoke(method, options, input);
+    return expectText(method, raw);
   }
 }
 

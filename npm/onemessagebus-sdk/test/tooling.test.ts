@@ -14,7 +14,7 @@ import {
 import { join } from "node:path";
 import { z } from "zod";
 import { BusFailed, defineMessage, type MessageType } from "../src/index.js";
-import { PACKAGE, removeScratch, scratch } from "./support.js";
+import { caughtAs, PACKAGE, removeScratch, scratch } from "./support.js";
 
 afterAll(removeScratch);
 
@@ -44,7 +44,7 @@ describe("generate:check", () => {
     expect(run.stderr).toContain("roots/sent.ts is stale (line ");
     expect(run.stderr).toContain("roots/asked.ts is missing");
     expect(run.stderr).toContain("roots/removed.ts is no longer generated");
-    expect(run.stderr).toContain("run `bun run --cwd npm/onemessagebus-sdk generate`");
+    expect(run.stderr).toContain("run `just sdk-generate`");
   });
 });
 
@@ -92,18 +92,13 @@ describe("defineMessage", () => {
     expect(document.required).toEqual(["text"]);
   });
 
-  test("refuses a violating value naming the id and the pointer, as the core does", () => {
+  test("refuses a violating value naming the id and the pointer, as the core does", async () => {
     const nested = defineMessage(
       "demo.nested@2",
       z.object({ items: z.array(z.object({ "a/b": z.number() })) }),
     );
-    try {
-      nested.parse({ items: [{ "a/b": "no" }] });
-      throw new Error("parsed a violation");
-    } catch (error) {
-      expect(error).toBeInstanceOf(BusFailed);
-      expect((error as Error).message).toStartWith("demo.nested@2: at /items/0/a~1b:");
-    }
+    const error = await caughtAs(BusFailed, () => nested.parse({ items: [{ "a/b": "no" }] }));
+    expect(error.message).toStartWith("demo.nested@2: at /items/0/a~1b:");
     expect(() => Greeting.parse("text")).toThrow("demo.greeting@1: at /:");
   });
 

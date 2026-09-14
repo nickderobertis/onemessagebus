@@ -6,9 +6,7 @@
 // schema this definition renders.
 import { z } from "zod";
 import { BusFailed } from "./errors.js";
-
-/** `<namespace>.<name>@<version>`, as the core's `SchemaId` parses it. */
-export const SCHEMA_ID = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$/u;
+import { SchemaIdSchema } from "./generated/roots/schema-id.js";
 
 export type JsonSchemaDocument = Record<string, unknown>;
 
@@ -36,8 +34,9 @@ export function violation(id: string, error: z.ZodError): string {
   return `${id}: at ${at === "" ? "/" : at}: ${issue?.message ?? "invalid"}`;
 }
 
+/** Refuses an id the core's `SchemaId` would not parse, by the generated schema of that type. */
 export function assertSchemaId(id: string): void {
-  if (!SCHEMA_ID.test(id)) {
+  if (!SchemaIdSchema.safeParse(id).success) {
     throw new TypeError(
       `${JSON.stringify(id)} is not a schema id; an id is <namespace>.<name>@<version>, e.g. demo.greeting@1`,
     );
@@ -66,12 +65,9 @@ function definition<T>(
  * Declare a message type: `defineMessage("demo.greeting@1", z.object({ text: z.string() }))`.
  * Throws a `TypeError` for a malformed id.
  */
-export function defineMessage<S extends z.ZodType>(
-  id: string,
-  schema: S,
-): MessageDefinition<z.output<S>> {
+export function defineMessage<T>(id: string, schema: z.ZodType<T>): MessageDefinition<T> {
   const title = id.slice(0, id.indexOf("@"));
-  return definition(id, schema as z.ZodType<z.output<S>>, () => ({
+  return definition(id, schema, () => ({
     ...z.toJSONSchema(schema, { target: "draft-2020-12" }),
     title,
   }));
@@ -91,9 +87,12 @@ export function isMessageDefinition(value: unknown): value is MessageDefinition<
   return (
     typeof value === "object" &&
     value !== null &&
-    typeof (value as { id?: unknown }).id === "string" &&
-    typeof (value as { jsonSchema?: unknown }).jsonSchema === "function" &&
-    typeof (value as { parse?: unknown }).parse === "function"
+    "id" in value &&
+    typeof value.id === "string" &&
+    "jsonSchema" in value &&
+    typeof value.jsonSchema === "function" &&
+    "parse" in value &&
+    typeof value.parse === "function"
   );
 }
 
@@ -104,8 +103,8 @@ export function isMessageDefinition(value: unknown): value is MessageDefinition<
 export function messageOf<T>(
   type: MessageDefinition<T> | z.ZodType<T>,
 ): Pick<MessageDefinition<T>, "id" | "schema" | "parse"> {
-  if (isMessageDefinition(type)) return type as MessageDefinition<T>;
-  const schema = type as z.ZodType<T>;
+  if (!(type instanceof z.ZodType)) return type;
+  const schema = type;
   return {
     id: "payload",
     schema,

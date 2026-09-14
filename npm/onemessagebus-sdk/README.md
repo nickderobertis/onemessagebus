@@ -161,16 +161,18 @@ and the pin is the checkout's own workspace version.
 
 ## Developing
 
+From the repository root, through its command surface:
+
 ```bash
-bun install --frozen-lockfile
-bun run generate          # rewrite src/generated from the Rust bundle (runs cargo)
-bun run generate:check    # exit 1 naming each stale generated file
-bun run format:check && bun run lint && bun run typecheck
-bun run test              # needs target/debug/onemessagebus: cargo build -p onemessagebus-cli --locked
-bun run build
-bun run pack              # dist-pack/: the stamped, publishable copy
-bun run test:package      # installs the packed tarballs offline and drives the SDK under node
+just bootstrap      # installs this package's locked dependencies with the rest of the tree
+just sdk-generate   # rewrite src/generated from the Rust bundle (runs cargo)
+just sdk-check      # every tier of this package: generate-check, format, lint, typecheck, tests, build
 ```
+
+The tests drive the real binary (`cargo build -p onemessagebus-cli --locked`
+builds it). Packing and the installed-package journey belong to the
+`onemessagebus-sdk-install-e2e` project, which stamps this package with
+`scripts/pack.mjs`, installs the tarball beside the CLI and drives it under node.
 
 In a checkout the `onemessagebus-cli` dependency is an optional peer pinned to
 the placeholder, so installing does not fetch a version that does not exist;

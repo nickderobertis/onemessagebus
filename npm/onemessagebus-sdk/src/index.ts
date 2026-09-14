@@ -15,7 +15,8 @@ export {
   type MessageTypeLike,
   type Predicate,
   type QueueStatus,
-  type Reading,
+  type AsJson,
+  type AsText,
   type Refused,
   type Reply,
   SchemaApi,
@@ -35,7 +36,6 @@ export {
   type JsonSchemaDocument,
   type MessageDefinition,
   type MessageType,
-  SCHEMA_ID,
 } from "./message.js";
 export {
   type Args,

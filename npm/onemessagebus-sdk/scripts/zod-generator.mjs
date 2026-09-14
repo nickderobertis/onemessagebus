@@ -36,7 +36,7 @@ export class UnsupportedSchema extends Error {}
 
 function refuse(at, what) {
   throw new UnsupportedSchema(
-    `${at}: ${what}; extend scripts/zod-generator.mjs to enforce it (or change the Rust schema), then run \`bun run generate\``,
+    `${at}: ${what}; extend scripts/zod-generator.mjs to enforce it (or change the Rust schema), then run \`just sdk-generate\``,
   );
 }
 
@@ -283,9 +283,7 @@ export function zodDeclarations(document, { exportName, typeName, at }) {
     );
   }
   const { $defs: _defs, ...root } = document;
-  lines.push(
-    `export const ${exportName} = ${expression(root, at)} as unknown as z.ZodType<${typeName}>;`,
-  );
+  lines.push(`export const ${exportName} = contract<${typeName}>(${expression(root, at)});`);
   return lines.join("\n\n");
 }
 
@@ -307,5 +305,14 @@ export function oneOf(branches: Branches): z.ZodType {
       context.addIssue({ code: "custom", message: \`matches \${admitted} oneOf branches, where exactly one must\` });
     }
   });
+}
+
+/**
+ * A document's schema, typed as the declaration generated from the same document.
+ * The declaration cannot be inferred from the schema — its \`$defs\` are lazily typed —
+ * so the generated modules' one type assertion is here rather than in each of them.
+ */
+export function contract<T>(schema: z.ZodType): z.ZodType<T> {
+  return schema as z.ZodType<T>; // sound: \`schema\` and \`T\` are generated from one JSON Schema document
 }
 `;

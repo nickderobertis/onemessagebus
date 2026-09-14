@@ -19,7 +19,17 @@
       "inputs": ["default"]
     },
     "lint": {
-      "command": "bun run --cwd npm/onemessagebus-sdk lint && bun run --cwd npm/onemessagebus-sdk typecheck && bun run --cwd npm/onemessagebus-sdk generate:check",
+      "command": "bun run --cwd npm/onemessagebus-sdk lint && bun run --cwd npm/onemessagebus-sdk generate:check",
+      "inputs": [
+        "default",
+        "{workspaceRoot}/scripts/sdk-bundle.mjs",
+        "{workspaceRoot}/crates/**/*",
+        "{workspaceRoot}/Cargo.toml",
+        "{workspaceRoot}/Cargo.lock"
+      ]
+    },
+    "typecheck": {
+      "command": "bun run --cwd npm/onemessagebus-sdk typecheck",
       "inputs": [
         "default",
         "{workspaceRoot}/scripts/sdk-bundle.mjs",
@@ -29,7 +39,7 @@
       ]
     },
     "test": {
-      "command": "bun run --cwd npm/onemessagebus-sdk test && bun run --cwd npm/onemessagebus-sdk test:package",
+      "command": "bun run --cwd npm/onemessagebus-sdk test",
       "dependsOn": [{ "projects": ["onemessagebus-cli"], "target": "build" }],
       "cache": false
     },
@@ -41,7 +51,7 @@
     "doc": { "executor": "nx:noop" },
     "check": {
       "executor": "nx:noop",
-      "dependsOn": ["format-check", "lint", "test", "build", "doc"]
+      "dependsOn": ["format-check", "lint", "typecheck", "test", "build", "doc"]
     }
   }
 }

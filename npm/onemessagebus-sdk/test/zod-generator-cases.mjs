@@ -48,13 +48,14 @@ const module = zodDeclarations(
   },
   { exportName: "ThingSchema", typeName: "unknown", at: "thing" },
 );
-// The emitted TypeScript, as JavaScript: its type annotations and the root's cast removed.
+// The emitted TypeScript, as JavaScript: its type annotations and type arguments removed.
 const source = `${module
   .replace("export const", "const")
   .replaceAll(": z.ZodType =", " =")
-  .replace(/ as unknown as z\.ZodType<unknown>;$/u, ";")}\nreturn ThingSchema;`;
+  .replace("contract<unknown>(", "contract(")}\nreturn ThingSchema;`;
 const union = (branches) => (branches.length === 1 ? branches[0] : z.union(branches));
-const schema = new Function("z", "anyOf", "oneOf", source)(z, union, union);
+const contract = (typed) => typed;
+const schema = new Function("z", "anyOf", "oneOf", "contract", source)(z, union, union, contract);
 
 const parses = [
   { name: "😀😀", any: null, count: 3, map: { k: "x" } },

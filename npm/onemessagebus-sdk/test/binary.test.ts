@@ -12,11 +12,20 @@ import {
   VersionMismatch,
   verifyVersion,
 } from "../src/index.js";
-import { BINARY, caught, PACKAGE, ROOT, removeScratch, requireBinary, scratch } from "./support.js";
+import {
+  BINARY,
+  caughtAs,
+  PACKAGE,
+  ROOT,
+  removeScratch,
+  requireBinary,
+  scratch,
+} from "./support.js";
 
 afterAll(removeScratch);
 
-const WORKSPACE_VERSION = checkoutVersion(ROOT);
+// Empty when no checkout version is found, which the first test below refuses.
+const WORKSPACE_VERSION = checkoutVersion(ROOT) ?? "";
 
 /** An executable that prints `output` for any argument: the one subprocess double here. */
 function fakeBinary(output: string, exit = 0): string {
@@ -29,32 +38,24 @@ function fakeBinary(output: string, exit = 0): string {
 describe("the version pin", () => {
   test("in a checkout, the pin is the workspace version Cargo.toml declares", () => {
     expect(WORKSPACE_VERSION).toMatch(/^\d+\.\d+\.\d+/u);
-    expect(pinnedVersion()).toBe(WORKSPACE_VERSION as string);
+    expect(pinnedVersion()).toBe(WORKSPACE_VERSION);
     expect(pinnedVersion("1.2.3")).toBe("1.2.3");
   });
 
   test("with no stamp and no checkout, there is no pin, and that is said plainly", () => {
-    const error = (() => {
-      try {
-        return pinnedVersion("0.0.0-dev", "/");
-      } catch (thrown) {
-        return thrown;
-      }
-    })();
-    expect(error).toBeInstanceOf(VersionMismatch);
-    expect((error as Error).message).toContain("carries no CLI version pin");
+    expect(() => pinnedVersion("0.0.0-dev", "/")).toThrow(VersionMismatch);
+    expect(() => pinnedVersion("0.0.0-dev", "/")).toThrow("carries no CLI version pin");
   });
 
   test("a client refuses a binary of another version before its first call, naming both", async () => {
     const fake = fakeBinary("onemessagebus 9.9.9");
     const client = new Client({ config: { binary: fake } });
-    const error = await caught(() => client.transports());
-    expect(error).toBeInstanceOf(VersionMismatch);
-    expect((error as Error).message).toBe(
+    const error = await caughtAs(VersionMismatch, () => client.transports());
+    expect(error.message).toBe(
       `this onemessagebus SDK drives onemessagebus-cli ${WORKSPACE_VERSION}, and ${fake} reports 9.9.9; install onemessagebus-cli@${WORKSPACE_VERSION}`,
     );
-    expect((error as VersionMismatch).expected).toBe(WORKSPACE_VERSION as string);
-    expect((error as VersionMismatch).actual).toBe("9.9.9");
+    expect(error.expected).toBe(WORKSPACE_VERSION);
+    expect(error.actual).toBe("9.9.9");
   });
 
   test("the real binary is the pinned version, and the check is made once", async () => {
@@ -65,19 +66,18 @@ describe("the version pin", () => {
   });
 
   test("a program that is not onemessagebus, one that fails, and one that is missing are each named", async () => {
-    const other = await caught(() => verifyVersion({ command: fakeBinary("git 2.0"), prefix: [] }));
-    expect(other).toBeInstanceOf(VersionMismatch);
-    expect((other as Error).message).toContain("is not an onemessagebus binary");
-    const failing = await caught(() =>
+    const other = await caughtAs(VersionMismatch, () =>
+      verifyVersion({ command: fakeBinary("git 2.0"), prefix: [] }),
+    );
+    expect(other.message).toContain("is not an onemessagebus binary");
+    const failing = await caughtAs(TransportError, () =>
       verifyVersion({ command: fakeBinary("broken", 3), prefix: [] }),
     );
-    expect(failing).toBeInstanceOf(TransportError);
-    expect((failing as Error).message).toContain("--version failed");
-    const missing = await caught(() =>
+    expect(failing.message).toContain("--version failed");
+    const missing = await caughtAs(TransportError, () =>
       new Client({ config: { binary: join(scratch("missing"), "onemessagebus") } }).status(),
     );
-    expect(missing).toBeInstanceOf(TransportError);
-    expect((missing as Error).message).toContain(
+    expect(missing.message).toContain(
       "name the binary with ClientConfig.binary or ONEMESSAGEBUS_BIN",
     );
   });

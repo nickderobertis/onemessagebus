@@ -53,7 +53,7 @@ function exactOptionalProperties(declarations) {
       const candidate = lines[end];
       if (candidate === undefined) {
         throw new Error(
-          `generated optional property has no terminator: ${lines[index]}; extend scripts/typescript-generator.mjs for this shape, then run \`bun run generate\``,
+          `generated optional property has no terminator: ${lines[index]}; extend scripts/typescript-generator.mjs for this shape, then run \`just sdk-generate\``,
         );
       }
       const atIndent =

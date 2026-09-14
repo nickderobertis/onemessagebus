@@ -113,12 +113,23 @@ export const TRANSPORTS: readonly TransportCase[] = [
   },
 ];
 
-/** What `run` threw or rejected with; fails the test when it did neither. */
-export async function caught(run: () => unknown): Promise<unknown> {
+/** The error `run` threw or rejected with; fails the test when it did neither, or threw a non-Error. */
+export async function caught(run: () => unknown): Promise<Error> {
   try {
     await run();
   } catch (error) {
-    return error;
+    if (error instanceof Error) return error;
+    throw error;
   }
   throw new Error("expected a rejection, and the call resolved");
+}
+
+/** `caught`, as the error class the test expects; any other failure fails the test with itself. */
+export async function caughtAs<E extends Error>(
+  kind: new (...args: never[]) => E,
+  run: () => unknown,
+): Promise<E> {
+  const error = await caught(run);
+  if (error instanceof kind) return error;
+  throw error;
 }
