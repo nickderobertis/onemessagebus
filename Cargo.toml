@@ -11,7 +11,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.89"
 license = "MIT"
@@ -23,8 +23,8 @@ homepage = "https://github.com/nickderobertis/onemessagebus"
 # The two crates of this workspace, as members name each other. The version
 # requirement is what `cargo publish` uploads — a bare path resolves to nothing
 # on crates.io — and release-plz keeps it in step with the workspace version.
-onemessagebus = { path = "crates/onemessagebus", version = "0.3.0" }
-onemessagebus-agent = { path = "crates/onemessagebus-agent", version = "0.3.0" }
+onemessagebus = { path = "crates/onemessagebus", version = "0.4.0" }
+onemessagebus-agent = { path = "crates/onemessagebus-agent", version = "0.4.0" }
 # Unpublished, so path-only: cargo strips a path-only dev-dependency when it
 # packages the crates that name it.
 onemessagebus-cli = { path = "crates/onemessagebus-cli" }
