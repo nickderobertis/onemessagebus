@@ -480,9 +480,14 @@ fn failed(message: impl Into<String>) -> Refusal {
 /// Run the command line over `args` (the program name first), writing to this
 /// process's stdout and stderr, and answer the exit code.
 pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
-    let cli = match Cli::try_parse_from(args) {
+    let args: Vec<OsString> = args.into_iter().collect();
+    let cli = match Cli::try_parse_from(&args) {
         Ok(cli) => cli,
         Err(usage) => {
+            if let Some(verb) = usage_refusing_verb(&args).filter(|_| usage.use_stderr()) {
+                eprintln!("onemessagebus: {}", usage_refusal(verb, &usage));
+                return ExitCode::from(EXIT_INVALID);
+            }
             // clap's own rendering and exit code: 0 for --help/--version, 2
             // for a usage error.
             let _ = usage.print();
@@ -497,6 +502,49 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
             ExitCode::from(refusal.verdict.code())
         }
     }
+}
+
+/// The verbs whose usage errors are refusals like any other: one line on stderr
+/// as `onemessagebus: <what is wrong>`, nothing on stdout, exit 2.
+const USAGE_REFUSING_VERBS: [&str; 3] = ["ask", "reply", "validate"];
+
+/// The verb `args` names, when it is one whose usage errors are refusals. The
+/// command line has no option before its verb, so the verb is the first word.
+fn usage_refusing_verb(args: &[OsString]) -> Option<&'static str> {
+    let named = args.get(1)?.to_str()?;
+    USAGE_REFUSING_VERBS.into_iter().find(|verb| *verb == named)
+}
+
+/// What clap found wrong with `verb`'s command line, on one line: every
+/// paragraph of its report but the usage synopsis and the pointer to `--help`,
+/// which is named instead.
+fn usage_refusal(verb: &str, usage: &clap::Error) -> String {
+    let rendered = usage.render().to_string();
+    let found: Vec<String> = rendered
+        .split("\n\n")
+        .map(|paragraph| {
+            paragraph
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .filter(|paragraph| {
+            !paragraph.is_empty()
+                && !paragraph.starts_with("Usage:")
+                && !paragraph.starts_with("For more information")
+        })
+        .map(|paragraph| {
+            paragraph
+                .strip_prefix("error: ")
+                .map_or_else(|| paragraph.clone(), str::to_owned)
+        })
+        .collect();
+    format!(
+        "{verb}: {}; see `onemessagebus {verb} --help`",
+        found.join("; ")
+    )
 }
 
 fn dispatch(cli: Cli, out: &mut impl std::io::Write) -> Result<(), Refusal> {

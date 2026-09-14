@@ -94,6 +94,35 @@ pub fn run(args: &[&str], stdin: Option<&str>) -> Run {
     run_in(dir.path(), args, stdin, &[])
 }
 
+/// A usage error `verb` refused as the exit-code table gives refused input:
+/// exit 2, nothing on stdout, and one line on stderr — `onemessagebus: <verb>: `,
+/// what was wrong (`what`), and the verb's `--help` — with nothing of clap's
+/// own `error:` report or usage synopsis.
+pub fn assert_usage_refused(run: &Run, verb: &str, what: &str) {
+    assert_eq!(run.code, 2, "{verb}: {what}: {}", run.stderr);
+    assert_eq!(run.stdout, "", "{verb}: {what}");
+    assert_eq!(
+        run.stderr.lines().count(),
+        1,
+        "{verb}: {what}: not one line: {}",
+        run.stderr
+    );
+    let line = run.stderr.trim_end();
+    assert!(
+        line.starts_with(&format!("onemessagebus: {verb}: ")),
+        "{verb}: {what}: {line}"
+    );
+    assert!(line.contains(what), "{verb}: {what}: {line}");
+    assert!(
+        line.ends_with(&format!("; see `onemessagebus {verb} --help`")),
+        "{verb}: {what}: {line}"
+    );
+    assert!(
+        !line.contains("error:") && !line.contains("Usage:"),
+        "{verb}: {what}: clap's own report: {line}"
+    );
+}
+
 /// The profile crate's recorded and golden fixtures.
 pub fn fixture(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

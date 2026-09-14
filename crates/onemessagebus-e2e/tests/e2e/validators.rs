@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use onemessagebus::VALIDATE_QUEUE_ENV;
 use serde_json::{json, Value};
 
-use crate::support::{run_in, Run};
+use crate::support::{assert_usage_refused, run_in, Run};
 
 /// The test path a validator command names this subprocess fixture by.
 const DOUBLE: &str = "validators::scripted_validator";
@@ -218,15 +218,43 @@ fn validate_refuses_a_record_that_is_not_json_or_not_an_object_with_exit_two_jud
         assert_eq!(refused.stdout, "", "{problem}");
         assert!(refused.stderr.contains(problem), "{problem}: {}", refused.stderr);
     }
-    let usage = scratch.bus(&["validate", "replies", "--verdict", "pass"], Some("{}"));
-    assert_eq!(usage.code, 2, "{}", usage.stderr);
-    assert_eq!(usage.stdout, "");
     assert!(
         scratch.ran("validate").is_empty(),
         "a validator judged refused input"
     );
     assert!(
         scratch.lines("replies.jsonl").is_empty() && scratch.lines("surfaces.jsonl").is_empty()
+    );
+}
+
+#[test]
+fn validate_refuses_a_usage_error_on_one_line_with_exit_two_judging_nothing() {
+    let scratch = Scratch::new();
+    scratch.configure(&format!(
+        "profile: planner-channel\nvalidators:\n  - {{on: replies, kind: command, command: {}}}\n",
+        scratch.command()
+    ));
+    // Were the command reached, it would refuse, and the verb would exit 1.
+    scratch.script(
+        json!({"exit": 1, "stderr": "judged a command line that was never valid"}),
+        json!({"exit": 0, "stdout": "bar-1"}),
+    );
+    let record = json!({"version": 3, "completion": true, "reason": "main"}).to_string();
+    for (args, what) in [
+        (
+            vec!["validate", "replies", "--verdict", "pass"],
+            "unexpected argument '--verdict' found",
+        ),
+        (
+            vec!["validate"],
+            "the following required arguments were not provided: <QUEUE>",
+        ),
+    ] {
+        assert_usage_refused(&scratch.bus(&args, Some(&record)), "validate", what);
+    }
+    assert!(
+        scratch.ran("validate").is_empty(),
+        "a validator judged a usage error"
     );
 }
 

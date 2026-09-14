@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::support::{onemessagebus, run_in, Run};
+use crate::support::{assert_usage_refused, onemessagebus, run_in, Run};
 
 /// How long a journey gives a waiting `ask` to finish before it is killed —
 /// by the handle that started it — and the journey fails.
@@ -580,9 +580,8 @@ fn a_question_the_bus_refuses_answers_refused_with_no_reply_and_appends_nothing(
     );
 }
 
-/// Refused input, as the exit-code table gives it: exit 2, the problem on
-/// stderr, nothing on stdout — and, for a refusal `onemessagebus` makes itself
-/// rather than clap, `onemessagebus: ` before it.
+/// Refused input, as the exit-code table gives it: exit 2, nothing on stdout,
+/// and the problem on stderr as `onemessagebus: <what is wrong>`.
 fn assert_refused_input(run: &Run, problem: &str) {
     assert_eq!(
         run.code, 2,
@@ -590,7 +589,11 @@ fn assert_refused_input(run: &Run, problem: &str) {
         run.stdout, run.stderr
     );
     assert_eq!(run.stdout, "", "{problem}");
-    assert!(run.stderr.contains(problem), "{problem}: {}", run.stderr);
+    assert!(
+        run.stderr.starts_with("onemessagebus: ") && run.stderr.contains(problem),
+        "{problem}: {}",
+        run.stderr
+    );
     assert!(
         !run.stderr
             .lines()
@@ -639,7 +642,7 @@ fn ask_refuses_input_it_cannot_take_with_exit_two_and_raises_nothing() {
         (
             vec!["ask", "surfaces", "--timeout", "soon"],
             asked.as_str(),
-            "--timeout",
+            "onemessagebus: ask: invalid value 'soon' for '--timeout <SECONDS>'",
         ),
     ] {
         let refused = scratch.bus(&args, Some(stdin));
@@ -690,7 +693,7 @@ fn reply_refuses_input_it_cannot_take_with_exit_two_appending_nothing_and_the_as
                 correlation.as_str(),
             ],
             answer.as_str(),
-            "--correlation",
+            "onemessagebus: reply: the argument '[POSITION]' cannot be used with '--correlation <CORRELATION>'",
         ),
     ] {
         let refused = scratch.bus(&args, Some(stdin));
@@ -715,6 +718,67 @@ fn reply_refuses_input_it_cannot_take_with_exit_two_appending_nothing_and_the_as
     let answered = asking.finish();
     assert_eq!(answered.code, 0, "{}", answered.stderr);
     assert_eq!(one(&answered)["reply"]["reply"]["reason"], json!("main"));
+}
+
+#[test]
+fn ask_refuses_a_usage_error_on_one_line_with_exit_two_and_nothing_on_stdout() {
+    let scratch = Scratch::new();
+    let asked = question("which base?");
+    for (args, what) in [
+        (
+            vec!["ask", "surfaces", "--timeout", "soon"],
+            "invalid value 'soon' for '--timeout <SECONDS>': invalid digit found in string",
+        ),
+        (
+            vec!["ask"],
+            "the following required arguments were not provided: <QUEUE>",
+        ),
+        (
+            vec!["ask", "surfaces", "--bogus"],
+            "unexpected argument '--bogus' found; tip: a similar argument exists: '--about'",
+        ),
+    ] {
+        assert_usage_refused(&scratch.bus(&args, Some(&asked)), "ask", what);
+    }
+    assert!(
+        scratch.lines("surfaces.jsonl").is_empty(),
+        "a usage error raised a question"
+    );
+    // Asking for help is no usage error: it is answered on stdout at exit 0.
+    let help = scratch.bus(&["ask", "--help"], None);
+    assert_eq!(help.code, 0, "{}", help.stderr);
+    assert!(
+        help.stdout.contains("Usage: onemessagebus ask"),
+        "{}",
+        help.stdout
+    );
+    assert_eq!(help.stderr, "");
+}
+
+#[test]
+fn reply_refuses_a_usage_error_on_one_line_with_exit_two_appending_nothing() {
+    let scratch = Scratch::new();
+    let answer = verdict("main");
+    for (args, what) in [
+        (
+            vec!["reply", "surfaces", "0", "--correlation", "c-1"],
+            "the argument '[POSITION]' cannot be used with '--correlation <CORRELATION>'",
+        ),
+        (
+            vec!["reply"],
+            "the following required arguments were not provided: <QUEUE>",
+        ),
+        (
+            vec!["reply", "surfaces", "--position", "0"],
+            "unexpected argument '--position' found",
+        ),
+    ] {
+        assert_usage_refused(&scratch.bus(&args, Some(&answer)), "reply", what);
+    }
+    assert!(
+        scratch.lines("replies.jsonl").is_empty(),
+        "a usage error appended a reply"
+    );
 }
 
 #[test]

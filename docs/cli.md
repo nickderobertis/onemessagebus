@@ -58,7 +58,15 @@ cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebu
 | `2` | Input the verb refuses: a malformed id or filter, an unknown profile, an unsupported language, an unregistered id, a usage error. |
 
 Refusals go to stderr as `onemessagebus: <what is wrong>`; stdout carries
-answers only.
+answers only. A usage error of `ask`, `reply` or `validate` is refused the same
+way, on one line naming the verb and its `--help`:
+
+```bash
+$ onemessagebus ask surfaces --timeout soon --transport-dir runs/r1/channel
+onemessagebus: ask: invalid value 'soon' for '--timeout <SECONDS>': invalid digit found in string; see `onemessagebus ask --help`
+```
+
+The other verbs print clap's usage report for a usage error, at the same exit.
 
 ## `schema`
 
