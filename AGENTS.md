@@ -165,8 +165,7 @@ you:
 - **A new verb reaches every surface along one path:** a capability in
   `crates/onemessagebus/src/capability.rs`, then a method in both SDK clients
   (`just sdk-coverage` fails until both exist), then `just node-sdk-generate`,
-  `just python-sdk-generate` and `just parity-audit`. Each SDK's own `AGENTS.md`
-  says how its package is generated, versioned and tested.
+  `just python-sdk-generate` and `just parity-audit`.
 - **Affected selection fails closed** (`scripts/nx-affected.sh`): with no
   derivable merge base it runs everything, because a speed optimisation that
   can silently skip a check is a correctness hole.

@@ -213,11 +213,26 @@ impl Config {
     fn typescript(&self, scratch: &Scratch, name: &str, source: &str) -> Said {
         let package = root().join("npm/onemessagebus-sdk");
         let script = scratch.path(&format!("{name}.ts"));
-        // The program imports the SDK and zod by absolute path, since it runs from
-        // the scratch directory rather than from inside the package; zod is the
-        // copy the root npm workspace installed for the SDK.
+        // The program imports the SDK as a consumer's import resolves it, through the
+        // entry its package.json exports (the built dist), and zod as the copy the root
+        // npm workspace installed for it; both by absolute path, since the program runs
+        // from the scratch directory rather than from inside the package.
+        let manifest: Value = serde_json::from_str(
+            &std::fs::read_to_string(package.join("package.json")).expect("the SDK's manifest"),
+        )
+        .expect("the SDK's manifest is JSON");
+        let entry = package.join(
+            manifest["exports"]["."]["import"]
+                .as_str()
+                .expect("the SDK's manifest exports an import entry"),
+        );
+        assert!(
+            entry.is_file(),
+            "the journey imports the SDK through its exported entry {}, which is not built; build it with `just nx run onemessagebus-node-sdk:build`",
+            entry.display()
+        );
         let source = source
-            .replace("@SDK@", &package.join("src/index.ts").display().to_string())
+            .replace("@SDK@", &entry.display().to_string())
             .replace(
                 "@ZOD@",
                 &root()

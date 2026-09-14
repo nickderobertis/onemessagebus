@@ -111,7 +111,7 @@ function run(binary: Binary, args: readonly string[], config: ClientConfig): Pro
         } else if (error) {
           reject(
             new TransportError(
-              `${describeBinary(binary)} --version failed: ${stderr.trim() || error.message}; check that it is an onemessagebus binary`,
+              `${describeBinary(binary)} ${args.join(" ")} failed: ${stderr.trim() || error.message}; check that it is an onemessagebus binary`,
               error,
             ),
           );

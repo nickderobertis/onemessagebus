@@ -53,6 +53,8 @@ for (const transport of TRANSPORTS) {
       const kinds = await client.transports();
       expect(kinds.map((kind) => kind.kind)).toContain("local");
       expect(await client.transports({ format: "text" })).toContain("local builtin");
+      // An option value no TransportsOptions admits, arriving as JSON from outside
+      // TypeScript's view: the refusal is what is under test.
       const refused = await refusedWith(BusRefused, () =>
         client.transports(JSON.parse('{"format":"yaml"}')),
       );
@@ -125,7 +127,8 @@ for (const transport of TRANSPORTS) {
       const violation = await refusedWith(BusFailed, () => client.send("greetings", { text: 7 }));
       expect(violation.message).toContain("demo.greeting@1");
       expect(violation.message).toContain("/text");
-      // the same payload stopped in the SDK, by the same schema, in the same words
+      // the same payload, arriving as JSON from outside TypeScript's view, stopped in the
+      // SDK by the same schema, in the same words
       const early = await refusedWith(BusFailed, () =>
         client.send("greetings", JSON.parse('{"text":7}'), { type: Greeting }),
       );
@@ -391,6 +394,7 @@ for (const transport of TRANSPORTS) {
         await profile.send("surfaces", { ...SURFACE, message: "bare" });
         const bare = await profile.next("surfaces", { type: schemas.PlannerSurface.schema });
         expect(bare?.record.message).toBe("bare");
+        // A surface its schema refuses, arriving as JSON from outside TypeScript's view.
         const refused = await refusedWith(BusFailed, () =>
           profile.send("surfaces", JSON.parse('{"kind":7}'), {
             type: schemas.PlannerSurface.schema,

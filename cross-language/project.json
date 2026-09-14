@@ -42,6 +42,12 @@
             "onemessagebus-node-sdk"
           ],
           "target": "bootstrap"
+        },
+        {
+          "projects": [
+            "onemessagebus-node-sdk"
+          ],
+          "target": "build"
         }
       ],
       "inputs": [
