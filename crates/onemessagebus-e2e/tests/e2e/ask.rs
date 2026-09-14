@@ -747,8 +747,11 @@ fn ask_refuses_a_usage_error_on_one_line_with_exit_two_and_nothing_on_stdout() {
     // Asking for help is no usage error: it is answered on stdout at exit 0.
     let help = scratch.bus(&["ask", "--help"], None);
     assert_eq!(help.code, 0, "{}", help.stderr);
+    // clap names the program as it was invoked, `onemessagebus.exe` on Windows.
     assert!(
-        help.stdout.contains("Usage: onemessagebus ask"),
+        ["Usage: onemessagebus ask", "Usage: onemessagebus.exe ask"]
+            .iter()
+            .any(|usage| help.stdout.contains(usage)),
         "{}",
         help.stdout
     );
