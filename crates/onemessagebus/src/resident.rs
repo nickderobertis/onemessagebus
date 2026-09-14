@@ -14,6 +14,7 @@
 //! prints it and both SDKs generate their protocol types from it.
 
 use std::borrow::Cow;
+use std::fmt;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -46,12 +47,45 @@ impl Message for ResidentLine {
     const SCHEMA: SchemaId = RESIDENT_PROTOCOL;
 }
 
+/// The id a client gives a request, which every line about that request carries:
+/// its answer, its refusal, its events and its cancel. On the wire it is the bare
+/// number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RequestId(pub u64);
+
+impl fmt::Display for RequestId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// The registered document describes an id exactly as it describes a `u64`: inline
+/// at each field, with that field's own description.
+impl JsonSchema for RequestId {
+    fn schema_name() -> Cow<'static, str> {
+        u64::schema_name()
+    }
+
+    fn schema_id() -> Cow<'static, str> {
+        u64::schema_id()
+    }
+
+    fn inline_schema() -> bool {
+        u64::inline_schema()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        u64::json_schema(generator)
+    }
+}
+
 /// Run one capability, as its SDK method, with its options.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResidentRequest {
     /// Chosen by the client and echoed on every line answering this request.
-    pub id: u64,
+    pub id: RequestId,
     /// The capability to run, by its SDK method: one of the manifest's and no other.
     pub verb: ResidentVerb,
     /// The capability's options, keyed as its options root keys them (camelCase).
@@ -146,7 +180,7 @@ impl JsonSchema for ResidentVerb {
 #[serde(deny_unknown_fields)]
 pub struct ResidentCancel {
     /// The request to stop.
-    pub id: u64,
+    pub id: RequestId,
     /// Always `true`.
     pub cancel: True,
 }
@@ -156,7 +190,7 @@ pub struct ResidentCancel {
 #[serde(deny_unknown_fields)]
 pub struct ResidentAnswer {
     /// The request answered.
-    pub id: u64,
+    pub id: RequestId,
     /// The verb's output: the document of a `json` verb, the list of lines of a
     /// `jsonl` verb, the text of a `text` verb or a `--format text` rendering —
     /// and, for `subscribe`, `"until"` when its predicate held or `"cancelled"`.
@@ -168,7 +202,7 @@ pub struct ResidentAnswer {
 #[serde(deny_unknown_fields)]
 pub struct ResidentFailure {
     /// The request refused; `null` for a line that named no id to answer.
-    pub id: Option<u64>,
+    pub id: Option<RequestId>,
     /// Why.
     pub error: ResidentRefusal,
 }
@@ -192,7 +226,7 @@ pub struct ResidentRefusal {
 #[serde(deny_unknown_fields)]
 pub struct ResidentEvent {
     /// The streaming request.
-    pub id: u64,
+    pub id: RequestId,
     /// The line, as the verb prints it: a `{position, record}` log record, or its
     /// text rendering under `--format text`.
     pub event: Value,

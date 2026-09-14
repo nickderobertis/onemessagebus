@@ -25,8 +25,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use clap::Parser as _;
 use onemessagebus::resident::{
-    ResidentAnswer, ResidentCancel, ResidentEvent, ResidentExit, ResidentFailure, ResidentLine,
-    ResidentRefusal, ResidentRequest,
+    RequestId, ResidentAnswer, ResidentCancel, ResidentEvent, ResidentExit, ResidentFailure,
+    ResidentLine, ResidentRefusal, ResidentRequest,
 };
 use onemessagebus::{Capability, FlagKind, StdoutShape, TransportKinds};
 use serde_json::{Map, Value};
@@ -38,7 +38,7 @@ use super::{
 
 /// The requests running on one connection, by id, each with the flag that
 /// stops it.
-type Running = Arc<Mutex<BTreeMap<u64, Arc<AtomicBool>>>>;
+type Running = Arc<Mutex<BTreeMap<RequestId, Arc<AtomicBool>>>>;
 
 /// The write half of one connection, shared by every request running on it.
 type Writer = Arc<Mutex<UnixStream>>;
@@ -215,7 +215,7 @@ fn send(writer: &Writer, line: &ResidentLine) {
     }
 }
 
-fn refusal(id: Option<u64>, exit: ResidentExit, message: String) -> ResidentLine {
+fn refusal(id: Option<RequestId>, exit: ResidentExit, message: String) -> ResidentLine {
     ResidentLine::Failure(ResidentFailure {
         id,
         error: ResidentRefusal {
@@ -266,7 +266,7 @@ enum Asked {
     /// Run a capability.
     Request(ResidentRequest),
     /// Stop the request with this id.
-    Cancel(u64),
+    Cancel(RequestId),
     /// Nothing: the line is refused, and this is the refusal.
     Refused(ResidentLine),
 }
@@ -284,7 +284,7 @@ fn read_line(line: &str) -> Asked {
             ))
         }
     };
-    let id = value.get("id").and_then(Value::as_u64);
+    let id = value.get("id").and_then(Value::as_u64).map(RequestId);
     let wrong = |failure: serde_json::Error, what: &str| {
         Asked::Refused(refusal(
             id,
@@ -399,7 +399,7 @@ fn answer(
     }
 }
 
-fn failure(id: u64, refused: Refusal, output: Option<Value>) -> ResidentLine {
+fn failure(id: RequestId, refused: Refusal, output: Option<Value>) -> ResidentLine {
     ResidentLine::Failure(ResidentFailure {
         id: Some(id),
         error: ResidentRefusal {
@@ -589,7 +589,7 @@ fn bus_args(command: &mut Command) -> Option<&mut BusArgs> {
 /// A streaming verb's stdout: each line it prints, sent as an event the moment
 /// the line is whole.
 struct Events {
-    id: u64,
+    id: RequestId,
     writer: Writer,
     text: bool,
     pending: Vec<u8>,

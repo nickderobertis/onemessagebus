@@ -4,8 +4,8 @@
 //! name.
 
 use onemessagebus::resident::{
-    ResidentAnswer, ResidentCancel, ResidentEvent, ResidentExit, ResidentFailure, ResidentLine,
-    ResidentRefusal, ResidentRequest, ResidentVerb, True, RESIDENT_PROTOCOL,
+    RequestId, ResidentAnswer, ResidentCancel, ResidentEvent, ResidentExit, ResidentFailure,
+    ResidentLine, ResidentRefusal, ResidentRequest, ResidentVerb, True, RESIDENT_PROTOCOL,
 };
 use onemessagebus::{Registry, CAPABILITIES};
 use serde_json::{json, Value};
@@ -28,7 +28,7 @@ fn each_line_reads_back_as_the_kind_of_line_it_is_and_writes_the_same_bytes() {
         (
             r#"{"id":1,"verb":"send","args":{"queue":"greetings"},"input":"{\"text\":\"hi\"}"}"#,
             ResidentLine::Request(ResidentRequest {
-                id: 1,
+                id: RequestId(1),
                 verb: ResidentVerb::named("send").expect("a capability"),
                 args: json!({"queue": "greetings"})
                     .as_object()
@@ -40,7 +40,7 @@ fn each_line_reads_back_as_the_kind_of_line_it_is_and_writes_the_same_bytes() {
         (
             r#"{"id":2,"verb":"transports"}"#,
             ResidentLine::Request(ResidentRequest {
-                id: 2,
+                id: RequestId(2),
                 verb: ResidentVerb::named("transports").expect("a capability"),
                 args: serde_json::Map::new(),
                 input: None,
@@ -49,21 +49,21 @@ fn each_line_reads_back_as_the_kind_of_line_it_is_and_writes_the_same_bytes() {
         (
             r#"{"id":2,"cancel":true}"#,
             ResidentLine::Cancel(ResidentCancel {
-                id: 2,
+                id: RequestId(2),
                 cancel: True,
             }),
         ),
         (
             r#"{"id":3,"ok":[{"queue":"greetings","position":"1"}]}"#,
             ResidentLine::Answer(ResidentAnswer {
-                id: 3,
+                id: RequestId(3),
                 ok: json!([{"queue": "greetings", "position": "1"}]),
             }),
         ),
         (
             r#"{"id":4,"error":{"exit":1,"message":"nothing on greetings to claim"}}"#,
             ResidentLine::Failure(ResidentFailure {
-                id: Some(4),
+                id: Some(RequestId(4)),
                 error: ResidentRefusal {
                     exit: ResidentExit::Failed,
                     message: "nothing on greetings to claim".to_owned(),
@@ -85,7 +85,7 @@ fn each_line_reads_back_as_the_kind_of_line_it_is_and_writes_the_same_bytes() {
         (
             r#"{"id":5,"event":{"position":"1","record":{}}}"#,
             ResidentLine::Event(ResidentEvent {
-                id: 5,
+                id: RequestId(5),
                 event: json!({"position": "1", "record": {}}),
             }),
         ),
