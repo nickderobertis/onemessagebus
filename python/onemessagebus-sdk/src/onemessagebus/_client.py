@@ -163,7 +163,7 @@ class Client:
         await self._open()
         return await self._transport.call(method, self._args(method, values), payload)
 
-    async def _render(self, method: str, values: Mapping[str, Any], shape: Any) -> Any:
+    async def _reading(self, method: str, values: Mapping[str, Any], shape: Any) -> Any:
         answered = await self._call(method, values)
         if values.get("format") == "text":
             return _text(answered, method)
@@ -182,7 +182,7 @@ class Client:
     ) -> list[SchemaEntry] | str:
         """Every registered id: the profile's and the registry directory's."""
         values = {"registry": registry, "format": format}
-        return await self._render("schemaList", values, list[SchemaEntry])
+        return await self._reading("schemaList", values, list[SchemaEntry])
 
     async def schema_check(
         self,
@@ -250,7 +250,7 @@ class Client:
         """
         values = {"files": files, "filter": _spec(filter), "profile": profile, "format": format}
         shape = list[Envelope] if profile in (None, VOCABULARY_NAME) else list[dict[str, Any]]
-        return await self._render("eventsMerge", values, shape)
+        return await self._reading("eventsMerge", values, shape)
 
     @overload
     async def events_emit(
@@ -348,7 +348,7 @@ class Client:
     ) -> list[CarriedEntry] | str:
         """Every message the carry store holds, in the order carried, without draining it."""
         values = {"store": store, "format": format}
-        return await self._render("inboxCarried", values, list[CarriedEntry])
+        return await self._reading("inboxCarried", values, list[CarriedEntry])
 
     async def send(
         self,
@@ -422,7 +422,7 @@ class Client:
             "registry": registry,
         }
         try:
-            claimed = await self._render("next", values, Claimed)
+            claimed = await self._reading("next", values, Claimed)
         except BusFailed as refused:
             if refused.message == f"nothing on {queue} to claim":
                 return None
@@ -554,7 +554,7 @@ class Client:
             "transport_dir": transport_dir,
             "registry": registry,
         }
-        return await self._render("status", values, list[QueueStatus])
+        return await self._reading("status", values, list[QueueStatus])
 
     @overload
     async def transports(self, *, format: Literal["json"] | None = None) -> list[KindEntry]: ...
@@ -564,7 +564,7 @@ class Client:
         self, *, format: Literal["json", "text"] | None = None
     ) -> list[KindEntry] | str:
         """Every transport kind this build can open."""
-        return await self._render("transports", {"format": format}, list[KindEntry])
+        return await self._reading("transports", {"format": format}, list[KindEntry])
 
     async def validate(
         self,

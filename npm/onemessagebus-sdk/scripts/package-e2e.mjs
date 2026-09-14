@@ -52,13 +52,14 @@ process.on("exit", () => {
 const env = { ...process.env };
 delete env.ONEMESSAGEBUS_BIN;
 
-function run(command, args, options = {}) {
+// `action` is the step's own next move, since each step fails for its own reason.
+function run(command, args, action, options = {}) {
   try {
     return execFileSync(command, args, { encoding: "utf8", env, stdio: "pipe", ...options }).trim();
   } catch (error) {
     fail(
       `\`${command} ${args.join(" ")}\` failed:\n${[error.stdout, error.stderr].filter(Boolean).join("\n")}`,
-      "read the output above; the full install is left nowhere, so rerun `bun run test:package` after fixing it",
+      `${action}, then rerun \`bun run test:package\``,
     );
   }
 }
@@ -70,31 +71,43 @@ const npmEnv = {
   npm_config_update_notifier: "false",
   npm_config_cache: join(work, "npm-cache"),
 };
-const npm = (args, cwd) => run("npm", args, { cwd, env: npmEnv });
-const pack = (dir) => npm(["pack", "--silent", "--pack-destination", work], dir).split("\n").at(-1);
+const npm = (args, cwd, action) => run("npm", args, action, { cwd, env: npmEnv });
+const pack = (dir) =>
+  npm(
+    ["pack", "--silent", "--pack-destination", work],
+    dir,
+    `fix the manifest in ${dir} that npm refused above`,
+  )
+    .split("\n")
+    .at(-1);
 
-const sdkDir = run(process.execPath, [
-  join(PACKAGE, "scripts/pack.mjs"),
-  "--out",
-  join(work, "sdk"),
-]);
+const npmBuildAction =
+  "fix what scripts/npm-build.mjs refused above (its own tests are `node --test npm/test/*.test.mjs`)";
+const sdkDir = run(
+  process.execPath,
+  [join(PACKAGE, "scripts/pack.mjs"), "--out", join(work, "sdk")],
+  "build dist/ with `just nx run onemessagebus-node-sdk:build`, which scripts/pack.mjs stamps",
+);
 const packages = join(work, "packages");
-const platformDir = run(process.execPath, [
-  join(ROOT, "scripts/npm-build.mjs"),
-  "platform",
-  "--target",
-  target,
-  "--binary",
-  BINARY,
-  "--out",
-  packages,
-]);
-const launcherDir = run(process.execPath, [
-  join(ROOT, "scripts/npm-build.mjs"),
-  "launcher",
-  "--out",
-  packages,
-]);
+const platformDir = run(
+  process.execPath,
+  [
+    join(ROOT, "scripts/npm-build.mjs"),
+    "platform",
+    "--target",
+    target,
+    "--binary",
+    BINARY,
+    "--out",
+    packages,
+  ],
+  npmBuildAction,
+);
+const launcherDir = run(
+  process.execPath,
+  [join(ROOT, "scripts/npm-build.mjs"), "launcher", "--out", packages],
+  npmBuildAction,
+);
 const stamped = JSON.parse(readFileSync(join(sdkDir, "package.json"), "utf8"));
 const platformName = JSON.parse(readFileSync(join(platformDir, "package.json"), "utf8")).name;
 
@@ -127,6 +140,7 @@ npm(
     "--omit=dev",
   ],
   consumer,
+  "a runtime dependency of the SDK is not among the packed tarballs: add it to the consumer's dependencies above, or move it to the SDK's devDependencies",
 );
 
 const installed = JSON.parse(
@@ -170,7 +184,12 @@ assert.equal(existsSync(socket), false, "closing stopped the resident it started
 console.log("ok");
 `,
 );
-const said = run(process.execPath, ["consume.mjs"], { cwd: consumer });
+const said = run(
+  process.execPath,
+  ["consume.mjs"],
+  "fix the installed SDK behaviour behind the consume.mjs assertion named above",
+  { cwd: consumer },
+);
 if (said !== "ok") {
   fail(
     `the installed SDK printed ${JSON.stringify(said)} where consume.mjs prints only "ok"`,
