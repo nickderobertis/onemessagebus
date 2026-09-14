@@ -51,3 +51,17 @@ covers = [
   "npm:onemessagebus-cli-darwin-arm64",
   "npm:onemessagebus-cli-win32-x64",
 ]
+
+[[target]]
+id = "pypi:onemessagebus"
+name = "sdk"
+what = "The typed async Python SDK over the onemessagebus binary — one client method per capability, message types declared as Pydantic models, subscriptions over the resident core — installed with `pip install onemessagebus`, pinning the exact onemessagebus-cli release it drives."
+published_by = "release.yml's `publish-python-sdk` job, from the distribution `build-python-sdk` packs from python/onemessagebus-sdk, under python/onemessagebus-sdk/pyproject.toml's [project] name."
+manifest = "python/onemessagebus-sdk/pyproject.toml"
+
+[[target]]
+id = "npm:@onemessagebus/sdk"
+name = "node-sdk"
+what = "The typed TypeScript SDK over the onemessagebus binary — one client method per capability, message types declared with Zod through `defineMessage`, subscriptions over the resident core — installed with `npm install @onemessagebus/sdk`, pinning the exact onemessagebus-cli release it drives."
+published_by = "release.yml's `publish-node-sdk` job, from the tarball `build-node-sdk` packs from npm/onemessagebus-sdk, under npm/onemessagebus-sdk/package.json's name."
+manifest = "npm/onemessagebus-sdk/package.json"

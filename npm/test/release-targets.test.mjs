@@ -18,7 +18,10 @@
 //   * the PyPI project name — `pyproject.toml`'s `[project]`,
 //   * the npm launcher name — `npm/onemessagebus-cli/package.json`, and the
 //     per-platform package names — `scripts/npm-build.mjs`'s TARGETS, through
-//     the same template that script names them by.
+//     the same template that script names them by,
+//   * the two SDKs' names — `python/onemessagebus-sdk/pyproject.toml`'s
+//     `[project]` and `npm/onemessagebus-sdk/package.json` — each counted only
+//     while release.yml has the job that publishes it.
 //
 // Add an artifact anywhere in that configuration and this fails until
 // `release-targets.toml` accounts for it; declare one this repository does not
@@ -83,6 +86,8 @@ const PUBLISHERS = {
   "publish-crate": "crate",
   "publish-pypi": "pypi",
   "publish-npm": "npm",
+  "publish-python-sdk": "pypi",
+  "publish-node-sdk": "npm",
 };
 
 /// The value of `name` in a TOML `[section]`, taking the first `name = "..."`
@@ -132,6 +137,8 @@ const INPUT_FILES = [
   [".github", "workflows", "release.yml"],
   ["pyproject.toml"],
   ["npm", "onemessagebus-cli", "package.json"],
+  ["python", "onemessagebus-sdk", "pyproject.toml"],
+  ["npm", "onemessagebus-sdk", "package.json"],
   ["scripts", "npm-build.mjs"],
   ["scripts", "release-probe.sh"],
   [FILE],
@@ -171,7 +178,16 @@ function inputs(root) {
     probe: read("scripts", "release-probe.sh"),
     cargoNames: PUBLISHED_CRATES,
     pypiName: tomlName(read("pyproject.toml"), "project"),
+    pythonSdkName: tomlName(read("python", "onemessagebus-sdk", "pyproject.toml"), "project"),
+    nodeSdkName: JSON.parse(read("npm", "onemessagebus-sdk", "package.json")).name,
   };
+}
+
+/// The names a publish job pushes when release.yml has that job, and none when it
+/// does not: an SDK is published by its own job, so a workflow without it
+/// publishes nothing under the SDK's name however its manifest reads.
+function publishedBy(io, job, names) {
+  return jobNames(io.workflow).includes(job) ? names : [];
 }
 
 /// The per-platform package names a release assembles, built the way
@@ -193,9 +209,15 @@ function publishedNames(io, registry) {
     case "crate":
       return io.cargoNames;
     case "pypi":
-      return [io.pypiName];
+      return [
+        ...publishedBy(io, "publish-pypi", [io.pypiName]),
+        ...publishedBy(io, "publish-python-sdk", [io.pythonSdkName]),
+      ];
     case "npm":
-      return [io.launcher.name, ...platformPackages(io.buildScript)];
+      return [
+        ...publishedBy(io, "publish-npm", [io.launcher.name, ...platformPackages(io.buildScript)]),
+        ...publishedBy(io, "publish-node-sdk", [io.nodeSdkName]),
+      ];
     default:
       return assert.fail(`no derivation for the ${registry} registry`);
   }
@@ -351,11 +373,14 @@ describe("the declared release targets", () => {
         ["crate:onemessagebus-agent", "agent-crate"],
         ["pypi:onemessagebus-cli", "pypi"],
         ["npm:onemessagebus-cli", "npm"],
+        ["pypi:onemessagebus", "sdk"],
+        ["npm:@onemessagebus/sdk", "node-sdk"],
       ],
     );
     const jobs = jobNames(io.workflow);
     for (const target of raw.target) {
-      const [registry, artifact] = target.id.split(":");
+      const registry = target.id.slice(0, target.id.indexOf(":"));
+      const artifact = target.id.slice(target.id.indexOf(":") + 1);
       const named = [...target.published_by.matchAll(/`([a-z][a-z0-9-]*)`/g)].map((m) => m[1]);
       for (const job of named) {
         assert.ok(
@@ -372,7 +397,7 @@ describe("the declared release targets", () => {
       const manifest = readFileSync(join(REPO_ROOT, target.manifest), "utf8");
       const declared = target.manifest.endsWith("package.json")
         ? JSON.parse(manifest).name
-        : tomlName(manifest, target.manifest === "pyproject.toml" ? "project" : "package");
+        : tomlName(manifest, target.manifest.endsWith("pyproject.toml") ? "project" : "package");
       assert.equal(
         declared,
         artifact,
@@ -409,11 +434,11 @@ describe("the drift gate itself", () => {
     assert.match(dropped.message, /no declared target names or covers/);
     assert.match(dropped.message, /npm:onemessagebus-cli-win32-x64/);
 
-    // And a whole registry going undeclared, which is the same failure one level up.
-    const unpublished = drift(
-      (document) => document.target.splice(2, 1),
-      declaresEveryPublishingRegistry,
-    );
+    // And a whole registry going undeclared, which is the same failure one level up:
+    // every PyPI target — the binary's wheel and the Python SDK — dropped at once.
+    const unpublished = drift((document) => {
+      document.target = document.target.filter((target) => !target.id.startsWith("pypi:"));
+    }, declaresEveryPublishingRegistry);
     assert.match(unpublished.message, /disagree about which registries/);
   });
 
