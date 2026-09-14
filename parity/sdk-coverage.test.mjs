@@ -1,7 +1,7 @@
 // The SDK parity gate, watched failing.
 //
 // A gate whose whole job is to fail is known to work only once it has been seen
-// to: so `scripts/sdk-coverage.mjs` is run for real — the real bundle, the real
+// to: so `parity/sdk-coverage.mjs` is run for real — the real bundle, the real
 // clients — and then against copies of each client with one capability's method
 // renamed, and must go red naming both the capability left without a method and
 // the method left without a capability. Nothing is stubbed; the copies differ from
@@ -14,9 +14,9 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { render } from "../scripts/parity-audit.mjs";
-import { ROOT } from "../scripts/sdk-bundle.mjs";
-import { CLIENTS, classBody, definedMethods, pythonName } from "../scripts/sdk-coverage.mjs";
+import { render } from "./parity-audit.mjs";
+import { ROOT } from "../crates/onemessagebus-cli/sdk-bundle.mjs";
+import { CLIENTS, classBody, definedMethods, pythonName } from "./sdk-coverage.mjs";
 
 let scratch;
 before(() => {
@@ -28,7 +28,7 @@ after(() => {
 
 /** The gate over the clients at `typescript` and `python`. */
 function gate(typescript = CLIENTS.typescript, python = CLIENTS.python) {
-  return spawnSync(process.execPath, ["scripts/sdk-coverage.mjs", typescript, python], {
+  return spawnSync(process.execPath, ["parity/sdk-coverage.mjs", typescript, python], {
     cwd: ROOT,
     encoding: "utf8",
   });
@@ -53,7 +53,7 @@ function renamed(client, name, definition, from, to) {
   return path;
 }
 
-describe("scripts/sdk-coverage.mjs", () => {
+describe("parity/sdk-coverage.mjs", () => {
   it("passes the clients as they stand, naming how many capabilities it held", () => {
     const result = gate();
     assert.equal(result.status, 0, result.stderr);
@@ -110,9 +110,9 @@ describe("scripts/sdk-coverage.mjs", () => {
   });
 });
 
-describe("scripts/parity-audit.mjs", () => {
+describe("parity/parity-audit.mjs", () => {
   it("keeps docs/sdk-parity.md current", () => {
-    const result = spawnSync(process.execPath, ["scripts/parity-audit.mjs", "--check"], {
+    const result = spawnSync(process.execPath, ["parity/parity-audit.mjs", "--check"], {
       cwd: ROOT,
       encoding: "utf8",
     });

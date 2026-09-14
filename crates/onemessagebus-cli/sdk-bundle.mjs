@@ -11,7 +11,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** The repository root this script lives in. */
-export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 /** The cargo invocation that prints the bundle and nothing else. */
 export const BUNDLE_ARGS = [

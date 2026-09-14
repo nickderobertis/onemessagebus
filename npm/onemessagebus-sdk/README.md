@@ -43,11 +43,11 @@ The binary is `config.binary`, else `ONEMESSAGEBUS_BIN`, else the installed
 `onemessagebus` on `PATH`.
 
 There is exactly one method per capability, named as the capability manifest
-names it: `schemaList`, `schemaCheck`, `schemaGen`, `schemaRegister`,
-`eventsMerge`, `eventsEmit`, `deliver`, `inboxCarried`, `send`, `next`, `reply`,
-`subscribe`, `status`, `transports`, `validate`, `ask` and `serve`. Each takes
-its generated options type (camelCase) and, where the verb reads stdin, a payload
-that is sent as JSON. The shapes worth knowing:
+names it; the generated
+[parity table](https://github.com/nickderobertis/onemessagebus/blob/main/docs/sdk-parity.md)
+lists every one beside its command. Each takes its generated options type
+(camelCase) and, where the verb reads stdin, a payload that is sent as JSON. The
+shapes worth knowing:
 
 ```ts
 await client.send(queue, message, options?);                  // Sent[]

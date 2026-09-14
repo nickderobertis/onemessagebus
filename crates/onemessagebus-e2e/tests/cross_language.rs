@@ -611,7 +611,7 @@ fn the_parity_gate_goes_red_when_a_client_loses_a_method_and_green_when_it_is_re
     let gate = |typescript: &Path, python: &Path| {
         Said::of(
             Command::new(&node)
-                .arg("scripts/sdk-coverage.mjs")
+                .arg("parity/sdk-coverage.mjs")
                 .arg(typescript)
                 .arg(python)
                 .current_dir(root())

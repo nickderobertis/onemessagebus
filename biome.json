@@ -8,6 +8,7 @@
       "scripts/**/*.mjs",
       "parity/**/*.mjs",
       "parity/**/*.json",
+      "crates/onemessagebus-cli/sdk-bundle.mjs",
       "sdk-install/**/*.mjs",
       "sdk-install/**/*.json",
       "!npm/onemessagebus-sdk"

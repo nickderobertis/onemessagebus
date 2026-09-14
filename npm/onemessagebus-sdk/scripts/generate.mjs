@@ -12,9 +12,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { format } from "prettier";
-// Not published (`files` is dist + README), so reaching the repository's shared
-// bundle reader is safe: this script only ever runs from a checkout.
-import { schemaBundle } from "../../../scripts/sdk-bundle.mjs";
+// Not published (`files` is dist + README): the bundle reader belongs to the CLI crate,
+// which this project declares a dependency on, and this script only runs from a checkout.
+import { schemaBundle } from "../../../crates/onemessagebus-cli/sdk-bundle.mjs";
 import { typescriptDeclarations } from "./typescript-generator.mjs";
 import { RUNTIME_MODULE, UnsupportedSchema, zodDeclarations } from "./zod-generator.mjs";
 

@@ -16,7 +16,7 @@ client method, named as the manifest names it: camelCase in TypeScript
 (`schema_list`, `events_emit`, `send`, `next`, …). A method takes its verb's
 options, spelled as the verb's options root spells them, and renders them to argv
 through the manifest's bindings, so a method can set every flag its verb takes and
-no flag its verb does not. `scripts/sdk-coverage.mjs` fails the build when a
+no flag its verb does not. `parity/sdk-coverage.mjs` fails the build when a
 capability has no method in either client, or a client has a method no capability
 names.
 

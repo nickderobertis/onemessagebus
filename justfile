@@ -333,11 +333,11 @@ node-sdk-dist out:
 
 # Every capability, one method in each SDK client, and no method beside them.
 sdk-coverage:
-    @node scripts/sdk-coverage.mjs
+    @node parity/sdk-coverage.mjs
 
 # Regenerate docs/sdk-parity.md from the capability manifest and the SDK clients.
 parity-audit:
-    @node scripts/parity-audit.mjs
+    @node parity/parity-audit.mjs
     @echo "parity-audit: docs/sdk-parity.md regenerated"
 
 # Build one crate's docs with warnings denied (kept in the gate so doc links don't rot).

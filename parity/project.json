@@ -20,29 +20,18 @@
       "inputs": ["default", "{workspaceRoot}/biome.json"]
     },
     "lint": {
-      "command": "node scripts/sdk-coverage.mjs && node scripts/parity-audit.mjs --check",
+      "command": "node parity/sdk-coverage.mjs && node parity/parity-audit.mjs --check",
       "inputs": [
         "default",
         "^default",
         "^crateSource",
-        "{workspaceRoot}/scripts/sdk-bundle.mjs",
-        "{workspaceRoot}/scripts/sdk-coverage.mjs",
-        "{workspaceRoot}/scripts/parity-audit.mjs",
         "{workspaceRoot}/docs/sdk-parity.md",
         "sharedGlobals"
       ]
     },
     "test": {
       "command": "node --test parity/*.test.mjs",
-      "inputs": [
-        "default",
-        "^default",
-        "^crateSource",
-        "{workspaceRoot}/scripts/sdk-bundle.mjs",
-        "{workspaceRoot}/scripts/sdk-coverage.mjs",
-        "{workspaceRoot}/scripts/parity-audit.mjs",
-        "sharedGlobals"
-      ],
+      "inputs": ["default", "^default", "^crateSource", "sharedGlobals"],
       "outputs": []
     },
     "doc": { "executor": "nx:noop" },

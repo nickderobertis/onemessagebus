@@ -4,7 +4,7 @@
 //! protocol's.
 //!
 //! `cargo run -q -p onemessagebus-cli --example sdk_bundle` is what
-//! `just node-sdk-generate`, `just python-sdk-generate` and `scripts/sdk-coverage.mjs`
+//! `just node-sdk-generate`, `just python-sdk-generate` and `parity/sdk-coverage.mjs`
 //! read; it prints the bundle and nothing else.
 
 use onemessagebus::sdk_schema;

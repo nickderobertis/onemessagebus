@@ -19,7 +19,6 @@
       "command": "bun run --cwd npm/onemessagebus-sdk lint && bun run --cwd npm/onemessagebus-sdk generate:check",
       "inputs": [
         "default",
-        "{workspaceRoot}/scripts/sdk-bundle.mjs",
         "{workspaceRoot}/crates/**/*",
         "{workspaceRoot}/Cargo.toml",
         "{workspaceRoot}/Cargo.lock"
@@ -29,7 +28,6 @@
       "command": "bun run --cwd npm/onemessagebus-sdk typecheck",
       "inputs": [
         "default",
-        "{workspaceRoot}/scripts/sdk-bundle.mjs",
         "{workspaceRoot}/crates/**/*",
         "{workspaceRoot}/Cargo.toml",
         "{workspaceRoot}/Cargo.lock"

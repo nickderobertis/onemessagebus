@@ -42,12 +42,12 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`Client` has exactly one async method per capability the binary declares —
-`schema_list`, `schema_check`, `schema_gen`, `schema_register`, `events_merge`,
-`events_emit`, `deliver`, `inbox_carried`, `send`, `next`, `reply`, `subscribe`,
-`status`, `transports`, `validate`, `ask`, `serve` — each taking that verb's
-options as snake_case parameters (required ones positional) and, where the verb
-reads stdin, the payload: a Pydantic model, a JSON-able value, or JSON text.
+`Client` has exactly one async method per capability the binary declares, named
+as the capability manifest names it in snake_case; the generated
+[parity table](https://github.com/nickderobertis/onemessagebus/blob/main/docs/sdk-parity.md)
+lists every one beside its command. Each takes that verb's options as snake_case
+parameters (required ones positional) and, where the verb reads stdin, the payload:
+a Pydantic model, a JSON-able value, or JSON text.
 `format="text"` makes a reading method return the binary's text rendering.
 
 `ClientConfig(binary, config, transport_dir, registry, cwd, env)`: `binary` is the

@@ -49,8 +49,6 @@
         "{workspaceRoot}/crates/onemessagebus-e2e/tests/cross_language.rs",
         "^default",
         "^crateSource",
-        "{workspaceRoot}/scripts/sdk-bundle.mjs",
-        "{workspaceRoot}/scripts/sdk-coverage.mjs",
         "sharedGlobals"
       ]
     },

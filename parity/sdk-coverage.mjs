@@ -13,7 +13,7 @@
 // either package and a method that exists only as a type is not mistaken for one
 // a caller can invoke.
 //
-// Usage: node scripts/sdk-coverage.mjs [typescript-client] [python-client]
+// Usage: node parity/sdk-coverage.mjs [typescript-client] [python-client]
 // The paths default to the real clients; a candidate client can be named instead,
 // which is how the gate is shown to go red without touching the real sources.
 //
@@ -23,7 +23,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { ROOT, schemaBundle } from "./sdk-bundle.mjs";
+import { ROOT, schemaBundle } from "../crates/onemessagebus-cli/sdk-bundle.mjs";
 
 /** The two clients, relative to the repository root. */
 export const CLIENTS = Object.freeze({
