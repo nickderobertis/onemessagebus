@@ -24,14 +24,20 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::ask::Correlation;
 use crate::author::{Allowlist, Author, NarrowingRefused, OpWord};
+use crate::codec::{CodecConfig, CodecName};
 use crate::kinds::{TransportConfig, TransportKinds};
 use crate::queue::{
-    Delivery, Ordering, Policy, Predicate, Pushed, QueueError, QueueSpec, RawQueue, Retention,
-    Supersede,
+    shape_word, Delivery, Ordering, Policy, Predicate, Pushed, QueueError, QueueSpec, RawQueue,
+    Retention, Supersede,
 };
-use crate::schema::{Registry, SchemaId};
+use crate::schema::{Message, Registry, SchemaId};
 use crate::transport::{ConsumerName, DocumentName, QueueName, Transport, TransportError};
+use crate::validate::{
+    combined, CommandValidator, OnRecords, PassCache, ValidationContext, Validator, Validators,
+    Verdict, When,
+};
 
 /// The configuration version this build reads and writes.
 pub const CONFIG_VERSION: u32 = 1;
@@ -61,6 +67,94 @@ pub struct Config {
     /// Authors whose grants the configuration narrows. It may never widen them.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub authors: BTreeMap<Author, AuthorConfig>,
+    /// Validators judging what is offered to a queue before anything is
+    /// appended, in the order each queue judges by them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validators: Vec<ValidatorConfig>,
+    /// What a host configures for each codec `serve` runs, by the codec's name.
+    /// Which names there are is the binary's: one no linked codec answers to is
+    /// refused where `serve` resolves it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub codecs: BTreeMap<CodecName, CodecConfig>,
+}
+
+/// One validator of a configuration: the external kind, which a Rust
+/// validator a linking consumer registers is not — that one is code
+/// ([`Bus::with_validator`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ValidatorConfig {
+    /// The queue whose offered messages it judges.
+    pub on: QueueName,
+    /// Which of them it judges; every one when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<When>,
+    /// Which kind of validator it is.
+    pub kind: ValidatorKind,
+    /// The command's argv, the program first: the message on its stdin, exit 0
+    /// a pass, 1 a refusal with its stderr as the reason, anything else
+    /// unjudged.
+    pub command: Vec<String>,
+    /// Where its passes are recorded; nowhere when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache: Option<CacheConfig>,
+}
+
+/// The kinds of validator a configuration declares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ValidatorKind {
+    /// [`CommandValidator`]: an external command.
+    Command,
+}
+
+/// Where a command validator records its passes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CacheConfig {
+    /// The directory records are kept in, relative to the working directory
+    /// when relative.
+    pub dir: PathBuf,
+    /// The argv whose output fingerprints the bar: a pass recorded under one
+    /// fingerprint is not a pass under another.
+    pub bar_fingerprint: Vec<String>,
+}
+
+impl ValidatorConfig {
+    /// The validator this declares.
+    ///
+    /// # Errors
+    ///
+    /// The refusal, naming the key under `validators[index]`.
+    fn build(&self, index: usize) -> Result<CommandValidator, String> {
+        let ValidatorKind::Command = self.kind;
+        let validator = CommandValidator::new(self.command.iter().cloned())
+            .map_err(|failure| format!("validators[{index}].command: {failure}"))?;
+        Ok(match &self.cache {
+            Some(cache) => validator.with_cache(
+                PassCache::new(&cache.dir, cache.bar_fingerprint.iter().cloned()).map_err(
+                    |failure| format!("validators[{index}].cache.bar_fingerprint: {failure}"),
+                )?,
+            ),
+            None => validator,
+        })
+    }
+}
+
+/// A configured validator: judged only for the messages its `when` admits.
+struct Gated {
+    when: Option<When>,
+    validator: CommandValidator,
+}
+
+impl Validator<Value> for Gated {
+    fn validate(&self, message: &Value, context: &ValidationContext) -> Verdict {
+        if self.when.as_ref().is_none_or(|when| when.admits(message)) {
+            Validator::<Value>::validate(&self.validator, message, context)
+        } else {
+            Verdict::Pass
+        }
+    }
 }
 
 /// One queue of a configuration: an addition, or an override of a layout's
@@ -243,6 +337,12 @@ impl Config {
                 found: config.version,
             });
         }
+        for (index, validator) in config.validators.iter().enumerate() {
+            validator.build(index).map_err(|why| ConfigError::Parse {
+                path: PathBuf::new(),
+                why,
+            })?;
+        }
         Ok(config)
     }
 
@@ -255,6 +355,8 @@ impl Config {
             profile: profile.map(str::to_owned),
             queues: BTreeMap::new(),
             authors: BTreeMap::new(),
+            validators: Vec::new(),
+            codecs: BTreeMap::new(),
         }
     }
 
@@ -353,6 +455,34 @@ impl Config {
                 NARROWED,
             )?;
         }
+        let mut validators: BTreeMap<QueueName, Validators<Value>> = BTreeMap::new();
+        for (index, declared) in self.validators.iter().enumerate() {
+            if !specs.contains_key(&declared.on) {
+                return Err(ConfigError::Queue {
+                    key: format!("validators[{index}].on"),
+                    why: format!(
+                        "`{}` is not a queue this configuration declares; it declares: {}",
+                        declared.on,
+                        specs
+                            .keys()
+                            .map(QueueName::as_str)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                });
+            }
+            let validator = declared.build(index).map_err(|why| ConfigError::Queue {
+                key: format!("validators[{index}]"),
+                why,
+            })?;
+            validators
+                .entry(declared.on.clone())
+                .or_default()
+                .push(Arc::new(Gated {
+                    when: declared.when.clone(),
+                    validator,
+                }));
+        }
         let transport = kinds.open(&self.transport)?;
         Ok(Bus {
             transport,
@@ -361,6 +491,7 @@ impl Config {
             queues: specs,
             allowlist,
             registry: Arc::new(registry),
+            validators,
         })
     }
 }
@@ -398,6 +529,28 @@ pub trait Layout: Send + Sync + 'static {
         let _ = allowlist;
         Ok(vec![(queue.clone(), record)])
     }
+}
+
+/// Where the halves of one offer go: the part of a layout that splits a record
+/// offered to one queue into records on several, by its shape — so that each
+/// half reaches the reader it is for, and a reader never claims a half that is
+/// not its own. A profile declares one for a layout whose offers carry halves
+/// for different readers, and its layout's [`prepare`](Layout::prepare) routes
+/// through it.
+pub trait Router: Send + Sync {
+    /// The records `record`, offered to `queue`, becomes, in the order they are
+    /// pushed, checked against `allowlist`.
+    ///
+    /// # Errors
+    ///
+    /// The refusal, in the router's own words, for a record its author may not
+    /// write or that has no shape the router routes.
+    fn route(
+        &self,
+        queue: &QueueName,
+        record: Value,
+        allowlist: &Allowlist<OpWord>,
+    ) -> Result<Vec<(QueueName, Value)>, String>;
 }
 
 /// The layouts a process links, by name.
@@ -459,6 +612,22 @@ pub enum BusError {
         /// The layout's words.
         why: String,
     },
+    /// A queue no question can be asked or answered on.
+    #[error("{queue} is not a queue a question is asked on: {why}")]
+    NotAskable {
+        /// The queue.
+        queue: QueueName,
+        /// Why not.
+        why: String,
+    },
+    /// A reply, or a listener, that binds to no question.
+    #[error("{queue}: {why}")]
+    Unbound {
+        /// The queue whose questions were looked through.
+        queue: QueueName,
+        /// What was looked for, and what is there instead.
+        why: String,
+    },
     /// The queue refused it, or its transport failed.
     #[error(transparent)]
     Queue(#[from] QueueError),
@@ -475,6 +644,7 @@ pub struct Bus {
     queues: BTreeMap<QueueName, QueueSpec>,
     allowlist: Allowlist<OpWord>,
     registry: Arc<Registry>,
+    validators: BTreeMap<QueueName, Validators<Value>>,
 }
 
 impl fmt::Debug for Bus {
@@ -539,7 +709,73 @@ impl Bus {
             Arc::clone(&self.transport),
             spec.clone(),
             Arc::clone(&self.registry),
-        ))
+        )
+        .with_validators(self.validators.get(name).cloned().unwrap_or_default()))
+    }
+
+    /// The same bus, judging every message offered to `queue` by `validator`
+    /// as well, after every validator the configuration declares for it. A Rust
+    /// validator is code, so it is registered here rather than in the file; a
+    /// record that does not read as an `M` is refused naming why.
+    ///
+    /// # Errors
+    ///
+    /// [`BusError::UnknownQueue`].
+    pub fn with_validator<M: Message + 'static>(
+        mut self,
+        queue: &QueueName,
+        validator: impl Validator<M> + 'static,
+    ) -> Result<Self, BusError> {
+        self.queue(queue)?;
+        self.validators
+            .entry(queue.clone())
+            .or_default()
+            .push(Arc::new(OnRecords::new(validator)));
+        Ok(self)
+    }
+
+    /// Judge what offering `record` to `queue` would append, appending nothing:
+    /// the offer by `queue`'s validators, and each record the layout routes to
+    /// another queue by that queue's.
+    ///
+    /// # Errors
+    ///
+    /// As [`prepare`](Self::prepare): an unknown queue, or the layout's refusal.
+    pub fn validate(&self, queue: &QueueName, record: Value) -> Result<Verdict, BusError> {
+        let routed = self.prepare(queue, record.clone())?;
+        Ok(self.judge(queue, &record, &routed, None))
+    }
+
+    /// The verdict on an offer and the records it was routed into, each judged
+    /// in a context naming `correlation` when the offer asks or answers the
+    /// question it names.
+    pub(crate) fn judge(
+        &self,
+        queue: &QueueName,
+        offered: &Value,
+        routed: &[(QueueName, Value)],
+        correlation: Option<&Correlation>,
+    ) -> Verdict {
+        let judged_by = |target: &QueueName, record: &Value| {
+            self.validators.get(target).map_or(Verdict::Pass, |each| {
+                let context = ValidationContext::new(target.clone());
+                let context = match correlation {
+                    Some(correlation) => context.with_correlation(correlation.clone()),
+                    None => context,
+                };
+                each.judge(record, &context)
+            })
+        };
+        combined(
+            std::iter::once(judged_by(queue, offered))
+                .chain(
+                    routed
+                        .iter()
+                        .filter(|(target, _)| target != queue)
+                        .map(|(target, record)| judged_by(target, record)),
+                )
+                .collect::<Vec<_>>(),
+        )
     }
 
     /// What offering `record` to `queue` pushes, in order: the layout's
@@ -547,13 +783,23 @@ impl Bus {
     ///
     /// # Errors
     ///
-    /// [`BusError::UnknownQueue`], or [`BusError::Refused`] in the layout's words.
+    /// [`BusError::UnknownQueue`]; [`QueueError::NotAnObject`] for a record
+    /// that is not a JSON object offered to a queue whose records are objects —
+    /// one that keeps events or numbers its records — before the layout reads
+    /// it; or [`BusError::Refused`] in the layout's words.
     pub fn prepare(
         &self,
         queue: &QueueName,
         record: Value,
     ) -> Result<Vec<(QueueName, Value)>, BusError> {
-        self.queue(queue)?;
+        let spec = self.queue(queue)?.spec().clone();
+        if (spec.policy.keeps_events() || spec.numbered) && !record.is_object() {
+            return Err(QueueError::NotAnObject {
+                queue: queue.clone(),
+                shape: shape_word(&record),
+            }
+            .into());
+        }
         match &self.layout {
             Some(layout) => layout
                 .prepare(queue, record, &self.allowlist)
@@ -565,21 +811,26 @@ impl Bus {
         }
     }
 
-    /// Offer `record` to `queue`: prepare it, then push each record it becomes
-    /// onto its queue, validated against that queue's schema.
+    /// Offer `record` to `queue`: prepare it, judge it as
+    /// [`validate`](Self::validate) does, then push each record it becomes onto
+    /// its queue, validated against that queue's schema.
     ///
     /// # Errors
     ///
-    /// As [`prepare`](Self::prepare), or the first push a queue refused; what was
-    /// pushed before it stays pushed.
+    /// As [`prepare`](Self::prepare); [`QueueError::Refused`] or
+    /// [`QueueError::Unjudged`] for an offer the validators did not pass, with
+    /// nothing appended anywhere; or the first push a queue refused, when what
+    /// was pushed before it stays pushed.
     pub fn send(
         &self,
         queue: &QueueName,
         record: Value,
     ) -> Result<Vec<(QueueName, Pushed<Value>)>, BusError> {
+        let routed = self.prepare(queue, record.clone())?;
+        QueueError::of_verdict(queue, self.judge(queue, &record, &routed, None))?;
         let mut pushed = Vec::new();
-        for (target, record) in self.prepare(queue, record)? {
-            let landed = self.queue(&target)?.push(record)?;
+        for (target, record) in routed {
+            let landed = self.queue(&target)?.push_judged(record)?;
             pushed.push((target, landed));
         }
         Ok(pushed)

@@ -27,11 +27,13 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod ask;
 mod author;
 mod bounds;
 mod capability;
 mod carry;
 mod clock;
+mod codec;
 mod config;
 pub mod conformance;
 mod emit;
@@ -47,8 +49,16 @@ mod schema;
 pub mod sdk_schema;
 mod spool;
 pub mod transport;
+mod validate;
 mod vocabulary;
 
+/// The ask contract's refusal, named apart from the allowlist's [`Refusal`]
+/// where both are in scope.
+pub use ask::Refusal as AskRefusal;
+pub use ask::{
+    Address, AddressError, Answer, AskOptions, Bound, Correlation, CorrelationError, Pending,
+    RefusalKind,
+};
 pub use author::{Allowlist, Author, NarrowingRefused, OpWord, Operation, Refusal, NOT_GRANTED};
 pub use bounds::{
     bound_detail, bound_payload, bound_text, MAX_ACTIVITY_DETAIL_CHARS, MAX_PAYLOAD_TEXT_BYTES,
@@ -59,9 +69,13 @@ pub use capability::{
 };
 pub use carry::{CarriedEntry, Carry, CARRY_SCHEMA_VERSION};
 pub use clock::now_rfc3339;
+pub use codec::{
+    Codec, CodecConfig, CodecFailure, CodecName, EnvName, NameRefused, ServeError, ServeOptions,
+    ServeSession, Served, DEFAULT_REPLY_WINDOW,
+};
 pub use config::{
-    AuthorConfig, Bus, BusError, Config, ConfigError, Layout, Layouts, PolicyConfig, QueueConfig,
-    CONFIG_VERSION, NARROWED,
+    AuthorConfig, Bus, BusError, CacheConfig, Config, ConfigError, Layout, Layouts, PolicyConfig,
+    QueueConfig, Router, ValidatorConfig, ValidatorKind, CONFIG_VERSION, NARROWED,
 };
 pub use emit::{Emitter, EmitterError, Unrecorded};
 pub use envelope::{ArtifactRef, Envelope, Kind, Labels, NoDimensions, Source};
@@ -90,6 +104,10 @@ pub use transport::{
     Batch, Changed, ConsumerName, DocumentName, Fingerprint, LocalTransport, MemoryTransport,
     NameError, Position, ProcessTransport, QueueName, Stored, TornRecord, Transport,
     TransportError,
+};
+pub use validate::{
+    CommandValidator, OnRecords, PassCache, ValidationContext, Validator, ValidatorError,
+    Validators, Verdict, When, PASS_RECORD_VERSION, VALIDATE_CORRELATION_ENV, VALIDATE_QUEUE_ENV,
 };
 pub use vocabulary::{Admits, Open, Reserved, Vocabulary, Wire};
 

@@ -21,14 +21,19 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use onemessagebus::sdk_schema::{self, ClaimedRecord, Lang, LogRecord, Replied, SchemaEntry, Sent};
+use onemessagebus::sdk_schema::{
+    self, Asked, ClaimedRecord, Lang, LogRecord, Replied, SchemaEntry, Sent, Validated,
+};
 use onemessagebus::{
-    Admits, Asker, BackendError, Bus, BusError, Carry, CheckError, Config, ConsumerName, Emitter,
-    Filter, Layouts, Lifetime, Merge, Open, Position, Predicate, QueueError, QueueName,
-    QueueStatus, Redactor, SchemaId, Spool, Subscription, TransportKinds, Undelivered, Vocabulary,
-    SPOOL_WAIT,
+    Address, Admits, Answer, AskOptions, Asker, BackendError, Bus, BusError, Carry, CheckError,
+    CodecName, Config, ConsumerName, Correlation, Emitter, EnvName, Filter, Layouts, Lifetime,
+    Merge, Open, Pending, Position, Predicate, QueueError, QueueName, QueueStatus, Redactor,
+    SchemaId, ServeError, ServeOptions, Served, Spool, Subscription, TransportKinds, Undelivered,
+    Vocabulary, DEFAULT_REPLY_WINDOW, SPOOL_WAIT,
 };
 use onemessagebus_agent::channel::{PlannerChannel, PLANNER_CHANNEL};
+use onemessagebus_agent::codec::onejudge::{self, Onejudge};
+use onemessagebus_agent::codec::CODECS;
 use onemessagebus_agent::Agent;
 use serde_json::{Map, Value};
 
@@ -71,7 +76,11 @@ enum Command {
     Send(SendArgs),
     /// Claim the next record of a queue and print it.
     Next(NextArgs),
-    /// Answer the pending record claimed at a position with a reply.
+    /// Ask a question on a queue and wait for its answer: a reply echoing the
+    /// question's correlation, a timeout, an abandoned listener, or a refusal.
+    Ask(AskArgs),
+    /// Answer a pending ask — by its correlation, the one pending, or the
+    /// record claimed at a position — with a reply.
     Reply(ReplyArgs),
     /// Stream a queue's log as it grows, ending on the first record a
     /// predicate admits.
@@ -85,6 +94,50 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
         format: OutputFormat,
     },
+    /// Judge a record by a queue's validators, appending nothing, and print the
+    /// verdict.
+    Validate(ValidateArgs),
+    /// Serve a member's judge side: frames of a codec's protocol in, one
+    /// response per frame out, over a queue.
+    Serve(ServeArgs),
+}
+
+/// What `serve` takes.
+#[derive(Debug, Args)]
+struct ServeArgs {
+    /// The queue the codec raises and asks on.
+    #[arg(value_name = "QUEUE")]
+    queue: String,
+    /// The codec the frames are read with.
+    #[arg(long, value_name = "NAME")]
+    codec: String,
+    /// Seconds the session serves before it stops of its own accord, leaving
+    /// what it asked counted; read from the codec's session variable when
+    /// absent, and no bound when neither is set.
+    #[arg(long, value_name = "SECONDS")]
+    session_seconds: Option<u64>,
+    /// Who the session listens for; read from the codec's asker variable when
+    /// absent.
+    #[arg(long, value_name = "WORD")]
+    asker: Option<OsString>,
+    /// A file of frames, one per line; stdin when absent.
+    #[arg(long, value_name = "PATH")]
+    file: Option<PathBuf>,
+    #[command(flatten)]
+    bus: BusArgs,
+}
+
+/// What `validate` takes.
+#[derive(Debug, Args)]
+struct ValidateArgs {
+    /// The queue whose validators judge the record.
+    #[arg(value_name = "QUEUE")]
+    queue: String,
+    /// The record file; stdin when absent.
+    #[arg(long, value_name = "PATH")]
+    file: Option<PathBuf>,
+    #[command(flatten)]
+    bus: BusArgs,
 }
 
 /// The configuration a queue verb opens its bus with.
@@ -132,15 +185,53 @@ struct NextArgs {
     bus: BusArgs,
 }
 
+/// What `ask` takes.
+#[derive(Debug, Args)]
+struct AskArgs {
+    /// The queue to ask on.
+    #[arg(value_name = "QUEUE")]
+    queue: String,
+    /// Whether the asker waits on the answer: a blocking question is claimed
+    /// first and held pending until answered.
+    #[arg(long)]
+    blocking: bool,
+    /// Who asks: a later listener naming the same asker takes the question back
+    /// when this one leaves it abandoned.
+    #[arg(long, value_name = "WORD")]
+    asker: Option<OsString>,
+    /// What the question is about.
+    #[arg(long, value_name = "ADDRESS")]
+    about: Option<String>,
+    /// Seconds to wait for the answer; no bound when absent.
+    #[arg(long, value_name = "SECONDS")]
+    timeout: Option<u64>,
+    /// Listen again for the question this correlation minted, raising nothing.
+    #[arg(
+        long,
+        value_name = "CORRELATION",
+        conflicts_with_all = ["blocking", "about", "file"]
+    )]
+    correlation: Option<String>,
+    /// The question file; stdin when absent.
+    #[arg(long, value_name = "PATH")]
+    file: Option<PathBuf>,
+    #[command(flatten)]
+    bus: BusArgs,
+}
+
 /// What `reply` takes.
 #[derive(Debug, Args)]
 struct ReplyArgs {
-    /// The queue whose pending record is answered.
+    /// The queue whose pending ask is answered.
     #[arg(value_name = "QUEUE")]
     queue: String,
-    /// Where the pending record was claimed, as `next` printed it.
+    /// Where the pending record was claimed, as `next` printed it; the one
+    /// pending ask when neither this nor `--correlation` is given.
     #[arg(value_name = "POSITION")]
-    position: u64,
+    position: Option<u64>,
+    /// The correlation of the ask the reply answers, as `ask` printed it.
+    #[arg(long, value_name = "CORRELATION", conflicts_with = "position")]
+    correlation: Option<String>,
     /// The reply file; stdin when absent.
     #[arg(long, value_name = "PATH")]
     file: Option<PathBuf>,
@@ -389,9 +480,14 @@ fn failed(message: impl Into<String>) -> Refusal {
 /// Run the command line over `args` (the program name first), writing to this
 /// process's stdout and stderr, and answer the exit code.
 pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
-    let cli = match Cli::try_parse_from(args) {
+    let args: Vec<OsString> = args.into_iter().collect();
+    let cli = match Cli::try_parse_from(&args) {
         Ok(cli) => cli,
         Err(usage) => {
+            if let Some(verb) = usage_refusing_verb(&args).filter(|_| usage.use_stderr()) {
+                eprintln!("onemessagebus: {}", usage_refusal(verb, &usage));
+                return ExitCode::from(EXIT_INVALID);
+            }
             // clap's own rendering and exit code: 0 for --help/--version, 2
             // for a usage error.
             let _ = usage.print();
@@ -408,6 +504,49 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
     }
 }
 
+/// The verbs whose usage errors are refusals like any other: one line on stderr
+/// as `onemessagebus: <what is wrong>`, nothing on stdout, exit 2.
+const USAGE_REFUSING_VERBS: [&str; 3] = ["ask", "reply", "validate"];
+
+/// The verb `args` names, when it is one whose usage errors are refusals. The
+/// command line has no option before its verb, so the verb is the first word.
+fn usage_refusing_verb(args: &[OsString]) -> Option<&'static str> {
+    let named = args.get(1)?.to_str()?;
+    USAGE_REFUSING_VERBS.into_iter().find(|verb| *verb == named)
+}
+
+/// What clap found wrong with `verb`'s command line, on one line: every
+/// paragraph of its report but the usage synopsis and the pointer to `--help`,
+/// which is named instead.
+fn usage_refusal(verb: &str, usage: &clap::Error) -> String {
+    let rendered = usage.render().to_string();
+    let found: Vec<String> = rendered
+        .split("\n\n")
+        .map(|paragraph| {
+            paragraph
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .filter(|paragraph| {
+            !paragraph.is_empty()
+                && !paragraph.starts_with("Usage:")
+                && !paragraph.starts_with("For more information")
+        })
+        .map(|paragraph| {
+            paragraph
+                .strip_prefix("error: ")
+                .map_or_else(|| paragraph.clone(), str::to_owned)
+        })
+        .collect();
+    format!(
+        "{verb}: {}; see `onemessagebus {verb} --help`",
+        found.join("; ")
+    )
+}
+
 fn dispatch(cli: Cli, out: &mut impl std::io::Write) -> Result<(), Refusal> {
     match cli.command {
         Command::Schema { verb } => schema(verb, out),
@@ -418,10 +557,13 @@ fn dispatch(cli: Cli, out: &mut impl std::io::Write) -> Result<(), Refusal> {
         } => carried(&store, format, out),
         Command::Send(args) => send(args, out),
         Command::Next(args) => next(args, out),
+        Command::Ask(args) => ask(args, out),
         Command::Reply(args) => reply(args, out),
         Command::Subscribe(args) => subscribe(args, out),
         Command::Status(args) => status(args, out),
         Command::Transports { format } => transports(format, out),
+        Command::Validate(args) => validate(args, out),
+        Command::Serve(args) => serve(args, out),
     }
 }
 
@@ -891,6 +1033,12 @@ fn layouts() -> Layouts {
 /// transport directory overridden when one is named — or, with no file, the
 /// planner-channel layout over a local transport in that directory.
 fn open_bus(args: &BusArgs) -> Result<Bus, Refusal> {
+    resolved(configuration(args)?)
+}
+
+/// The configuration a queue verb opens its bus with, loaded and checked but
+/// not yet bound to the layouts and transports this binary has.
+fn configuration(args: &BusArgs) -> Result<Config, Refusal> {
     let config = match (&args.config, &args.transport_dir) {
         (Some(path), _) => Config::load(path).map_err(|failure| invalid(failure.to_string()))?,
         (None, Some(dir)) => Config::local(dir, Some(PLANNER_CHANNEL)),
@@ -903,10 +1051,31 @@ fn open_bus(args: &BusArgs) -> Result<Bus, Refusal> {
             ))
         }
     };
-    let config = match &args.transport_dir {
+    // The configuration's codec names are the binary's to say, as `--codec`'s are.
+    if let Some(name) = config.codecs.keys().find(|name| !CODECS.contains(name)) {
+        return Err(invalid(format!(
+            "codecs.{name}: `{name}` is not a codec this build links; it links: {}",
+            linked_codecs()
+        )));
+    }
+    Ok(match &args.transport_dir {
         Some(dir) => config.with_transport_dir(dir),
         None => config,
-    };
+    })
+}
+
+/// The codecs this build links, comma-separated.
+fn linked_codecs() -> String {
+    CODECS
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// `config` bound to the layouts this binary links and the transports it can
+/// open.
+fn resolved(config: Config) -> Result<Bus, Refusal> {
     config
         .resolve(&layouts(), &TransportKinds::builtin())
         .map_err(|failure| invalid(failure.to_string()))
@@ -919,22 +1088,28 @@ fn parse_queue(text: &str) -> Result<QueueName, Refusal> {
 
 /// A queue's refusal, with the verdict its exit code comes from: a record the
 /// queue will not keep, or a claim it cannot answer, is a well-formed no; a
-/// queue that has no such operation, or no schema registered, refuses the input.
+/// document that is not the JSON object the queue's records are, a queue that
+/// has no such operation, or no schema registered, refuses the input.
 fn queue_refusal(failure: QueueError) -> Refusal {
     match failure {
-        QueueError::NotAnEventQueue { .. } | QueueError::Unregistered { .. } => {
-            invalid(failure.to_string())
-        }
+        QueueError::NotAnObject { .. }
+        | QueueError::NotAnEventQueue { .. }
+        | QueueError::Unregistered { .. } => invalid(failure.to_string()),
         _ => failed(failure.to_string()),
     }
 }
 
 fn bus_refusal(failure: BusError) -> Refusal {
     match failure {
-        BusError::UnknownQueue { .. } => invalid(failure.to_string()),
-        BusError::Refused { .. } => failed(failure.to_string()),
+        BusError::UnknownQueue { .. } | BusError::NotAskable { .. } => invalid(failure.to_string()),
+        BusError::Refused { .. } | BusError::Unbound { .. } => failed(failure.to_string()),
         BusError::Queue(failure) => queue_refusal(failure),
     }
+}
+
+fn parse_correlation(text: &str) -> Result<Correlation, Refusal> {
+    text.parse()
+        .map_err(|failure| invalid(format!("--correlation: {failure}")))
 }
 
 fn json_line<T: serde::Serialize>(value: &T) -> Result<String, Refusal> {
@@ -1006,58 +1181,165 @@ fn next(args: NextArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
 
 fn reply(args: ReplyArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
     let queue_name = parse_queue(&args.queue)?;
+    let correlation = args
+        .correlation
+        .as_deref()
+        .map(parse_correlation)
+        .transpose()?;
     let bus = open_bus(&args.bus)?;
     let queue = bus.queue(&queue_name).map_err(bus_refusal)?;
-    let answers = queue.spec().answers.clone().ok_or_else(|| {
-        invalid(format!(
+    if queue.spec().answers.is_none() {
+        return Err(invalid(format!(
             "{queue_name} declares no queue its replies are appended to (`answers`), so none of \
              its records is answered with `reply`"
-        ))
-    })?;
+        )));
+    }
     // Asked before the reply is read or anything is written: a reply to a record
     // that is not pending there is refused with nothing appended.
-    let pending = queue
-        .pending_at(&Position::from_token(args.position))
-        .map_err(queue_refusal)?;
+    let position = args.position.map(Position::from_token);
+    if let Some(position) = &position {
+        queue.pending_at(position).map_err(queue_refusal)?;
+    }
     let record = read_payload(args.file.as_deref())?;
-    let mut sent = Vec::new();
-    let mut reply_position = None;
-    for (target, record) in bus.prepare(&answers, record).map_err(bus_refusal)? {
-        let pushed = bus
-            .queue(&target)
-            .map_err(bus_refusal)?
-            .push(record)
-            .map_err(queue_refusal)?;
-        if target == answers {
-            reply_position = Some(pushed.position);
-        }
-        sent.push(Sent {
-            queue: target,
+    let bound = match &position {
+        Some(position) => bus.reply_at(&queue_name, position, record),
+        None => bus.reply(&queue_name, correlation.as_ref(), record),
+    }
+    .map_err(bus_refusal)?;
+    let answered = bound.answered.then(|| ClaimedRecord {
+        queue: queue_name,
+        position: bound.question.position,
+        id: bound.question.id,
+        record: bound.question.record,
+    });
+    let sent = bound
+        .sent
+        .into_iter()
+        .map(|(queue, pushed)| Sent {
+            queue,
             position: pushed.position,
             id: pushed.id,
-        });
-    }
-    let answered = match reply_position {
-        Some(at) => {
-            // Another reply can release the slot between the check above and
-            // this one; the reply that lost is on the queue but answered nothing.
-            if !queue.answer(&pending, &at).map_err(queue_refusal)? {
-                return Err(failed(format!(
-                    "{queue_name}: the record pending at position {} was answered by another reply \
-                     first; this reply was appended to {answers} at position {at} and answers nothing",
-                    pending.position
-                )));
-            }
-            Some(ClaimedRecord {
-                queue: queue_name,
-                position: pending.position,
-                id: pending.id,
-                record: pending.record,
-            })
+        })
+        .collect();
+    emit_text(
+        out,
+        &json_line(&Replied {
+            answered,
+            correlation: bound.correlation,
+            sent,
+        })?,
+    )
+}
+
+fn ask(args: AskArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+    let queue = parse_queue(&args.queue)?;
+    let asker = args
+        .asker
+        .as_deref()
+        .map(|value| Asker::named(value, "--asker"))
+        .transpose()
+        .map_err(|failure| invalid(failure.to_string()))?;
+    let about = args
+        .about
+        .as_deref()
+        .map(str::parse::<Address>)
+        .transpose()
+        .map_err(|failure| invalid(format!("--about: {failure}")))?;
+    let correlation = args
+        .correlation
+        .as_deref()
+        .map(parse_correlation)
+        .transpose()?;
+    let bus = open_bus(&args.bus)?;
+    // Refused before stdin is read, so a mistyped queue costs nothing.
+    bus.queue(&queue).map_err(bus_refusal)?;
+    let (pending, owned): (Pending<Value>, bool) = match &correlation {
+        Some(correlation) => {
+            let lifetime = match &asker {
+                Some(asker) => Lifetime::Durable(asker.clone()),
+                None => Lifetime::Session,
+            };
+            let pending = bus
+                .listen(&queue, correlation, &lifetime)
+                .map_err(bus_refusal)?;
+            // A listener re-armed under the question's own asker has taken it
+            // over, and leaves it abandoned when it goes; any other attends
+            // nothing, so it abandons nothing either.
+            let owned = asker.is_some() && pending.asker() == asker.as_ref();
+            (pending, owned)
         }
-        None => None,
+        None => {
+            let question = read_payload(args.file.as_deref())?;
+            let options = AskOptions {
+                blocking: args.blocking,
+                asker,
+                about,
+            };
+            match bus.ask::<Value, Value>(&queue, question, options) {
+                Ok(pending) => (pending, true),
+                Err(failure) => {
+                    let refusal = bus_refusal(failure);
+                    if matches!(refusal.verdict, Verdict::Failed) {
+                        emit_text(
+                            out,
+                            &json_line(&Asked::Refused {
+                                correlation: None,
+                                reason: refusal.message.clone(),
+                            })?,
+                        )?;
+                    }
+                    return Err(refusal);
+                }
+            }
+        }
     };
-    emit_text(out, &json_line(&Replied { answered, sent })?)
+    let correlation = pending.correlation().clone();
+    eprintln!("correlation: {correlation}");
+    let answer = pending.wait(args.timeout.map_or(Duration::MAX, Duration::from_secs));
+    // A listener that goes without its answer says nobody is waiting for it
+    // now: the question is marked abandoned — kept, and still answerable —
+    // for a later listener of its asker to take back.
+    if owned && !matches!(answer, Answer::Reply(_) | Answer::Abandoned) {
+        let _ = pending.abandon();
+    }
+    let (asked, why) = match answer {
+        Answer::Reply(reply) => (Asked::Reply { correlation, reply }, None),
+        Answer::Timeout => (
+            Asked::Timeout {
+                correlation: correlation.clone(),
+            },
+            Some(format!(
+                "{queue}: no reply echoing {correlation} arrived within {} seconds; the question \
+                 stands, abandoned until a listener of its asker takes it back with \
+                 `ask {queue} --correlation {correlation} --asker <asker>`",
+                args.timeout.unwrap_or_default()
+            )),
+        ),
+        Answer::Abandoned => (
+            Asked::Abandoned {
+                correlation: correlation.clone(),
+            },
+            Some(format!(
+                "{queue}: the question {correlation} was abandoned and nobody re-attended it; its \
+                 asker takes it back with `ask {queue} --correlation {correlation} --asker <asker>`"
+            )),
+        ),
+        Answer::Refused(refused) => {
+            let reason = refused.reason;
+            (
+                Asked::Refused {
+                    correlation: Some(correlation),
+                    reason: reason.clone(),
+                },
+                Some(reason),
+            )
+        }
+    };
+    emit_text(out, &json_line(&asked)?)?;
+    match why {
+        None => Ok(()),
+        Some(why) => Err(failed(why)),
+    }
 }
 
 fn subscribe(args: SubscribeArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
@@ -1189,6 +1471,171 @@ fn transports(format: OutputFormat, out: &mut impl std::io::Write) -> Result<(),
         }
     };
     emit_text(out, &text)
+}
+
+fn serve(args: ServeArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+    let queue = parse_queue(&args.queue)?;
+    let name: CodecName = args
+        .codec
+        .parse()
+        .map_err(|failure| invalid(format!("--codec: {failure}")))?;
+    if !CODECS.contains(&name) {
+        return Err(invalid(format!(
+            "--codec: `{name}` is not a codec this build links; it links: {}",
+            linked_codecs()
+        )));
+    }
+    let config = configuration(&args.bus)?;
+    let settings = config.codecs.get(&name).cloned().unwrap_or_default();
+    if let Some(configured) = &settings.queue {
+        if configured != &queue {
+            return Err(invalid(format!(
+                "codecs.{name}.queue names `{configured}`, and serve was asked to serve `{queue}`; \
+                 name the same queue in both, or leave codecs.{name}.queue unset"
+            )));
+        }
+    }
+    let session_env = settings
+        .session_env
+        .as_ref()
+        .map_or(onejudge::SESSION_ENV, EnvName::as_str);
+    let bound = "a whole number of seconds greater than zero";
+    let session = match args.session_seconds {
+        Some(0) => {
+            return Err(invalid(format!(
+                "--session-seconds is {bound}; leave it unset for a session that serves until its \
+                 frame stream ends"
+            )))
+        }
+        Some(seconds) => Some(seconds),
+        None => match std::env::var_os(session_env) {
+            None => None,
+            Some(value) => Some(
+                value
+                    .to_str()
+                    .and_then(|text| text.trim().parse::<u64>().ok())
+                    .filter(|seconds| *seconds > 0)
+                    .ok_or_else(|| {
+                        invalid(format!(
+                            "{session_env} is {bound}, and this session was given {value:?}; \
+                             leave it unset for a session that serves until its frame stream ends"
+                        ))
+                    })?,
+            ),
+        },
+    };
+    let asker_env = settings
+        .asker_env
+        .as_ref()
+        .map_or(onejudge::ASKER_ENV, EnvName::as_str);
+    let asker = match &args.asker {
+        Some(value) => Some(Asker::named(value, "--asker")),
+        None => std::env::var_os(asker_env).map(|value| Asker::named(&value, asker_env)),
+    }
+    .transpose()
+    .map_err(|failure| invalid(failure.to_string()))?;
+    let about = match &settings.about_env {
+        None => None,
+        Some(env) => match std::env::var_os(env.as_str()) {
+            None => None,
+            Some(value) => Some(
+                value
+                    .to_str()
+                    .ok_or_else(|| {
+                        invalid(format!(
+                            "{env} is set to a value this host cannot read as text"
+                        ))
+                    })?
+                    .parse::<Address>()
+                    .map_err(|failure| invalid(format!("{env}: {failure}")))?,
+            ),
+        },
+    };
+    let run_env = settings.run_env.clone().unwrap_or_else(|| {
+        onejudge::RUN_ENV
+            .parse()
+            .expect("the linked onejudge run variable is a valid environment name")
+    });
+    let options = ServeOptions {
+        asker,
+        about,
+        session: session.map(Duration::from_secs),
+        reply_window: settings
+            .reply_window_seconds
+            .map_or(DEFAULT_REPLY_WINDOW, |seconds| {
+                Duration::from_secs(seconds.get())
+            }),
+    };
+    let input: Box<dyn std::io::BufRead + Send> = match &args.file {
+        Some(path) => Box::new(std::io::BufReader::new(std::fs::File::open(path).map_err(
+            |failure| invalid(format!("cannot read {}: {failure}", path.display())),
+        )?)),
+        None => Box::new(std::io::BufReader::new(std::io::stdin())),
+    };
+    let bus = resolved(config)?;
+    bus.queue(&queue).map_err(bus_refusal)?;
+    let mut codec = Onejudge::new()
+        .with_run_env(run_env.clone(), optional_env_text(run_env.as_str())?)
+        .with_alternate_home(optional_env_text(onejudge::CODEX_ALT_HOME_ENV)?);
+    match bus.serve(&queue, &mut codec, &options, input, out) {
+        Ok(Served::StreamEnded { .. }) => Ok(()),
+        Ok(Served::SessionOver { standing }) => {
+            eprintln!(
+                "onemessagebus: this serving session reached its {}-second bound with the frame \
+                 stream still open; {}",
+                session.unwrap_or_default(),
+                match standing {
+                    0 => "nothing it asked stands unanswered".to_owned(),
+                    standing => format!(
+                        "the {standing} question(s) it asked stay on {queue}, still counted and \
+                         still waiting for an answer"
+                    ),
+                }
+            );
+            Ok(())
+        }
+        Err(ServeError::Refused(why)) => Err(invalid(why)),
+        Err(ServeError::Failed(why)) => Err(failed(why)),
+        Err(ServeError::Bus(failure)) => Err(bus_refusal(failure)),
+        Err(failure @ (ServeError::Stream(_) | ServeError::Spawn(_) | ServeError::Write(_))) => {
+            Err(failed(failure.to_string()))
+        }
+    }
+}
+
+fn optional_env_text(name: &str) -> Result<Option<String>, Refusal> {
+    std::env::var_os(name)
+        .map(|value| {
+            value.into_string().map_err(|value| {
+                invalid(format!(
+                    "{name} is set to a value this host cannot read as text: {value:?}"
+                ))
+            })
+        })
+        .transpose()
+}
+
+fn validate(args: ValidateArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+    let queue = parse_queue(&args.queue)?;
+    let bus = open_bus(&args.bus)?;
+    // Refused before stdin is read, so a mistyped queue costs nothing.
+    bus.queue(&queue).map_err(bus_refusal)?;
+    let record = read_payload(args.file.as_deref())?;
+    let verdict = bus.validate(&queue, record).map_err(bus_refusal)?;
+    let judged = Validated {
+        queue: queue.clone(),
+        verdict,
+    };
+    emit_text(out, &json_line(&judged)?)?;
+    match judged.verdict.reason() {
+        None => Ok(()),
+        Some(reason) => Err(failed(match judged.verdict {
+            onemessagebus::Verdict::Unjudged { .. } => {
+                format!("{queue}: could not be judged, so it would not be sent: {reason}")
+            }
+            _ => format!("{queue}: refused, so it would not be sent: {reason}"),
+        })),
+    }
 }
 
 fn emit_text(out: &mut impl std::io::Write, text: &str) -> Result<(), Refusal> {

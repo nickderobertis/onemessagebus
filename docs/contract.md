@@ -130,8 +130,13 @@ One NDJSON line per event, byte-identical to what `oneagentgraph`, `onevcs` and
 ### Contract R — the schema registry
 
 - `onemessagebus::SchemaId` is `<namespace>.<name>@<version>` —
-  `agent.finding@1`, `agent.event-envelope@2` — parsed and refused at the
-  boundary (empty parts, a version that is not a positive integer).
+  `agent.finding@1`, `agent.event-envelope@2`, `agent.onejudge-frame.judge@6` —
+  parsed and refused at the boundary (empty parts, a version that is not a
+  positive integer). The namespace is the first dot-separated part alone; the
+  name is everything after it up to the `@`, one or more parts joined by single
+  dots, each part and the namespace a non-empty run of ASCII letters, digits, `-`
+  and `_`. Every id whose name has no dot parses exactly as it did before names
+  could carry one.
 - `trait Message: Serialize + DeserializeOwned + JsonSchema { const SCHEMA:
   SchemaId; }` — a Rust message type says which schema it is;
   `Registry::register::<M>()` records the type's generated JSON Schema under its
@@ -521,6 +526,191 @@ recorded here so the adopting nodes read them where they read the contract:
    `results` over the recorded run root to identical output with the written
    channel substituted, and compares `next` and `status` with this crate's answers.
 
+### Contract A — ask and answer
+
+- `Bus::ask::<Q: Message, R: Message>(&self, queue: &QueueName, question: Q,
+  options: AskOptions) -> Result<Pending<R>, BusError>` raises `question` on
+  `queue` and hands back the handle its answer arrives on, with `AskOptions {
+  blocking: bool, asker: Option<Asker>, about: Option<Address> }`. The question's
+  record carries a minted `Correlation`, and only a reply echoing it answers this
+  ask.
+- `Pending<R>` (its correlation, queue and position): `correlation(&self) ->
+  &Correlation`; `wait(&self, timeout: Duration) -> Answer<R>` blocks up to
+  `timeout`, and a timeout is `Answer::Timeout`, never an `R`; `rearm(&self) ->
+  Result<(), QueueError>` re-arms a listener for the same question after a lost
+  wait — the re-arm `ask-manager.sh` did by hand.
+- `enum Answer<R> { Reply(R), Timeout, Abandoned, Refused(Refusal) }`: a reply
+  echoing this ask's correlation; the wait elapsed and the question stands; the
+  listener was abandoned and nobody re-attended; the bus refused the question or
+  the reply (validator, capability, schema).
+- `Bus::reply(queue, correlation: Option<&Correlation>, reply)` binds a reply to
+  the pending ask whose correlation it echoes. A reply echoing a correlation
+  nothing pending holds is refused naming it — the misrouted-reply guard
+  `channel-reply.sh` implemented by reading `queue.json` — and a reply echoing
+  none binds to the queue's pending ask when exactly one is pending, and is
+  refused otherwise.
+- `Correlation` is minted by the bus (opaque, unique per run root), stamped on the
+  question's record as a reserved field, and required on the reply's; the CLI
+  prints it with the question and accepts `--correlation` on `reply`. **There is
+  no path that turns a timeout, a session bound or an abandoned listener into an
+  `R`**: the `{"completion": false, "reason": "the channel timed out waiting for a
+  verdict"}` ruling `channel serve` synthesized is exactly the shape this type
+  makes unrepresentable. `ask` names every answer on stdout, and only a reply
+  carries a `reply` member:
+
+<!-- fixture: asked -->
+```json
+[{"answer": "reply", "correlation": "c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b", "reply": {"id": 0, "reply": {"version": 3, "completion": true, "reason": "main"}, "at": 1789300000000, "correlation": "c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b"}},
+ {"answer": "timeout", "correlation": "c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b"},
+ {"answer": "abandoned", "correlation": "c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b"},
+ {"answer": "refused", "correlation": "c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b", "reason": "the reply echoing c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b on replies is refused: agent.queued-reply@1: at /reply/completion: \"yes\" is not of type \"boolean\""}]
+```
+
+- Routing by shape stays where `onepipeline` put it: a reply carrying both a
+  verdict and edits reaches both the pending ask and the command path; a
+  commands-only envelope reaches the command path alone and leaves the pending
+  ask standing. The bus expresses this as two queues and a `Router` the profile
+  declares for the planner-channel layout (`onemessagebus_agent::channel::ReplyRouter`);
+  the meaning of the edits stays the consumer's.
+
+### Contract V — validators
+
+- `trait Validator<M: Message>: Send + Sync { fn validate(&self, message: &M,
+  context: &ValidationContext) -> Verdict; }` and `enum Verdict { Pass, Refuse {
+  reason }, Unjudged { reason } }`; **an `Unjudged` verdict never passes**. On the
+  wire:
+
+<!-- fixture: verdicts -->
+```json
+[{"verdict": "pass"}, {"verdict": "refuse", "reason": "the criterion names no observable outcome"}, {"verdict": "unjudged", "reason": "the validator `review` exited 3, which is neither a pass (0) nor a refusal (1)"}]
+```
+
+- `Validators<M>` is ordered: every one runs, the first `Refuse` wins, and
+  otherwise an `Unjudged` makes the send `Unjudged`.
+- `CommandValidator { command, cache: Option<PassCache> }` is the external
+  validator: the message on stdin, exit 0 a pass, exit 1 a refusal with its
+  stderr as the reason, any other exit unjudged.
+- `PassCache { dir, bar_fingerprint }` records a `Pass` keyed on the content
+  digest and the bar fingerprint; only a pass is recorded, so a changed bar
+  re-runs the command.
+- `Queue::push` and `Bus::reply` — and `Bus::send` and `Bus::ask` — run the
+  queue's configured validators **before** anything is appended; a refused or
+  unjudged message is appended nowhere, and the caller gets the reason verbatim.
+  An offer the layout routes to several queues is judged whole: by the offered
+  queue's validators, and each routed record by its own queue's.
+- Configuration, extending `onemessagebus.yaml`:
+
+<!-- fixture: validators-config -->
+```yaml
+validators:
+  - {on: replies, when: {carries: commands}, kind: command, command: [uv, run, python, -m, orchestrator.plan_review, --envelope],
+     cache: {dir: .validator-passes, bar_fingerprint: [scripts/llmlint-fingerprint.sh]}}
+```
+
+  `on` names a queue, `when` an optional predicate over the envelope, `kind:
+  command` the external form; a Rust validator a linking consumer registers
+  (`Bus::with_validator`, `Queue::with_validators`) is not configurable from the
+  file, because it is code. Every key is refused by name when unknown.
+
+### Contract K — the onejudge codec behind `serve`
+
+`onemessagebus serve <queue> --codec onejudge [--config <path>]` is a member's
+judge-side command provider in the sense of `onejudge`'s `docs/protocol.md`: one
+request frame in on stdin, one response object out on stdout, per op. It replaces
+the pair `onepipeline channel serve` and `channel-serve.py` with **one** process
+that reads the frames `onejudge` writes.
+
+- `supervisor` → **liveness only**: any assistant content in the last turn means
+  the member took its turn — no surface is raised, and the response is a
+  non-completion the member can act on. A turn with **no** assistant content, or
+  whose last assistant message is a machine transcript proving the turn was lost
+  (JSON-RPC frames ending in an `error` frame or a failed `turn/completed`), is a
+  failure: one bounded, non-blocking `monitor-failed` surface naming the cause and
+  the identity is raised on the configured queue, and the process exits non-zero.
+  Nothing else in a turn's prose is ever raised — a monitor reports through the
+  `finding` op it issues itself.
+- `judge` → the criterion is raised as its own non-blocking ask on the queue; the
+  ruling that comes back is the score (`completion` → the boolean, the prose → the
+  reason); a timeout is the conservative `unsatisfied`, never a fabricated pass.
+- `assess` and a non-boolean `judge` → refused by name.
+- The run this member belongs to is read from the frame's `task` opening line
+  where `onejudge` writes one, and from the environment variable the codec's
+  configuration names (`run_env`) otherwise; what a frame is about is validated
+  against a predicate the consumer configures (`Onejudge::with_about_check`;
+  `onepipeline` supplies "the run's graph has it").
+- A reply that is a live edit (commands, no verdict) never reaches this process —
+  it is routed by Contract A — and if one arrives anyway (a regressed transport)
+  it is recognised, the member is answered with a non-completion naming the edits,
+  and nothing is re-applied.
+- The session bound and the asker are `serve`'s `--session-seconds` and
+  `--asker`, each also readable from a configured environment name; a session
+  reaching its bound leaves what it raised counted, and a stream ending marks it
+  abandoned — `onepipeline`'s `Served` distinction, kept.
+- Every fixed string this codec reads or writes — the frame ops, the response
+  fields, the transcript-frame shape — is declared once in
+  `onemessagebus_agent::codec::onejudge`. The frames are `Message` types
+  registered as `agent.onejudge-frame.<op>@6`, transcribed field for field from
+  `onejudge`'s `docs/protocol.md` and `crates/onejudge/src/command.rs` at 0.8.1,
+  exposed as `codec::onejudge::schemas() -> Vec<(SchemaId, Schema)>`, and covered
+  by `schema gen`:
+
+<!-- fixture: onejudge-frames -->
+```json
+{"protocol": 6, "transcribed from": "onejudge 0.8.1",
+ "frames": ["agent.onejudge-frame.respond@6", "agent.onejudge-frame.user@6", "agent.onejudge-frame.supervisor@6", "agent.onejudge-frame.judge@6", "agent.onejudge-frame.assess@6"],
+ "served": ["supervisor", "judge"]}
+```
+
+- The constants a host configures — the reply window, the queue, and the
+  session, asker, run and about variable names — are the `codecs.onejudge` block
+  of `onemessagebus.yaml`:
+
+<!-- fixture: codecs-config -->
+```yaml
+codecs:
+  onejudge: {queue: surfaces, reply_window_seconds: 3000, session_env: ONEPIPELINE_SERVE_SESSION_SECONDS,
+             asker_env: ONEPIPELINE_CHANNEL_ASKER, run_env: ONEPIPELINE_RUN_ID, about_env: ORCHESTRATOR_ASK_MANAGER_NODE}
+```
+
+**Departures, ruled by the manager over the ask seam** for this node's contracts
+(R, V, A, K and C), recorded here so the adopting nodes read them where they read
+the contract:
+
+1. Contract R's name is widened to dot-joined parts so the onejudge frame ids
+   are exactly `agent.onejudge-frame.<op>@6`; the namespace stays the first part
+   alone, and every id that parsed before parses to the same namespace, name and
+   version (held over every registered id and every recorded fixture).
+2. `when` takes `{carries: <field path>}` — the field is present and non-empty —
+   or any Contract Q predicate; `carries` is not a form of the predicate grammar.
+3. `Bus` stays the non-generic type over `Arc<dyn Transport>` Contract Q shipped
+   (Contract A wrote `impl<T: Transport> Bus<T>`): `ask`, `listen`, `reply`,
+   `reply_at` and `validate` are its methods.
+4. The ask types live in `onemessagebus::ask` and are re-exported at the root as
+   `Answer`, `Pending`, `AskOptions`, `Correlation`, `Address` and `AskRefusal` —
+   the last because the root's `Refusal` is Contract Q's allowlist refusal, which
+   keeps its name and meaning.
+5. `ask <queue> --correlation <c>` re-attaches to a question already asked
+   (`Bus::listen`), so abandonment and re-arm are reachable through the binary as
+   two processes: under the question's own `--asker` it re-arms it and waits;
+   under none or another it attends nothing, and a question left abandoned
+   answers `abandoned`. An `ask` process — or a listener that re-armed — ending
+   without its answer abandons its question, as `serve`'s stream end does;
+   `Pending::abandon()` is the library's explicit form, with no `Drop` side
+   effect. Abandonment is state on the queue, which `status` reads as nobody
+   waiting now, and an answer arriving for an abandoned question is still matched
+   to it.
+6. The `codecs` block is generic in the core, which names no agent word:
+   `Config.codecs` maps a codec name to one block (`queue`,
+   `reply_window_seconds`, `session_env`, `asker_env`, `run_env`, `about_env`),
+   every key refused by name when unknown at `Config::load`. The binary owns the
+   set of codec names it resolves and refuses one it does not link, naming those
+   it does; every onejudge fixed string lives in
+   `onemessagebus_agent::codec::onejudge`; and the serving loop is the core's
+   `Bus::serve` over a `Codec` trait that names no protocol.
+7. A `judge` score's prose is written as `reason`, the field `onejudge` 0.8.1's
+   `JudgePayload` reads. The host's `channel-serve.py` wrote `rationale`, which
+   `onejudge` drops, so every score it relayed arrived unexplained.
+
 ### Contract C — the command line and the capability manifest
 
 - `onemessagebus schema list` (no input; every registered id), `schema check
@@ -583,5 +773,5 @@ recorded here so the adopting nodes read them where they read the contract:
 
 <!-- fixture: verbs -->
 ```json
-["schema list", "schema check", "schema gen", "schema register", "events merge", "events emit", "deliver", "inbox carried", "send", "next", "reply", "subscribe", "status", "transports"]
+["schema list", "schema check", "schema gen", "schema register", "events merge", "events emit", "deliver", "inbox carried", "send", "next", "reply", "subscribe", "status", "transports", "validate", "ask", "serve"]
 ```

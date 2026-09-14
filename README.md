@@ -25,7 +25,10 @@ Three artifacts:
   a typed channel into a running process whose sender learns what the receiver
   did with each message — and `send`, `next`, `reply`, `subscribe` and `status`
   over durable queues kept on a transport a configuration names, with
-  `transports` listing the kinds a transport can be. The local transport keeps
+  `transports` listing the kinds a transport can be, `ask` raising a question and
+  waiting for the one reply that echoes its correlation, `validate` judging a
+  record by a queue's validators before anything is sent, and `serve` answering a
+  `onejudge` member's frames as its judge side. The local transport keeps
   the planner channel's files byte-compatible with `onepipeline`, and a
   distributed one is a plugin rather than a consumer change.
 

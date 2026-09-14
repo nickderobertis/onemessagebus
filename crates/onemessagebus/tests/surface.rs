@@ -208,7 +208,18 @@ fn the_rust_renderer_refuses_what_it_cannot_express_naming_where() {
         (
             json!({ "title": "Thing", "type": "string" }),
             "Thing",
-            "neither an object with properties nor a string enum",
+            "neither an object with properties, a string enum, nor a named scalar",
+        ),
+        (
+            // A named scalar carrying a keyword no newtype regenerates.
+            json!({
+                "title": "Thing",
+                "type": "object",
+                "properties": { "code": { "$ref": "#/$defs/Code" } },
+                "$defs": { "Code": { "type": "string", "pattern": "^[a-z]+$" } }
+            }),
+            "Code",
+            "nor a named scalar",
         ),
         (
             json!({ "title": "Thing", "enum": [1, 2] }),

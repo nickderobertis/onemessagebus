@@ -41,6 +41,11 @@ pub struct Rich {
     /// Defaulted, so not required.
     #[serde(default)]
     pub label: String,
+    /// A named scalar: a newtype over text.
+    pub code: Code,
+    /// An optional named scalar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<Code>,
 }
 
 /// A closed set of words.
@@ -60,3 +65,7 @@ pub struct Inner {
     /// Its id.
     pub id: String,
 }
+
+/// A code: text with a name of its own.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct Code(pub String);

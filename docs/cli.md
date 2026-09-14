@@ -2,9 +2,12 @@
 
 `onemessagebus` has the `schema` verbs, over the registry; the `events` verbs,
 over NDJSON streams; `deliver` and `inbox carried`, over the inbox
-(`docs/inbox.md`); and `send`, `next`, `reply`, `subscribe` and `status` over
+(`docs/inbox.md`); `send`, `next`, `reply`, `subscribe` and `status` over
 queues kept on a transport, with `transports` listing the transport kinds
-(`docs/queues.md`, `docs/transport.md`). Every verb is a capability in
+(`docs/queues.md`, `docs/transport.md`); `ask`, a question and the answer that
+echoes its correlation (`docs/ask.md`); `validate`, a record judged by a
+queue's validators (`docs/validators.md`); and `serve`, a member's judge side
+over a queue (`docs/codecs.md`). Every verb is a capability in
 `onemessagebus::CAPABILITIES`, which is what the SDK clients are generated from
 and what the clap tree is held to, so a verb or flag here exists nowhere the
 manifest does not say.
@@ -35,8 +38,8 @@ cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebu
   content for a person, never separate content.
 - **`--registry <dir>` / `ONEMESSAGEBUS_REGISTRY`** on every `schema` verb names
   a directory of registered documents added to the profile's own.
-- **The queue verbs read one configuration.** `send`, `next`, `reply`,
-  `subscribe` and `status` take `--config <path>` (or `ONEMESSAGEBUS_CONFIG`),
+- **The queue verbs read one configuration.** `send`, `next`, `ask`, `reply`,
+  `subscribe`, `status`, `validate` and `serve` take `--config <path>` (or `ONEMESSAGEBUS_CONFIG`),
   the `onemessagebus.yaml` naming the transport, the layout, added or overridden
   queues and narrowed authors, and `--transport-dir <dir>` (or
   `ONEMESSAGEBUS_TRANSPORT_DIR`), which replaces the file's `transport.dir` for
@@ -55,7 +58,15 @@ cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebu
 | `2` | Input the verb refuses: a malformed id or filter, an unknown profile, an unsupported language, an unregistered id, a usage error. |
 
 Refusals go to stderr as `onemessagebus: <what is wrong>`; stdout carries
-answers only.
+answers only. A usage error of `ask`, `reply` or `validate` is refused the same
+way, on one line naming the verb and its `--help`:
+
+```bash
+$ onemessagebus ask surfaces --timeout soon --transport-dir runs/r1/channel
+onemessagebus: ask: invalid value 'soon' for '--timeout <SECONDS>': invalid digit found in string; see `onemessagebus ask --help`
+```
+
+The other verbs print clap's usage report for a usage error, at the same exit.
 
 ## `schema`
 
@@ -206,8 +217,12 @@ against the queue's schema, and given an id where the queue gives one. A reply
 envelope sent to `replies` under `planner-channel` is routed by its halves, as
 `onepipeline` routes it: its commands to `commands`, its verdict to `replies`,
 so one send can print two lines. A queue the configuration does not declare is
-refused with exit 2 naming the queues it does, before stdin is read; a record
-its author may not write, or its schema refuses, exits 1 with nothing appended.
+refused with exit 2 naming the queues it does, before stdin is read, and a
+record that is not JSON, or not a JSON object on a queue whose records are
+objects — one that keeps events or numbers its records — is refused with exit 2
+with nothing appended; a record its author may not write, its schema refuses, or a validator refuses or cannot
+judge (`validate`) exits 1 with nothing appended anywhere, the validator's reason
+on stderr unaltered.
 
 ```bash
 $ echo '{"kind":"finding","message":"the base moved","source":"proposal","blocking":true}' | onemessagebus send surfaces --transport-dir runs/r1/channel
@@ -228,17 +243,54 @@ earlier listener of the same asker abandoned is taken back first. A blank
 `--asker`, or one that is not Unicode, is refused with exit 2. Nothing to claim
 exits 1. Text is `<queue> <position> <record>`.
 
-### `reply <queue> <position> [--file PATH] [--config PATH] [--transport-dir DIR]`
+### `ask <queue> [--blocking] [--asker WORD] [--about ADDRESS] [--timeout SECONDS] [--correlation CORRELATION] [--file PATH] [--config PATH] [--transport-dir DIR]`
 
-Answer the pending record of `<queue>` that was claimed at `<position>` — the
-position `next` printed — with the reply on stdin (or in `--file`). The reply is
-appended to the queue `<queue>` answers on (`replies` for `surfaces`), shaped
-and checked as `send` does, and the pending record is released. It prints
-`{answered, sent}`: the record answered, and every record appended. A reply that
-carries only commands answers nothing — `answered` is `null` — and the record
-stays pending. A position the pending record was not claimed at, or a queue with
-nothing pending, exits 1 with nothing appended; a queue that answers on no queue
-is refused with exit 2. Of replies racing for one pending record, one answers it;
+Ask the question on stdin (or in `--file`) on `<queue>` and wait for its answer
+(`docs/ask.md`). The question is stamped with a correlation the bus mints —
+printed on stderr as `correlation: <c>` the moment the question is on the queue —
+and with `--blocking`, `--asker` and `--about`, then shaped, checked and judged
+as `send` does. The answer is one line of JSON on stdout: `{"answer": "reply",
+"correlation", "reply"}` exits 0, carrying the reply record that echoes the
+correlation; `{"answer": "timeout", "correlation"}` when `--timeout` seconds pass
+without one, `{"answer": "abandoned", "correlation"}` when the question is
+abandoned and nobody re-attended it, and `{"answer": "refused", "reason"}` when
+the bus refused the question or the reply, each exit 1 with the reason on stderr.
+Only a reply carries a `reply` member. Without `--timeout` it waits for as long as
+it runs. An `ask` that ends without its answer abandons its question — kept, and
+still answerable — for a later listener of its asker to take back.
+
+With `--correlation` it raises nothing and listens again for the question that
+correlation minted: under the question's own `--asker` it takes the question back
+and waits for its reply; under no asker or another, it attends nothing, and a
+question left abandoned answers `abandoned`. A question that is not JSON or not a JSON object,
+a queue that keeps no events or answers on no queue, a blank `--asker`, and a
+malformed or over-long `--about` or `--correlation` are refused with exit 2:
+nothing is raised, nothing is printed on stdout, and the problem is named on
+stderr.
+
+```bash
+$ echo '{"kind":"planner-question","message":"which base?","source":"proposal"}' | onemessagebus ask surfaces --blocking --asker worker-1 --timeout 3000 --transport-dir runs/r1/channel
+{"answer":"reply","correlation":"c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b","reply":{"id":0,"reply":{"version":3,"completion":true,"reason":"main"},"at":1789300000000,"correlation":"c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b"}}
+```
+
+### `reply <queue> [<position>] [--correlation CORRELATION] [--file PATH] [--config PATH] [--transport-dir DIR]`
+
+Answer a pending ask of `<queue>` with the reply on stdin (or in `--file`), bound
+one of three ways (`docs/ask.md`): `--correlation` names the ask whose
+correlation `ask` printed; `<position>` names the record claimed there, as `next`
+printed it; with neither, the reply binds to the queue's one pending ask. The
+reply is appended to the queue `<queue>` answers on (`replies` for `surfaces`),
+shaped, checked and judged as `send` does and stamped with the ask's
+correlation, and a question held pending is released. It prints `{answered,
+correlation, sent}`: the question answered, its correlation, and every record
+appended. A reply that carries only commands answers nothing — `answered` is
+`null` — and the ask stays pending. A correlation nothing pending holds (unknown,
+or already answered) exits 1 naming it, as do a reply naming neither when no ask
+or more than one is pending and a position the pending record was not claimed at,
+each with nothing appended. `--correlation` beside `<position>` is a usage error,
+and a reply that is not JSON or not a JSON object, a malformed or over-long
+correlation, or a queue that answers on no queue, is refused with exit 2, before
+the reply is bound and with nothing appended. Of replies racing for one pending record by position, one answers it;
 each other is appended, answers nothing, and exits 1 saying another reply
 answered the record first.
 
@@ -271,6 +323,55 @@ wrapper otherwise takes from `queue.json` by hand. Text is one line per queue,
 
 ```bash
 $ onemessagebus status surfaces --format text --config onemessagebus.yaml
+```
+
+### `validate <queue> [--file PATH] [--config PATH] [--transport-dir DIR]`
+
+Judge the record on stdin (or in `--file`) exactly as `send` would judge it, and
+append nothing: by the validators the configuration declares for `<queue>`, and
+each record the layout routes to another queue by that queue's
+(`docs/validators.md`). It prints `{queue, verdict, reason}` — `verdict` is
+`pass`, `refuse` or `unjudged`, and `reason`, beside a verdict that is not a
+pass, is the validator's own words, unaltered — and exits 0 for a pass and 1 for
+either other verdict, saying the reason on stderr as well. An unjudged record is
+never a pass. A queue the configuration does not declare is refused with exit 2
+before stdin is read, and a record that is not JSON, or not a JSON object on a
+queue whose records are objects, with exit 2 before any validator judges it; a
+queue with no validators passes every record. A pass a
+validator's cache records is recorded here as it would be on a send.
+
+```bash
+$ onemessagebus validate replies --file reply.json --config onemessagebus.yaml
+{"queue":"replies","verdict":"refuse","reason":"an `add` states task prose the bar refuses\n"}
+```
+
+### `serve <queue> --codec NAME [--session-seconds SECONDS] [--asker WORD] [--file PATH] [--config PATH] [--transport-dir DIR]`
+
+Serve a member's judge side (`docs/codecs.md`): read the frames of the `--codec`
+protocol one line at a time from stdin (or `--file`), and write each frame's
+response as one line of JSON on stdout, raising and asking on `<queue>`.
+`onejudge` is the codec this build links; any other is refused with exit 2,
+naming the ones it links. A `supervisor` frame whose turn produced content is
+answered with a non-completion and raises nothing; one whose turn was lost raises
+one bounded, non-blocking `monitor-failed` surface naming the cause and the
+identity, and exits 1. A `judge` frame raises its criterion as a non-blocking
+question and answers the ruling as the score, `{"value", "reason"}` — or, with no
+ruling within the codec's reply window, `{"value": false, "reason"}`, never a
+pass. `assess`, a numeric `judge` and every other operation are refused with exit
+2, naming it.
+
+With `--session-seconds` (or the codec's session variable) the session stops of
+its own accord after that many seconds with exit 0, leaving what it asked counted
+and saying so on stderr; when the frame stream ends instead, what it asked and
+nobody answered is marked abandoned. `--asker` (or the codec's asker variable)
+names who the session listens for. The configuration's `codecs.onejudge` block
+names the reply window, the queue and the variables read; a codec — by
+`--codec` or as a key of `codecs` — this build does not link, a session bound, an asker or a queue it cannot take, and a frame naming no run, are refused
+with exit 2.
+
+```bash
+$ onemessagebus serve surfaces --codec onejudge --config onemessagebus.yaml < frame.json
+{"completion":false,"message":"Your turn was taken and no planner surface was raised for it: …","reason":"the monitor took its turn; a report reaches the planner as a finding"}
 ```
 
 ## `transports`

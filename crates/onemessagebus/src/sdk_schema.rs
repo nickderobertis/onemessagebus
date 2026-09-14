@@ -9,13 +9,16 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::num::NonZeroU64;
 
 use schemars::{schema_for, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::ask::{Address, Correlation};
 use crate::capability::{Capability, CAPABILITIES};
 use crate::carry::CarriedEntry;
+use crate::codec::CodecName;
 use crate::config::Config;
 use crate::envelope::Envelope;
 use crate::filter::{Filter, Matcher};
@@ -23,6 +26,7 @@ use crate::kinds::KindEntry;
 use crate::queue::{Asker, QueueStatus};
 use crate::schema::{Registry, SchemaId};
 use crate::transport::{ConsumerName, Position, QueueName};
+use crate::validate::Verdict;
 use crate::vocabulary::{Reserved, Vocabulary};
 
 /// How a reading verb renders what it read.
@@ -234,13 +238,19 @@ pub struct NextOptions {
 }
 
 /// The options of `reply`.
+// llmlint: ignore[invalid_states_unrepresentable] This is the language-neutral SDK wire object for a CLI invocation: preserving `position` and `correlation` as independently omitted fields keeps the generated clients' object shape stable, while clap and every SDK executor refuse both together before calling the bus. The library operation itself takes one `Option<&Correlation>` beside its distinct position-based queue operation, so this transport description is not an internal state retained after validation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReplyOptions {
-    /// The queue whose pending record is answered.
+    /// The queue whose pending ask is answered.
     pub queue: QueueName,
-    /// Where that record was claimed, as `next` printed it.
-    pub position: Position,
+    /// Where the pending record was claimed, as `next` printed it; absent, the
+    /// ask `correlation` names, or the one pending.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<Position>,
+    /// The correlation of the ask the reply answers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation: Option<Correlation>,
     /// The reply file; stdin when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
@@ -303,6 +313,127 @@ pub struct TransportsOptions {
     pub format: Option<Format>,
 }
 
+/// The options of `validate`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ValidateOptions {
+    /// The queue whose validators judge the record.
+    pub queue: QueueName,
+    /// The record file; stdin when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// The configuration file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
+    /// The transport directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport_dir: Option<String>,
+}
+
+/// The options of `ask`.
+// llmlint: ignore[invalid_states_unrepresentable] This is the language-neutral SDK wire object, where each named field must remain a top-level capability binding. Clap and every generated SDK executor validate that `correlation` is not combined with `blocking`, `about`, or `file` before an invocation reaches `Bus::ask`; encoding the modes as a nested Rust enum would change those shared option keys and cease to describe the CLI boundary this schema exists to generate.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "AskOptions")]
+pub struct AskVerbOptions {
+    /// The queue to ask on.
+    pub queue: QueueName,
+    /// Whether the asker waits on the answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocking: Option<bool>,
+    /// Who asks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asker: Option<Asker>,
+    /// What the question is about.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub about: Option<Address>,
+    /// Seconds to wait for the answer; no bound when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+    /// Listen again for the question this correlation minted, raising nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation: Option<Correlation>,
+    /// The question file; stdin when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// The configuration file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
+    /// The transport directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport_dir: Option<String>,
+}
+
+/// The options of `serve`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schemars(rename = "ServeOptions")]
+pub struct ServeVerbOptions {
+    /// The queue the codec raises and asks on.
+    pub queue: QueueName,
+    /// The codec the frames are read with.
+    pub codec: CodecName,
+    /// Seconds the session serves before it stops of its own accord.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_seconds: Option<NonZeroU64>,
+    /// Who the session listens for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asker: Option<Asker>,
+    /// A file of frames, one per line; stdin when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// The configuration file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
+    /// The transport directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport_dir: Option<String>,
+}
+
+/// What `ask` answered. Every answer names itself in `answer`, and only a
+/// reply carries a `reply`: a caller reading the reply member of a timeout, an
+/// abandoned listener or a refusal reads nothing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "answer", rename_all = "lowercase")]
+pub enum Asked {
+    /// A reply record echoing the question's correlation.
+    Reply {
+        /// The question's correlation.
+        correlation: Correlation,
+        /// The reply record, as the answer queue holds it.
+        reply: Value,
+    },
+    /// The wait elapsed; the question stands.
+    Timeout {
+        /// The question's correlation.
+        correlation: Correlation,
+    },
+    /// The question was abandoned, and nobody re-attended it.
+    Abandoned {
+        /// The question's correlation.
+        correlation: Correlation,
+    },
+    /// The bus refused the question, or the reply to it.
+    Refused {
+        /// The question's correlation, when the question was asked.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        correlation: Option<Correlation>,
+        /// Why.
+        reason: String,
+    },
+}
+
+/// What `validate` judged: the queue, and the verdict its validators reached.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Validated {
+    /// The queue the record was judged for.
+    pub queue: QueueName,
+    /// The verdict: `pass`, `refuse` or `unjudged`, with the reason beside a
+    /// verdict that is not a pass.
+    #[serde(flatten)]
+    pub verdict: Verdict,
+}
+
 /// One record `send` or `reply` appended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -340,6 +471,9 @@ pub struct Replied {
     /// The pending record answered, or `null` when the reply carried nothing
     /// for its answer queue.
     pub answered: Option<ClaimedRecord>,
+    /// The correlation of the ask the reply bound to, when it carries one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation: Option<Correlation>,
     /// Every record appended, in order.
     pub sent: Vec<Sent>,
 }
@@ -470,6 +604,13 @@ pub struct Bundle {
     pub queue_statuses: Schema,
     /// The output of `transports`: every kind this build can open.
     pub transport_kinds: Schema,
+    /// The output of `validate`: the verdict a queue's validators reached.
+    pub validated: Schema,
+    /// The output of `ask`: the answer, named.
+    pub asked: Schema,
+    /// One line of `serve`: the response to one frame, in the protocol of the
+    /// codec served.
+    pub codec_response: Schema,
     /// The option contracts, by the root each capability names.
     pub options: BTreeMap<&'static str, Schema>,
     /// Every message the registry holds, by id.
@@ -497,6 +638,9 @@ pub fn bundle<V: Vocabulary>(registry: &Registry) -> Bundle {
     options.insert("subscribe_options", schema_for!(SubscribeOptions));
     options.insert("status_options", schema_for!(StatusOptions));
     options.insert("transports_options", schema_for!(TransportsOptions));
+    options.insert("validate_options", schema_for!(ValidateOptions));
+    options.insert("ask_options", schema_for!(AskVerbOptions));
+    options.insert("serve_options", schema_for!(ServeVerbOptions));
     Bundle {
         capabilities: CAPABILITIES,
         vocabulary: VocabularyManifest {
@@ -523,6 +667,13 @@ pub fn bundle<V: Vocabulary>(registry: &Registry) -> Bundle {
         log_record: schema_for!(LogRecord),
         queue_statuses: schema_for!(Vec<QueueStatus>),
         transport_kinds: schema_for!(Vec<KindEntry>),
+        validated: schema_for!(Validated),
+        asked: schema_for!(Asked),
+        codec_response: schemars::json_schema!({
+            "title": "CodecResponse",
+            "description": "The response to one frame, in the protocol of the codec served: one JSON object per line.",
+            "type": "object"
+        }),
         options,
         messages: registry
             .ids()
@@ -820,6 +971,14 @@ mod rust {
             let _ = writeln!(out, "}}");
             return Ok(());
         }
+        if let Some(inner) = scalar_newtype(id, name, schema)? {
+            let _ = writeln!(
+                out,
+                "#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]"
+            );
+            let _ = writeln!(out, "pub struct {ident}(pub {inner});");
+            return Ok(());
+        }
         let properties = schema
             .get("properties")
             .and_then(Value::as_object)
@@ -827,7 +986,7 @@ mod rust {
                 unrenderable(
                     id,
                     name,
-                    "a schema that is neither an object with properties nor a string enum",
+                    "a schema that is neither an object with properties, a string enum, nor a named scalar",
                 )
             })?;
         let required: Vec<&str> = schema
@@ -896,6 +1055,44 @@ mod rust {
         }
         let _ = writeln!(out, "}}");
         Ok(())
+    }
+
+    /// The type a named scalar is a newtype over: a schema that is one scalar
+    /// `type` beside nothing a newtype would not regenerate — its description,
+    /// an integer's format, and the zero minimum schemars writes beside an
+    /// unsigned one. `None` for any other schema, which is left to be refused
+    /// by name: a pattern or a length on a scalar is a keyword no newtype
+    /// declaration regenerates.
+    fn scalar_newtype(
+        id: &SchemaId,
+        at: &str,
+        schema: &Value,
+    ) -> Result<Option<String>, GenerateError> {
+        let Some(object) = schema.as_object() else {
+            return Ok(None);
+        };
+        let scalar = matches!(
+            object.get("type").and_then(Value::as_str),
+            Some("string" | "boolean" | "integer" | "number")
+        );
+        let unsigned = object
+            .get("format")
+            .and_then(Value::as_str)
+            .is_some_and(|format| format.starts_with("uint"));
+        let regenerates = object.iter().all(|(key, value)| match key.as_str() {
+            "type" | "description" | "format" => true,
+            "minimum" => unsigned && value.as_u64() == Some(0),
+            _ => false,
+        });
+        if !scalar || !regenerates {
+            return Ok(None);
+        }
+        let inner: Map<String, Value> = object
+            .iter()
+            .filter(|(key, _)| key.as_str() != "description")
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        type_of(id, at, &Value::Object(inner)).map(Some)
     }
 
     /// The words of a closed string set, each with its description and its

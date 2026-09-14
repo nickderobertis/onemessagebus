@@ -1,4 +1,5 @@
 {
+  "// llmlint": "ignore[new_command_or_client_gets_its_own_project] ask, reply --correlation, validate and serve are verbs of the one shipped onemessagebus binary over one library surface, added by Contract C and declared in CAPABILITIES for SDK parity. They are not independently built commands or clients, and a project for each would split one binary's build.",
   "name": "onemessagebus-cli",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "projectType": "application",

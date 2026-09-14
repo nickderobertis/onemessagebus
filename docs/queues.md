@@ -55,7 +55,9 @@ which are declaration keys rather than policy fields (a manager's ruling):
 
 An event queue owns four fields of its records and names nothing else in them:
 `id`, allocated one past the highest id the log has queued; `blocking`;
-`abandoned`, omitted while false; and `asker`, who raised it. Every other field
+`abandoned`, omitted while false; and `asker`, who raised it. A question asked
+through `Bus::ask` carries two more the bus stamps: `correlation`, which the reply
+answering it echoes, and `about`, what it is about (`docs/ask.md`). Every other field
 is the consumer's, and a typed queue (`Queue<M>`) writes each record in `M`'s
 field order. A record is written in the field order it was given, and a fold of
 the log hands it back in that order.
@@ -212,6 +214,12 @@ Reading it is two steps, and the types keep them apart:
    an `answers` naming no declared queue (`queues.<queue>.<key>`); and a transport
    its kind refuses. What it answers, a `Bus`, is the one type that opens a queue
    or authors a record.
+
+Two more blocks sit beside these: `validators`, what a queue judges a message by
+before anything is appended (`docs/validators.md`), and `codecs`, what a host
+configures for each codec `serve` runs (`docs/codecs.md`). Each refuses an
+unknown key by name at `Config::load`, and `validators[<index>].on` naming no
+declared queue is refused by `Config::resolve`.
 
 The binary reads the file from `--config <path>` or `ONEMESSAGEBUS_CONFIG`, and
 `--transport-dir <dir>` or `ONEMESSAGEBUS_TRANSPORT_DIR` replaces `transport.dir`

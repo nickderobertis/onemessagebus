@@ -97,7 +97,7 @@ impl Addressee {
 }
 
 /// Which party of the conversation a delivery reached.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Party {
     /// The agent under test.
@@ -357,7 +357,7 @@ pub enum NoteRefused {
 }
 
 /// One note as it was handed to a party, with the party it reached.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DeliveredNote {
     /// The note itself, addressee included.
     pub note: Note,

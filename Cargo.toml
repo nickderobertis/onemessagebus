@@ -50,6 +50,13 @@ time = { version = "0.3", features = ["formatting", "macros"] }
 # A filter kept in a file beside a plan is YAML, of which the inline JSON form
 # is a subset. serde_norway is the maintained fork of the archived serde_yaml.
 serde_norway = "0.9"
+# A validator's pass record is keyed on the digest of the message it passed, and
+# a key an adversary can collide is a bar anyone can walk past: FNV, which the
+# projection's seal uses against accidents, is not that. Already in the lock.
+sha2 = "0.10"
+# A correlation is minted from the operating system's randomness, so a reply
+# written for one question cannot be mistaken for another's. Already in the lock.
+getrandom = "0.3"
 
 assert_cmd = "2"
 predicates = "3"

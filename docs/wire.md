@@ -111,7 +111,9 @@ another; the redaction walks every string in the payload, however nested.
 
 ## The registry
 
-A schema id is `<namespace>.<name>@<version>`: `agent.event-envelope@2`. A
+A schema id is `<namespace>.<name>@<version>`: `agent.event-envelope@2`. The
+namespace ends at the first dot, and the name may itself be dot-joined parts —
+`agent.onejudge-frame.judge@6` is the name `onejudge-frame.judge` in `agent`. A
 *family* is the id without its version. The registry records a JSON Schema
 under an id — a Rust type's generated one through `register::<M>()`, or a
 document handed in through `register_schema` — and refuses a second, different
@@ -133,8 +135,12 @@ owns each command's meaning), `agent.artifact-ref@1`, `agent.event-filter@1`,
 `agent.labels@1`, and `agent.note@1` — the agent note contract's message, the
 first family carried over the inbox. The planner channel's four record types —
 `agent.planner-surface@1`, `agent.queued-reply@1`, `agent.queued-commands@1` and
-`agent.command-outcome@1`, stated in docs/queues.md — and the transport plugin
-protocol's three shapes — `onemessagebus.transport-hello@1`,
+`agent.command-outcome@1`, stated in docs/queues.md — `onejudge`'s five
+command-provider frames — `agent.onejudge-frame.respond@6`,
+`agent.onejudge-frame.user@6`, `agent.onejudge-frame.supervisor@6`,
+`agent.onejudge-frame.judge@6` and `agent.onejudge-frame.assess@6`, stated in
+docs/codecs.md — and the transport plugin protocol's three shapes —
+`onemessagebus.transport-hello@1`,
 `onemessagebus.transport-request@1` and `onemessagebus.transport-reply@1`, stated
 in docs/transport.md — are registered beside them, so a client in another
 language validates against the documents this build reads and writes.
