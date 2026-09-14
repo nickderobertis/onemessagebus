@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nickderobertis/onemessagebus/compare/v0.3.0...v0.4.0) - 2026-09-14
+
+### Added
+
+- *(ask)* correlated asks with typed answers, pre-send validators, and the onejudge codec behind serve ([#30](https://github.com/nickderobertis/onemessagebus/pull/30))
+
 ## [0.3.0](https://github.com/nickderobertis/onemessagebus/compare/v0.2.0...v0.3.0) - 2026-09-13
 
 ### Added
