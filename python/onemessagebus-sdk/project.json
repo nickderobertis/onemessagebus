@@ -1,0 +1,41 @@
+{
+  "name": "onemessagebus-python-sdk",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "python/onemessagebus-sdk/src",
+  "tags": ["scope:sdk", "lang:python", "type:packaging"],
+  "implicitDependencies": ["onemessagebus-cli"],
+  "targets": {
+    "bootstrap": {
+      "command": "bash python/onemessagebus-sdk/scripts/run true"
+    },
+    "format": {
+      "command": "bash python/onemessagebus-sdk/scripts/run ruff format ."
+    },
+    "format-check": {
+      "command": "bash python/onemessagebus-sdk/scripts/run ruff format --check --quiet .",
+      "inputs": ["default"]
+    },
+    "lint": {
+      "command": "bash python/onemessagebus-sdk/scripts/run sh -c 'ruff check --quiet . && ty check --quiet && python scripts/generate.py --check'",
+      "inputs": ["default", "{workspaceRoot}/Cargo.toml", "{workspaceRoot}/Cargo.lock", "{workspaceRoot}/crates/**/*"]
+    },
+    "test": {
+      "command": "bash python/onemessagebus-sdk/scripts/run sh -c 'coverage erase && coverage run -m pytest -q -p no:cacheprovider && coverage report'",
+      "dependsOn": [{ "projects": ["onemessagebus-cli"], "target": "build" }],
+      "inputs": ["default", "{workspaceRoot}/Cargo.toml", "{workspaceRoot}/Cargo.lock", "{workspaceRoot}/crates/**/*"],
+      "outputs": [],
+      "cache": false
+    },
+    "build": {
+      "command": "bash python/onemessagebus-sdk/scripts/build",
+      "inputs": ["default", "{workspaceRoot}/Cargo.toml"],
+      "outputs": ["{projectRoot}/dist"]
+    },
+    "doc": { "executor": "nx:noop" },
+    "check": {
+      "executor": "nx:noop",
+      "dependsOn": ["format-check", "lint", "test", "build", "doc"]
+    }
+  }
+}

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Build the publishable package and prove it installs: pack a copy with every
+# placeholder version stamped from Cargo.toml, build its sdist and wheel with uv
+# into dist/packages, install the wheel into a fresh virtualenv beside pydantic
+# (the onemessagebus-cli pin is the release's, installed by a user's resolver), and
+# import it. Quiet on success but for one line.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$here"
+unset VIRTUAL_ENV
+packed="$(uv run --quiet --no-project python scripts/pack.py | tail -n1)"
+rm -rf "$here/dist/packages" "$here/dist/smoke-venv"
+uv build --quiet --out-dir "$here/dist/packages" "$packed"
+wheel="$(ls "$here"/dist/packages/onemessagebus-*.whl)"
+uv venv --quiet "$here/dist/smoke-venv"
+uv pip install --quiet --python "$here/dist/smoke-venv/bin/python" --no-deps "$wheel"
+uv pip install --quiet --python "$here/dist/smoke-venv/bin/python" "pydantic>=2.7,<3"
+"$here/dist/smoke-venv/bin/python" - <<'EOF'
+import onemessagebus
+from onemessagebus import models
+from onemessagebus._manifest import CAPABILITIES
+
+assert onemessagebus.__version__ == onemessagebus.CLI_VERSION != "0.0.0.dev0", onemessagebus.__version__
+assert len(CAPABILITIES) == 17, "the wheel carries the capability manifest"
+assert models.PlannerSurface.__name__ == "Surface"
+print(f"build: onemessagebus {onemessagebus.__version__} wheel installs and imports")
+EOF
