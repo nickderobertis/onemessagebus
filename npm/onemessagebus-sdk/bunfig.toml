@@ -1,0 +1,8 @@
+[test]
+coverage = true
+coverageThreshold = 0.95
+# The generated contract is data, not logic; the tests are the measure, not its subject.
+# The repository's own scripts a test imports (the parity gate) are not this package's source.
+coveragePathIgnorePatterns = ["src/generated/**", "test/**", "scripts/**", "../../scripts/**", "**/scripts/*.mjs"]
+# Journeys spawn real processes and wait on real timeouts.
+timeout = 60000
