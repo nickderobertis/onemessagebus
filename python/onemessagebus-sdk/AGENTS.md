@@ -1,9 +1,8 @@
 # onemessagebus (the Python SDK)
 
-A typed async client over the `onemessagebus` binary; `docs/sdk.md` is its
-consumer story. What touches the wire is generated, and the hand-written code is
-the transports, the typed errors, the `Message` base, the async iterator and the
-version check.
+A typed async client over the `onemessagebus` binary. What touches the wire is
+generated, and the hand-written code is the transports, the typed errors, the
+`Message` base, the async iterator and the version check.
 
 - **`_generated/` and `models.py` are the generator's.** `scripts/generate.py`
   renders them from the sdk_bundle example; `just python-sdk-generate` rewrites

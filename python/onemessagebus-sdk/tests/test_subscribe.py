@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from typing import Any
 
 import pytest
 
@@ -62,7 +61,7 @@ async def test_closing_a_subscription_early_stops_it(client: Client) -> None:
         async for record in records:
             assert record.record["message"] == "m"
             break
-    transport: Any = client._transport
+    transport = client._transport
     if isinstance(transport, CliTransport):
         assert not transport._running, "the subscribe process was ended"
     else:

@@ -173,16 +173,17 @@ async def test_every_bound_option_renders_its_flag_or_positional(method: str) ->
     flags = argv[: argv.index("--")] if "--" in argv else argv
     for binding in entry.bindings:
         value = values[snake_case(binding.option)]
-        if binding.kind == "positional":
-            expected = [str(item) for item in value] if isinstance(value, list) else [str(value)]
-            assert all(word in positionals for word in expected), (binding, argv)
-        elif binding.kind == "switch":
-            assert binding.flag in flags, (binding, argv)
-        elif binding.kind == "key-value":
-            for key, item in value.items():
-                assert adjacent(flags, binding.flag, f"{key}={item}"), (binding, argv)
-        else:
-            assert adjacent(flags, binding.flag, word(value)), (binding, argv)
+        match binding.kind:
+            case "positional":
+                expected = [str(v) for v in value] if isinstance(value, list) else [str(value)]
+                assert all(word in positionals for word in expected), (binding, argv)
+            case "switch":
+                assert binding.flag in flags, (binding, argv)
+            case "key-value":
+                for key, item in value.items():
+                    assert adjacent(flags, binding.flag, f"{key}={item}"), (binding, argv)
+            case "value" | "repeated":
+                assert adjacent(flags, binding.flag, word(value)), (binding, argv)
     if entry.stdin:
         assert recorded.value.payload is not None
 
