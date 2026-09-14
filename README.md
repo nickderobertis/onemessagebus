@@ -69,6 +69,18 @@ assert_eq!(envelope.seq, 1);
 Every wire value is a Rust type with `serde` and `schemars` derivations, and
 the public API is stated in [`docs/contract.md`](docs/contract.md).
 
+## Use the SDKs
+
+```bash
+pip install onemessagebus              # Python: import onemessagebus
+npm install @onemessagebus/sdk         # TypeScript
+```
+
+Both are typed clients over the binary — one method per verb, message types
+declared as a Pydantic model or with Zod's `defineMessage`, subscriptions over a
+resident core — so a message defined in Python is validated by the Rust core and
+read typed in TypeScript. [`docs/sdk.md`](docs/sdk.md) is the whole story.
+
 ## Develop
 
 ```bash

@@ -1,0 +1,676 @@
+[
+  {
+    "method": "schemaList",
+    "verb": [
+      "schema",
+      "list"
+    ],
+    "options": "schema_list_options",
+    "output": "schema_list",
+    "stdout": "json",
+    "stdin": false,
+    "library_entry": "onemessagebus::Registry::ids",
+    "bindings": [
+      {
+        "option": "registry",
+        "flag": "--registry",
+        "kind": "value"
+      },
+      {
+        "option": "format",
+        "flag": "--format",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "schemaCheck",
+    "verb": [
+      "schema",
+      "check"
+    ],
+    "options": "schema_check_options",
+    "output": null,
+    "stdout": "text",
+    "stdin": true,
+    "library_entry": "onemessagebus::Registry::check",
+    "bindings": [
+      {
+        "option": "id",
+        "flag": "",
+        "kind": "positional"
+      },
+      {
+        "option": "file",
+        "flag": "--file",
+        "kind": "value"
+      },
+      {
+        "option": "registry",
+        "flag": "--registry",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "schemaGen",
+    "verb": [
+      "schema",
+      "gen"
+    ],
+    "options": "schema_gen_options",
+    "output": null,
+    "stdout": "text",
+    "stdin": false,
+    "library_entry": "onemessagebus::sdk_schema::generate",
+    "bindings": [
+      {
+        "option": "id",
+        "flag": "",
+        "kind": "positional"
+      },
+      {
+        "option": "lang",
+        "flag": "--lang",
+        "kind": "value"
+      },
+      {
+        "option": "registry",
+        "flag": "--registry",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "schemaRegister",
+    "verb": [
+      "schema",
+      "register"
+    ],
+    "options": "schema_register_options",
+    "output": null,
+    "stdout": "text",
+    "stdin": false,
+    "library_entry": "onemessagebus::Registry::register_schema",
+    "bindings": [
+      {
+        "option": "id",
+        "flag": "",
+        "kind": "positional"
+      },
+      {
+        "option": "file",
+        "flag": "--file",
+        "kind": "value"
+      },
+      {
+        "option": "registry",
+        "flag": "--registry",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "eventsMerge",
+    "verb": [
+      "events",
+      "merge"
+    ],
+    "options": "events_merge_options",
+    "output": "envelope",
+    "stdout": "jsonl",
+    "stdin": false,
+    "library_entry": "onemessagebus::Merge::open",
+    "bindings": [
+      {
+        "option": "files",
+        "flag": "",
+        "kind": "positional"
+      },
+      {
+        "option": "filter",
+        "flag": "--filter",
+        "kind": "value"
+      },
+      {
+        "option": "profile",
+        "flag": "--profile",
+        "kind": "value"
+      },
+      {
+        "option": "format",
+        "flag": "--format",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "eventsEmit",
+    "verb": [
+      "events",
+      "emit"
+    ],
+    "options": "events_emit_options",
+    "output": "envelope",
+    "stdout": "json",
+    "stdin": true,
+    "library_entry": "onemessagebus::Emitter::shared",
+    "bindings": [
+      {
+        "option": "path",
+        "flag": "",
+        "kind": "positional"
+      },
+      {
+        "option": "kind",
+        "flag": "--kind",
+        "kind": "value"
+      },
+      {
+        "option": "stream",
+        "flag": "--stream",
+        "kind": "value"
+      },
+      {
+        "option": "source",
+        "flag": "--source",
+        "kind": "value"
+      },
+      {
+        "option": "profile",
+        "flag": "--profile",
+        "kind": "value"
+      },
+      {
+        "option": "labels",
+        "flag": "--label",
+        "kind": "key-value"
+      },
+      {
+        "option": "file",
+        "flag": "--file",
+        "kind": "value"
+      },
+      {
+        "option": "format",
+        "flag": "--format",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "deliver",
+    "verb": [
+      "deliver"
+    ],
+    "options": "deliver_options",
+    "output": "disposition",
+    "stdout": "json",
+    "stdin": true,
+    "library_entry": "onemessagebus::Spool::deliver",
+    "bindings": [
+      {
+        "option": "address",
+        "flag": "",
+        "kind": "positional"
+      },
+      {
+        "option": "message",
+        "flag": "--message",
+        "kind": "value"
+      },
+      {
+        "option": "file",
+        "flag": "--file",
+        "kind": "value"
+      },
+      {
+        "option": "wait",
+        "flag": "--wait",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "inboxCarried",
+    "verb": [
+      "inbox",
+      "carried"
+    ],
+    "options": "inbox_carried_options",
+    "output": "carried_entry",
+    "stdout": "jsonl",
+    "stdin": false,
+    "library_entry": "onemessagebus::Carry::read",
+    "bindings": [
+      {
+        "option": "store",
+        "flag": "",
+        "kind": "positional"
+      },
+      {
+        "option": "format",
+        "flag": "--format",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "send",
+    "verb": [
+      "send"
+    ],
+    "options": "send_options",
+    "output": "sent",
+    "stdout": "jsonl",
+    "stdin": true,
+    "library_entry": "onemessagebus::Bus::send",
+    "bindings": [
+      {
+        "option": "queue",
+        "flag": "",
+        "kind": "positional"
+      },
+      {
+        "option": "file",
+        "flag": "--file",
+        "kind": "value"
+      },
+      {
+        "option": "config",
+        "flag": "--config",
+        "kind": "value"
+      },
+      {
+        "option": "transportDir",
+        "flag": "--transport-dir",
+        "kind": "value"
+      },
+      {
+        "option": "registry",
+        "flag": "--registry",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "next",
+    "verb": [
+      "next"
+    ],
+    "options": "next_options",
+    "output": "claimed",
+    "stdout": "json",
+    "stdin": false,
+    "library_entry": "onemessagebus::RawQueue::claim",
+    "bindings": [
+      {
+        "option": "queue",
+        "flag": "",
+        "kind": "positional"
+      },
+      {
+        "option": "consumer",
+        "flag": "--consumer",
+        "kind": "value"
+      },
+      {
+        "option": "asker",
+        "flag": "--asker",
+        "kind": "value"
+      },
+      {
+        "option": "format",
+        "flag": "--format",
+        "kind": "value"
+      },
+      {
+        "option": "config",
+        "flag": "--config",
+        "kind": "value"
+      },
+      {
+        "option": "transportDir",
+        "flag": "--transport-dir",
+        "kind": "value"
+      },
+      {
+        "option": "registry",
+        "flag": "--registry",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "reply",
+    "verb": [
+      "reply"
+    ],
+    "options": "reply_options",
+    "output": "replied",
+    "stdout": "json",
+    "stdin": true,
+    "library_entry": "onemessagebus::Bus::reply",
+    "bindings": [
+      {
+        "option": "queue",
+        "flag": "",
+        "kind": "positional"
+      },
+      {
+        "option": "position",
+        "flag": "",
+        "kind": "positional"
+      },
+      {
+        "option": "correlation",
+        "flag": "--correlation",
+        "kind": "value"
+      },
+      {
+        "option": "file",
+        "flag": "--file",
+        "kind": "value"
+      },
+      {
+        "option": "config",
+        "flag": "--config",
+        "kind": "value"
+      },
+      {
+        "option": "transportDir",
+        "flag": "--transport-dir",
+        "kind": "value"
+      },
+      {
+        "option": "registry",
+        "flag": "--registry",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "subscribe",
+    "verb": [
+      "subscribe"
+    ],
+    "options": "subscribe_options",
+    "output": "log_record",
+    "stdout": "jsonl",
+    "stdin": false,
+    "library_entry": "onemessagebus::RawQueue::wait_for_change",
+    "bindings": [
+      {
+        "option": "queue",
+        "flag": "",
+        "kind": "positional"
+      },
+      {
+        "option": "until",
+        "flag": "--until",
+        "kind": "value"
+      },
+      {
+        "option": "timeout",
+        "flag": "--timeout",
+        "kind": "value"
+      },
+      {
+        "option": "format",
+        "flag": "--format",
+        "kind": "value"
+      },
+      {
+        "option": "config",
+        "flag": "--config",
+        "kind": "value"
+      },
+      {
+        "option": "transportDir",
+        "flag": "--transport-dir",
+        "kind": "value"
+      },
+      {
+        "option": "registry",
+        "flag": "--registry",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "status",
+    "verb": [
+      "status"
+    ],
+    "options": "status_options",
+    "output": "queue_statuses",
+    "stdout": "json",
+    "stdin": false,
+    "library_entry": "onemessagebus::RawQueue::status",
+    "bindings": [
+      {
+        "option": "queue",
+        "flag": "",
+        "kind": "positional"
+      },
+      {
+        "option": "format",
+        "flag": "--format",
+        "kind": "value"
+      },
+      {
+        "option": "config",
+        "flag": "--config",
+        "kind": "value"
+      },
+      {
+        "option": "transportDir",
+        "flag": "--transport-dir",
+        "kind": "value"
+      },
+      {
+        "option": "registry",
+        "flag": "--registry",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "transports",
+    "verb": [
+      "transports"
+    ],
+    "options": "transports_options",
+    "output": "transport_kinds",
+    "stdout": "json",
+    "stdin": false,
+    "library_entry": "onemessagebus::TransportKinds::kinds",
+    "bindings": [
+      {
+        "option": "format",
+        "flag": "--format",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "validate",
+    "verb": [
+      "validate"
+    ],
+    "options": "validate_options",
+    "output": "validated",
+    "stdout": "json",
+    "stdin": true,
+    "library_entry": "onemessagebus::Bus::validate",
+    "bindings": [
+      {
+        "option": "queue",
+        "flag": "",
+        "kind": "positional"
+      },
+      {
+        "option": "file",
+        "flag": "--file",
+        "kind": "value"
+      },
+      {
+        "option": "config",
+        "flag": "--config",
+        "kind": "value"
+      },
+      {
+        "option": "transportDir",
+        "flag": "--transport-dir",
+        "kind": "value"
+      },
+      {
+        "option": "registry",
+        "flag": "--registry",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "ask",
+    "verb": [
+      "ask"
+    ],
+    "options": "ask_options",
+    "output": "asked",
+    "stdout": "json",
+    "stdin": true,
+    "library_entry": "onemessagebus::Bus::ask",
+    "bindings": [
+      {
+        "option": "queue",
+        "flag": "",
+        "kind": "positional"
+      },
+      {
+        "option": "blocking",
+        "flag": "--blocking",
+        "kind": "switch"
+      },
+      {
+        "option": "asker",
+        "flag": "--asker",
+        "kind": "value"
+      },
+      {
+        "option": "about",
+        "flag": "--about",
+        "kind": "value"
+      },
+      {
+        "option": "timeout",
+        "flag": "--timeout",
+        "kind": "value"
+      },
+      {
+        "option": "correlation",
+        "flag": "--correlation",
+        "kind": "value"
+      },
+      {
+        "option": "file",
+        "flag": "--file",
+        "kind": "value"
+      },
+      {
+        "option": "config",
+        "flag": "--config",
+        "kind": "value"
+      },
+      {
+        "option": "transportDir",
+        "flag": "--transport-dir",
+        "kind": "value"
+      },
+      {
+        "option": "registry",
+        "flag": "--registry",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "serve",
+    "verb": [
+      "serve"
+    ],
+    "options": "serve_options",
+    "output": "codec_response",
+    "stdout": "jsonl",
+    "stdin": true,
+    "library_entry": "onemessagebus::Bus::serve",
+    "bindings": [
+      {
+        "option": "queue",
+        "flag": "",
+        "kind": "positional"
+      },
+      {
+        "option": "codec",
+        "flag": "--codec",
+        "kind": "value"
+      },
+      {
+        "option": "sessionSeconds",
+        "flag": "--session-seconds",
+        "kind": "value"
+      },
+      {
+        "option": "asker",
+        "flag": "--asker",
+        "kind": "value"
+      },
+      {
+        "option": "file",
+        "flag": "--file",
+        "kind": "value"
+      },
+      {
+        "option": "config",
+        "flag": "--config",
+        "kind": "value"
+      },
+      {
+        "option": "transportDir",
+        "flag": "--transport-dir",
+        "kind": "value"
+      },
+      {
+        "option": "registry",
+        "flag": "--registry",
+        "kind": "value"
+      }
+    ],
+    "uncovered": [
+      {
+        "flag": "--resident",
+        "reason": "runs the resident core rather than a codec session: an SDK starts it through its resident transport, which spawns `serve --resident --socket <path>` itself, and each request to the core names the capability it runs rather than a flag of this one"
+      },
+      {
+        "flag": "--socket",
+        "reason": "the unix socket the resident core listens on, taken only beside `--resident`; an SDK's resident transport passes it when it starts the core"
+      }
+    ]
+  }
+]

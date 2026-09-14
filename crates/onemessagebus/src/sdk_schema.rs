@@ -212,6 +212,9 @@ pub struct SendOptions {
     /// The transport directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transport_dir: Option<String>,
+    /// The registry directory whose schemas are registered beside the layout's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry: Option<String>,
 }
 
 /// The options of `next`.
@@ -235,6 +238,9 @@ pub struct NextOptions {
     /// The transport directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transport_dir: Option<String>,
+    /// The registry directory whose schemas are registered beside the layout's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry: Option<String>,
 }
 
 /// The options of `reply`.
@@ -260,6 +266,9 @@ pub struct ReplyOptions {
     /// The transport directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transport_dir: Option<String>,
+    /// The registry directory whose schemas are registered beside the layout's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry: Option<String>,
 }
 
 /// The options of `subscribe`.
@@ -284,6 +293,9 @@ pub struct SubscribeOptions {
     /// The transport directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transport_dir: Option<String>,
+    /// The registry directory whose schemas are registered beside the layout's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry: Option<String>,
 }
 
 /// The options of `status`.
@@ -302,6 +314,9 @@ pub struct StatusOptions {
     /// The transport directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transport_dir: Option<String>,
+    /// The registry directory whose schemas are registered beside the layout's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry: Option<String>,
 }
 
 /// The options of `transports`.
@@ -328,6 +343,9 @@ pub struct ValidateOptions {
     /// The transport directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transport_dir: Option<String>,
+    /// The registry directory whose schemas are registered beside the layout's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry: Option<String>,
 }
 
 /// The options of `ask`.
@@ -362,6 +380,9 @@ pub struct AskVerbOptions {
     /// The transport directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transport_dir: Option<String>,
+    /// The registry directory whose schemas are registered beside the layout's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry: Option<String>,
 }
 
 /// The options of `serve`.
@@ -388,6 +409,9 @@ pub struct ServeVerbOptions {
     /// The transport directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transport_dir: Option<String>,
+    /// The registry directory whose schemas are registered beside the layout's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry: Option<String>,
 }
 
 /// What `ask` answered. Every answer names itself in `answer`, and only a

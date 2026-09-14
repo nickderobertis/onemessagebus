@@ -1,0 +1,86 @@
+[build-system]
+requires = ["uv_build>=0.11,<0.12"]
+build-backend = "uv_build"
+
+[project]
+name = "onemessagebus"
+version = "0.0.0.dev0"
+description = "Typed async Python SDK for the onemessagebus message bus"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Nick DeRobertis" }]
+keywords = ["ndjson", "events", "message-bus", "queue", "schema"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+# The onemessagebus-cli pin is a placeholder version: scripts/pack.py stamps the
+# workspace version into a publishable copy, so the SDK and the binary it drives
+# always release as one version. In this checkout [tool.uv.sources] resolves it to
+# the workspace's own distribution at the repository root instead.
+dependencies = ["pydantic>=2.7,<3", "onemessagebus-cli==0.0.0.dev0"]
+
+[project.urls]
+Homepage = "https://github.com/nickderobertis/onemessagebus"
+Repository = "https://github.com/nickderobertis/onemessagebus"
+
+[dependency-groups]
+dev = [
+    "coverage==7.16.1",
+    "datamodel-code-generator==0.81.0",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "ruff==0.16.7",
+    "ty==0.0.80",
+    "uv-build>=0.11,<0.12",
+]
+
+[tool.uv.sources]
+onemessagebus-cli = { workspace = true }
+
+[tool.uv.build-backend]
+module-name = "onemessagebus"
+module-root = "src"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "ASYNC", "S", "RUF", "SIM", "PT"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101", # pytest's plain assert is the test contract, as in the sibling SDKs.
+]
+
+[tool.ty.environment]
+python-version = "3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+asyncio_default_test_loop_scope = "function"
+filterwarnings = ["error"]
+pythonpath = ["src", "."]
+
+[tool.coverage.run]
+source_pkgs = ["onemessagebus"]
+# The generated models are the Rust contract restated by datamodel-code-generator;
+# what they cover is the bundle's business, and `generate.py --check` holds them.
+omit = ["*/onemessagebus/_generated/*"]
+
+[tool.coverage.report]
+fail_under = 95
+show_missing = true
+skip_covered = true

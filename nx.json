@@ -7,6 +7,7 @@
       "{workspaceRoot}/nx.json",
       "{workspaceRoot}/package.json",
       "{workspaceRoot}/package-lock.json",
+      "{workspaceRoot}/uv.lock",
       "{workspaceRoot}/rust-toolchain.toml",
       "{workspaceRoot}/rustfmt.toml",
       "{workspaceRoot}/clippy.toml",
@@ -28,10 +29,11 @@
       "type:contract": [],
       "type:profile": ["type:contract"],
       "type:app": ["type:contract", "type:profile"],
-      "type:e2e": ["type:contract", "type:profile", "type:app", "type:packaging"],
+      "type:e2e": ["type:contract", "type:profile", "type:app", "type:packaging", "type:parity"],
       "type:packaging": ["type:app"],
+      "type:parity": ["type:contract", "type:app", "type:packaging"],
       "type:repo": [],
-      "type:workspace": ["type:contract", "type:profile", "type:app", "type:e2e", "type:packaging", "type:repo"]
+      "type:workspace": ["type:contract", "type:profile", "type:app", "type:e2e", "type:packaging", "type:parity", "type:repo"]
     }
   },
   "targetDefaults": {
@@ -40,6 +42,7 @@
     "format-check": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
     "lint": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
     "doc": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
+    "typecheck": { "cache": true },
     "build": { "cache": true, "inputs": ["crateSource", "^crateSource"] },
     "test": {
       "cache": false,
@@ -48,7 +51,7 @@
     },
     "check": {
       "cache": false,
-      "dependsOn": ["format-check", "lint", "test", "doc"]
+      "dependsOn": ["format-check", "lint", "typecheck", "test", "doc"]
     }
   }
 }

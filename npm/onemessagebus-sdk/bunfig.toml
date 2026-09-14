@@ -1,0 +1,9 @@
+[test]
+coverage = true
+coverageThreshold = 0.95
+# The generated contract is data, not logic. Nothing else is excluded: the tests drive
+# the package's scripts and the repository's parity gate as subprocesses, so what the
+# report measures in-process is the SDK's own source (and the test support it runs).
+coveragePathIgnorePatterns = ["src/generated/**"]
+# Journeys spawn real processes and wait on real timeouts.
+timeout = 60000

@@ -775,3 +775,29 @@ the contract:
 ```json
 ["schema list", "schema check", "schema gen", "schema register", "events merge", "events emit", "deliver", "inbox carried", "send", "next", "reply", "subscribe", "status", "transports", "validate", "ask", "serve"]
 ```
+
+**Departures, ruled by the manager over the ask seam** for Contracts S and P —
+the SDKs and the resident core — recorded here as the completion of Contract S:
+
+1. The queue verbs — `send`, `next`, `ask`, `reply`, `subscribe`, `status`,
+   `validate` and `serve` — take the same `--registry <dir>` /
+   `ONEMESSAGEBUS_REGISTRY` the `schema` verbs take; each capability binds it, and
+   each of their options roots gains an optional `registry`. The core gains
+   `Config::resolve_with_registry(&layouts, &kinds, &registry)`, registering a
+   registry's schemas beside the layout's and refusing, at `registry`, an id the
+   two hold different documents under; and `Config::resolve_over(&layouts,
+   transport, &registry)`, the same binding over a transport already open, which is
+   how the resident core holds its transport open while a schema registered after
+   it started is seen by the next request. So a type an SDK declares in its own
+   language and registers through `schema register` is one a queue's `schema`
+   names, and the core validates every record pushed onto that queue against it.
+   No existing key changes.
+2. The resident protocol's request line carries an optional `input` — the bytes
+   the verb would read on stdin — beside `id`, `verb` and `args`; a refusal answers
+   `{id, error: {exit, message, output?}}`, `exit` being exactly the code the
+   command line's exit-code table gives that refusal and `output` the document
+   `ask` or `validate` printed before refusing. The protocol's schema is a
+   registered document under `bus.resident-protocol@1`, printed by `schema gen
+   --lang json bus.resident-protocol@1` and listed by `schema list`, and both SDKs
+   generate their protocol types from it; a bare word in the id position is
+   refused as the malformed id it is.

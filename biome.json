@@ -1,7 +1,18 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
   "files": {
-    "includes": ["npm/**/*.js", "npm/**/*.mjs", "npm/**/*.json", "scripts/**/*.mjs"]
+    "includes": [
+      "npm/**/*.js",
+      "npm/**/*.mjs",
+      "npm/**/*.json",
+      "scripts/**/*.mjs",
+      "parity/**/*.mjs",
+      "parity/**/*.json",
+      "crates/onemessagebus-cli/sdk-bundle.mjs",
+      "sdk-install/**/*.mjs",
+      "sdk-install/**/*.json",
+      "!npm/onemessagebus-sdk"
+    ]
   },
   "formatter": {
     "enabled": true,

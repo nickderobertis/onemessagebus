@@ -8,9 +8,9 @@
   "implicitDependencies": ["onemessagebus", "onemessagebus-agent"],
   "targets": {
     "bootstrap": { "command": "just _crate-bootstrap" },
-    "format": { "command": "just _crate-format onemessagebus-cli" },
-    "format-check": { "command": "just _crate-fmt-check onemessagebus-cli" },
-    "lint": { "command": "just _crate-lint onemessagebus-cli" },
+    "format": { "command": "just _crate-format onemessagebus-cli && node node_modules/@biomejs/biome/bin/biome format --write crates/onemessagebus-cli/sdk-bundle.mjs" },
+    "format-check": { "command": "just _crate-fmt-check onemessagebus-cli && node node_modules/@biomejs/biome/bin/biome format crates/onemessagebus-cli/sdk-bundle.mjs" },
+    "lint": { "command": "just _crate-lint onemessagebus-cli && node node_modules/@biomejs/biome/bin/biome lint crates/onemessagebus-cli/sdk-bundle.mjs" },
     "build": { "command": "just _crate-build onemessagebus-cli" },
     "test": { "command": "just _crate-test onemessagebus-cli" },
     "doc": { "command": "just _crate-doc onemessagebus-cli" },

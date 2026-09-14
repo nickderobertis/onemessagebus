@@ -50,3 +50,9 @@ Repository = "https://github.com/nickderobertis/onemessagebus"
 bindings = "bin"
 manifest-path = "crates/onemessagebus-cli/Cargo.toml"
 strip = true
+
+# The uv workspace the Python SDK develops in: python/onemessagebus-sdk resolves
+# its onemessagebus-cli dependency to this distribution, and every Python tool it
+# runs, from the one root uv.lock. Nothing maturin builds reads it.
+[tool.uv.workspace]
+members = ["python/onemessagebus-sdk"]

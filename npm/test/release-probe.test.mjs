@@ -56,7 +56,16 @@ describe("the release probe's not-answered answer", () => {
   });
 
   it("refuses a name it cannot build a URL for", () => {
-    for (const identifier of ["npm:", "npm:@scope/pkg", "npm:one agent graph", "pypi:../etc"]) {
+    for (const identifier of [
+      "npm:",
+      "npm:@scope",
+      "npm:@/pkg",
+      "npm:@scope/pkg/extra",
+      "pypi:@scope/pkg",
+      "crate:@scope/pkg",
+      "npm:one agent graph",
+      "pypi:../etc",
+    ]) {
       assertNotAnswered(probe(identifier), `the name in '${identifier}'`);
     }
   });
@@ -91,7 +100,9 @@ describe("the release probe's not-answered answer", () => {
     // because that is precisely the answer that means "this registry has never
     // served it" — and a consumer reading the one as the other launches early,
     // against a fix that is not in force.
-    const unrecognised = probe("npm:@scope/pkg");
+    // A scope is recognised on npm alone, so one on PyPI is refused before any
+    // registry is asked.
+    const unrecognised = probe("pypi:@scope/pkg");
     assert.notEqual(
       unrecognised.status,
       0,
@@ -153,6 +164,16 @@ describe("the release probe against a registry that answers", {
         },
         "pypi:onemessagebus-cli",
         "1.0.0-0.3.7+exp.sha.5114f85",
+      ],
+      // The Node SDK's scoped name, asked for as the registry's one path segment.
+      [
+        {
+          "/registry.npmjs.org/@onemessagebus%2fsdk": {
+            body: { "dist-tags": { latest: "0.4.0" }, versions: { "0.4.0": {} } },
+          },
+        },
+        "npm:@onemessagebus/sdk",
+        "0.4.0",
       ],
     ];
     for (const [routes, identifier, version] of answers) {

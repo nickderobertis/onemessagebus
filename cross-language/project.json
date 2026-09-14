@@ -1,0 +1,73 @@
+{
+  "name": "onemessagebus-cross-language-e2e",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "crates/onemessagebus-e2e/tests",
+  "tags": [
+    "scope:e2e",
+    "lang:rust",
+    "type:e2e"
+  ],
+  "implicitDependencies": [
+    "onemessagebus-cli",
+    "onemessagebus-python-sdk",
+    "onemessagebus-node-sdk",
+    "onemessagebus-sdk-parity"
+  ],
+  "targets": {
+    "bootstrap": {
+      "executor": "nx:noop"
+    },
+    "format": {
+      "executor": "nx:noop"
+    },
+    "format-check": {
+      "executor": "nx:noop"
+    },
+    "lint": {
+      "executor": "nx:noop"
+    },
+    "test": {
+      "command": "just _cross-language-test",
+      "dependsOn": [
+        {
+          "projects": [
+            "onemessagebus-cli"
+          ],
+          "target": "build"
+        },
+        {
+          "projects": [
+            "onemessagebus-python-sdk",
+            "onemessagebus-node-sdk"
+          ],
+          "target": "bootstrap"
+        },
+        {
+          "projects": [
+            "onemessagebus-node-sdk"
+          ],
+          "target": "build"
+        }
+      ],
+      "inputs": [
+        "{projectRoot}/**/*",
+        "{workspaceRoot}/crates/onemessagebus-e2e/tests/cross_language.rs",
+        "^default",
+        "^crateSource",
+        "sharedGlobals"
+      ]
+    },
+    "doc": {
+      "executor": "nx:noop"
+    },
+    "check": {
+      "executor": "nx:noop",
+      "dependsOn": [
+        "format-check",
+        "lint",
+        "test"
+      ]
+    }
+  }
+}

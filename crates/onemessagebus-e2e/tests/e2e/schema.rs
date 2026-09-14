@@ -4,9 +4,9 @@ use serde_json::{json, Value};
 
 use crate::support::{fixture, run, run_in};
 
-/// The ids the profile registers, which `schema list` prints with nothing
-/// else.
-const PROFILE_IDS: &[&str] = &[
+/// The ids the binary registers — the profile's, and the resident protocol's —
+/// which `schema list` prints with nothing else.
+const REGISTERED_IDS: &[&str] = &[
     "agent.artifact-ref@1",
     "agent.command-outcome@1",
     "agent.event-envelope@1",
@@ -24,6 +24,7 @@ const PROFILE_IDS: &[&str] = &[
     "agent.queued-reply@1",
     "agent.reply-envelope@2",
     "agent.reply-envelope@3",
+    "bus.resident-protocol@1",
     "onemessagebus.transport-hello@1",
     "onemessagebus.transport-reply@1",
     "onemessagebus.transport-request@1",
@@ -45,14 +46,14 @@ fn schema_list_prints_every_registered_id_and_nothing_else() {
         .iter()
         .map(|entry| entry["id"].as_str().expect("an id"))
         .collect();
-    assert_eq!(ids, PROFILE_IDS);
+    assert_eq!(ids, REGISTERED_IDS);
     assert_eq!(entries[2]["family"], json!("agent.event-envelope"));
     assert_eq!(entries[2]["version"], json!(1));
     assert!(listed.stderr.is_empty(), "{}", listed.stderr);
 
     let text = run(&["schema", "list", "--format", "text"], None);
     assert_eq!(text.code, 0);
-    assert_eq!(text.stdout.lines().collect::<Vec<_>>(), PROFILE_IDS);
+    assert_eq!(text.stdout.lines().collect::<Vec<_>>(), REGISTERED_IDS);
 }
 
 #[test]
@@ -275,7 +276,7 @@ fn schema_register_makes_an_id_answer_in_list_and_govern_check_in_a_later_invoca
         &[],
     );
     assert_eq!(listed.code, 0, "{}", listed.stderr);
-    let mut expected: Vec<&str> = PROFILE_IDS.to_vec();
+    let mut expected: Vec<&str> = REGISTERED_IDS.to_vec();
     expected.push("agent.finding@1");
     expected.sort_unstable();
     let mut printed: Vec<&str> = listed.stdout.lines().collect();

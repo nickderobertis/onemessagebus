@@ -65,7 +65,7 @@ _ensure-tool tool:
 # The tiers run in fail-fast order as dependencies, each fanned across every
 # project by Nx, then the aggregate coverage floor over every project's run.
 # Deterministic quality gate, every project.
-check: fmt-check lint test doc coverage
+check: fmt-check lint typecheck test doc coverage
     @echo "check: ok"
 
 # The complete pre-push bar: the deterministic gate plus the LLM-judge tier scoped
@@ -78,14 +78,21 @@ gate base="origin/main": check (lint-llm-diff base)
 # What PR CI runs: the same tiers, scoped to the projects this branch's diff can
 # reach. The coverage floor is over the union of every crate's run, so when the
 # diff reaches a crate at all every test target runs and the floor is enforced;
-# when it reaches none, only the affected non-Rust tests run. Fails closed —
-# with no derivable merge base it runs everything.
+# when it reaches none, only the affected non-Rust tests run. The SDK install
+# journey is never among them: it resolves the SDKs' third-party dependencies from
+# the public registries, so pull requests run it from CI's own `sdk-install` job
+# and `check` sweeps it with everything else. The cross-language journey is not part
+# of the coverage union either: when the diff reaches a crate it runs after the floor,
+# and it is affected whenever a crate is, since it drives the CLI. (`nx affected` has
+# no `--projects` filter; it hands an unknown flag to every target's command.) Fails
+# closed — with no derivable merge base it runs everything.
 # Deterministic quality gate, affected projects only.
 check-affected:
-    @bash scripts/nx-affected.sh -t format-check lint doc build
+    @bash scripts/nx-affected.sh -t format-check lint typecheck doc build
     @rm -f {{profraw-root}}/*.profraw
-    @if [ "$(just affected-crate)" = "true" ]; then bash scripts/nx run workspace:coverage; \
-      else bash scripts/nx-affected.sh -t test; fi
+    @if [ "$(just affected-crate)" = "true" ]; then bash scripts/nx run workspace:coverage \
+        && bash scripts/nx run onemessagebus-cross-language-e2e:test; \
+      else bash scripts/nx-affected.sh -t test --exclude=onemessagebus-sdk-install-e2e; fi
     @echo "check-affected: ok"
 
 # `true` when this branch's diff can reach a Rust crate project, so CI can skip
@@ -94,6 +101,13 @@ check-affected:
 # Whether the Rust crates are affected by this branch.
 affected-crate:
     @bash scripts/nx-affected.sh --affects onemessagebus-cli
+
+# `true` when this branch's diff can reach either SDK package — the binary they
+# drive included — so CI can skip their install journey on a change that cannot
+# touch one. Fails closed.
+# Whether the SDK packages are affected by this branch.
+affected-sdk:
+    @bash scripts/nx-affected.sh --affects onemessagebus-sdk-install-e2e
 
 # Escape hatch for Nx itself, e.g. `just nx show projects` or `just nx graph`.
 # Run an arbitrary Nx command against this workspace.
@@ -111,6 +125,11 @@ format:
 # Lint every project with its own linter; any warning is an error.
 lint:
     @bash scripts/nx run-many -t lint
+
+# Every project with a type checker of its own beside its compiler: ty and tsc.
+# Type-check every project that has one.
+typecheck:
+    @bash scripts/nx run-many -t typecheck
 
 # Every project's test suite, each writing its coverage profile for `coverage`.
 test:
@@ -157,13 +176,15 @@ _crate-test crate:
     @cargo test --doc -p {{crate}} --locked --quiet \
       || { echo "{{crate}}: doctests failed — fix the sample named above, or the README it is compiled from" >&2; exit 1; }
 
+# llmlint: ignore-block[external_service_suite_stays_out_of_the_affected_tier] the one journey this recipe selects that reaches PyPI is the onepipeline 0.28.2 byte-compatibility journey, which fetches a single exact pinned wheel (onepipeline-cli==0.28.2) anonymously, so there is no credential to gate it behind; it runs in the pull-request gate by design, because byte compatibility with that engine release is the promise the journey holds and every change must keep it. ci.yml's gate step records the same reason.
 # The compiled-binary journeys: the binary built instrumented in the coverage
 # target directory, so what the journeys spawn is attributed to the crates it
 # was built from, then the journey crate's tests over it.
 _e2e-test:
     @cargo llvm-cov --no-report run -p onemessagebus-cli --bin onemessagebus --locked -- --version >/dev/null
-    @cargo llvm-cov --no-report nextest -p onemessagebus-e2e --locked --status-level fail --final-status-level fail \
+    @cargo llvm-cov --no-report nextest -p onemessagebus-e2e --locked -E 'not binary(cross_language)' --status-level fail --final-status-level fail \
       || { echo "onemessagebus-e2e: journeys failed — fix the failures named above" >&2; exit 1; }
+# llmlint: ignore-end[external_service_suite_stays_out_of_the_affected_tier]
 
 # Pinned to the maturin CI's `wheel` job builds with, so a wheel that builds here
 # is the one that job would build.
@@ -187,6 +208,58 @@ _wheel-test:
     version="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -n1)"
     PATH="$venv/bin:$PATH" bash scripts/smoke-published.sh --expect-version "$version" --label "the wheel built from this revision"
 
+# Both SDKs packed at this revision's version and installed the way a user
+# installs them, beside the binary built from it: the Python SDK with the wheel
+# `onemessagebus-pypi:build` left in dist/wheels, the Node SDK with the launcher
+# and host platform package scripts/npm-build.mjs assembles around a release
+# build. Then each smoke program under sdk-install/ drives what was installed.
+_sdk-install-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="$PWD"
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' EXIT
+    fail() { echo "onemessagebus-sdk-install-e2e: $1" >&2; exit 1; }
+    version="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -n1)"
+    mkdir -p "$work/wheels" "$work/npm" "$work/tarballs" "$work/app"
+    cp dist/wheels/*.whl "$work/wheels/" 2>/dev/null \
+      || fail "no binary wheel in dist/wheels — run 'just nx run onemessagebus-pypi:build' first"
+    just python-sdk-dist "$work/wheels" || fail "the Python SDK did not build — its output is above"
+    uv venv --quiet "$work/venv" || fail "cannot create a virtualenv — install uv (https://docs.astral.sh/uv/)"
+    # The binary's wheel by path first, so the index's release of the same version
+    # cannot stand in for this revision's; then the SDK, which pins it exactly.
+    VIRTUAL_ENV="$work/venv" uv pip install --quiet "$work"/wheels/onemessagebus_cli-*.whl \
+      || fail "the binary's wheel did not install into a fresh virtualenv"
+    VIRTUAL_ENV="$work/venv" uv pip install --quiet --find-links "$work/wheels" "onemessagebus==$version" \
+      || fail "the Python SDK $version did not install beside onemessagebus-cli $version"
+    (cd "$work" && PATH="$work/venv/bin:$PATH" "$work/venv/bin/python" "$root/sdk-install/smoke.py" "$version") \
+      || fail "the installed Python SDK failed its smoke run — its output is above"
+    cargo build --release --locked --quiet -p onemessagebus-cli
+    target="$(rustc -vV | sed -n 's/^host: //p')"
+    platform="$(node scripts/npm-build.mjs platform --target "$target" --binary target/release/onemessagebus --out "$work/npm")"
+    launcher="$(node scripts/npm-build.mjs launcher --out "$work/npm")"
+    just node-sdk-dist "$work/tarballs" || fail "the Node SDK did not build — its output is above"
+    bun run --cwd npm/onemessagebus-sdk test:package \
+      || fail "the Node SDK's packed tarball did not install and run — its output is above"
+    for dir in "$platform" "$launcher"; do
+      (cd "$dir" && npm pack --silent --pack-destination "$work/tarballs" >/dev/null) || fail "cannot pack $dir"
+    done
+    (cd "$work/app" && npm init -y >/dev/null && npm install --silent --no-audit --no-fund "$work"/tarballs/*.tgz) \
+      || fail "the Node SDK $version did not install beside onemessagebus-cli $version"
+    # Run from inside the app: a module resolves a bare package name from where the
+    # module file sits, and only the app has the SDK installed.
+    cp "$root/sdk-install/smoke.mjs" "$work/app/smoke.mjs"
+    (cd "$work/app" && node smoke.mjs "$version") \
+      || fail "the installed Node SDK failed its smoke run — its output is above"
+
+# The cross-language journey, apart from the Rust journeys because it also runs
+# uv, Python, bun and both SDKs: the binary built instrumented, then only
+# crates/onemessagebus-e2e/tests/cross_language.rs over it.
+_cross-language-test:
+    @cargo llvm-cov --no-report run -p onemessagebus-cli --bin onemessagebus --locked -- --version >/dev/null
+    @cargo llvm-cov --no-report nextest -p onemessagebus-e2e --locked --test cross_language --status-level fail --final-status-level fail \
+      || { echo "onemessagebus-cross-language-e2e: the journey failed — fix the failures named above (it needs uv and bun on PATH, and both SDKs bootstrapped)" >&2; exit 1; }
+
 # The aggregate report over every project's profiles, enforced once. The
 # conformance table is test support published for profile crates, exercised by
 # its callers rather than a subject of coverage.
@@ -204,9 +277,70 @@ test-e2e:
 # Every project's tests, the npm install journeys included, without coverage instrumentation.
 test-uninstrumented:
     @cargo build -p onemessagebus-cli --locked --quiet
+    @bash scripts/nx run onemessagebus-node-sdk:build
     @cargo nextest run --workspace --locked --status-level fail --final-status-level fail
     @cargo test --doc --workspace --locked --quiet
     @node --test npm/test/*.test.mjs npm/e2e/*.test.mjs
+
+# The language SDKs are packages of their own, each with its Nx project; these
+# are the verbs a person reaches for by name. What each tier runs is the
+# package's project.json's to say.
+# Regenerate the TypeScript SDK's generated contract from the Rust bundle.
+node-sdk-generate:
+    @bun run --cwd npm/onemessagebus-sdk generate
+
+# The TypeScript SDK's tiers: generate-check, format, lint, typecheck, tests, build.
+node-sdk-check:
+    @bash scripts/nx run onemessagebus-node-sdk:check
+
+# Regenerate the Python SDK's generated models from the Rust bundle.
+python-sdk-generate:
+    @bash python/onemessagebus-sdk/scripts/run python scripts/generate.py
+
+# The Python SDK's tiers: generate-check, format, ruff, ty, tests with the coverage floor, build.
+python-sdk-check:
+    @bash scripts/nx run onemessagebus-python-sdk:check
+
+# Re-resolve uv.lock, the Python workspace's lockfile the SDK's environment syncs from.
+python-sdk-lock:
+    @uv lock --quiet
+
+# The publishable copy is stamped by scripts/pack.py from Cargo.toml's version;
+# release.yml and the SDK install journey both build it through here.
+# Build the Python SDK's publishable sdist and wheel, at the workspace version, into OUT.
+python-sdk-dist out:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fail() { echo "python-sdk-dist: $1" >&2; exit 1; }
+    pack="$(uv run --no-project python python/onemessagebus-sdk/scripts/pack.py | tail -n1)" \
+      || fail "the Python SDK did not pack — run 'uv run --no-project python python/onemessagebus-sdk/scripts/pack.py' to see why"
+    uv build --quiet --out-dir "{{out}}" "$pack" \
+      || fail "the packed Python SDK at $pack did not build — the uv output above says why"
+
+# The publishable copy is stamped by scripts/pack.mjs from Cargo.toml's version;
+# release.yml and the SDK install journey both build it through here.
+# Build the Node SDK's publishable npm tarball, at the workspace version, into OUT.
+node-sdk-dist out:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fail() { echo "node-sdk-dist: $1" >&2; exit 1; }
+    [ -e node_modules/.bin/tsc ] || npm ci --silent --no-audit --no-fund \
+      || fail "the npm workspace did not install — run 'npm ci' to see why"
+    bun run --cwd npm/onemessagebus-sdk build >/dev/null || fail "the Node SDK did not build — run 'just node-sdk-check'"
+    sdk="$(node npm/onemessagebus-sdk/scripts/pack.mjs | tail -n1)" \
+      || fail "the Node SDK did not pack — run 'node npm/onemessagebus-sdk/scripts/pack.mjs' to see why"
+    mkdir -p "{{out}}"
+    out="$(cd "{{out}}" && pwd)"
+    (cd "$sdk" && npm pack --silent --pack-destination "$out" >/dev/null) || fail "cannot pack $sdk into $out"
+
+# Every capability, one method in each SDK client, and no method beside them.
+sdk-coverage:
+    @node parity/sdk-coverage.mjs
+
+# Regenerate docs/sdk-parity.md from the capability manifest and the SDK clients.
+parity-audit:
+    @node parity/parity-audit.mjs
+    @echo "parity-audit: docs/sdk-parity.md regenerated"
 
 # Build one crate's docs with warnings denied (kept in the gate so doc links don't rot).
 _crate-doc crate:

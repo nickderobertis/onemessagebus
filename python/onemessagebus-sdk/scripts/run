@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Run one development command in the package's pinned environment, from any
+# directory: `bash python/onemessagebus-sdk/scripts/run pytest`.
+#
+# The environment is the uv workspace's root .venv, synced on every run from the
+# root uv.lock (a no-op when nothing moved, and refused rather than re-resolved
+# when the lock is stale) over the Python .python-version names, with this package
+# installed editable beside its dev group. Its onemessagebus-cli dependency is the
+# workspace's own distribution and is left uninstalled: building it compiles the
+# binary, and the tests drive target/debug/onemessagebus. A real virtualenv rather
+# than a uv overlay, because ty reads the site-packages of the environment it finds
+# and follows no overlay. An activated virtualenv of the caller's is ignored.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+root="$(cd "$here/../.." && pwd)"
+if ! command -v uv >/dev/null 2>&1; then
+  echo "onemessagebus-sdk: uv is not on PATH; install it (https://docs.astral.sh/uv/) and re-run" >&2
+  exit 1
+fi
+cd "$here"
+unset VIRTUAL_ENV
+if ! uv sync --quiet --locked --package onemessagebus --no-install-package onemessagebus-cli; then
+  echo "onemessagebus-sdk: the environment did not sync from uv.lock; when uv says the lock is stale, run 'just python-sdk-lock' and review the change" >&2
+  exit 1
+fi
+export VIRTUAL_ENV="$root/.venv"
+export PATH="$root/.venv/bin:$PATH"
+exec "$@"

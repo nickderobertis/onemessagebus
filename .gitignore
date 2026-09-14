@@ -10,6 +10,17 @@
 # npm/onemessagebus-cli/ and pyproject.toml.
 /npm/dist
 /dist
+# The language SDK packages' builds and test caches; each package's committed
+# sources and generated contract are what is tracked.
+/npm/onemessagebus-sdk/dist
+/npm/onemessagebus-sdk/coverage
+/python/onemessagebus-sdk/dist
+# The uv workspace's environment, synced from the root uv.lock.
+/.venv
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.coverage
 # Coverage instrumentation writes these wherever an instrumented binary happens
 # to run. They are raw counter dumps, never sources.
 *.profraw

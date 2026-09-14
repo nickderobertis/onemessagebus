@@ -274,6 +274,133 @@ fn the_configuration_schema_accepts_the_documented_file_and_refuses_an_unknown_k
     );
 }
 
+/// A schema registered at run time is one a queue's `schema` may name, and every
+/// record pushed onto that queue is validated against it; one the layout already
+/// holds under a different document is refused naming the key.
+#[test]
+fn resolve_with_registry_validates_a_queue_against_a_schema_registered_at_run_time() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let text = format!(
+        "version: 1\ntransport: {{kind: local, dir: {}}}\nprofile: ledger\nqueues:\n  greetings: {{schema: demo.greeting@1}}\n",
+        dir.path().display()
+    );
+    let config = Config::parse(&text).expect("loads");
+    let unregistered = config
+        .resolve(&layouts(), &TransportKinds::default())
+        .expect_err("the layout registers no demo.greeting@1");
+    assert!(
+        unregistered
+            .to_string()
+            .starts_with("queues.greetings.schema: demo.greeting@1 is not a schema"),
+        "{unregistered}"
+    );
+
+    let mut added = Registry::new();
+    let greeting = json!({
+        "type": "object",
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"]
+    });
+    added
+        .register_schema("demo.greeting@1".parse().expect("an id"), greeting)
+        .expect("a schema");
+    let bus = config
+        .resolve_with_registry(&layouts(), &TransportKinds::default(), &added)
+        .expect("resolves with the added schema");
+    let greetings: QueueName = "greetings".parse().expect("a queue");
+    bus.send(&greetings, json!({"text": "hello"}))
+        .expect("a greeting conforms");
+    let refused = bus
+        .send(&greetings, json!({"text": 7}))
+        .expect_err("a number is no greeting");
+    assert!(refused.to_string().contains("demo.greeting@1"), "{refused}");
+    assert!(refused.to_string().contains("/text"), "{refused}");
+
+    struct Holding;
+    impl Layout for Holding {
+        fn name(&self) -> &str {
+            "holding"
+        }
+        fn queues(&self) -> Vec<QueueSpec> {
+            Vec::new()
+        }
+        fn allowlist(&self) -> Allowlist<OpWord> {
+            Allowlist::new(Vec::<OpWord>::new())
+        }
+        fn registry(&self) -> Registry {
+            let mut registry = Registry::new();
+            registry
+                .register_schema(
+                    "demo.greeting@1".parse().expect("an id"),
+                    json!({"type": "string"}),
+                )
+                .expect("a schema");
+            registry
+        }
+    }
+    let conflict = Config::parse(&format!(
+        "version: 1\ntransport: {{kind: local, dir: {}}}\nprofile: holding\n",
+        dir.path().display()
+    ))
+    .expect("loads")
+    .resolve_with_registry(
+        &Layouts::new().with(Arc::new(Holding)),
+        &TransportKinds::default(),
+        &added,
+    )
+    .expect_err("the layout holds another document under the id");
+    assert!(conflict.to_string().starts_with("registry: "), "{conflict}");
+    assert!(
+        conflict.to_string().contains("demo.greeting@1"),
+        "{conflict}"
+    );
+}
+
+/// A transport held open is what two binds share: a record one bus appended over
+/// a memory transport is the other's to claim, and a schema registered between
+/// the two binds is one the second validates by.
+#[test]
+fn resolve_over_binds_each_bus_over_the_transport_held_open() {
+    let config = Config::parse(
+        "version: 1\ntransport: {kind: memory}\nprofile: ledger\nqueues:\n  greetings: {schema: demo.greeting@1}\n",
+    )
+    .expect("loads");
+    let transport = TransportKinds::default()
+        .open(&config.transport)
+        .expect("a memory transport");
+    let refused = config
+        .resolve_over(&layouts(), Arc::clone(&transport), &Registry::new())
+        .expect_err("nothing registers demo.greeting@1 yet");
+    assert!(
+        refused.to_string().starts_with("queues.greetings.schema: "),
+        "{refused}"
+    );
+    let mut added = Registry::new();
+    added
+        .register_schema(
+            "demo.greeting@1".parse().expect("an id"),
+            json!({"type": "object", "required": ["text"]}),
+        )
+        .expect("a schema");
+    let first = config
+        .resolve_over(&layouts(), Arc::clone(&transport), &added)
+        .expect("binds");
+    let greetings: QueueName = "greetings".parse().expect("a queue");
+    first
+        .send(&greetings, json!({"text": "hello"}))
+        .expect("a greeting");
+    let second = config
+        .resolve_over(&layouts(), Arc::clone(&transport), &added)
+        .expect("binds again");
+    let status = second
+        .queue(&greetings)
+        .expect("declared")
+        .status()
+        .expect("a status");
+    assert_eq!(status.records, 1, "the held transport keeps what was sent");
+    assert!(Arc::ptr_eq(first.transport(), second.transport()));
+}
+
 /// Every policy key and every declaration key a configuration sets reaches the
 /// queue it names, a layout that shapes nothing offers each record as it is, and
 /// a key a built-in transport does not take is refused.
