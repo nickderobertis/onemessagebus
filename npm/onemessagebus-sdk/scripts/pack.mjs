@@ -59,7 +59,10 @@ if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(version) || version === PLACEHO
 
 const built = join(from, "dist/version.js");
 if (!existsSync(built)) {
-  fail(`${built} does not exist`, "build first: bun run --cwd npm/onemessagebus-sdk build");
+  fail(
+    `${built} does not exist`,
+    "build first: `just node-sdk-dist OUT` builds and packs it in one step, or `just nx run onemessagebus-node-sdk:build` builds dist/ alone",
+  );
 }
 const manifest = JSON.parse(readFileSync(join(from, "package.json"), "utf8"));
 if (manifest.version !== PLACEHOLDER) {

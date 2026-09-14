@@ -289,9 +289,12 @@ let files;
 try {
   files = await generate(bundle);
 } catch (error) {
-  const kind =
-    error instanceof UnsupportedSchema ? "unsupported schema construct" : "generation failed";
-  console.error(`generate: ${kind}: ${error.message}`);
+  const unsupported = error instanceof UnsupportedSchema;
+  const kind = unsupported ? "unsupported schema construct" : "generation failed";
+  const action = unsupported
+    ? "teach scripts/zod-generator.mjs the construct named above, or express the Rust schema without it"
+    : "fix the schema or the generator the error above names";
+  console.error(`generate: ${kind}: ${error.message}\n  fix: ${action}, then rerun \`${RERUN}\``);
   process.exit(1);
 }
 

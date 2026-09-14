@@ -6,7 +6,7 @@
 // does, through its exact `onemessagebus-cli` dependency.
 //
 // Needs `dist/` built (the `test:package` script builds it) and
-// target/debug/onemessagebus (`cargo build -p onemessagebus-cli --locked`).
+// target/debug/onemessagebus (`just nx run onemessagebus-cli:build`).
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -36,7 +36,7 @@ if (!target) {
   );
 }
 if (!existsSync(BINARY)) {
-  fail(`${BINARY} is not built`, "cargo build -p onemessagebus-cli --locked --quiet");
+  fail(`${BINARY} is not built`, "build it with `just nx run onemessagebus-cli:build`, then rerun");
 }
 
 const base = process.env.ONEPIPELINE_NODE_SCRATCH_DIR ?? tmpdir();
@@ -171,7 +171,12 @@ console.log("ok");
 `,
 );
 const said = run(process.execPath, ["consume.mjs"], { cwd: consumer });
-if (said !== "ok") fail(`the installed SDK printed ${JSON.stringify(said)}`, "read it above");
+if (said !== "ok") {
+  fail(
+    `the installed SDK printed ${JSON.stringify(said)} where consume.mjs prints only "ok"`,
+    "the SDK wrote to stdout on its own; send its diagnostics to stderr, then rerun `bun run test:package`",
+  );
+}
 console.log(
   `test:package: @onemessagebus/sdk ${stamped.version} installed and drove onemessagebus under node`,
 );

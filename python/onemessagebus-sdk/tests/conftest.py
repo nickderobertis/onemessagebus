@@ -22,7 +22,7 @@ from onemessagebus import (
 PACKAGE = Path(__file__).resolve().parents[1]
 ROOT = PACKAGE.parents[1]
 BINARY = ROOT / "target" / "debug" / ("onemessagebus.exe" if os.name == "nt" else "onemessagebus")
-BUILD = "cargo build -p onemessagebus-cli --locked"
+BUILD = "just nx run onemessagebus-cli:build"
 
 
 class Greeting(Message, schema="demo.greeting@1"):

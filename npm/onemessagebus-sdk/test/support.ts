@@ -21,7 +21,7 @@ export const ROOT = resolve(PACKAGE, "../..");
 export function requireBinary(path: string): string {
   if (!existsSync(path)) {
     throw new Error(
-      `these tests drive the real binary at ${path}, which is not built; build it with \`cargo build -p onemessagebus-cli --locked --quiet\` and rerun`,
+      `these tests drive the real binary at ${path}, which is not built; build it with \`just nx run onemessagebus-cli:build\` and rerun`,
     );
   }
   return path;

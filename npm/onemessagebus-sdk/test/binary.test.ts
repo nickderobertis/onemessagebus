@@ -134,7 +134,7 @@ describe("the test support's own guard", () => {
   test("a run with no built binary is refused with the command that builds it", () => {
     const missing = join(scratch("unbuilt"), "onemessagebus");
     expect(() => requireBinary(missing)).toThrow(
-      `these tests drive the real binary at ${missing}, which is not built; build it with \`cargo build -p onemessagebus-cli --locked --quiet\` and rerun`,
+      `these tests drive the real binary at ${missing}, which is not built; build it with \`just nx run onemessagebus-cli:build\` and rerun`,
     );
     expect(requireBinary(BINARY)).toBe(BINARY);
   });

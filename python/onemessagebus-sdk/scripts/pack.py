@@ -7,10 +7,10 @@ both constants of `_version.py` — and this script writes a copy with each
 replaced, refusing when any one of them is not there exactly once: a placeholder
 that moved would publish a package pinned to the wrong binary.
 
-    bash python/onemessagebus-sdk/scripts/run python scripts/pack.py
-    uv build python/onemessagebus-sdk/dist/pack/onemessagebus-sdk
+    just python-sdk-dist OUT
 
-It prints the directory it assembled.
+builds the publishable sdist and wheel through it. On its own it prints the
+directory it assembled.
 """
 
 from __future__ import annotations
