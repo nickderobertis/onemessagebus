@@ -212,9 +212,8 @@ class CliTransport:
         config, binary = self._bound()
         process = await _spawn(binary, argv, config, stdin=input is not None)
         self._running.add(process)
-        # _spawn opens stdout and stderr as pipes, so neither is None.
-        stdout = cast("asyncio.StreamReader", process.stdout)
-        stderr = cast("asyncio.StreamReader", process.stderr)
+        stdout = cast("asyncio.StreamReader", process.stdout)  # sound: _spawn pipes stdout
+        stderr = cast("asyncio.StreamReader", process.stderr)  # sound: _spawn pipes stderr
         # stderr is drained beside stdout: a filled pipe would stall the verb.
         errors = asyncio.ensure_future(stderr.read())
         try:
@@ -405,8 +404,7 @@ class ResidentTransport:
             await asyncio.sleep(0.02)
 
     async def _gather(self, process: asyncio.subprocess.Process) -> None:
-        # _spawn opens stderr as a pipe, so it is not None.
-        async for raw in cast("asyncio.StreamReader", process.stderr):
+        async for raw in cast("asyncio.StreamReader", process.stderr):  # sound: _spawn pipes stderr
             self._said.append(raw.decode("utf-8", "replace").rstrip("\r\n"))
 
     async def _forget(self) -> None:
