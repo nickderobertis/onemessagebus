@@ -1,7 +1,7 @@
 # @onemessagebus/sdk (the TypeScript SDK)
 
-A typed client over the `onemessagebus` binary; `docs/sdk.md` is its consumer
-story. What touches the wire is generated, and the hand-written code is the
+A typed client over the `onemessagebus` binary. What touches the wire is
+generated, and the hand-written code is the
 transports, the typed errors, `defineMessage`, the async iterator and the version
 check.
 

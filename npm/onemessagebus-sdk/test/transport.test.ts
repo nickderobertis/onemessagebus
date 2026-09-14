@@ -2,7 +2,7 @@
 // who stops a resident, and how a bus that cannot be reached is reported.
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { existsSync, rmSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   BusRefused,
@@ -211,6 +211,76 @@ describe("a bus that cannot be reached, or stops answering", () => {
         rmSync(socket, { force: true });
         await exited;
       }
+    }
+  }, 60_000);
+});
+
+/** An executable at `path` running `body`: the built binary, reached another way. */
+function wrapper(path: string, body: string): string {
+  writeFileSync(path, `#!/bin/sh\n${body}\n`);
+  chmodSync(path, 0o755);
+  return path;
+}
+
+describe("who owns a resident", () => {
+  test("a resident another client started first is used and left running", async () => {
+    const dir = scratch("resident-race");
+    const socket = socketPath();
+    const config = baseConfig(dir);
+    const spawned = join(dir, "late-resident-spawned");
+    // The built binary, except that `serve` first says it was spawned and pauses, so
+    // another client's resident takes the socket between the late spawn and its connect.
+    const late = wrapper(
+      join(dir, "late-onemessagebus"),
+      `if [ "$1" = serve ]; then touch "${spawned}"; sleep 2; fi\nexec "${BINARY}" "$@"`,
+    );
+    const ownerTransport = new ResidentTransport({ socket });
+    const lateTransport = new ResidentTransport({ socket });
+    const owner = new Client({ config, transport: ownerTransport });
+    const lateClient = new Client({
+      config: { ...config, binary: late },
+      transport: lateTransport,
+    });
+    try {
+      const answering = lateClient.transports({ format: "text" });
+      for (let tries = 0; !existsSync(spawned); tries += 1) {
+        expect(tries).toBeLessThan(1500);
+        await sleep(20);
+      }
+      expect(await owner.transports({ format: "text" })).toContain("local");
+      expect(ownerTransport.started).toBe(true);
+      expect(await answering).toContain("local");
+      expect(lateTransport.started).toBe(false);
+
+      await lateTransport.close();
+      expect(existsSync(socket)).toBe(true);
+      expect(await owner.transports({ format: "text" })).toContain("local");
+
+      await ownerTransport.close();
+      expect(existsSync(socket)).toBe(false);
+    } finally {
+      await lateTransport.close();
+      await ownerTransport.close();
+    }
+  }, 60_000);
+
+  test("a resident a launcher runs as its own child is still the transport's to stop", async () => {
+    const dir = scratch("resident-launcher");
+    const socket = socketPath();
+    // As the npm launcher does: the binary runs as the launcher's child, not in its place.
+    const launcher = wrapper(
+      join(dir, "launcher-onemessagebus"),
+      `"${BINARY}" "$@"\nstatus=$?\nexit "$status"`,
+    );
+    const transport = new ResidentTransport({ socket });
+    const client = new Client({ config: { ...baseConfig(dir), binary: launcher }, transport });
+    try {
+      expect(await client.transports({ format: "text" })).toContain("local");
+      expect(transport.started).toBe(true);
+      await transport.close();
+      expect(existsSync(socket)).toBe(false);
+    } finally {
+      await transport.close();
     }
   }, 60_000);
 });

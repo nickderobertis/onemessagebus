@@ -2,7 +2,8 @@
 // what comes back; a transport carries one to the other and maps a refusal to its
 // typed error. Two ship here — a subprocess per call, and the resident core over a
 // unix socket — and a native binding is a third implementation of the same seam.
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
 import { resolve } from "node:path";
@@ -397,6 +398,11 @@ export class ResidentTransport implements Transport {
     return resolveBinary(this.#config);
   }
 
+  /** Whether the resident answering on the socket is one this transport started, and `close` stops. */
+  get started(): boolean {
+    return this.#started !== undefined;
+  }
+
   configure(config: ClientConfig): void {
     this.#config = { ...config, ...definedOnly(this.#config) };
   }
@@ -642,7 +648,9 @@ export class ResidentTransport implements Transport {
     while (true) {
       try {
         const socket = await attach(this.socket);
-        if (exit === undefined) {
+        // Something answers, but another client's resident may have won the socket
+        // while this one was starting: only the resident that recorded itself is ours.
+        if (await owns(this.socket, child, deadline)) {
           this.#started = child;
           this.#startedWith = startedWith;
         }
@@ -663,9 +671,62 @@ export class ResidentTransport implements Transport {
           `the resident started on ${this.socket} did not listen within ${this.#startTimeout}ms; run \`${describeBinary(binary)} ${argv.join(" ")}\` to see why`,
         );
       }
-      await new Promise((wake) => setTimeout(wake, 25));
+      await pause(25);
     }
   }
+}
+
+/** The live pid `<socket>.pid` records, or undefined while it records none (or a gone one). */
+function recordedOwner(socket: string): number | undefined {
+  let pid: number;
+  try {
+    pid = Number.parseInt(readFileSync(`${socket}.pid`, "utf8").trim(), 10);
+  } catch {
+    return undefined;
+  }
+  if (!Number.isInteger(pid) || pid <= 0) return undefined;
+  try {
+    // Signal 0 delivers nothing; it answers whether the process is there.
+    process.kill(pid, 0);
+    return pid;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The parent of process `pid`, as `ps` reports it; undefined when it cannot say. */
+function parentOf(pid: number): Promise<number | undefined> {
+  return new Promise((settle) => {
+    execFile("ps", ["-o", "ppid=", "-p", String(pid)], (error, stdout) => {
+      const parent = Number.parseInt(stdout.trim(), 10);
+      settle(error === null && Number.isInteger(parent) ? parent : undefined);
+    });
+  });
+}
+
+/**
+ * Whether the resident answering on `socket` is the one `child` started. A resident
+ * binds its socket before it records its pid beside it, so a connection can reach
+ * the winner of a start race before its pid is on disk; the loser exits naming the
+ * winner. The answer waits for the pid file to name a live owner — `child` itself,
+ * or the binary a launcher `child` runs as its own child — for `child` to exit, or
+ * for the start deadline, after which nothing else claimed the socket.
+ */
+async function owns(socket: string, child: ChildProcess, deadline: number): Promise<boolean> {
+  while (true) {
+    const owner = recordedOwner(socket);
+    if (owner !== undefined) {
+      return owner === child.pid || (await parentOf(owner)) === child.pid;
+    }
+    if (child.exitCode !== null || child.signalCode !== null) return false;
+    if (Date.now() > deadline) return true;
+    await pause(20);
+  }
+}
+
+/** Resolves after `ms` milliseconds. */
+function pause(ms: number): Promise<void> {
+  return new Promise((wake) => setTimeout(wake, ms));
 }
 
 function attach(path: string): Promise<Socket> {
