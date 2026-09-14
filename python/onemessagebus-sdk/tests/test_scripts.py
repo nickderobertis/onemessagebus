@@ -53,6 +53,58 @@ def test_the_generator_is_deterministic_and_its_check_goes_red_on_a_stale_copy(
     assert not stray.exists()
 
 
+def test_the_generator_fails_with_a_cause_and_a_next_action_rather_than_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    colliding = [
+        generate.Rendered("agent.planner-surface@1", "agent_planner_surface_v1", "Surface"),
+        generate.Rendered("other.planner-surface@1", "other_planner_surface_v1", "Surface"),
+    ]
+    with pytest.raises(SystemExit) as collided:
+        generate.models_module(colliding)
+    assert collided.value.code == 1
+    said = capsys.readouterr().err
+    assert said.startswith(
+        "generate.py: the families agent.planner-surface and other.planner-surface would both be "
+        "exported from onemessagebus.models as PlannerSurface"
+    )
+    assert "then rerun `just python-sdk-generate`" in said
+
+    (tmp_path / "module.py").write_text("x = 1\n", encoding="utf-8")
+    unreadable = tmp_path / "unreadable.toml"
+    unreadable.write_text("[tool.ruff\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as unformatted:
+        generate.format_generated(tmp_path, unreadable)
+    assert unformatted.value.code == 1
+    said = capsys.readouterr().err
+    assert "generate.py: ruff could not check the generated files (exit 2)" in said
+    assert "  ruff said:\n" in said
+    assert f"fix: repair {unreadable} when ruff cannot read it" in said
+
+    bundle: dict[str, object] = {
+        "capabilities": [{"method": "status", "output": "queue_statuses"}],
+        "vocabulary": {"name": "agent"},
+        "options": {},
+        "messages": {},
+        "sent": {"title": "Sent"},
+        "queue_statuses": {"type": "array"},
+    }
+    with pytest.raises(SystemExit):
+        generate.output_roots(bundle)
+    assert (
+        "the bundle's `queue_statuses` is not a JSON Schema with a title" in capsys.readouterr().err
+    )
+    del bundle["queue_statuses"]
+    with pytest.raises(SystemExit):
+        generate.output_roots(bundle)
+    assert (
+        "the capability `status` reads its output as `queue_statuses`, which the bundle has no "
+        "root for" in capsys.readouterr().err
+    )
+    bundle["queue_statuses"] = {"title": "Array_of_QueueStatus", "type": "array"}
+    assert generate.output_roots(bundle) == ["sent", "queue_statuses"]
+
+
 def test_pack_stamps_every_placeholder_from_the_workspace_version(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

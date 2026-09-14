@@ -9,7 +9,7 @@ import types
 import typing
 from collections.abc import AsyncGenerator, Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from pydantic import BaseModel
@@ -20,6 +20,7 @@ from onemessagebus._manifest import (
     CAPABILITIES,
     KINDS,
     RENDERERS,
+    STDOUTS,
     Binding,
     Capability,
     read_manifest,
@@ -229,29 +230,23 @@ def test_render_argv_refuses_what_no_binding_renders() -> None:
     ]
 
 
-def test_a_repeated_binding_renders_its_flag_once_per_value(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # No capability binds a repeated flag today; the kind is the manifest's, so it renders.
-    entry = Capability(
-        method="tagged",
-        verb=("tagged",),
-        options=None,
-        output=None,
-        stdout="text",
-        stdin=False,
-        bindings=(Binding("tags", "--tag", "repeated"),),
-    )
-    monkeypatch.setitem(cast("dict[str, Capability]", CAPABILITIES), "tagged", entry)
-    assert render_argv("tagged", {"tags": ["a", "b"]}) == ["tagged", "--tag", "a", "--tag", "b"]
-    assert render_argv("tagged", {"tags": "one"}) == ["tagged", "--tag", "one"]
+def test_a_repeated_binding_renders_its_flag_once_per_value() -> None:
+    # No capability binds a repeated flag today; the kind is the manifest's, so it has a renderer.
+    tags = Binding("tags", "--tag", "repeated")
+    assert RENDERERS["repeated"]("tagged", tags, ["a", "b"]) == (["--tag", "a", "--tag", "b"], [])
+    assert RENDERERS["repeated"]("tagged", tags, "one") == (["--tag", "one"], [])
 
 
-def test_the_manifest_refuses_a_binding_kind_it_has_no_renderer_for() -> None:
+def test_the_manifest_refuses_a_binding_kind_or_stdout_shape_it_cannot_handle() -> None:
     text = (CLIENT_SOURCE.parent / "_generated" / "capabilities.json").read_text(encoding="utf-8")
     assert read_manifest(text) == CAPABILITIES
     assert set(RENDERERS) == KINDS
-    entries = json.loads(text)
-    entries[0]["bindings"][0]["kind"] = "counted"
+    assert {entry.stdout for entry in CAPABILITIES.values()} == STDOUTS
+    counted = json.loads(text)
+    counted[0]["bindings"][0]["kind"] = "counted"
     with pytest.raises(ContractError, match="the manifest binds `registry` as a 'counted' flag"):
-        read_manifest(json.dumps(entries))
+        read_manifest(json.dumps(counted))
+    yaml = json.loads(text)
+    yaml[0]["stdout"] = "yaml"
+    with pytest.raises(ContractError, match="schemaList: the manifest reads its stdout as 'yaml'"):
+        read_manifest(json.dumps(yaml))

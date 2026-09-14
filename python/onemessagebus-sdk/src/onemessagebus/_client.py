@@ -22,7 +22,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from ._config import ClientConfig
 from ._errors import BusFailed, ContractError
-from ._manifest import capability, snake_case
+from ._manifest import VOCABULARY_NAME, capability, snake_case
 from ._pin import Identity, hold
 from ._schema import SchemaNamespace
 from ._transport import CliTransport, Transport
@@ -46,8 +46,6 @@ ModelT = TypeVar("ModelT", bound=BaseModel)
 
 # The options a ClientConfig supplies to every call that binds them and leaves them unset.
 _DEFAULTED = ("config", "transportDir", "registry")
-# The vocabulary the bundle's envelope models are generated over.
-_BUNDLE_PROFILE = "agent"
 
 
 @cache
@@ -73,15 +71,17 @@ def _text(value: Any, method: str) -> str:
 
 def _encode(payload: Payload | None) -> str | None:
     """The JSON text a payload is written to stdin as."""
-    if payload is None:
-        return None
-    if isinstance(payload, BaseModel):
-        return json.dumps(payload.model_dump(mode="json", by_alias=True, exclude_none=True))
-    if isinstance(payload, bytes):
-        return payload.decode("utf-8")
-    if isinstance(payload, str):
-        return payload
-    return json.dumps(payload)
+    match payload:
+        case None:
+            return None
+        case BaseModel():
+            return json.dumps(payload.model_dump(mode="json", by_alias=True, exclude_none=True))
+        case bytes():
+            return payload.decode("utf-8")
+        case str():
+            return payload
+        case _:
+            return json.dumps(payload)
 
 
 def _spec(value: str | Mapping[str, Any] | None) -> str | None:
@@ -92,13 +92,18 @@ def _spec(value: str | Mapping[str, Any] | None) -> str | None:
 
 
 def _plain(value: Any) -> Any:
-    if isinstance(value, os.PathLike):
-        return os.fspath(value)
-    if isinstance(value, Mapping):
-        return {str(key): _plain(item) for key, item in value.items()}
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        return [_plain(item) for item in value]
-    return value
+    """`value` as JSON-ready data: paths as strings, mappings and sequences walked."""
+    match value:
+        case os.PathLike():
+            return os.fspath(value)
+        case Mapping():
+            return {str(key): _plain(item) for key, item in value.items()}
+        case str() | bytes():
+            return value
+        case Sequence():
+            return [_plain(item) for item in value]
+        case _:
+            return value
 
 
 class Client:
@@ -244,7 +249,7 @@ class Client:
         are handed back as documents, since the models are the agent vocabulary's.
         """
         values = {"files": files, "filter": _spec(filter), "profile": profile, "format": format}
-        shape = list[Envelope] if profile in (None, _BUNDLE_PROFILE) else list[dict[str, Any]]
+        shape = list[Envelope] if profile in (None, VOCABULARY_NAME) else list[dict[str, Any]]
         return await self._render("eventsMerge", values, shape)
 
     @overload
@@ -313,7 +318,7 @@ class Client:
             "file": file,
             "format": format,
         }
-        shape = Envelope if profile in (None, _BUNDLE_PROFILE) else dict[str, Any]
+        shape = Envelope if profile in (None, VOCABULARY_NAME) else dict[str, Any]
         answered = await self._call("eventsEmit", values, _encode(payload))
         if format == "text":
             return _text(answered, "eventsEmit")

@@ -375,12 +375,34 @@ class ResidentTransport:
                     ) from error
                 await asyncio.sleep(0.02)
                 continue
-            if _owner(path) not in (None, process.pid):
+            if not await self._answered_by(process, path, deadline):
                 # Another client's resident won the socket first; this one exits 1
                 # naming it, and closing must not stop the one that answers.
                 await asyncio.wait_for(process.wait(), _STOP_WAIT)
                 await self._forget()
             return connection
+
+    async def _answered_by(
+        self, process: asyncio.subprocess.Process, path: Path, deadline: float
+    ) -> bool:
+        """Whether the resident answering on `path` is the one `process` is.
+
+        A resident binds its socket and then records its pid beside it, so a
+        connection can reach the winner of a race before the winner's pid is on
+        disk; and the loser exits 1 naming the winner. Until one of those is seen
+        the answer is unknown, and a resident that records nothing by the start
+        deadline is the one this transport spawned, since nothing else claims it.
+        """
+        loop = asyncio.get_running_loop()
+        while True:
+            owner = _owner(path)
+            if owner is not None:
+                return owner == process.pid
+            if process.returncode is not None:
+                return False
+            if loop.time() > deadline:
+                return True
+            await asyncio.sleep(0.02)
 
     async def _gather(self, process: asyncio.subprocess.Process) -> None:
         # _spawn opens stderr as a pipe, so it is not None.

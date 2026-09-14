@@ -17,7 +17,11 @@
       "inputs": ["default"]
     },
     "lint": {
-      "command": "bash python/onemessagebus-sdk/scripts/run sh -c 'ruff check --quiet . && ty check --quiet && python scripts/generate.py --check'",
+      "command": "bash python/onemessagebus-sdk/scripts/run sh -c 'ruff check --quiet . && python scripts/generate.py --check'",
+      "inputs": ["default", "{workspaceRoot}/Cargo.toml", "{workspaceRoot}/Cargo.lock", "{workspaceRoot}/crates/**/*"]
+    },
+    "typecheck": {
+      "command": "bash python/onemessagebus-sdk/scripts/run ty check --quiet",
       "inputs": ["default", "{workspaceRoot}/Cargo.toml", "{workspaceRoot}/Cargo.lock", "{workspaceRoot}/crates/**/*"]
     },
     "test": {
@@ -35,7 +39,7 @@
     "doc": { "executor": "nx:noop" },
     "check": {
       "executor": "nx:noop",
-      "dependsOn": ["format-check", "lint", "test", "build", "doc"]
+      "dependsOn": ["format-check", "lint", "typecheck", "test", "build", "doc"]
     }
   }
 }

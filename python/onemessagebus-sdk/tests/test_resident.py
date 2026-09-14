@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -104,3 +106,46 @@ async def test_a_transport_that_was_never_opened_says_how_to_open_it() -> None:
         await ResidentTransport("bus.sock").call("transports", {}, None)
     with pytest.raises(TransportError, match="not open"):
         await CliTransport().call("transports", {}, None)
+
+
+def wait_for_file(path: Path, within: float = 30.0) -> None:
+    """Block until `path` exists; run in a thread, beside the event loop."""
+    deadline = time.monotonic() + within
+    while not path.exists():
+        if time.monotonic() > deadline:
+            raise AssertionError(f"{path} never appeared")
+        time.sleep(0.02)
+
+
+async def test_a_resident_another_client_started_first_is_used_and_left_running(
+    binary: Path, scratch: Path
+) -> None:
+    config = bus_config(binary, scratch)
+    socket = scratch / "bus.sock"
+    spawned = scratch / "late-resident-spawned"
+    # A binary path this test controls: the built binary, except that `serve` first
+    # says it was spawned and pauses, so another client's resident takes the socket
+    # between the late transport's spawn and its connect.
+    late_binary = scratch / "late-onemessagebus"
+    late_binary.write_text(
+        f'#!/bin/sh\nif [ "$1" = serve ]; then touch "{spawned}"; sleep 1; fi\n'
+        f'exec "{binary}" "$@"\n',
+        encoding="utf-8",
+    )
+    late_binary.chmod(0o755)
+    owner_transport = ResidentTransport(socket)
+    late_transport = ResidentTransport(socket)
+    async with Client(config, owner_transport) as owner:
+        async with Client(replace(config, binary=late_binary), late_transport) as late:
+            answering = asyncio.ensure_future(late.transports(format="text"))
+            await asyncio.to_thread(wait_for_file, spawned)
+            assert "local" in await owner.transports(format="text")
+            assert owner_transport.started
+            assert "local" in await asyncio.wait_for(answering, 30)
+            assert not late_transport.started, "the late transport's own resident lost the socket"
+        assert socket.exists(), "closing the late client left the live resident running"
+        assert "local" in await owner.transports(format="text")
+        live = owner_transport._process
+        assert live is not None
+        assert live.returncode is None
+    assert not socket.exists()

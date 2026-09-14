@@ -14,13 +14,25 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from importlib import resources
-from typing import Any, Literal, cast, get_args
+from typing import Any, Literal, TypeGuard, get_args
 
 from ._errors import BusRefused, ContractError
 
 #: How a binding renders: the closed set this SDK renders, refused past at load.
 Kind = Literal["positional", "value", "repeated", "switch", "key-value"]
 KINDS: frozenset[str] = frozenset(get_args(Kind))
+
+#: How a verb's stdout reads: the closed set this SDK parses, refused past at load.
+Stdout = Literal["json", "jsonl", "text"]
+STDOUTS: frozenset[str] = frozenset(get_args(Stdout))
+
+
+def _is_kind(word: str) -> TypeGuard[Kind]:
+    return word in KINDS
+
+
+def _is_stdout(word: str) -> TypeGuard[Stdout]:
+    return word in STDOUTS
 
 
 @dataclass(frozen=True)
@@ -40,7 +52,7 @@ class Capability:
     verb: tuple[str, ...]
     options: str | None
     output: str | None
-    stdout: str
+    stdout: Stdout
     stdin: bool
     bindings: tuple[Binding, ...]
 
@@ -52,24 +64,38 @@ def snake_case(name: str) -> str:
 
 def _binding(method: str, declared: Mapping[str, str]) -> Binding:
     kind = declared["kind"]
-    if kind not in KINDS:
+    if not _is_kind(kind):
         raise ContractError(
             f"{method}: the manifest binds `{declared['option']}` as a {kind!r} flag, which this "
             f"SDK does not render; it renders {', '.join(sorted(KINDS))}. Regenerate the SDK "
             "from the bundle of the binary it drives"
         )
-    return Binding(declared["option"], declared["flag"], cast("Kind", kind))
+    return Binding(declared["option"], declared["flag"], kind)
+
+
+def _stdout(method: str, word: str) -> Stdout:
+    if not _is_stdout(word):
+        raise ContractError(
+            f"{method}: the manifest reads its stdout as {word!r}, which this SDK does not parse; "
+            f"it parses {', '.join(sorted(STDOUTS))}. Regenerate the SDK from the bundle of the "
+            "binary it drives"
+        )
+    return word
 
 
 def read_manifest(text: str) -> dict[str, Capability]:
-    """The capabilities a manifest declares, by method; a binding kind it cannot render is refused."""
+    """The capabilities a manifest declares, by method.
+
+    A binding kind this SDK cannot render, and a stdout shape it cannot parse,
+    are refused here, once, so everything past the load holds a closed set.
+    """
     return {
         entry["method"]: Capability(
             method=entry["method"],
             verb=tuple(entry["verb"]),
             options=entry["options"],
             output=entry["output"],
-            stdout=entry["stdout"],
+            stdout=_stdout(entry["method"], entry["stdout"]),
             stdin=entry["stdin"],
             bindings=tuple(_binding(entry["method"], b) for b in entry["bindings"]),
         )
@@ -77,12 +103,15 @@ def read_manifest(text: str) -> dict[str, Capability]:
     }
 
 
+def _generated(name: str) -> str:
+    return resources.files("onemessagebus._generated").joinpath(name).read_text(encoding="utf-8")
+
+
 #: Every capability, by its camelCase method.
-CAPABILITIES: Mapping[str, Capability] = read_manifest(
-    resources.files("onemessagebus._generated")
-    .joinpath("capabilities.json")
-    .read_text(encoding="utf-8")
-)
+CAPABILITIES: Mapping[str, Capability] = read_manifest(_generated("capabilities.json"))
+
+#: The profile the generated envelope models are written over, as the bundle names it.
+VOCABULARY_NAME: str = json.loads(_generated("vocabulary.json"))["name"]
 
 
 def capability(method: str) -> Capability:
@@ -97,15 +126,18 @@ def capability(method: str) -> Capability:
 
 
 def _word(method: str, option: str, value: Any) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (str, int, float)):
-        return str(value)
-    if isinstance(value, os.PathLike):
-        return os.fspath(value)
-    raise BusRefused(
-        f"{method}: `{option}` takes a string, a number or a boolean, not {type(value).__name__}"
-    )
+    match value:
+        case bool():
+            return "true" if value else "false"
+        case str() | int() | float():
+            return str(value)
+        case os.PathLike():
+            return os.fspath(value)
+        case _:
+            raise BusRefused(
+                f"{method}: `{option}` takes a string, a number or a boolean, "
+                f"not {type(value).__name__}"
+            )
 
 
 def _words(method: str, option: str, value: Any) -> list[str]:

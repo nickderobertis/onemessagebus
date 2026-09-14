@@ -45,7 +45,11 @@ def cargo_version(manifest: Path) -> str:
             found := re.fullmatch(r'version\s*=\s*"([^"]+)"', stripped)
         ):
             return found.group(1)
-    fail(f"{manifest} declares no [workspace.package] version to stamp")
+    fail(
+        f"{manifest} declares no [workspace.package] version to stamp; release-plz keeps the "
+        'release version there as `version = "X.Y.Z"` under [workspace.package]: restore that '
+        "line, then rerun pack.py."
+    )
 
 
 def stamp(path: Path, placeholder: str, stamped: str) -> None:

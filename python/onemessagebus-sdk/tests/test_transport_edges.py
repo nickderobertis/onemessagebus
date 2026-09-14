@@ -145,17 +145,20 @@ async def test_a_process_that_ignores_sigterm_is_killed_once_its_wait_passes() -
 
 
 # A resident double from a binary path this test controls: it reports the pinned
-# version, answers every request with an empty list, and ignores both the removal
-# of its socket and SIGTERM.
+# version, records its pid beside its socket as a resident does, answers every
+# request with an empty list, and ignores both the removal of its socket and SIGTERM.
 STUBBORN_RESIDENT = """#!{python}
-import json, signal, socket, sys
+import json, os, signal, socket, sys
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 if sys.argv[1:] == ["--version"]:
     print("onemessagebus {version}")
     sys.exit(0)
 listener = socket.socket(socket.AF_UNIX)
-listener.bind(sys.argv[sys.argv.index("--socket") + 1])
+path = sys.argv[sys.argv.index("--socket") + 1]
+listener.bind(path)
 listener.listen()
+with open(path + ".pid", "w") as recorded:
+    recorded.write(str(os.getpid()) + "\\n")
 while True:
     connection, _ = listener.accept()
     for line in connection.makefile("r"):

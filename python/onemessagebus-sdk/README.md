@@ -135,22 +135,20 @@ sits in.
 
 ## Developing
 
-Everything runs from the repository root through the package's pinned
-environment (`requirements-dev.txt`, its own `.venv`, `src/` on the path — the
-`onemessagebus-cli` dependency is a placeholder no resolver can install until it
-is stamped):
+The package's work goes through the repository's command surface, from its root:
 
 ```bash
-bash python/onemessagebus-sdk/scripts/run python scripts/generate.py          # regenerate _generated/
-bash python/onemessagebus-sdk/scripts/run python scripts/generate.py --check  # exit 1 with a diff when stale
-bash python/onemessagebus-sdk/scripts/run ruff format --check .
-bash python/onemessagebus-sdk/scripts/run ruff check .
-bash python/onemessagebus-sdk/scripts/run ty check
-cargo build -p onemessagebus-cli --locked                                     # the binary the tests drive
-bash python/onemessagebus-sdk/scripts/run sh -c 'coverage run -m pytest && coverage report'
-bash python/onemessagebus-sdk/scripts/build   # pack, uv build, install into a fresh venv, import
-bash python/onemessagebus-sdk/scripts/lock    # re-resolve requirements-dev.txt from requirements-dev.in
+just python-sdk-generate   # regenerate _generated/ and models.py from the Rust bundle
+just python-sdk-check      # generate --check, format, ruff, ty, tests with the coverage floor, build
+just typecheck             # ty here, beside every other project's type check
 ```
+
+Each recipe runs the package's pinned environment (`requirements-dev.txt` in its
+own `.venv`, `src/` on the path: the `onemessagebus-cli` dependency is a
+placeholder no resolver can install until it is stamped). The tests drive the
+checkout's `target/debug/onemessagebus`, which `python-sdk-check` builds first.
+Re-resolving that environment is a deliberate dependency change, made with
+`scripts/lock` and reviewed as one.
 
 `_generated/` is never edited by hand: it is datamodel-code-generator's rendering
 of the schema bundle the Rust build prints, plus the capability manifest as data.

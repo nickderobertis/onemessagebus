@@ -180,8 +180,10 @@ async def test_the_queue_verbs(client: Client, scratch: Path) -> None:
         ("memory", "builtin"),
     ]
     assert (await client.transports(format="text")).startswith("local builtin")
+    # Sound: a format outside the overloads' Literal is the input under test, refused by the binary.
+    bogus = cast(Literal["json"], "bogus")
     with pytest.raises(BusRefused, match="invalid value 'bogus'"):
-        await client.transports(format=cast(Literal["json"], "bogus"))
+        await client.transports(format=bogus)
 
     sent = await client.send("surfaces", SURFACE)
     assert [(record.queue, record.id) for record in sent] == [("surfaces", 0)]
