@@ -81,13 +81,16 @@ gate base="origin/main": check (lint-llm-diff base)
 # when it reaches none, only the affected non-Rust tests run. The SDK install
 # journey is never among them: it resolves the SDKs' third-party dependencies from
 # the public registries, so pull requests run it from CI's own `sdk-install` job
-# and `check` sweeps it with everything else. Fails closed — with no derivable
-# merge base it runs everything.
+# and `check` sweeps it with everything else. The cross-language journey is not part
+# of the coverage union either: when the diff reaches a crate it runs after the floor,
+# selected by its own dependencies. Fails closed — with no derivable merge base it
+# runs everything.
 # Deterministic quality gate, affected projects only.
 check-affected:
     @bash scripts/nx-affected.sh -t format-check lint typecheck doc build
     @rm -f {{profraw-root}}/*.profraw
-    @if [ "$(just affected-crate)" = "true" ]; then bash scripts/nx run workspace:coverage; \
+    @if [ "$(just affected-crate)" = "true" ]; then bash scripts/nx run workspace:coverage \
+        && bash scripts/nx-affected.sh -t test --projects=onemessagebus-cross-language-e2e; \
       else bash scripts/nx-affected.sh -t test --exclude=onemessagebus-sdk-install-e2e; fi
     @echo "check-affected: ok"
 

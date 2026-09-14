@@ -32,8 +32,7 @@
             "onemessagebus-agent",
             "onemessagebus-cli",
             "onemessagebus-e2e",
-            "onemessagebus-repo",
-            "onemessagebus-cross-language-e2e"
+            "onemessagebus-repo"
           ],
           "target": "test"
         }

@@ -49,7 +49,17 @@ async def test_a_binary_of_another_version_is_refused_naming_both(
 async def test_the_binary_is_config_then_the_environment_then_path(
     binary: Path, tmp_path: Path
 ) -> None:
-    named = ClientConfig(env={"ONEMESSAGEBUS_BIN": str(binary)})
+    # Each source that should lose points at a decoy reporting a version nothing
+    # released, so a client that took it would be refused on entry: only the
+    # precedence this test is named for lets each client below answer.
+    decoys = tmp_path / "decoys"
+    decoy = executable(decoys, "#!/bin/sh\necho 'onemessagebus 9.9.9'\n")
+
+    chosen = ClientConfig(binary=binary, env={"ONEMESSAGEBUS_BIN": str(decoy), "PATH": str(decoys)})
+    async with Client(chosen) as client:
+        assert "local" in await client.transports(format="text")
+
+    named = ClientConfig(env={"ONEMESSAGEBUS_BIN": str(binary), "PATH": str(decoys)})
     async with Client(named) as client:
         assert [kind.kind for kind in await client.transports()][:2] == ["local", "memory"]
 
