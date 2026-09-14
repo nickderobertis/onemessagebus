@@ -86,6 +86,7 @@ def read_bundle() -> dict[str, Any]:
     if cargo is None:
         fail("cargo is not on PATH; install the pinned toolchain with `just bootstrap`.")
     try:
+        # llmlint: ignore[async_typed_clients_at_boundaries] this is the one-shot codegen command `just python-sdk-generate` runs, not a runtime talking to a service: it runs the pinned cargo build once to print the schema bundle and waits for it with nothing to do concurrently, so an async client would wrap an event loop around one blocking step, and cargo is the local toolchain the gate pins rather than a network or IO service a typed client exists for.
         run = subprocess.run(  # noqa: S603 - argv is cargo as shutil.which resolved it and the constant bundle arguments; a bare name trips S607
             [cargo, *BUNDLE_ARGS],
             cwd=ROOT,
@@ -390,6 +391,7 @@ def format_generated(directory: Path, config: Path) -> None:
         ["check", "--fix", "--select", "I,F401,UP,RUF022", "--quiet", "--config", str(config)],
         ["format", "--quiet", "--config", str(config)],
     ):
+        # llmlint: ignore[async_typed_clients_at_boundaries] the same one-shot codegen command runs the pinned ruff once per pass over the files it has just written and waits for each pass before the next, so there is nothing for an async client to run concurrently, and ruff is the local formatter the gate pins rather than a network or IO service a typed client exists for.
         run = subprocess.run(  # noqa: S603 - argv is this interpreter, the constant ruff command and the generator's own scratch directory
             [sys.executable, "-m", "ruff", *command, str(directory)],
             capture_output=True,

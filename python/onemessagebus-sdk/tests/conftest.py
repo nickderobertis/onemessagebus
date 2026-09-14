@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import os
-import subprocess
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -40,12 +38,13 @@ def binary() -> Path:
 
 
 @pytest.fixture
-def scratch(binary: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
+async def scratch(binary: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A short scratch directory: a unix socket path must fit in 108 bytes.
 
-    It holds `onemessagebus.yaml`, declaring a `greetings` queue whose schema,
-    `demo.greeting@1` — the `Greeting` type above — is registered in `registry/` by the binary — beside the
-    planner channel's queues, kept in `channel/`.
+    It holds `onemessagebus.yaml`, declaring a `greetings` queue typed by
+    `demo.greeting@1` — the `Greeting` type above, registered in `registry/` through
+    the client as a user registers one — beside the planner channel's queues, kept in
+    `channel/`.
     """
     directory = tmp_path_factory.mktemp("bus")
     (directory / "onemessagebus.yaml").write_text(
@@ -56,17 +55,9 @@ def scratch(binary: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
         "  greetings: {schema: demo.greeting@1}\n",
         encoding="utf-8",
     )
-    document = directory / "greeting.schema.json"
-    document.write_text(json.dumps(Greeting.json_schema()), encoding="utf-8")
-    subprocess.run(  # noqa: S603 - argv is the checkout's built binary and constant words; a resolved path is never a literal, and a bare name trips S607
-        [
-            str(binary),
-            *("schema", "register", "--file", str(document)),
-            *("--registry", str(directory / "registry"), "--", Greeting.schema_id()),
-        ],
-        check=True,
-        capture_output=True,
-    )
+    registry = ClientConfig(binary=binary, registry=directory / "registry", cwd=directory)
+    async with Client(registry, CliTransport()) as registering:
+        await registering.schema.register(Greeting)
     return directory
 
 
