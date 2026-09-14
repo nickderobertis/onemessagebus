@@ -160,12 +160,11 @@ you:
   attributed to binaries that no longer exist — and `check-affected` runs the
   whole test set whenever the diff reaches a crate, because the floor is over
   the union.
-- **Where an SDK touches the wire, it is generated.** The sdk_bundle example
-  (`scripts/sdk-bundle.mjs` runs it) is the one source: `just sdk-generate` and
-  `just python-sdk-generate` rewrite each package's generated contract, each
-  package's lint fails on a stale one, and `just sdk-coverage` fails on a
-  capability with no client method or a method with no capability. A new verb
-  is a capability, then a method in both clients, then `just parity-audit`.
+- **A new verb reaches every surface along one path:** a capability in
+  `crates/onemessagebus/src/capability.rs`, then a method in both SDK clients
+  (`just sdk-coverage` fails until both exist), then `just sdk-generate`,
+  `just python-sdk-generate` and `just parity-audit`. Each SDK's own `AGENTS.md`
+  says how its package is generated, versioned and tested.
 - **Affected selection fails closed** (`scripts/nx-affected.sh`): with no
   derivable merge base it runs everything, because a speed optimisation that
   can silently skip a check is a correctness hole.
