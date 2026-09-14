@@ -83,14 +83,15 @@ gate base="origin/main": check (lint-llm-diff base)
 # the public registries, so pull requests run it from CI's own `sdk-install` job
 # and `check` sweeps it with everything else. The cross-language journey is not part
 # of the coverage union either: when the diff reaches a crate it runs after the floor,
-# selected by its own dependencies. Fails closed — with no derivable merge base it
-# runs everything.
+# and it is affected whenever a crate is, since it drives the CLI. (`nx affected` has
+# no `--projects` filter; it hands an unknown flag to every target's command.) Fails
+# closed — with no derivable merge base it runs everything.
 # Deterministic quality gate, affected projects only.
 check-affected:
     @bash scripts/nx-affected.sh -t format-check lint typecheck doc build
     @rm -f {{profraw-root}}/*.profraw
     @if [ "$(just affected-crate)" = "true" ]; then bash scripts/nx run workspace:coverage \
-        && bash scripts/nx-affected.sh -t test --projects=onemessagebus-cross-language-e2e; \
+        && bash scripts/nx run onemessagebus-cross-language-e2e:test; \
       else bash scripts/nx-affected.sh -t test --exclude=onemessagebus-sdk-install-e2e; fi
     @echo "check-affected: ok"
 
@@ -276,6 +277,7 @@ test-e2e:
 # Every project's tests, the npm install journeys included, without coverage instrumentation.
 test-uninstrumented:
     @cargo build -p onemessagebus-cli --locked --quiet
+    @bash scripts/nx run onemessagebus-node-sdk:build
     @cargo nextest run --workspace --locked --status-level fail --final-status-level fail
     @cargo test --doc --workspace --locked --quiet
     @node --test npm/test/*.test.mjs npm/e2e/*.test.mjs
