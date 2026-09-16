@@ -15,9 +15,8 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use onemessagebus::{CONNECT_TIMEOUT, READ_TIMEOUT};
 use onemessagebus_agent::codec::onejudge;
 use serde_json::{json, Value};
 
@@ -62,12 +61,12 @@ fn bundle(version: &str) -> String {
 
 /// A scratch directory: a cache, a configuration naming links, and the binary
 /// run from there with only the variables a journey names.
-struct Scratch {
+pub(crate) struct Scratch {
     dir: tempfile::TempDir,
 }
 
 impl Scratch {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             dir: tempfile::tempdir().expect("a scratch directory"),
         }
@@ -106,7 +105,7 @@ impl Scratch {
 
     /// Run the binary with `args` and `stdin`, the cache at [`cache`](Self::cache)
     /// unless `env` names the variable itself.
-    fn run(&self, args: &[&str], stdin: Option<&str>, env: &[(&str, &str)]) -> Run {
+    pub(crate) fn run(&self, args: &[&str], stdin: Option<&str>, env: &[(&str, &str)]) -> Run {
         let started = self.spawn(args, stdin, env);
         let output = started.wait_with_output().expect("the binary exits");
         Run {
@@ -272,6 +271,13 @@ impl Origin {
         served.etag = format!("\"{version}\"");
     }
 
+    /// Serve `text` as the document, under a tag of its own.
+    fn serve_text(&self, text: String) {
+        let mut served = self.served.lock().expect("the origin's state");
+        served.etag = format!("\"{}\"", text.len());
+        served.body = text;
+    }
+
     fn seen(&self) -> Vec<Seen> {
         self.served.lock().expect("the origin's state").seen.clone()
     }
@@ -335,13 +341,13 @@ fn read_head(stream: &mut impl Read) -> Option<(String, BTreeMap<String, String>
 
 /// A loopback `CONNECT` proxy that logs each request line; `silent`, it accepts
 /// the connection, reads the `CONNECT`, and never answers.
-struct Proxy {
+pub(crate) struct Proxy {
     addr: SocketAddr,
     log: Arc<Mutex<Vec<String>>>,
 }
 
 impl Proxy {
-    fn start(silent: bool) -> Self {
+    pub(crate) fn start(silent: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
         let addr = listener.local_addr().expect("an address");
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -373,11 +379,11 @@ impl Proxy {
         Self { addr, log }
     }
 
-    fn url(&self) -> String {
+    pub(crate) fn url(&self) -> String {
         format!("http://{}", self.addr)
     }
 
-    fn log(&self) -> Vec<String> {
+    pub(crate) fn log(&self) -> Vec<String> {
         self.log.lock().expect("the log").clone()
     }
 }
@@ -396,23 +402,6 @@ fn pipe(a: TcpStream, b: TcpStream) {
     let _ = std::io::copy(&mut b_read, &mut a_write);
     let _ = a_write.shutdown(Shutdown::Write);
     let _ = forward.join();
-}
-
-/// A loopback listener that accepts each connection, reads what arrives, and
-/// never answers.
-fn silent_origin() -> SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
-    let addr = listener.local_addr().expect("an address");
-    std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(mut stream) = stream else { continue };
-            std::thread::spawn(move || {
-                let mut buffer = [0_u8; 1024];
-                while matches!(stream.read(&mut buffer), Ok(n) if n > 0) {}
-            });
-        }
-    });
-    addr
 }
 
 /// A CA, and a server configuration presenting a leaf for `127.0.0.1` it signed;
@@ -1084,69 +1073,6 @@ fn https_proxy_carries_the_fetch_and_no_proxy_naming_the_host_bypasses_it() {
     assert_eq!(origin.seen().len(), 2, "the bundle was reached directly");
 }
 
-#[test]
-fn an_origin_that_never_answers_is_refused_at_the_read_timeout() {
-    let scratch = Scratch::new();
-    let link = format!("http://{}/frames.json@8", silent_origin());
-    let started = Instant::now();
-    let run = scratch.run(&["schemas", "fetch", &link], None, &[]);
-    let took = started.elapsed();
-    assert_eq!(run.code, 1, "{}", run.stderr);
-    assert!(
-        run.stderr.contains(&format!(
-            "{link}: cannot fetch the bundle: nothing was received within the {}-second read timeout",
-            READ_TIMEOUT.as_secs()
-        )),
-        "{}",
-        run.stderr
-    );
-    assert!(
-        took >= READ_TIMEOUT,
-        "refused after {took:?}, before the read bound"
-    );
-    assert!(
-        took < READ_TIMEOUT + Duration::from_secs(10),
-        "refused after {took:?}, far past the read bound"
-    );
-}
-
-#[test]
-fn a_connection_that_never_completes_is_refused_at_the_connect_timeout() {
-    let scratch = Scratch::new();
-    let proxy = Proxy::start(true);
-    let link = "https://127.0.0.1:9/frames.json@8";
-    let proxy_url = proxy.url();
-    let started = Instant::now();
-    let run = scratch.run(
-        &["schemas", "fetch", link],
-        None,
-        &[("HTTPS_PROXY", proxy_url.as_str())],
-    );
-    let took = started.elapsed();
-    assert_eq!(run.code, 1, "{}", run.stderr);
-    assert!(
-        run.stderr.contains(&format!(
-            "{link}: cannot fetch the bundle: the connection was not established within the {}-second connect timeout",
-            CONNECT_TIMEOUT.as_secs()
-        )),
-        "{}",
-        run.stderr
-    );
-    assert_eq!(
-        proxy.log(),
-        vec!["CONNECT 127.0.0.1:9".to_owned()],
-        "the proxy took the connection"
-    );
-    assert!(
-        took >= CONNECT_TIMEOUT,
-        "refused after {took:?}, before the connect bound"
-    );
-    assert!(
-        took < CONNECT_TIMEOUT + Duration::from_secs(8),
-        "refused after {took:?}, far past the connect bound"
-    );
-}
-
 /// A supervisor frame whose turn is taken: `serve` answers it at once, raising
 /// nothing.
 fn frame() -> String {
@@ -1343,5 +1269,127 @@ fn schemas_lists_clears_and_fetch_warms_revalidating_whatever_the_window() {
         nowhere.stderr.contains("no schema cache directory"),
         "{}",
         nowhere.stderr
+    );
+}
+
+#[test]
+fn a_revalidation_answered_with_a_document_that_is_no_bundle_reuses_the_entry() {
+    let scratch = Scratch::new();
+    let origin = Origin::http("8.1");
+    let link = origin.link(Some("8"));
+    let config = scratch.config(&[&link]);
+    assert_eq!(scratch.check(&config, &json!({"hello": 1}), &[]).code, 0);
+    origin.serve_text("<html>a captive portal</html>".to_owned());
+
+    let reused = scratch.check(
+        &config,
+        &json!({"hello": 1}),
+        &[("ONEMESSAGEBUS_SCHEMA_TTL", "0")],
+    );
+    assert_eq!(reused.code, 0, "{}", reused.stderr);
+    assert!(origin.seen()[1].conditional());
+    assert!(
+        reused.stderr.contains(&format!(
+            "onemessagebus: {link}: could not revalidate the cached bundle at version 8.1 (the origin answered a document that is not a schema bundle: the document is not JSON"
+        )),
+        "{}",
+        reused.stderr
+    );
+    assert_eq!(
+        scratch.versions(),
+        vec!["8.1"],
+        "nothing unreadable is stored"
+    );
+
+    // With nothing cached, the same document refuses naming the link.
+    let cold = Scratch::new();
+    let config = cold.config(&[&link]);
+    let refused = cold.check(&config, &json!({"hello": 1}), &[]);
+    assert_eq!(refused.code, 2, "{}", refused.stderr);
+    assert!(
+        refused.stderr.contains(&format!(
+            "{link}: not a schema bundle: the document is not JSON"
+        )),
+        "{}",
+        refused.stderr
+    );
+}
+
+#[test]
+fn a_response_past_the_bundle_bound_is_refused_naming_the_bound() {
+    let scratch = Scratch::new();
+    let origin = Origin::http("8.1");
+    origin.serve_text(format!(
+        "{{\"padding\": \"{}\"}}",
+        "x".repeat(17 * 1024 * 1024)
+    ));
+    let link = origin.link(Some("8"));
+    let run = scratch.run(&["schemas", "fetch", &link], None, &[]);
+    assert_eq!(run.code, 1, "{}", run.stderr);
+    assert!(
+        run.stderr.contains(&format!(
+            "{link}: cannot fetch the bundle: reading the response: the response is larger than the 16 MiB a bundle may be"
+        )),
+        "{}",
+        run.stderr
+    );
+    assert!(scratch.versions().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_cache_directory_that_cannot_be_read_is_refused_by_the_verbs_that_report_on_it() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let scratch = Scratch::new();
+    let origin = Origin::http("8.1");
+    let link = origin.link(Some("8"));
+    assert_eq!(scratch.run(&["schemas", "fetch", &link], None, &[]).code, 0);
+    let entry_dir = std::fs::read_dir(scratch.path("cache"))
+        .expect("the cache")
+        .flatten()
+        .map(|entry| entry.path())
+        .next()
+        .expect("one entry directory");
+    std::fs::set_permissions(&entry_dir, std::fs::Permissions::from_mode(0o000)).expect("locked");
+    if std::fs::read_dir(&entry_dir).is_ok() {
+        // A user the permission bits do not bind (root) reads it anyway.
+        std::fs::set_permissions(&entry_dir, std::fs::Permissions::from_mode(0o755))
+            .expect("unlocked");
+        return;
+    }
+    let listed = scratch.run(&["schemas"], None, &[]);
+    let cleared = scratch.run(&["schemas", "clear"], None, &[]);
+    // Resolution fetches past the entry it cannot read, and then refuses the
+    // entry it cannot write, naming it.
+    let config = scratch.config(&[&link]);
+    let resolved = scratch.check(&config, &json!({"hello": 1}), &[]);
+    std::fs::set_permissions(&entry_dir, std::fs::Permissions::from_mode(0o755)).expect("unlocked");
+
+    for run in [&listed, &cleared] {
+        assert_eq!(run.code, 1, "{}", run.stderr);
+        assert_eq!(run.stdout, "");
+        assert!(
+            run.stderr.contains(&format!(
+                "the schema cache at {}: cannot read it: ",
+                entry_dir.display()
+            )),
+            "{}",
+            run.stderr
+        );
+    }
+    assert_eq!(
+        origin.seen().len(),
+        2,
+        "resolution did not fetch past the unreadable entry"
+    );
+    assert_eq!(resolved.code, 1, "{}", resolved.stderr);
+    assert!(
+        resolved
+            .stderr
+            .contains(&format!("the schema cache at {}", entry_dir.display()))
+            && resolved.stderr.contains("cannot write it"),
+        "{}",
+        resolved.stderr
     );
 }

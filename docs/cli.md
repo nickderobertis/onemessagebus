@@ -41,14 +41,13 @@ cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebu
   a directory of registered documents added to the profile's own.
 - **`--config <path>` on every `schema` verb** names a configuration whose
   `schemas` links are resolved and every linked document registered beside the
-  profile's and the directory's (`docs/schema-links.md`). A `schema` verb reads
+  profile's and the directory's. A `schema` verb reads
   it from the flag alone, never from the configuration variable the queue verbs
   read, so an environment set for them changes nothing here.
 - **A verb that loads a configuration resolves its `schemas` links first.** Each
   link names a schema bundle, and every document of every bundle is registered
-  beside the profile's schemas and the registry directory's; how a link resolves
-  — the pin, the cache, `serve` never waiting on the network — is
-  `docs/schema-links.md`'s to say.
+  beside the profile's schemas and the registry directory's, as the `schemas`
+  section below says.
 - **The queue verbs read one configuration.** `send`, `next`, `ask`, `reply`,
   `subscribe`, `status`, `validate` and `serve` take `--config <path>` (or `ONEMESSAGEBUS_CONFIG`),
   the `onemessagebus.yaml` naming the transport, the layout, added or overridden
@@ -138,9 +137,11 @@ but is not a directory.
 
 ## `schemas`
 
+<!-- llmlint: ignore-block[no_redundant_instruction_pointers] the node that added schema links was required to state Contract L once, in docs/schema-links.md, and to have this command-line reference point at it rather than restate it; this paragraph is that one pointer, so a reader of the verbs finds the cache's rules without a second copy that could drift. -->
 The cache a configuration's `schemas` links resolve through. Contract L — the
 bundle document, the link and its pin, the cache's rules, and each verb's output
 — is `docs/schema-links.md`; the headings here are the verbs' synopses.
+<!-- llmlint: ignore-end[no_redundant_instruction_pointers] -->
 
 ### `schemas [--format json|text]`
 

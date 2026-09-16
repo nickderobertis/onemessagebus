@@ -36,6 +36,7 @@ serde_norway = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
+# llmlint: ignore[new_command_or_client_gets_its_own_project] the HTTP client is how `LinkResolver` fetches a schema link, and Contract L makes resolution a library call beside `Config` in this crate: `Config::resolve_links` calls it, and the capability manifest names `onemessagebus::LinkResolver::{cached, clear, resolve}` as the library entries of the `schemas` verbs, which `tests/library_surface.rs` requires to be paths in this crate. A crate of its own would either depend on the core and leave `Config::resolve_links` unable to call it, or be depended on by the core and publish a second crate for one private function.
 ureq = { workspace = true }
 
 [dev-dependencies]

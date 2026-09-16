@@ -6,9 +6,8 @@ version — rather than transcribing the grammar or linking the program. A pinne
 remote link resolves through an on-disk **cache**, so a serving session never
 waits on the network when the cache holds what it needs.
 
-This is Contract L, stated once. `docs/contract.md`, `docs/cli.md` and
-`docs/queues.md` point here rather than restating it, and every node that adopts
-a link restates it from this page.
+This is Contract L, stated once: every consumer that adopts a link restates it
+from this page.
 
 ## The bundle document
 

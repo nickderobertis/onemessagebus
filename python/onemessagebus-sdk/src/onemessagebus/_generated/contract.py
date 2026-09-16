@@ -56,13 +56,6 @@ class AuthorConfig(BaseModel):
     """
 
 
-class BundleVersion(RootModel[str]):
-    root: str = Field(..., pattern="^[0-9]+(\\.[0-9]+){0,2}$")
-    """
-    One to three dot-separated non-negative integers: the version a bundle declares.
-    """
-
-
 class CacheConfig(BaseModel):
     """
     Where a command validator records its passes.
@@ -80,25 +73,6 @@ class CacheConfig(BaseModel):
     """
     The directory records are kept in, relative to the working directory
     when relative.
-    """
-
-
-class CachedBundle(BaseModel):
-    """
-    One entry of the cache, as `schemas` lists it.
-    """
-
-    confirmed_at: str
-    """
-    When the origin last confirmed it: RFC 3339, UTC.
-    """
-    url: str
-    """
-    The link's location, without its pin.
-    """
-    version: str = Field(..., pattern="^[0-9]+(\\.[0-9]+){0,2}$")
-    """
-    The version the cached bundle declares.
     """
 
 
@@ -356,25 +330,6 @@ class ReplyOptions(BaseModel):
     transport_dir: str | None = Field(None, alias="transportDir")
     """
     The transport directory.
-    """
-
-
-class SchemaCache(BaseModel):
-    """
-    The output of `schemas`: the cache directory and every entry it holds.
-    """
-
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    cache: str
-    """
-    The cache directory.
-    """
-    entries: list[CachedBundle]
-    """
-    One entry per cached location and declared version, by location then
-    version.
     """
 
 
@@ -894,6 +849,27 @@ class AskedTimeout(BaseModel):
     """
 
 
+class CachedBundle(BaseModel):
+    """
+    One entry of the cache, as `schemas` lists it.
+    """
+
+    confirmed_at: str = Field(
+        ..., pattern="^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    )
+    """
+    When the origin last confirmed it.
+    """
+    url: str
+    """
+    The link's location, without its pin.
+    """
+    version: str = Field(..., pattern="^[0-9]+(\\.[0-9]+){0,2}$")
+    """
+    The version the cached bundle declares.
+    """
+
+
 class CarriedEntry(BaseModel):
     """
     One carried message, as the store holds it.
@@ -1115,9 +1091,9 @@ class EventsMergeOptions(BaseModel):
     """
 
 
-class FetchedLink(BaseModel):
+class FetchedLinkConfirmed(BaseModel):
     """
-    One link of `schemas fetch`.
+    The cached entry, confirmed current by the origin.
     """
 
     model_config = ConfigDict(
@@ -1127,18 +1103,90 @@ class FetchedLink(BaseModel):
     """
     The link, as named.
     """
-    outcome: Literal["read", "fetched", "confirmed", "reused", "failed"]
+    outcome: Literal["confirmed"]
+    version: str = Field(..., pattern="^[0-9]+(\\.[0-9]+){0,2}$")
     """
-    How it ended.
+    The version the cached bundle declares.
     """
-    reason: str | None = None
+
+
+class FetchedLinkFailed(BaseModel):
     """
-    Why a revalidation failed, for `reused`, or why the link did not
-    resolve, for `failed`.
+    Not resolved.
     """
-    version: BundleVersion | None = None
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    link: str = Field(..., min_length=1)
     """
-    The version the bundle it resolved to declares; absent when it failed.
+    The link, as named.
+    """
+    outcome: Literal["failed"]
+    reason: str
+    """
+    Why not.
+    """
+
+
+class FetchedLinkFetched(BaseModel):
+    """
+    Fetched from the origin, and stored when the link is pinned.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    link: str = Field(..., min_length=1)
+    """
+    The link, as named.
+    """
+    outcome: Literal["fetched"]
+    version: str = Field(..., pattern="^[0-9]+(\\.[0-9]+){0,2}$")
+    """
+    The version the bundle declares.
+    """
+
+
+class FetchedLinkRead(BaseModel):
+    """
+    A `file://` or bare-path bundle, read.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    link: str = Field(..., min_length=1)
+    """
+    The link, as named.
+    """
+    outcome: Literal["read"]
+    version: str = Field(..., pattern="^[0-9]+(\\.[0-9]+){0,2}$")
+    """
+    The version the bundle declares.
+    """
+
+
+class FetchedLinkReused(BaseModel):
+    """
+    The cached entry, reused because its revalidation could not be made.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    link: str = Field(..., min_length=1)
+    """
+    The link, as named.
+    """
+    outcome: Literal["reused"]
+    reason: str
+    """
+    Why the revalidation failed.
+    """
+    version: str = Field(..., pattern="^[0-9]+(\\.[0-9]+){0,2}$")
+    """
+    The version the cached bundle declares.
     """
 
 
@@ -1346,6 +1394,25 @@ class Replied(BaseModel):
     """
 
 
+class SchemaCache(BaseModel):
+    """
+    The output of `schemas`: the cache directory and every entry it holds.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    cache: str
+    """
+    The cache directory.
+    """
+    entries: list[CachedBundle]
+    """
+    One entry per cached location and declared version, by location then
+    version.
+    """
+
+
 class SchemaCheckOptions(BaseModel):
     """
     The options of `schema check`.
@@ -1435,20 +1502,6 @@ class SchemaGenOptions(BaseModel):
     registry: str | None = None
     """
     The registry directory.
-    """
-
-
-class SchemasFetched(BaseModel):
-    """
-    The output of `schemas fetch`: one report per link, in the order named.
-    """
-
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    links: list[FetchedLink]
-    """
-    Each link and how it ended.
     """
 
 
@@ -1612,6 +1665,26 @@ class QueueConfig(BaseModel):
     schema_: SchemaId | None = Field(None, alias="schema")
     """
     The schema records are validated against.
+    """
+
+
+class SchemasFetched(BaseModel):
+    """
+    The output of `schemas fetch`: one report per link, in the order named.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    links: list[
+        FetchedLinkRead
+        | FetchedLinkFetched
+        | FetchedLinkConfirmed
+        | FetchedLinkReused
+        | FetchedLinkFailed
+    ]
+    """
+    Each link and how it ended.
     """
 
 

@@ -495,9 +495,8 @@ authors:
   a transport its kind refuses. A loaded `Config` opens nothing; the `Bus`
   `resolve` answers is the one type that opens a queue or authors a record.
 - `schemas` lists links to schema bundles another program publishes, each a URL
-  or path pinned to a version; `Config::load` parses each and resolves none.
-  Contract L — the bundle, the link, the pin, the cache, and which verbs resolve
-  a configuration's links — is stated once, in `docs/schema-links.md`.
+  or path pinned to a version; `Config::load` parses each and resolves none, as
+  Contract L below states.
 - The binary reads it from `--config <path>` or `ONEMESSAGEBUS_CONFIG`, and
   `--transport-dir <path>` or `ONEMESSAGEBUS_TRANSPORT_DIR` replaces
   `transport.dir` for one invocation: the flag over the variable, the variable
@@ -717,11 +716,13 @@ the contract:
 
 ### Contract L — schema links
 
+<!-- llmlint: ignore-block[no_redundant_instruction_pointers] Contract L's owner node was required to state it once, in docs/schema-links.md, and to have this contract — the source every consumer restates from — point at it rather than restate it; this section is that one pointer, so the contract lists every lettered contract and a copy of L here cannot drift from its source. -->
 Stated once, in [`docs/schema-links.md`](schema-links.md): the bundle document
 (`onemessagebus::SchemaBundle`), the link and its pin (`SchemaLink`), the cache a
 pinned remote link resolves through (`LinkResolver`), the configuration's
 `schemas` key and the verbs that resolve it, and the `schemas`, `schemas clear`
 and `schemas fetch` verbs. Every consumer restates it from there.
+<!-- llmlint: ignore-end[no_redundant_instruction_pointers] -->
 
 ### Contract C — the command line and the capability manifest
 
@@ -786,8 +787,7 @@ and `schemas fetch` verbs. Every consumer restates it from there.
   empty and warm the cache of linked schema bundles; each `schema` verb takes
   `--config <path>`, whose links it registers. Each is a `Capability` with a
   library entry (`LinkResolver::cached`, `LinkResolver::clear`,
-  `LinkResolver::resolve`); what they do is Contract L's, in
-  `docs/schema-links.md`.
+  `LinkResolver::resolve`); what they do is Contract L's.
 
 <!-- fixture: verbs -->
 ```json

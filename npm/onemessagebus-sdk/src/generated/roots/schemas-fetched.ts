@@ -3,9 +3,69 @@ import { z } from "zod";
 import { anyOf, contract, oneOf } from "../runtime.js";
 
 /**
- * One to three dot-separated non-negative integers: the version a bundle declares.
+ * How `schemas fetch` ended for one link, named in `outcome`: a version for
+ * every link that resolved, and a reason for one reused or failed.
  */
-export type BundleVersion = string;
+export type FetchedLink =
+  | {
+      /**
+       * The link, as named.
+       */
+      link: string;
+      /**
+       * The version the bundle declares.
+       */
+      version: string;
+      outcome: "read";
+    }
+  | {
+      /**
+       * The link, as named.
+       */
+      link: string;
+      /**
+       * The version the bundle declares.
+       */
+      version: string;
+      outcome: "fetched";
+    }
+  | {
+      /**
+       * The link, as named.
+       */
+      link: string;
+      /**
+       * The version the cached bundle declares.
+       */
+      version: string;
+      outcome: "confirmed";
+    }
+  | {
+      /**
+       * The link, as named.
+       */
+      link: string;
+      /**
+       * The version the cached bundle declares.
+       */
+      version: string;
+      /**
+       * Why the revalidation failed.
+       */
+      reason: string;
+      outcome: "reused";
+    }
+  | {
+      /**
+       * The link, as named.
+       */
+      link: string;
+      /**
+       * Why not.
+       */
+      reason: string;
+      outcome: "failed";
+    };
 
 /**
  * The output of `schemas fetch`: one report per link, in the order named.
@@ -16,47 +76,39 @@ export interface SchemasFetched {
    */
   links: FetchedLink[];
 }
-/**
- * One link of `schemas fetch`.
- */
-export interface FetchedLink {
-  /**
-   * The link, as named.
-   */
-  link: string;
-  /**
-   * How it ended.
-   */
-  outcome: "read" | "fetched" | "confirmed" | "reused" | "failed";
-  /**
-   * The version the bundle it resolved to declares; absent when it failed.
-   */
-  version?: BundleVersion | null | undefined;
-  /**
-   * Why a revalidation failed, for `reused`, or why the link did not
-   * resolve, for `failed`.
-   */
-  reason?: string | null | undefined;
-}
 
-const $FetchedLink: z.ZodType = z.strictObject({
-  link: z.lazy(() => $SchemaLink),
-  outcome: z.lazy(() => $FetchOutcome),
-  version: anyOf([z.lazy(() => $BundleVersion), z.null()]).optional(),
-  reason: anyOf([z.string(), z.null()]).optional(),
-});
+const $FetchedLink: z.ZodType = oneOf([
+  z.strictObject({
+    link: z.lazy(() => $SchemaLink),
+    version: z.lazy(() => $BundleVersion),
+    outcome: z.literal("read"),
+  }),
+  z.strictObject({
+    link: z.lazy(() => $SchemaLink),
+    version: z.lazy(() => $BundleVersion),
+    outcome: z.literal("fetched"),
+  }),
+  z.strictObject({
+    link: z.lazy(() => $SchemaLink),
+    version: z.lazy(() => $BundleVersion),
+    outcome: z.literal("confirmed"),
+  }),
+  z.strictObject({
+    link: z.lazy(() => $SchemaLink),
+    version: z.lazy(() => $BundleVersion),
+    reason: z.string(),
+    outcome: z.literal("reused"),
+  }),
+  z.strictObject({
+    link: z.lazy(() => $SchemaLink),
+    reason: z.string(),
+    outcome: z.literal("failed"),
+  }),
+]);
 
 const $SchemaLink: z.ZodType = z
   .string()
   .refine((value) => [...value].length >= 1, { message: "shorter than 1 characters" });
-
-const $FetchOutcome: z.ZodType = oneOf([
-  z.literal("read"),
-  z.literal("fetched"),
-  z.literal("confirmed"),
-  z.literal("reused"),
-  z.literal("failed"),
-]);
 
 const $BundleVersion: z.ZodType = z.string().regex(new RegExp("^[0-9]+(\\.[0-9]+){0,2}$", "u"));
 

@@ -23,8 +23,8 @@ use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use onemessagebus::sdk_schema::{
-    self, Asked, ClaimedRecord, FetchOutcome, FetchedLink, Lang, LogRecord, Replied, SchemaCache,
-    SchemaEntry, SchemasCleared, SchemasFetched, Sent, Validated,
+    self, Asked, ClaimedRecord, FetchedLink, Lang, LogRecord, Replied, SchemaCache, SchemaEntry,
+    SchemasCleared, SchemasFetched, Sent, Validated,
 };
 use onemessagebus::{
     Address, Admits, Answer, AskOptions, Asker, BackendError, Bus, BusError, Carry, CheckError,
@@ -372,7 +372,7 @@ enum SchemasVerb {
         /// The links to resolve: a URL or a path, each with an optional
         /// `@<pin>`; every link `--config` names when none is given.
         #[arg(value_name = "LINK")]
-        path: Vec<String>,
+        links: Vec<String>,
         /// The configuration whose `schemas` links are resolved when no link is
         /// named.
         #[arg(long, value_name = "PATH", env = "ONEMESSAGEBUS_CONFIG")]
@@ -941,11 +941,11 @@ fn schemas(args: SchemasArgs, out: &mut impl std::io::Write) -> Result<(), Refus
             emit_text(out, &text)
         }
         Some(SchemasVerb::Fetch {
-            path,
+            links: named,
             config,
             format,
         }) => {
-            let links: Vec<SchemaLink> = if path.is_empty() {
+            let links: Vec<SchemaLink> = if named.is_empty() {
                 let Some(config) = config else {
                     return Err(invalid(
                         "schemas fetch: name the links to fetch, or --config <path> (or set \
@@ -956,7 +956,8 @@ fn schemas(args: SchemasArgs, out: &mut impl std::io::Write) -> Result<(), Refus
                     .map_err(|failure| invalid(failure.to_string()))?
                     .schemas
             } else {
-                path.iter()
+                named
+                    .iter()
                     .map(|text| SchemaLink::parse(text).map_err(link_refusal))
                     .collect::<Result<_, _>>()?
             };
@@ -966,28 +967,27 @@ fn schemas(args: SchemasArgs, out: &mut impl std::io::Write) -> Result<(), Refus
                 let fetched = match resolver.resolve(&link, Freshness::Revalidate) {
                     Ok(resolved) => {
                         say_reused(&resolved);
-                        let (outcome, reason) = match resolved.outcome {
-                            Outcome::Read => (FetchOutcome::Read, None),
-                            Outcome::Fetched => (FetchOutcome::Fetched, None),
+                        let version = resolved.bundle.version().clone();
+                        match resolved.outcome {
+                            Outcome::Read => FetchedLink::Read { link, version },
+                            Outcome::Fetched => FetchedLink::Fetched { link, version },
                             // Revalidating answers `cached` never: every
                             // satisfying entry is asked about.
-                            Outcome::Confirmed | Outcome::Cached => (FetchOutcome::Confirmed, None),
-                            Outcome::Reused { why } => (FetchOutcome::Reused, Some(why)),
-                        };
-                        FetchedLink {
-                            link,
-                            outcome,
-                            version: Some(resolved.bundle.version().clone()),
-                            reason,
+                            Outcome::Confirmed | Outcome::Cached => {
+                                FetchedLink::Confirmed { link, version }
+                            }
+                            Outcome::Reused { why } => FetchedLink::Reused {
+                                link,
+                                version,
+                                reason: why,
+                            },
                         }
                     }
                     Err(failure) => {
                         unresolved.push(failure.to_string());
-                        FetchedLink {
+                        FetchedLink::Failed {
                             link,
-                            outcome: FetchOutcome::Failed,
-                            version: None,
-                            reason: Some(failure.to_string()),
+                            reason: failure.to_string(),
                         }
                     }
                 };
@@ -998,19 +998,24 @@ fn schemas(args: SchemasArgs, out: &mut impl std::io::Write) -> Result<(), Refus
                 OutputFormat::Text => {
                     let mut text = String::new();
                     for fetched in &report.links {
-                        let word = serde_json::to_value(fetched.outcome)
-                            .ok()
-                            .and_then(|word| word.as_str().map(str::to_owned))
-                            .unwrap_or_default();
-                        let version = fetched
-                            .version
-                            .as_ref()
-                            .map_or_else(|| "-".to_owned(), ToString::to_string);
-                        let _ = write!(text, "{} {word} {version}", fetched.link);
-                        if let Some(reason) = &fetched.reason {
-                            let _ = write!(text, " ({reason})");
-                        }
-                        text.push('\n');
+                        let line = match fetched {
+                            FetchedLink::Read { link, version } => format!("{link} read {version}"),
+                            FetchedLink::Fetched { link, version } => {
+                                format!("{link} fetched {version}")
+                            }
+                            FetchedLink::Confirmed { link, version } => {
+                                format!("{link} confirmed {version}")
+                            }
+                            FetchedLink::Reused {
+                                link,
+                                version,
+                                reason,
+                            } => format!("{link} reused {version} ({reason})"),
+                            FetchedLink::Failed { link, reason } => {
+                                format!("{link} failed - ({reason})")
+                            }
+                        };
+                        let _ = writeln!(text, "{line}");
                     }
                     text
                 }

@@ -46,7 +46,8 @@ jsonschema = { version = "0.56", default-features = false }
 thiserror = "2"
 # The envelope's `ts` is RFC 3339 with millisecond precision in UTC. Calendar
 # arithmetic is not a thing to hand-roll into an event stream's ordering key.
-time = { version = "0.3", features = ["formatting", "macros"] }
+# `parsing` reads a schema cache entry's confirmation stamp back.
+time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 # A filter kept in a file beside a plan is YAML, of which the inline JSON form
 # is a subset. serde_norway is the maintained fork of the archived serde_yaml.
 serde_norway = "0.9"

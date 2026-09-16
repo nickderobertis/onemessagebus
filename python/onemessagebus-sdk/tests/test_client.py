@@ -27,6 +27,7 @@ from onemessagebus import (
     Client,
     ClientConfig,
     Envelope,
+    FetchedLinkFetched,
     ValidatedPass,
     ValidatedRefuse,
     ValidatedUnjudged,
@@ -308,10 +309,9 @@ async def test_the_schema_cache_verbs(
             assert (empty.cache, empty.entries) == (str(cache), [])
 
             fetched = await client.schemas_fetch(config=scratch / "onemessagebus.yaml")
-            assert [
-                (each.link, each.outcome, each.version and each.version.root)
-                for each in fetched.links
-            ] == [(link, "fetched", "8.1")]
+            assert fetched.links == [
+                FetchedLinkFetched(link=link, outcome="fetched", version="8.1")
+            ]
             listed = await client.schemas()
             assert [(entry.url, entry.version) for entry in listed.entries] == [(url, "8.1")]
             assert (await client.schemas(format="text")).startswith(f"cache {cache}\n{url} 8.1 ")

@@ -382,11 +382,31 @@ impl JsonSchema for SchemaBundle {
     }
 }
 
+/// A URL a link fetches its bundle from: `https://` on any host, or `http://`
+/// on a loopback one. Only [`SchemaLink::parse`] makes one, so a location that
+/// holds a `RemoteUrl` has been held to Contract L's schemes.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RemoteUrl(String);
+
+impl RemoteUrl {
+    /// The URL, as the link wrote it without its pin.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for RemoteUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Where a link's bundle is read from.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LinkLocation {
     /// An `https://` URL, or an `http://` one on a loopback host: fetched.
-    Remote(String),
+    Remote(RemoteUrl),
     /// A `file://` URL or a bare path: read on every resolution, never cached.
     File(PathBuf),
 }
@@ -398,6 +418,24 @@ pub struct SchemaLink {
     written: String,
     location: LinkLocation,
     pin: Option<BundleVersion>,
+}
+
+/// What reaching a bundle was: reading a file, or fetching a URL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Access {
+    /// A `file://` or bare-path link, read.
+    Read,
+    /// A remote link, fetched.
+    Fetch,
+}
+
+impl fmt::Display for Access {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Read => "read",
+            Self::Fetch => "fetch",
+        })
+    }
 }
 
 /// Why a link did not resolve, or could not be parsed, naming it.
@@ -424,8 +462,8 @@ pub enum LinkError {
     Unreachable {
         /// The link.
         link: String,
-        /// `fetch` or `read`.
-        doing: &'static str,
+        /// Whether it was read or fetched.
+        doing: Access,
         /// Why not.
         why: String,
     },
@@ -451,10 +489,10 @@ pub enum LinkError {
     #[error("no schema cache directory: set {SCHEMA_CACHE_DIR_ENV}, XDG_CACHE_HOME or HOME")]
     NoCacheDir,
     /// The cache directory could not be read or written.
-    #[error("the schema cache {}: {why}", dir.display())]
+    #[error("the schema cache at {}: {why}", path.display())]
     Cache {
-        /// The path.
-        dir: PathBuf,
+        /// The directory or file that failed.
+        path: PathBuf,
         /// What the filesystem said.
         why: String,
     },
@@ -509,7 +547,7 @@ impl SchemaLink {
         let location = if lower.starts_with("https://") {
             host_of(&location["https://".len()..])
                 .ok_or_else(|| refuse("its URL names no host"))?;
-            LinkLocation::Remote(location.to_owned())
+            LinkLocation::Remote(RemoteUrl(location.to_owned()))
         } else if lower.starts_with("http://") {
             let host = host_of(&location["http://".len()..])
                 .ok_or_else(|| refuse("its URL names no host"))?;
@@ -522,7 +560,7 @@ impl SchemaLink {
                      use https://",
                 ));
             }
-            LinkLocation::Remote(location.to_owned())
+            LinkLocation::Remote(RemoteUrl(location.to_owned()))
         } else if lower.starts_with("file://") {
             let rest = &location["file://".len()..];
             let rest = rest.strip_prefix("localhost").unwrap_or(rest);
@@ -739,6 +777,66 @@ impl Resolved {
     }
 }
 
+/// When an origin last confirmed a cache entry: whole seconds since the Unix
+/// epoch, written and read as an RFC 3339 UTC stamp, `2026-09-16T13:42:23Z`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ConfirmedAt(OffsetDateTime);
+
+impl ConfirmedAt {
+    /// The instant `secs` seconds after the epoch, or `None` past what a
+    /// calendar date can hold.
+    #[must_use]
+    pub fn from_unix_seconds(secs: u64) -> Option<Self> {
+        let secs = i64::try_from(secs).ok()?;
+        OffsetDateTime::from_unix_timestamp(secs).ok().map(Self)
+    }
+
+    /// Seconds since the epoch.
+    #[must_use]
+    pub fn unix_seconds(self) -> i64 {
+        self.0.unix_timestamp()
+    }
+}
+
+impl fmt::Display for ConfirmedAt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0.format(STAMP).map_err(|_| fmt::Error)?)
+    }
+}
+
+impl Serialize for ConfirmedAt {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for ConfirmedAt {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        time::PrimitiveDateTime::parse(&text, STAMP)
+            .map(|at| Self(at.assume_utc()))
+            .map_err(|_| {
+                serde::de::Error::custom(format!(
+                    "{text:?} is not an RFC 3339 UTC stamp to the second, e.g. 2026-09-16T13:42:23Z"
+                ))
+            })
+    }
+}
+
+impl JsonSchema for ConfirmedAt {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("ConfirmedAt")
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "description": "When the origin last confirmed the entry: RFC 3339, UTC, to the second.",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        })
+    }
+}
+
 /// One entry of the cache, as `schemas` lists it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CachedBundle {
@@ -746,8 +844,8 @@ pub struct CachedBundle {
     pub url: String,
     /// The version the cached bundle declares.
     pub version: BundleVersion,
-    /// When the origin last confirmed it: RFC 3339, UTC.
-    pub confirmed_at: String,
+    /// When the origin last confirmed it.
+    pub confirmed_at: ConfirmedAt,
 }
 
 /// What a cache entry records beside its body.
@@ -893,13 +991,13 @@ impl LinkResolver {
                 let text =
                     std::fs::read_to_string(path).map_err(|failure| LinkError::Unreachable {
                         link: link.to_string(),
-                        doing: "read",
+                        doing: Access::Read,
                         why: format!("{}: {failure}", path.display()),
                     })?;
                 let bundle = held_to_pin(link, parse_bundle(link, &text)?)?;
                 return Ok(resolved(link, bundle, Outcome::Read));
             }
-            LinkLocation::Remote(url) => url,
+            LinkLocation::Remote(url) => url.as_str(),
         };
         let (Some(pin), Some(cache)) = (link.pin(), &self.cache_dir) else {
             let body = fetch(link, url, None)?.ok_or_else(|| unanswered(link))?;
@@ -978,13 +1076,17 @@ impl LinkResolver {
     /// that does not exist yet is an empty cache.
     pub fn cached(&self) -> Result<Vec<CachedBundle>, LinkError> {
         let cache = self.cache_dir.as_deref().ok_or(LinkError::NoCacheDir)?;
-        let mut entries: Vec<CachedBundle> = subdirs(cache)?
-            .iter()
-            .flat_map(|dir| read_entries(dir, ""))
+        let mut read = Vec::new();
+        for dir in subdirs(cache)? {
+            read.extend(listed_entries(&dir)?);
+        }
+        let mut entries: Vec<CachedBundle> = read
+            .into_iter()
             .map(|entry| CachedBundle {
                 url: entry.meta.url,
                 version: entry.meta.version,
-                confirmed_at: rfc3339_seconds(entry.meta.confirmed_at),
+                confirmed_at: ConfirmedAt::from_unix_seconds(entry.meta.confirmed_at)
+                    .unwrap_or(ConfirmedAt(OffsetDateTime::UNIX_EPOCH)),
             })
             .collect();
         entries.sort_by(|a, b| a.url.cmp(&b.url).then_with(|| a.version.cmp(&b.version)));
@@ -1002,10 +1104,10 @@ impl LinkResolver {
         let cache = self.cache_dir.as_deref().ok_or(LinkError::NoCacheDir)?;
         let mut removed = 0;
         for dir in subdirs(cache)? {
-            for entry in read_entries(&dir, "") {
+            for entry in listed_entries(&dir)? {
                 for path in [&entry.body_path, &entry.meta_path] {
                     std::fs::remove_file(path).map_err(|failure| LinkError::Cache {
-                        dir: path.clone(),
+                        path: path.clone(),
                         why: format!("cannot remove it: {failure}"),
                     })?;
                 }
@@ -1047,7 +1149,7 @@ fn held_to_pin(link: &SchemaLink, bundle: SchemaBundle) -> Result<SchemaBundle, 
 fn unanswered(link: &SchemaLink) -> LinkError {
     LinkError::Unreachable {
         link: link.to_string(),
-        doing: "fetch",
+        doing: Access::Fetch,
         why: "the origin answered 304 Not Modified to a request that was not conditional"
             .to_owned(),
     }
@@ -1061,15 +1163,6 @@ fn now_secs() -> u64 {
 
 const STAMP: &[BorrowedFormatItem<'static>] =
     format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]Z");
-
-/// `secs` since the epoch as an RFC 3339 UTC stamp to the second.
-fn rfc3339_seconds(secs: u64) -> String {
-    i64::try_from(secs)
-        .ok()
-        .and_then(|secs| OffsetDateTime::from_unix_timestamp(secs).ok())
-        .and_then(|at| at.format(STAMP).ok())
-        .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_owned())
-}
 
 /// The directory a URL's entries are kept in: a digest of the URL, so any URL
 /// names a valid directory and two never share one.
@@ -1098,20 +1191,35 @@ fn subdirs(cache: &Path) -> Result<Vec<PathBuf>, LinkError> {
             .collect()),
         Err(failure) if failure.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(failure) => Err(LinkError::Cache {
-            dir: cache.to_path_buf(),
+            path: cache.to_path_buf(),
             why: format!("cannot read it: {failure}"),
         }),
     }
 }
 
-/// Every readable entry in one URL's directory — all of them when `url` is
-/// empty. Anything else there — a half-written entry, a body that no longer
-/// declares the version its metadata does, metadata for another URL — is passed
-/// over, never misread: the cache is a speed-up, and resolution fetches past it.
+/// Every readable entry in one URL's directory, for resolution: a directory that
+/// cannot be read is an empty one, since resolution fetches past the cache.
 fn read_entries(dir: &Path, url: &str) -> Vec<Entry> {
-    let Ok(listing) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
+    entries_in(dir, url).unwrap_or_default()
+}
+
+/// Every readable entry in one URL's directory, for `schemas` and `schemas
+/// clear`, which answer a question about the cache and so refuse a directory
+/// they cannot read rather than report it empty.
+fn listed_entries(dir: &Path) -> Result<Vec<Entry>, LinkError> {
+    entries_in(dir, "").map_err(|failure| LinkError::Cache {
+        path: dir.to_path_buf(),
+        why: format!("cannot read it: {failure}"),
+    })
+}
+
+/// Every entry in one URL's directory — all of them when `url` is empty — or
+/// the failure to list it. Anything in a listed directory that is not an entry
+/// this build wrote — a half-written entry, a body that no longer declares the
+/// version its metadata does, metadata for another URL — is passed over, never
+/// misread.
+fn entries_in(dir: &Path, url: &str) -> std::io::Result<Vec<Entry>> {
+    let listing = std::fs::read_dir(dir)?;
     let mut entries = Vec::new();
     for meta_path in listing.flatten().map(|entry| entry.path()) {
         let is_meta = meta_path
@@ -1150,12 +1258,12 @@ fn read_entries(dir: &Path, url: &str) -> Vec<Entry> {
             body_path,
         });
     }
-    entries
+    Ok(entries)
 }
 
 fn cache_error(path: &Path, failure: &std::io::Error) -> LinkError {
     LinkError::Cache {
-        dir: path.to_path_buf(),
+        path: path.to_path_buf(),
         why: format!("cannot write it: {failure}"),
     }
 }
@@ -1210,7 +1318,7 @@ fn fetch(
 ) -> Result<Option<Body>, LinkError> {
     let refuse = |why: String| LinkError::Unreachable {
         link: link.to_string(),
-        doing: "fetch",
+        doing: Access::Fetch,
         why,
     };
     let agent = agent(url).map_err(refuse)?;
@@ -1273,6 +1381,10 @@ fn transport_failure(failure: &ureq::Error) -> String {
         ureq::Error::Timeout(_) => format!(
             "nothing was received within the {}-second read timeout",
             READ_TIMEOUT.as_secs()
+        ),
+        ureq::Error::BodyExceedsLimit(_) => format!(
+            "the response is larger than the {} MiB a bundle may be",
+            MAX_BUNDLE_BYTES / (1024 * 1024)
         ),
         other => other.to_string(),
     }

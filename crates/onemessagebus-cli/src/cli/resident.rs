@@ -566,8 +566,8 @@ impl Held {
             }
         }
         if let Command::Schemas(schemas) = command {
-            if let Some(SchemasVerb::Fetch { path, config, .. }) = &mut schemas.verb {
-                if path.is_empty() && absent("config") {
+            if let Some(SchemasVerb::Fetch { links, config, .. }) = &mut schemas.verb {
+                if links.is_empty() && absent("config") {
                     config.clone_from(&self.config);
                 }
             }

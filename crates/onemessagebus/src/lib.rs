@@ -91,9 +91,10 @@ pub use kinds::{
     MEMORY,
 };
 pub use link::{
-    BundleError, BundleVersion, CachedBundle, Freshness, LinkError, LinkLocation, LinkResolver,
-    Outcome, Resolved, SchemaBundle, SchemaLink, VersionError, CONNECT_TIMEOUT, DEFAULT_SCHEMA_TTL,
-    READ_TIMEOUT, SCHEMA_CACHE_DIR_ENV, SCHEMA_REFRESH_ENV, SCHEMA_TTL_ENV,
+    Access, BundleError, BundleVersion, CachedBundle, ConfirmedAt, Freshness, LinkError,
+    LinkLocation, LinkResolver, Outcome, RemoteUrl, Resolved, SchemaBundle, SchemaLink,
+    VersionError, CONNECT_TIMEOUT, DEFAULT_SCHEMA_TTL, READ_TIMEOUT, SCHEMA_CACHE_DIR_ENV,
+    SCHEMA_REFRESH_ENV, SCHEMA_TTL_ENV,
 };
 pub use queue::{
     Asker, AskerRefused, Claimed, Delivery, FieldPath, FieldPathError, Lifetime, Ordering, Policy,

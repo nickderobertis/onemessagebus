@@ -254,6 +254,7 @@ class Client:
         """Remove every entry of the schema cache, and report how many there were."""
         return await self._reading("schemasClear", {"format": format}, SchemasCleared)
 
+    # llmlint: ignore-block[modern_domain_modeling] every method of this client takes the contract's text-shaped values as `str` — `id`, `queue`, `correlation` — the way a caller writes them, and hands them to the transport as the options root keys them; a link is text in the same way, validated where the binary parses it, and a generated `SchemaLink` root model here alone would be the one parameter a caller must wrap.
     @overload
     async def schemas_fetch(
         self,
@@ -283,6 +284,8 @@ class Client:
         """
         values = {"links": links, "config": config, "format": format}
         return await self._reading("schemasFetch", values, SchemasFetched)
+
+    # llmlint: ignore-end[modern_domain_modeling]
 
     @overload
     async def events_merge(

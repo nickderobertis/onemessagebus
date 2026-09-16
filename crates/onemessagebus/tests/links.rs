@@ -142,8 +142,8 @@ fn refused(text: &str) -> String {
 fn a_link_parses_every_location_and_pin_contract_l_names() {
     let pinned = link("https://example.org/frames.json@8");
     assert_eq!(
-        pinned.location(),
-        &LinkLocation::Remote("https://example.org/frames.json".to_owned())
+        remote(pinned.location()),
+        Some("https://example.org/frames.json")
     );
     assert_eq!(pinned.pin().map(ToString::to_string).as_deref(), Some("8"));
     assert_eq!(pinned.to_string(), "https://example.org/frames.json@8");
@@ -162,8 +162,8 @@ fn a_link_parses_every_location_and_pin_contract_l_names() {
     let in_segment = link("https://example.org/@scope/frames.json");
     assert_eq!(in_segment.pin(), None);
     assert_eq!(
-        in_segment.location(),
-        &LinkLocation::Remote("https://example.org/@scope/frames.json".to_owned())
+        remote(in_segment.location()),
+        Some("https://example.org/@scope/frames.json")
     );
     let segment_then_pin = link("https://example.org/pkg@2/frames.json@3");
     assert_eq!(
@@ -171,8 +171,8 @@ fn a_link_parses_every_location_and_pin_contract_l_names() {
         Some("3")
     );
     assert_eq!(
-        segment_then_pin.location(),
-        &LinkLocation::Remote("https://example.org/pkg@2/frames.json".to_owned())
+        remote(segment_then_pin.location()),
+        Some("https://example.org/pkg@2/frames.json")
     );
     let not_a_pin = link("https://example.org/frames@latest");
     assert_eq!(not_a_pin.pin(), None);
@@ -219,6 +219,14 @@ fn a_link_parses_every_location_and_pin_contract_l_names() {
     assert!(refused("").contains("empty"));
     assert!(refused("@8").contains("no location"));
     assert!(refused(" https://example.org/frames.json").contains("whitespace"));
+}
+
+/// The URL a remote location fetches, or `None` for a file.
+fn remote(location: &LinkLocation) -> Option<&str> {
+    match location {
+        LinkLocation::Remote(url) => Some(url.as_str()),
+        LinkLocation::File(_) => None,
+    }
 }
 
 /// An absolute path as a `file://` URL's path.

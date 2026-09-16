@@ -647,37 +647,48 @@ pub struct SchemasCleared {
     pub removed: u64,
 }
 
-/// How `schemas fetch` ended for one link.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum FetchOutcome {
-    /// A `file://` or bare-path bundle, read.
-    Read,
-    /// Fetched from the origin, and stored when the link is pinned.
-    Fetched,
-    /// The cached entry, confirmed current by the origin.
-    Confirmed,
-    /// The cached entry, reused because its revalidation could not be made.
-    Reused,
-    /// Not resolved: `reason` says why.
-    Failed,
-}
-
-/// One link of `schemas fetch`.
+/// How `schemas fetch` ended for one link, named in `outcome`: a version for
+/// every link that resolved, and a reason for one reused or failed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FetchedLink {
-    /// The link, as named.
-    pub link: SchemaLink,
-    /// How it ended.
-    pub outcome: FetchOutcome,
-    /// The version the bundle it resolved to declares; absent when it failed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<BundleVersion>,
-    /// Why a revalidation failed, for `reused`, or why the link did not
-    /// resolve, for `failed`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
+#[serde(tag = "outcome", rename_all = "lowercase", deny_unknown_fields)]
+pub enum FetchedLink {
+    /// A `file://` or bare-path bundle, read.
+    Read {
+        /// The link, as named.
+        link: SchemaLink,
+        /// The version the bundle declares.
+        version: BundleVersion,
+    },
+    /// Fetched from the origin, and stored when the link is pinned.
+    Fetched {
+        /// The link, as named.
+        link: SchemaLink,
+        /// The version the bundle declares.
+        version: BundleVersion,
+    },
+    /// The cached entry, confirmed current by the origin.
+    Confirmed {
+        /// The link, as named.
+        link: SchemaLink,
+        /// The version the cached bundle declares.
+        version: BundleVersion,
+    },
+    /// The cached entry, reused because its revalidation could not be made.
+    Reused {
+        /// The link, as named.
+        link: SchemaLink,
+        /// The version the cached bundle declares.
+        version: BundleVersion,
+        /// Why the revalidation failed.
+        reason: String,
+    },
+    /// Not resolved.
+    Failed {
+        /// The link, as named.
+        link: SchemaLink,
+        /// Why not.
+        reason: String,
+    },
 }
 
 /// The output of `schemas fetch`: one report per link, in the order named.

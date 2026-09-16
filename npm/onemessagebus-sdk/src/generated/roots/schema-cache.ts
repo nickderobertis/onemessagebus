@@ -29,7 +29,7 @@ export interface CachedBundle {
    */
   version: string;
   /**
-   * When the origin last confirmed it: RFC 3339, UTC.
+   * When the origin last confirmed it.
    */
   confirmed_at: string;
   [k: string]: unknown;
@@ -38,10 +38,14 @@ export interface CachedBundle {
 const $CachedBundle: z.ZodType = z.looseObject({
   url: z.string(),
   version: z.lazy(() => $BundleVersion),
-  confirmed_at: z.string(),
+  confirmed_at: z.lazy(() => $ConfirmedAt),
 });
 
 const $BundleVersion: z.ZodType = z.string().regex(new RegExp("^[0-9]+(\\.[0-9]+){0,2}$", "u"));
+
+const $ConfirmedAt: z.ZodType = z
+  .string()
+  .regex(new RegExp("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$", "u"));
 
 export const SchemaCacheSchema = contract<SchemaCache>(
   z.strictObject({ cache: z.string(), entries: z.array(z.lazy(() => $CachedBundle)) }),
