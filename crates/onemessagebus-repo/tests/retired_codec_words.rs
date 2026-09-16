@@ -54,7 +54,8 @@ fn retired_codec_words_are_absent_from_scanned_paths_and_author_words_have_one_a
         let relative = path
             .strip_prefix(&root)
             .expect("under root")
-            .to_string_lossy();
+            .to_string_lossy()
+            .replace('\\', "/");
         if relative.starts_with("crates/") && !relative.contains("/src/") {
             continue;
         }
@@ -76,7 +77,7 @@ fn retired_codec_words_are_absent_from_scanned_paths_and_author_words_have_one_a
                     line + 1
                 );
             }
-            if !author_allowed.contains(relative.as_ref()) {
+            if !author_allowed.contains(relative.as_str()) {
                 for word in ["monitor", "pacemaker"] {
                     assert!(
                         !lower
