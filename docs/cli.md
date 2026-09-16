@@ -1,7 +1,7 @@
 # The command line
 
 `onemessagebus` has the `schema` verbs, over the registry; the `schemas` verbs,
-over the cache of linked schema bundles (`docs/schema-links.md`); the `events` verbs,
+over the cache of linked schema bundles; the `events` verbs,
 over NDJSON streams; `deliver` and `inbox carried`, over the inbox
 (`docs/inbox.md`); `send`, `next`, `reply`, `subscribe` and `status` over
 queues kept on a transport, with `transports` listing the transport kinds
