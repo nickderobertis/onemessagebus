@@ -1039,10 +1039,16 @@ impl LinkResolver {
         let cache_dir = var(SCHEMA_CACHE_DIR_ENV)
             .map(PathBuf::from)
             .or_else(|| {
-                var("XDG_CACHE_HOME").map(|home| PathBuf::from(home).join("onemessagebus/schemas"))
+                var("XDG_CACHE_HOME")
+                    .map(|home| PathBuf::from(home).join("onemessagebus").join("schemas"))
             })
             .or_else(|| {
-                var("HOME").map(|home| PathBuf::from(home).join(".cache/onemessagebus/schemas"))
+                var("HOME").map(|home| {
+                    PathBuf::from(home)
+                        .join(".cache")
+                        .join("onemessagebus")
+                        .join("schemas")
+                })
             });
         let text = |name: &'static str| {
             std::env::var_os(name)
