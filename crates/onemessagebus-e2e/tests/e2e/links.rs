@@ -1681,6 +1681,38 @@ fn a_cache_write_replaces_a_symbolic_link_at_an_entry_rather_than_following_it()
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(names.len(), 2, "a staged write was left behind: {names:?}");
+
+    // An entry directory that is itself a link to one outside the cache is
+    // neither listed, cleared, read nor written through.
+    let moved = scratch.path("outside-entries");
+    std::fs::rename(&entry_dir, &moved).expect("the entry directory moved out");
+    std::os::unix::fs::symlink(&moved, &entry_dir).expect("a symbolic link");
+    assert!(
+        scratch.versions().is_empty(),
+        "an entry outside the cache was listed"
+    );
+    let cleared = scratch.run(&["schemas", "clear"], None, &[]);
+    assert_eq!(cleared.code, 0, "{}", cleared.stderr);
+    let report: Value = serde_json::from_str(&cleared.stdout).expect("a JSON report");
+    assert_eq!(report["removed"], 0, "{}", cleared.stdout);
+    let refused = scratch.run(&["schemas", "fetch", &link], None, &[]);
+    assert_eq!(refused.code, 1, "{}", refused.stderr);
+    assert!(
+        refused.stderr.contains(&format!(
+            "{}: cannot write it: it is not a directory of the cache",
+            entry_dir.display()
+        )),
+        "{}",
+        refused.stderr
+    );
+    let outside_names = std::fs::read_dir(&moved)
+        .expect("the moved entries")
+        .flatten()
+        .count();
+    assert_eq!(
+        outside_names, 2,
+        "the entries outside the cache were touched"
+    );
 }
 // llmlint: ignore-end[tests_mirror_real_usage]
 

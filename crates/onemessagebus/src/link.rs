@@ -1317,8 +1317,8 @@ fn subdirs(cache: &Path) -> Result<Vec<PathBuf>, LinkError> {
     match std::fs::read_dir(cache) {
         Ok(entries) => Ok(entries
             .flatten()
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
             .map(|entry| entry.path())
-            .filter(|path| path.is_dir())
             .collect()),
         Err(failure) if failure.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(failure) => Err(LinkError::Cache {
@@ -1331,7 +1331,16 @@ fn subdirs(cache: &Path) -> Result<Vec<PathBuf>, LinkError> {
 /// Every readable entry in one URL's directory, for resolution: a directory that
 /// cannot be read is an empty one, since resolution fetches past the cache.
 fn read_entries(dir: &Path, url: &RemoteUrl) -> Vec<Entry> {
+    if !is_cache_dir(dir) {
+        return Vec::new();
+    }
     entries_in(dir, Some(url)).unwrap_or_default()
+}
+
+/// Whether `path` is a directory itself — never a symbolic link to one — so the
+/// cache is only ever read and written inside the directory it is named by.
+fn is_cache_dir(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir())
 }
 
 /// Every readable entry in one URL's directory, for `schemas` and `schemas
@@ -1407,6 +1416,12 @@ fn store(
     body: &Body,
     now: ConfirmedAt,
 ) -> Result<(), LinkError> {
+    if std::fs::symlink_metadata(dir).is_ok() && !is_cache_dir(dir) {
+        return Err(LinkError::Cache {
+            path: dir.to_path_buf(),
+            why: "cannot write it: it is not a directory of the cache".to_owned(),
+        });
+    }
     std::fs::create_dir_all(dir).map_err(|failure| cache_error(dir, &failure))?;
     let (body_path, meta_path) = entry_paths(dir, bundle.version());
     write_replacing(&body_path, body.text.as_bytes())
