@@ -38,6 +38,10 @@ const AMBIENT: &[&str] = &[
     "no_proxy",
     "SSL_CERT_FILE",
     "SSL_CERT_DIR",
+    // The host running the journeys may be inside a run; `serve` must not read it.
+    "ONEPIPELINE_RUN_ID",
+    "ONEPIPELINE_CHANNEL_ASKER",
+    "ONEPIPELINE_SERVE_SESSION_SECONDS",
 ];
 
 /// The id every bundle here publishes, and a document for it at `version`:
@@ -1210,7 +1214,7 @@ fn https_proxy_carries_the_fetch_and_no_proxy_naming_the_host_bypasses_it() {
 fn frame() -> String {
     json!({
         "op": "supervisor",
-        "task": "watch",
+        "task": "onepipeline run `r-7`.\nwatch",
         "persona": "A careful monitor.",
         "done_when": "the watch is kept",
         "worktree": "/repo",
