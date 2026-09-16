@@ -298,7 +298,7 @@ fn exercised() -> Vec<Exercise> {
                 let resolved = LinkResolver::new(Some(dir.path().join("cache")))
                     .resolve(&link, Freshness::Window)
                     .expect("resolves");
-                assert_eq!(resolved.outcome, Outcome::Read);
+                assert_eq!(resolved.outcome(), &Outcome::Read);
                 let mut registry = Registry::new();
                 resolved.register_into(&mut registry).expect("registers");
                 assert_eq!(registry.ids(), vec!["test.frame@1".parse().expect("an id")]);

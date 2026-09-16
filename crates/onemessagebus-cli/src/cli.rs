@@ -800,12 +800,12 @@ fn linked(config: &Config, freshness: Freshness) -> Result<Vec<Resolved>, Refusa
 /// A reused entry, said on stderr: the cache is a speed-up, and a revalidation
 /// that could not be made is worth a line but not a refusal.
 fn say_reused(resolved: &Resolved) {
-    if let Outcome::Reused { why } = &resolved.outcome {
+    if let Outcome::Reused { why } = resolved.outcome() {
         eprintln!(
             "onemessagebus: {}: could not revalidate the cached bundle at version {} ({why}); \
              using the cached entry",
-            resolved.link,
-            resolved.bundle.version()
+            resolved.link(),
+            resolved.bundle().version()
         );
     }
 }
@@ -967,8 +967,8 @@ fn schemas(args: SchemasArgs, out: &mut impl std::io::Write) -> Result<(), Refus
                 let fetched = match resolver.resolve(&link, Freshness::Revalidate) {
                     Ok(resolved) => {
                         say_reused(&resolved);
-                        let version = resolved.bundle.version().clone();
-                        match resolved.outcome {
+                        let version = resolved.bundle().version().clone();
+                        match resolved.outcome().clone() {
                             Outcome::Read => FetchedLink::Read { link, version },
                             Outcome::Fetched => FetchedLink::Fetched { link, version },
                             // Revalidating answers `cached` never: every

@@ -215,7 +215,9 @@ fn a_link_parses_every_location_and_pin_contract_l_names() {
 
     assert!(refused("file://relative/frames.json").contains("absolute path"));
     assert!(refused("ftp://example.org/frames.json").contains("scheme"));
-    assert!(refused("https:///frames.json").contains("no host"));
+    assert!(refused("https:///frames.json").contains("well-formed URL"));
+    assert!(refused("https://example.org:port/frames.json").contains("well-formed URL"));
+    assert!(refused("https://exa mple.org/frames.json").contains("well-formed URL"));
     assert!(refused("").contains("empty"));
     assert!(refused("@8").contains("no location"));
     assert!(refused(" https://example.org/frames.json").contains("whitespace"));
@@ -289,15 +291,15 @@ fn a_file_link_is_read_on_every_resolution_and_held_to_its_pin() {
     let first = resolver
         .resolve(&pinned, Freshness::Window)
         .expect("it resolves");
-    assert_eq!(first.outcome, Outcome::Read);
-    assert_eq!(first.bundle.version().to_string(), "8.1");
+    assert_eq!(first.outcome(), &Outcome::Read);
+    assert_eq!(first.bundle().version().to_string(), "8.1");
 
     std::fs::write(&path, frame("8.2").to_string()).expect("rewritten");
     let second = resolver
         .resolve(&pinned, Freshness::Window)
         .expect("it resolves");
     assert_eq!(
-        second.bundle.version().to_string(),
+        second.bundle().version().to_string(),
         "8.2",
         "read again, not cached"
     );
@@ -312,6 +314,22 @@ fn a_file_link_is_read_on_every_resolution_and_held_to_its_pin() {
     for named in [pinned.to_string().as_str(), "@8", "version 9"] {
         assert!(message.contains(named), "{message} does not name {named}");
     }
+
+    let large = dir.path().join("large.json");
+    std::fs::write(
+        &large,
+        format!("{{\"padding\": \"{}\"}}", "x".repeat(17 * 1024 * 1024)),
+    )
+    .expect("written");
+    let past_the_bound = resolver
+        .resolve(&link(&format!("{}@8", large.display())), Freshness::Window)
+        .expect_err("a file past the bundle bound is refused");
+    assert!(
+        past_the_bound
+            .to_string()
+            .contains("the document is larger than the 16 MiB a bundle may be"),
+        "{past_the_bound}"
+    );
 
     let missing = link(&format!("{}@8", dir.path().join("absent.json").display()));
     let unread = resolver
@@ -369,7 +387,7 @@ fn load_parses_links_resolving_nothing_and_refuses_a_malformed_one_by_name() {
     let resolved = only_file
         .resolve_links(&LinkResolver::new(Some(cache.clone())), Freshness::Window)
         .expect("the file link resolves");
-    assert_eq!(resolved[0].outcome, Outcome::Read);
+    assert_eq!(resolved[0].outcome(), &Outcome::Read);
     let written = serde_json::to_value(&only_file).expect("it serializes");
     assert_eq!(
         written["schemas"],

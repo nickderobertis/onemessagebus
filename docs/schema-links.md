@@ -118,7 +118,8 @@ spelling, the upper case first), unless `NO_PROXY` names the host — exactly, a
 
 A fetch that crosses one is refused naming it: `the connection was not
 established within the 5-second connect timeout`, `nothing was received within
-the 15-second read timeout`. A bundle is at most 16 MiB.
+the 15-second read timeout`. A bundle, fetched or read from a file, is at most 16
+MiB.
 
 ## Where links are named
 

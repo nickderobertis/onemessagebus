@@ -392,19 +392,36 @@ impl RemoteUrl {
     /// `text` as a remote location, or why it is not one: an `https://` URL
     /// naming a host, or an `http://` URL naming a loopback host.
     fn parse(text: &str) -> Result<Self, &'static str> {
-        let lower = text.to_ascii_lowercase();
-        let (rest, loopback_only) = if lower.starts_with("https://") {
-            (&text["https://".len()..], false)
-        } else if lower.starts_with("http://") {
-            (&text["http://".len()..], true)
-        } else {
-            return Err("it is not an https:// or http:// URL");
+        let uri: ureq::http::Uri = text
+            .parse()
+            .map_err(|_| "it is not a well-formed URL: a scheme, an authority and a path")?;
+        let loopback_only = match uri.scheme_str().map(str::to_ascii_lowercase).as_deref() {
+            Some("https") => false,
+            Some("http") => true,
+            _ => return Err("it is not an https:// or http:// URL"),
         };
-        let host = host_of(rest).ok_or("its URL names no host")?;
+        let host = uri
+            .host()
+            .filter(|host| !host.is_empty())
+            .ok_or("its URL names no host")?;
+        let authority = uri.authority().map_or("", |authority| authority.as_str());
+        let host_port = authority
+            .rsplit_once('@')
+            .map_or(authority, |(_, after)| after);
+        let after_host = host_port
+            .rsplit_once(']')
+            .map_or(host_port, |(_, after)| after);
+        if let Some((_, port)) = after_host.rsplit_once(':') {
+            if port.parse::<u16>().is_err() {
+                return Err(
+                    "it is not a well-formed URL: its port is not a number from 0 to 65535",
+                );
+            }
+        }
         if loopback_only
             && !matches!(
                 host.to_ascii_lowercase().as_str(),
-                "localhost" | "127.0.0.1" | "[::1]"
+                "localhost" | "127.0.0.1" | "[::1]" | "::1"
             )
         {
             return Err(
@@ -787,18 +804,34 @@ impl Outcome {
     }
 }
 
-/// A link resolved to its bundle.
+/// A link resolved to its bundle: only [`LinkResolver::resolve`] makes one, so
+/// the outcome is always one that link's kind and the cache could give.
 #[derive(Debug, Clone)]
 pub struct Resolved {
-    /// The link.
-    pub link: SchemaLink,
-    /// The bundle it resolved to.
-    pub bundle: SchemaBundle,
-    /// How it got there.
-    pub outcome: Outcome,
+    link: SchemaLink,
+    bundle: SchemaBundle,
+    outcome: Outcome,
 }
 
 impl Resolved {
+    /// The link.
+    #[must_use]
+    pub fn link(&self) -> &SchemaLink {
+        &self.link
+    }
+
+    /// The bundle it resolved to.
+    #[must_use]
+    pub fn bundle(&self) -> &SchemaBundle {
+        &self.bundle
+    }
+
+    /// How it got there.
+    #[must_use]
+    pub fn outcome(&self) -> &Outcome {
+        &self.outcome
+    }
+
     /// Register every document of the bundle into `registry`.
     ///
     /// # Errors
@@ -1032,12 +1065,11 @@ impl LinkResolver {
     pub fn resolve(&self, link: &SchemaLink, freshness: Freshness) -> Result<Resolved, LinkError> {
         let url = match link.location() {
             LinkLocation::File(path) => {
-                let text =
-                    std::fs::read_to_string(path).map_err(|failure| LinkError::Unreachable {
-                        link: link.to_string(),
-                        doing: Access::Read,
-                        why: format!("{}: {failure}", path.display()),
-                    })?;
+                let text = read_bounded(path).map_err(|why| LinkError::Unreachable {
+                    link: link.to_string(),
+                    doing: Access::Read,
+                    why: format!("{}: {why}", path.display()),
+                })?;
                 let bundle = held_to_pin(link, parse_bundle(link, &text)?)?;
                 return Ok(resolved(link, bundle, Outcome::Read));
             }
@@ -1163,6 +1195,28 @@ impl LinkResolver {
         }
         Ok(removed)
     }
+}
+
+/// A file's text, refused past the bound a fetched bundle is held to.
+fn read_bounded(path: &Path) -> Result<String, String> {
+    use std::io::Read as _;
+    let file = std::fs::File::open(path).map_err(|failure| failure.to_string())?;
+    let mut text = String::new();
+    file.take(MAX_BUNDLE_BYTES + 1)
+        .read_to_string(&mut text)
+        .map_err(|failure| failure.to_string())?;
+    if text.len() as u64 > MAX_BUNDLE_BYTES {
+        return Err(too_large());
+    }
+    Ok(text)
+}
+
+/// Why a document past the bundle bound is refused.
+fn too_large() -> String {
+    format!(
+        "the document is larger than the {} MiB a bundle may be",
+        MAX_BUNDLE_BYTES / (1024 * 1024)
+    )
 }
 
 fn resolved(link: &SchemaLink, bundle: SchemaBundle, outcome: Outcome) -> Resolved {
@@ -1422,10 +1476,7 @@ fn transport_failure(failure: &ureq::Error) -> String {
             "nothing was received within the {}-second read timeout",
             READ_TIMEOUT.as_secs()
         ),
-        ureq::Error::BodyExceedsLimit(_) => format!(
-            "the response is larger than the {} MiB a bundle may be",
-            MAX_BUNDLE_BYTES / (1024 * 1024)
-        ),
+        ureq::Error::BodyExceedsLimit(_) => too_large(),
         other => other.to_string(),
     }
 }

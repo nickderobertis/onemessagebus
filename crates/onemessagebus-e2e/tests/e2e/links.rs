@@ -1328,7 +1328,7 @@ fn a_response_past_the_bundle_bound_is_refused_naming_the_bound() {
     assert_eq!(run.code, 1, "{}", run.stderr);
     assert!(
         run.stderr.contains(&format!(
-            "{link}: cannot fetch the bundle: reading the response: the response is larger than the 16 MiB a bundle may be"
+            "{link}: cannot fetch the bundle: reading the response: the document is larger than the 16 MiB a bundle may be"
         )),
         "{}",
         run.stderr
