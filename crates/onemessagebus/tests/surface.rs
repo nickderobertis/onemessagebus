@@ -63,7 +63,10 @@ fn an_allowlist_reports_its_declared_authors_and_grants() {
     allowlist.grant(sentinel.clone(), retry.clone());
 
     assert_eq!(sentinel.as_str(), "sentinel");
-    assert_eq!(allowlist.authors(), [sentinel.clone()]);
+    assert_eq!(
+        allowlist.authors().as_slice(),
+        std::slice::from_ref(&sentinel)
+    );
     assert_eq!(allowlist.granted(&sentinel), [retry]);
 }
 
