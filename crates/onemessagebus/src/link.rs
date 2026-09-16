@@ -1117,13 +1117,13 @@ impl LinkResolver {
             LinkLocation::Remote(url) => url,
         };
         let (Some(pin), Some(cache)) = (link.pin(), &self.cache_dir) else {
-            let body = fetch(link, url, None)?.ok_or_else(|| unanswered(link))?;
+            let body = fetch(link, url)?;
             let bundle = held_to_pin(link, parse_bundle(link, &body.text)?)?;
             return Ok(resolved(link, bundle, Outcome::Fetched));
         };
         let dir = url_dir(cache, url.as_str());
         if self.refresh && freshness != Freshness::CachedFirst {
-            let body = fetch(link, url, None)?.ok_or_else(|| unanswered(link))?;
+            let body = fetch(link, url)?;
             let bundle = held_to_pin(link, parse_bundle(link, &body.text)?)?;
             for entry in read_entries(&dir, url) {
                 let _ = std::fs::remove_file(&entry.body_path);
@@ -1138,7 +1138,7 @@ impl LinkResolver {
             .collect();
         satisfying.sort_by(|a, b| b.meta.version.cmp(&a.meta.version));
         let Some(entry) = satisfying.into_iter().next() else {
-            let body = fetch(link, url, None)?.ok_or_else(|| unanswered(link))?;
+            let body = fetch(link, url)?;
             let bundle = held_to_pin(link, parse_bundle(link, &body.text)?)?;
             store(&dir, url, &bundle, &body, ConfirmedAt::now())?;
             return Ok(resolved(link, bundle, Outcome::Fetched));
@@ -1151,7 +1151,7 @@ impl LinkResolver {
         if freshness == Freshness::CachedFirst || (freshness == Freshness::Window && fresh) {
             return Ok(resolved(link, entry.bundle, Outcome::Cached));
         }
-        match fetch(link, url, Some(&entry.meta)) {
+        match revalidate(link, url, &entry.meta) {
             Ok(None) => {
                 let meta = EntryMeta {
                     confirmed_at: now,
@@ -1289,15 +1289,6 @@ fn held_to_pin(link: &SchemaLink, bundle: SchemaBundle) -> Result<SchemaBundle, 
             declared: bundle.version().clone(),
         }),
         _ => Ok(bundle),
-    }
-}
-
-fn unanswered(link: &SchemaLink) -> LinkError {
-    LinkError::Unreachable {
-        link: link.to_string(),
-        doing: Access::Fetch,
-        why: "the origin answered 304 Not Modified to a request that was not conditional"
-            .to_owned(),
     }
 }
 
@@ -1444,24 +1435,52 @@ struct Body {
     last_modified: Option<Validator>,
 }
 
-/// GET `url`: `Ok(None)` for a `304` to a conditional request — one carrying a
-/// validator `meta` recorded — and the document for a success.
+/// GET `url` unconditionally: the document for a success.
 ///
 /// # Errors
 ///
 /// [`LinkError::Unreachable`] for a transport failure, a timeout, or any other
 /// status.
-fn fetch(
+fn fetch(link: &SchemaLink, url: &RemoteUrl) -> Result<Body, LinkError> {
+    document(link, request(link, url, None)?)
+}
+
+/// GET `url` carrying the validators `meta` recorded: `Ok(None)` for a `304`
+/// to that conditional request, and the document for a success.
+///
+/// # Errors
+///
+/// As [`fetch`]; a `304` to a request that carried no validator is one of the
+/// other statuses.
+fn revalidate(
     link: &SchemaLink,
     url: &RemoteUrl,
-    meta: Option<&EntryMeta>,
+    meta: &EntryMeta,
 ) -> Result<Option<Body>, LinkError> {
-    let refuse = |why: String| LinkError::Unreachable {
+    let response = request(link, url, Some(meta))?;
+    let conditional = meta.etag.is_some() || meta.last_modified.is_some();
+    if conditional && response.status().as_u16() == 304 {
+        return Ok(None);
+    }
+    document(link, response).map(Some)
+}
+
+fn refusal(link: &SchemaLink, why: String) -> LinkError {
+    LinkError::Unreachable {
         link: link.to_string(),
         doing: Access::Fetch,
         why,
-    };
-    let conditional = meta.is_some_and(|meta| meta.etag.is_some() || meta.last_modified.is_some());
+    }
+}
+
+/// The response GET `url` ends at, with `meta`'s validators, after following
+/// redirects.
+fn request(
+    link: &SchemaLink,
+    url: &RemoteUrl,
+    meta: Option<&EntryMeta>,
+) -> Result<ureq::http::Response<ureq::Body>, LinkError> {
+    let refuse = |why: String| refusal(link, why);
     // Redirects are followed here rather than by the client, so every hop is
     // held to the schemes and hosts a link itself may name.
     let mut target = url.clone();
@@ -1500,15 +1519,20 @@ fn fetch(
             ))
         })?;
     }
-    let mut response = response.ok_or_else(|| {
+    response.ok_or_else(|| {
         refuse(format!(
             "the origin redirected more than {MAX_REDIRECTS} times"
         ))
-    })?;
+    })
+}
+
+/// The document a success `response` carries, and the validators it names.
+fn document(
+    link: &SchemaLink,
+    mut response: ureq::http::Response<ureq::Body>,
+) -> Result<Body, LinkError> {
+    let refuse = |why: String| refusal(link, why);
     let status = response.status().as_u16();
-    if conditional && status == 304 {
-        return Ok(None);
-    }
     if !(200..300).contains(&status) {
         return Err(refuse(format!("the origin answered HTTP {status}")));
     }
@@ -1532,11 +1556,11 @@ fn fetch(
                 transport_failure(&failure)
             ))
         })?;
-    Ok(Some(Body {
+    Ok(Body {
         text,
         etag,
         last_modified,
-    }))
+    })
 }
 
 /// How many redirects one fetch follows.

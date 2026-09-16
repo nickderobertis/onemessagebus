@@ -304,15 +304,23 @@ fn answer(mut stream: impl Read + Write, served: &Mutex<Served>) {
             path: path.clone(),
             headers: headers.clone(),
         });
+        let canned = |status: &str, headers: &str| {
+            format!("HTTP/1.1 {status}\r\n{headers}Content-Length: 0\r\nConnection: close\r\n\r\n")
+        };
         let redirect = match path.as_str() {
             "/moved.json" => Some("/frames.json"),
             "/away.json" => Some("http://example.org/frames.json"),
+            "/loop.json" => Some("/loop.json"),
             _ => None,
         };
         if let Some(location) = redirect {
-            format!(
-                "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            )
+            canned("302 Found", &format!("Location: {location}\r\n"))
+        } else if path == "/nowhere.json" {
+            canned("302 Found", "")
+        } else if path == "/gone.json" {
+            canned("404 Not Found", "")
+        } else if path == "/unchanged.json" {
+            canned("304 Not Modified", "")
         } else if headers.get("if-none-match") == Some(&served.etag) {
             format!(
                 "HTTP/1.1 304 Not Modified\r\nETag: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
@@ -1497,7 +1505,7 @@ fn a_response_past_the_bundle_bound_is_refused_naming_the_bound() {
     assert!(scratch.versions().is_empty());
 }
 
-// llmlint: ignore[tests_mirror_real_usage] the cache directory is a user-facing input — it is the directory ONEMESSAGEBUS_SCHEMA_CACHE_DIR, XDG_CACHE_HOME or HOME names, shared, editable and possibly written by another release — and what this journey holds is the binary's boundary validation of that input, which no verb can produce a corrupt or unreadable entry to exercise; the binary is still driven only through its command line.
+// llmlint: ignore-block[tests_mirror_real_usage] both journeys to the ignore-end below write into the cache directory: the cache directory is a user-facing input — it is the directory ONEMESSAGEBUS_SCHEMA_CACHE_DIR, XDG_CACHE_HOME or HOME names, shared, editable and possibly written by another release — and what this journey holds is the binary's boundary validation of that input, which no verb can produce a corrupt or unreadable entry to exercise; the binary is still driven only through its command line.
 #[cfg(unix)]
 #[test]
 fn a_cache_directory_that_cannot_be_read_is_refused_by_the_verbs_that_report_on_it() {
@@ -1556,7 +1564,6 @@ fn a_cache_directory_that_cannot_be_read_is_refused_by_the_verbs_that_report_on_
     );
 }
 
-// llmlint: ignore[tests_mirror_real_usage] the cache directory is a user-facing input — it is the directory ONEMESSAGEBUS_SCHEMA_CACHE_DIR, XDG_CACHE_HOME or HOME names, shared, editable and possibly written by another release — and what this journey holds is the binary's boundary validation of that input, which no verb can produce a corrupt or unreadable entry to exercise; the binary is still driven only through its command line.
 #[test]
 fn a_cache_entry_past_its_bound_is_passed_over_and_refetched() {
     let scratch = Scratch::new();
@@ -1619,6 +1626,7 @@ fn a_cache_entry_past_its_bound_is_passed_over_and_refetched() {
     );
     assert_eq!(scratch.versions(), vec!["8.1"]);
 }
+// llmlint: ignore-end[tests_mirror_real_usage]
 
 #[test]
 fn a_redirect_is_followed_only_to_a_location_a_link_may_name() {
@@ -1641,6 +1649,71 @@ fn a_redirect_is_followed_only_to_a_location_a_link_may_name() {
         refused.stderr
     );
     assert_eq!(origin.seen().len(), 3, "the refused redirect was followed");
+}
+
+#[test]
+fn an_origin_answer_no_bundle_can_come_from_is_refused_naming_it() {
+    let scratch = Scratch::new();
+    let origin = Origin::http("8.1");
+    let refusals = [
+        (
+            "/nowhere.json",
+            "the origin answered HTTP 302 with no Location",
+        ),
+        ("/loop.json", "the origin redirected more than 5 times"),
+        ("/gone.json", "the origin answered HTTP 404"),
+        // A request that carried no validator cannot be answered "not modified".
+        ("/unchanged.json", "the origin answered HTTP 304"),
+    ];
+    for (path, why) in refusals {
+        let link = format!("http://{}{path}@8", origin.addr);
+        let refused = scratch.run(&["schemas", "fetch", &link], None, &[]);
+        assert_eq!(refused.code, 1, "{path}: {}", refused.stderr);
+        assert!(
+            refused
+                .stderr
+                .contains(&format!("{link}: cannot fetch the bundle: {why}")),
+            "{path}: {}",
+            refused.stderr
+        );
+    }
+    let loops = origin
+        .seen()
+        .iter()
+        .filter(|seen| seen.path == "/loop.json")
+        .count();
+    assert_eq!(
+        loops, 6,
+        "the first request and five redirects are followed"
+    );
+    assert!(
+        scratch.versions().is_empty(),
+        "a refusal left a cache entry"
+    );
+}
+
+#[test]
+fn a_proxy_the_environment_names_that_is_not_usable_is_refused_naming_it() {
+    let scratch = Scratch::new();
+    let origin = Origin::http("8.1");
+    let link = origin.link(Some("8"));
+    let refused = scratch.run(
+        &["schemas", "fetch", &link],
+        None,
+        &[("HTTP_PROXY", "not a proxy at all")],
+    );
+    assert_eq!(refused.code, 1, "{}", refused.stderr);
+    assert!(
+        refused.stderr.contains(&format!(
+            "{link}: cannot fetch the bundle: the proxy \"not a proxy at all\" is not usable: "
+        )),
+        "{}",
+        refused.stderr
+    );
+    assert!(
+        origin.seen().is_empty(),
+        "the origin was reached around the proxy"
+    );
 }
 
 #[cfg(unix)]
