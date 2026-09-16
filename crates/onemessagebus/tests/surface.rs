@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use onemessagebus::sdk_schema::{self, Bundle, Format, Lang};
 use onemessagebus::{
-    Admits, Emitter, Filter, FlagKind, Kind, LabelMatch, Labels, Matcher, Merge, Open, Reader,
-    Reading, Redactor, Registry, Reserved, SchemaId, Source,
+    Admits, Allowlist, Author, Emitter, Filter, FlagKind, Kind, LabelMatch, Labels, Matcher, Merge,
+    OpWord, Open, Reader, Reading, Redactor, Registry, Reserved, SchemaId, Source,
 };
 use serde_json::{json, Map, Value};
 
@@ -53,6 +53,18 @@ fn kinds_sources_and_labels_convert_and_render() {
     assert_eq!(labels.get_str("missing"), None);
     let asks = LabelMatch::default().with("tenant", "acme");
     assert_eq!(asks.0["tenant"], json!("acme"));
+}
+
+#[test]
+fn an_allowlist_reports_its_declared_authors_and_grants() {
+    let sentinel = Author::from("sentinel");
+    let retry = OpWord("retry".to_owned());
+    let mut allowlist = Allowlist::new([retry.clone()]);
+    allowlist.grant(sentinel.clone(), retry.clone());
+
+    assert_eq!(sentinel.as_str(), "sentinel");
+    assert_eq!(allowlist.authors(), [sentinel.clone()]);
+    assert_eq!(allowlist.granted(&sentinel), [retry]);
 }
 
 #[test]
