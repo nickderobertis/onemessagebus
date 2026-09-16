@@ -1517,3 +1517,45 @@ fn a_cache_directory_that_cannot_be_read_is_refused_by_the_verbs_that_report_on_
         resolved.stderr
     );
 }
+
+#[test]
+fn a_cache_entry_past_its_bound_is_passed_over_and_refetched() {
+    let scratch = Scratch::new();
+    let origin = Origin::http("8.1");
+    let link = origin.link(Some("8"));
+    let config = scratch.config(&[&link]);
+    assert_eq!(scratch.run(&["schemas", "fetch", &link], None, &[]).code, 0);
+    let entry_dir = std::fs::read_dir(scratch.path("cache"))
+        .expect("the cache")
+        .flatten()
+        .map(|entry| entry.path())
+        .next()
+        .expect("one entry directory");
+
+    // A body still declaring 8.1, padded past the bundle bound with whitespace
+    // JSON allows: unbounded, it would read as the entry.
+    let body = entry_dir.join("8.1.json");
+    let padded = format!("{}{}", bundle("8.1"), " ".repeat(17 * 1024 * 1024));
+    std::fs::write(&body, padded).expect("padded");
+    assert!(
+        scratch.versions().is_empty(),
+        "an oversized cached body was listed"
+    );
+    let refetched = scratch.check(&config, &json!({"hello": 1}), &[]);
+    assert_eq!(refetched.code, 0, "{}", refetched.stderr);
+    assert_eq!(
+        origin.seen().len(),
+        2,
+        "the oversized entry was used rather than refetched"
+    );
+    assert_eq!(scratch.versions(), vec!["8.1"]);
+
+    // Metadata padded past its own bound is passed over the same way.
+    let meta = entry_dir.join("8.1.meta.json");
+    let text = std::fs::read_to_string(&meta).expect("metadata");
+    std::fs::write(&meta, format!("{text}{}", " ".repeat(65 * 1024))).expect("padded");
+    assert!(
+        scratch.versions().is_empty(),
+        "oversized metadata was listed"
+    );
+}

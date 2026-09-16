@@ -47,6 +47,10 @@ pub const READ_TIMEOUT: Duration = Duration::from_secs(15);
 /// unbounded document.
 const MAX_BUNDLE_BYTES: u64 = 16 * 1024 * 1024;
 
+/// The bound on a cache entry's metadata, which records a URL, a version, a
+/// stamp and two validators and so is never near it.
+const MAX_META_BYTES: u64 = 64 * 1024;
+
 /// A version a bundle declares, or a pin asks for: one to three dot-separated
 /// non-negative integers (`^\d+(\.\d+){0,2}$`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1065,11 +1069,12 @@ impl LinkResolver {
     pub fn resolve(&self, link: &SchemaLink, freshness: Freshness) -> Result<Resolved, LinkError> {
         let url = match link.location() {
             LinkLocation::File(path) => {
-                let text = read_bounded(path).map_err(|why| LinkError::Unreachable {
-                    link: link.to_string(),
-                    doing: Access::Read,
-                    why: format!("{}: {why}", path.display()),
-                })?;
+                let text =
+                    read_bounded(path, MAX_BUNDLE_BYTES).map_err(|why| LinkError::Unreachable {
+                        link: link.to_string(),
+                        doing: Access::Read,
+                        why: format!("{}: {why}", path.display()),
+                    })?;
                 let bundle = held_to_pin(link, parse_bundle(link, &text)?)?;
                 return Ok(resolved(link, bundle, Outcome::Read));
             }
@@ -1197,16 +1202,21 @@ impl LinkResolver {
     }
 }
 
-/// A file's text, refused past the bound a fetched bundle is held to.
-fn read_bounded(path: &Path) -> Result<String, String> {
+/// A file's text, refused past `limit` bytes: a linked bundle and a cached one
+/// are held to the bound a fetched bundle is, and cache metadata to its own.
+fn read_bounded(path: &Path, limit: u64) -> Result<String, String> {
     use std::io::Read as _;
     let file = std::fs::File::open(path).map_err(|failure| failure.to_string())?;
     let mut text = String::new();
-    file.take(MAX_BUNDLE_BYTES + 1)
+    file.take(limit + 1)
         .read_to_string(&mut text)
         .map_err(|failure| failure.to_string())?;
-    if text.len() as u64 > MAX_BUNDLE_BYTES {
-        return Err(too_large());
+    if text.len() as u64 > limit {
+        return Err(if limit == MAX_BUNDLE_BYTES {
+            too_large()
+        } else {
+            format!("the document is larger than the {limit} bytes it may be")
+        });
     }
     Ok(text)
 }
@@ -1323,7 +1333,7 @@ fn entries_in(dir: &Path, url: Option<&RemoteUrl>) -> std::io::Result<Vec<Entry>
         if !is_meta {
             continue;
         }
-        let Some(meta) = std::fs::read_to_string(&meta_path)
+        let Some(meta) = read_bounded(&meta_path, MAX_META_BYTES)
             .ok()
             .and_then(|text| serde_json::from_str::<EntryMeta>(&text).ok())
         else {
@@ -1338,7 +1348,7 @@ fn entries_in(dir: &Path, url: Option<&RemoteUrl>) -> std::io::Result<Vec<Entry>
         if expected != meta_path {
             continue;
         }
-        let Some(bundle) = std::fs::read_to_string(&body_path)
+        let Some(bundle) = read_bounded(&body_path, MAX_BUNDLE_BYTES)
             .ok()
             .and_then(|text| SchemaBundle::from_json(&text).ok())
             .filter(|bundle| bundle.version() == &meta.version)
