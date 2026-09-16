@@ -1627,6 +1627,59 @@ fn a_cache_entry_past_its_bound_is_passed_over_and_refetched() {
     assert_eq!(scratch.versions(), vec!["8.1"]);
 }
 
+#[test]
+fn schemas_clear_removes_every_file_an_entry_directory_holds_and_nothing_else() {
+    let scratch = Scratch::new();
+    let origin = Origin::http("8.1");
+    let link = origin.link(Some("8"));
+    assert_eq!(scratch.run(&["schemas", "fetch", &link], None, &[]).code, 0);
+    let cache = scratch.path("cache");
+    let entry_dir = std::fs::read_dir(&cache)
+        .expect("the cache")
+        .flatten()
+        .map(|entry| entry.path())
+        .next()
+        .expect("one entry directory");
+
+    // Beside the readable entry: metadata that is not JSON, a body with no
+    // metadata, and a write left staged — none of them listed.
+    std::fs::write(entry_dir.join("9.meta.json"), "not json").expect("malformed metadata");
+    std::fs::write(entry_dir.join("7.json"), bundle("7")).expect("a body alone");
+    std::fs::write(entry_dir.join(".8.2.json.4242.0.tmp"), "half").expect("a staged write");
+    assert_eq!(scratch.versions(), vec!["8.1"]);
+    // And what this build does not name: a file in the entry directory, and a
+    // directory of the cache that no URL's digest names.
+    std::fs::write(entry_dir.join("notes.txt"), "mine").expect("a file of the user's");
+    std::fs::create_dir(cache.join("kept")).expect("a directory of the user's");
+    std::fs::write(cache.join("kept").join("1.json"), "mine").expect("its file");
+
+    let cleared = scratch.run(&["schemas", "clear"], None, &[]);
+    assert_eq!(cleared.code, 0, "{}", cleared.stderr);
+    let report: Value = serde_json::from_str(&cleared.stdout).expect("a JSON report");
+    assert_eq!(report["removed"], 1, "{}", cleared.stdout);
+    let left: Vec<String> = std::fs::read_dir(&entry_dir)
+        .expect("the entry directory, holding the user's file")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, vec!["notes.txt"]);
+    assert_eq!(
+        std::fs::read_to_string(cache.join("kept").join("1.json")).expect("kept"),
+        "mine"
+    );
+
+    // With the user's file gone too, a clear leaves no entry directory behind.
+    std::fs::remove_file(entry_dir.join("notes.txt")).expect("removed");
+    std::fs::write(entry_dir.join("9.meta.json"), "not json").expect("malformed metadata");
+    let cleared = scratch.run(&["schemas", "clear", "--format", "text"], None, &[]);
+    assert_eq!(cleared.code, 0, "{}", cleared.stderr);
+    assert_eq!(
+        cleared.stdout,
+        format!("removed 0 from {}\n", cache.display())
+    );
+    assert!(!entry_dir.exists(), "the emptied entry directory was left");
+}
+
 #[cfg(unix)]
 #[test]
 fn a_cache_write_replaces_a_symbolic_link_at_an_entry_rather_than_following_it() {

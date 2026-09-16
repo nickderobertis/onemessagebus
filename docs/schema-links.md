@@ -174,8 +174,10 @@ clients (`schemas`, `schemasClear` / `schemas_clear`, `schemasFetch` /
   `<url> <version> <confirmed_at>` per line. An empty or absent cache is an empty
   list, exit 0.
 - **`schemas clear [--format json|text]`** removes every entry and reports how
-  many: `{"cache": <dir>, "removed": <n>}`, or `removed <n> from <dir>`. Exit 0,
-  also when there were none.
+  many: `{"cache": <dir>, "removed": <n>}`, or `removed <n> from <dir>`. The files
+  of a malformed, oversized or half-written entry go too, uncounted; a file or
+  directory the cache does not name for an entry is left. Exit 0, also when there
+  were none.
 - **`schemas fetch [<link>...] [--config PATH] [--format json|text]`** resolves
   each named link — or, when none is named, every link the configuration names
   (`--config` or `ONEMESSAGEBUS_CONFIG`) — **revalidating regardless of the

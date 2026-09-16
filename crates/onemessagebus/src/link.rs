@@ -1212,25 +1212,38 @@ impl LinkResolver {
         Ok(entries)
     }
 
-    /// Remove every entry of the cache, and answer how many there were. Only
-    /// entries this build wrote are removed.
+    /// Remove every entry of the cache, and answer how many there were. Every
+    /// file this build keeps in an entry directory goes — a malformed,
+    /// oversized or half-written entry's included — and only the entries that
+    /// could be read are counted. Nothing else is touched: a directory whose
+    /// name is not a URL's digest, a symbolic link to one, or a file this build
+    /// does not name.
     ///
     /// # Errors
     ///
-    /// As [`cached`](Self::cached), and [`LinkError::Cache`] for an entry that
+    /// As [`cached`](Self::cached), and [`LinkError::Cache`] for a file that
     /// could not be removed.
     pub fn clear(&self) -> Result<usize, LinkError> {
         let cache = self.cache_dir.as_deref().ok_or(LinkError::NoCacheDir)?;
         let mut removed = 0;
-        for dir in subdirs(cache)? {
-            for entry in listed_entries(&dir)? {
-                for path in [&entry.body_path, &entry.meta_path] {
-                    std::fs::remove_file(path).map_err(|failure| LinkError::Cache {
-                        path: path.clone(),
-                        why: format!("cannot remove it: {failure}"),
-                    })?;
+        for dir in subdirs(cache)?.into_iter().filter(|dir| is_url_dir(dir)) {
+            removed += listed_entries(&dir)?.len();
+            let listing = std::fs::read_dir(&dir).map_err(|failure| LinkError::Cache {
+                path: dir.clone(),
+                why: format!("cannot read it: {failure}"),
+            })?;
+            for file in listing.flatten() {
+                let kept = file.file_name().to_str().is_some_and(|name| {
+                    name.ends_with(".json") || (name.starts_with('.') && name.ends_with(".tmp"))
+                });
+                if !kept || file.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    continue;
                 }
-                removed += 1;
+                let path = file.path();
+                std::fs::remove_file(&path).map_err(|failure| LinkError::Cache {
+                    path: path.clone(),
+                    why: format!("cannot remove it: {failure}"),
+                })?;
             }
             let _ = std::fs::remove_dir(&dir);
         }
@@ -1304,6 +1317,18 @@ fn url_dir(cache: &Path, url: &str) -> PathBuf {
         .map(|byte| format!("{byte:02x}"))
         .collect();
     cache.join(name)
+}
+
+/// Whether `dir` is named as [`url_dir`] names an entry directory.
+fn is_url_dir(dir: &Path) -> bool {
+    dir.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name.len() == 32
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
 }
 
 fn entry_paths(dir: &Path, version: &BundleVersion) -> (PathBuf, PathBuf) {
