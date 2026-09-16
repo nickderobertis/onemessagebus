@@ -117,6 +117,80 @@ for (const transport of TRANSPORTS) {
       expect(refused.message).toContain("typescript");
     });
 
+    test("schemas lists the cache, schemasFetch warms it from a linked bundle, and schemasClear empties it", async () => {
+      const bundle = JSON.stringify({
+        version: "8.1",
+        schemas: [{ id: "demo.frame@1", schema: { type: "object", required: ["hello"] } }],
+      });
+      const etag = '"8.1"';
+      const origin = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch: (request) =>
+          request.headers.get("if-none-match") === etag
+            ? new Response(null, { status: 304, headers: { etag } })
+            : new Response(bundle, { headers: { etag, "content-type": "application/json" } }),
+      });
+      const url = `http://127.0.0.1:${origin.port}/frames.json`;
+      const link = `${url}@8`;
+      const linkedConfig = join(dir, "linked.yaml");
+      writeFileSync(
+        linkedConfig,
+        [
+          "version: 1",
+          `transport: {kind: local, dir: ${JSON.stringify(join(dir, "linked-channel"))}}`,
+          `schemas: [${JSON.stringify(link)}]`,
+          "",
+        ].join("\n"),
+      );
+      const cache = join(dir, "schema-cache");
+      const base = baseConfig(dir);
+      const linked = transport.client({
+        ...base,
+        env: {
+          ...base.env,
+          ONEMESSAGEBUS_SCHEMA_CACHE_DIR: cache,
+          ONEMESSAGEBUS_SCHEMA_TTL: "3600",
+        },
+      });
+      try {
+        expect(await linked.schemas()).toEqual({ cache, entries: [] });
+
+        const fetched = await linked.schemasFetch({ config: linkedConfig });
+        expect(fetched).toEqual({ links: [{ link, outcome: "fetched", version: "8.1" }] });
+        const listed = await linked.schemas();
+        expect(listed.entries.map((entry) => [entry.url, entry.version])).toEqual([[url, "8.1"]]);
+        expect(await linked.schemas({ format: "text" })).toStartWith(`cache ${cache}\n${url} 8.1 `);
+
+        expect(
+          await linked.schemaCheck({ id: "demo.frame@1", config: linkedConfig }, { hello: 1 }),
+        ).toBe("");
+        const violation = await refusedWith(BusFailed, () =>
+          linked.schemaCheck({ id: "demo.frame@1", config: linkedConfig }, {}),
+        );
+        expect(violation.message).toContain('"hello" is a required property');
+
+        expect(await linked.schemasFetch({ links: [link], format: "text" })).toBe(
+          `${link} confirmed 8.1\n`,
+        );
+        const absent = "http://127.0.0.1:9/absent.json@1";
+        const failed = await refusedWith(BusFailed, () => linked.schemasFetch({ links: [absent] }));
+        expect(failed.message).toStartWith(
+          `schemas fetch: 1 of 1 links did not resolve: ${absent}: cannot fetch the bundle`,
+        );
+        const malformed = await refusedWith(BusRefused, () =>
+          linked.schemasFetch({ links: ["http://example.org/frames.json@1"] }),
+        );
+        expect(malformed.message).toContain("only for a loopback host");
+
+        expect(await linked.schemasClear()).toEqual({ cache, removed: 1 });
+        expect(await linked.schemasClear({ format: "text" })).toBe(`removed 0 from ${cache}\n`);
+      } finally {
+        await linked.transport.close();
+        origin.stop(true);
+      }
+    });
+
     test("send appends a typed record, and the core refuses a violation naming the id and pointer", async () => {
       const [sent] = await client.send("greetings", Greeting.parse({ text: "hello" }));
       expect(sent?.queue).toBe("greetings");

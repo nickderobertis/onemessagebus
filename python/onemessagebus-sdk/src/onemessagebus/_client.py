@@ -36,7 +36,10 @@ from ._types import (
     Payload,
     QueueStatus,
     Replied,
+    SchemaCache,
     SchemaEntry,
+    SchemasCleared,
+    SchemasFetched,
     Sent,
     StrPath,
     Validated,
@@ -171,17 +174,29 @@ class Client:
 
     @overload
     async def schema_list(
-        self, *, registry: StrPath | None = None, format: Literal["json"] | None = None
+        self,
+        *,
+        registry: StrPath | None = None,
+        config: StrPath | None = None,
+        format: Literal["json"] | None = None,
     ) -> list[SchemaEntry]: ...
     @overload
     async def schema_list(
-        self, *, registry: StrPath | None = None, format: Literal["text"]
+        self,
+        *,
+        registry: StrPath | None = None,
+        config: StrPath | None = None,
+        format: Literal["text"],
     ) -> str: ...
     async def schema_list(
-        self, *, registry: StrPath | None = None, format: Literal["json", "text"] | None = None
+        self,
+        *,
+        registry: StrPath | None = None,
+        config: StrPath | None = None,
+        format: Literal["json", "text"] | None = None,
     ) -> list[SchemaEntry] | str:
-        """Every registered id: the profile's and the registry directory's."""
-        values = {"registry": registry, "format": format}
+        """Every registered id: the profile's, the registry directory's, and the linked ones."""
+        values = {"registry": registry, "config": config, "format": format}
         return await self._reading("schemaList", values, list[SchemaEntry])
 
     async def schema_check(
@@ -191,22 +206,83 @@ class Client:
         *,
         file: StrPath | None = None,
         registry: StrPath | None = None,
+        config: StrPath | None = None,
     ) -> str:
         """Validate a payload against the schema registered under `id`; exit 1 raises BusFailed."""
-        values = {"id": id, "file": file, "registry": registry}
+        values = {"id": id, "file": file, "registry": registry, "config": config}
         return _text(await self._call("schemaCheck", values, _encode(payload)), "schemaCheck")
 
-    async def schema_gen(self, id: str, lang: str, *, registry: StrPath | None = None) -> str:
+    async def schema_gen(
+        self,
+        id: str,
+        lang: str,
+        *,
+        registry: StrPath | None = None,
+        config: StrPath | None = None,
+    ) -> str:
         """The schema registered under `id`, rendered for `lang`."""
-        values = {"id": id, "lang": lang, "registry": registry}
+        values = {"id": id, "lang": lang, "registry": registry, "config": config}
         return _text(await self._call("schemaGen", values), "schemaGen")
 
     async def schema_register(
-        self, id: str, file: StrPath, *, registry: StrPath | None = None
+        self,
+        id: str,
+        file: StrPath,
+        *,
+        registry: StrPath | None = None,
+        config: StrPath | None = None,
     ) -> str:
         """Record the JSON Schema document in `file` under `id`, in the registry directory."""
-        values = {"id": id, "file": file, "registry": registry}
+        values = {"id": id, "file": file, "registry": registry, "config": config}
         return _text(await self._call("schemaRegister", values), "schemaRegister")
+
+    @overload
+    async def schemas(self, *, format: Literal["json"] | None = None) -> SchemaCache: ...
+    @overload
+    async def schemas(self, *, format: Literal["text"]) -> str: ...
+    async def schemas(self, *, format: Literal["json", "text"] | None = None) -> SchemaCache | str:
+        """The schema cache: its directory, and each linked bundle it holds."""
+        return await self._reading("schemas", {"format": format}, SchemaCache)
+
+    @overload
+    async def schemas_clear(self, *, format: Literal["json"] | None = None) -> SchemasCleared: ...
+    @overload
+    async def schemas_clear(self, *, format: Literal["text"]) -> str: ...
+    async def schemas_clear(
+        self, *, format: Literal["json", "text"] | None = None
+    ) -> SchemasCleared | str:
+        """Remove every entry of the schema cache, and report how many there were."""
+        return await self._reading("schemasClear", {"format": format}, SchemasCleared)
+
+    @overload
+    async def schemas_fetch(
+        self,
+        links: Sequence[str] | None = None,
+        *,
+        config: StrPath | None = None,
+        format: Literal["json"] | None = None,
+    ) -> SchemasFetched: ...
+    @overload
+    async def schemas_fetch(
+        self,
+        links: Sequence[str] | None = None,
+        *,
+        config: StrPath | None = None,
+        format: Literal["text"],
+    ) -> str: ...
+    async def schemas_fetch(
+        self,
+        links: Sequence[str] | None = None,
+        *,
+        config: StrPath | None = None,
+        format: Literal["json", "text"] | None = None,
+    ) -> SchemasFetched | str:
+        """Resolve each link, or every link the configuration names, revalidating the cache.
+
+        A link that does not resolve raises BusFailed, whose `output` is the report.
+        """
+        values = {"links": links, "config": config, "format": format}
+        return await self._reading("schemasFetch", values, SchemasFetched)
 
     @overload
     async def events_merge(

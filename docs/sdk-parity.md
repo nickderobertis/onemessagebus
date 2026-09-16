@@ -33,6 +33,9 @@ Every capability of the `onemessagebus` binary, and how each consumer surface re
 | `validate` | `onemessagebus validate` | json `validated` | `onemessagebus::Bus::validate` | yes, `validate` | yes, `validate` | yes, `validate` |
 | `ask` | `onemessagebus ask` | json `asked` | `onemessagebus::Bus::ask` | yes, `ask` | yes, `ask` | yes, `ask` |
 | `serve` | `onemessagebus serve` | jsonl `codec_response` | `onemessagebus::Bus::serve` | yes, `serve` | yes, `serve` | yes, `serve` |
+| `schemas` | `onemessagebus schemas` | json `schema_cache` | `onemessagebus::LinkResolver::cached` | yes, `schemas` | yes, `schemas` | yes, `schemas` |
+| `schemasClear` | `onemessagebus schemas clear` | json `schemas_cleared` | `onemessagebus::LinkResolver::clear` | yes, `schemasClear` | yes, `schemas_clear` | yes, `schemasClear` |
+| `schemasFetch` | `onemessagebus schemas fetch` | json `schemas_fetched` | `onemessagebus::LinkResolver::resolve` | yes, `schemasFetch` | yes, `schemas_fetch` | yes, `schemasFetch` |
 
 ## Options, flag by flag
 
@@ -45,6 +48,7 @@ Options root `schema_list_options`; takes no payload.
 | Option | Python | Flag | Kind |
 | --- | --- | --- | --- |
 | `registry` | `registry` | `--registry` | value |
+| `config` | `config` | `--config` | value |
 | `format` | `format` | `--format` | value |
 
 ### `schemaCheck` — `onemessagebus schema check`
@@ -56,6 +60,7 @@ Options root `schema_check_options`; takes a payload on stdin (a resident reques
 | `id` | `id` | positional | positional |
 | `file` | `file` | `--file` | value |
 | `registry` | `registry` | `--registry` | value |
+| `config` | `config` | `--config` | value |
 
 ### `schemaGen` — `onemessagebus schema gen`
 
@@ -66,6 +71,7 @@ Options root `schema_gen_options`; takes no payload.
 | `id` | `id` | positional | positional |
 | `lang` | `lang` | `--lang` | value |
 | `registry` | `registry` | `--registry` | value |
+| `config` | `config` | `--config` | value |
 
 ### `schemaRegister` — `onemessagebus schema register`
 
@@ -76,6 +82,7 @@ Options root `schema_register_options`; takes no payload.
 | `id` | `id` | positional | positional |
 | `file` | `file` | `--file` | value |
 | `registry` | `registry` | `--registry` | value |
+| `config` | `config` | `--config` | value |
 
 ### `eventsMerge` — `onemessagebus events merge`
 
@@ -244,3 +251,29 @@ Options root `serve_options`; takes a payload on stdin (a resident request's `in
 - `--resident` is not an SDK option: runs the resident core rather than a codec session: an SDK starts it through its resident transport, which spawns `serve --resident --socket <path>` itself, and each request to the core names the capability it runs rather than a flag of this one.
 
 - `--socket` is not an SDK option: the unix socket the resident core listens on, taken only beside `--resident`; an SDK's resident transport passes it when it starts the core.
+
+### `schemas` — `onemessagebus schemas`
+
+Options root `schemas_options`; takes no payload.
+
+| Option | Python | Flag | Kind |
+| --- | --- | --- | --- |
+| `format` | `format` | `--format` | value |
+
+### `schemasClear` — `onemessagebus schemas clear`
+
+Options root `schemas_clear_options`; takes no payload.
+
+| Option | Python | Flag | Kind |
+| --- | --- | --- | --- |
+| `format` | `format` | `--format` | value |
+
+### `schemasFetch` — `onemessagebus schemas fetch`
+
+Options root `schemas_fetch_options`; takes no payload.
+
+| Option | Python | Flag | Kind |
+| --- | --- | --- | --- |
+| `links` | `links` | positional | positional |
+| `config` | `config` | `--config` | value |
+| `format` | `format` | `--format` | value |

@@ -17,6 +17,11 @@
         "kind": "value"
       },
       {
+        "option": "config",
+        "flag": "--config",
+        "kind": "value"
+      },
+      {
         "option": "format",
         "flag": "--format",
         "kind": "value"
@@ -50,6 +55,11 @@
         "option": "registry",
         "flag": "--registry",
         "kind": "value"
+      },
+      {
+        "option": "config",
+        "flag": "--config",
+        "kind": "value"
       }
     ],
     "uncovered": []
@@ -80,6 +90,11 @@
         "option": "registry",
         "flag": "--registry",
         "kind": "value"
+      },
+      {
+        "option": "config",
+        "flag": "--config",
+        "kind": "value"
       }
     ],
     "uncovered": []
@@ -109,6 +124,11 @@
       {
         "option": "registry",
         "flag": "--registry",
+        "kind": "value"
+      },
+      {
+        "option": "config",
+        "flag": "--config",
         "kind": "value"
       }
     ],
@@ -672,5 +692,74 @@
         "reason": "the unix socket the resident core listens on, taken only beside `--resident`; an SDK's resident transport passes it when it starts the core"
       }
     ]
+  },
+  {
+    "method": "schemas",
+    "verb": [
+      "schemas"
+    ],
+    "options": "schemas_options",
+    "output": "schema_cache",
+    "stdout": "json",
+    "stdin": false,
+    "library_entry": "onemessagebus::LinkResolver::cached",
+    "bindings": [
+      {
+        "option": "format",
+        "flag": "--format",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "schemasClear",
+    "verb": [
+      "schemas",
+      "clear"
+    ],
+    "options": "schemas_clear_options",
+    "output": "schemas_cleared",
+    "stdout": "json",
+    "stdin": false,
+    "library_entry": "onemessagebus::LinkResolver::clear",
+    "bindings": [
+      {
+        "option": "format",
+        "flag": "--format",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
+  },
+  {
+    "method": "schemasFetch",
+    "verb": [
+      "schemas",
+      "fetch"
+    ],
+    "options": "schemas_fetch_options",
+    "output": "schemas_fetched",
+    "stdout": "json",
+    "stdin": false,
+    "library_entry": "onemessagebus::LinkResolver::resolve",
+    "bindings": [
+      {
+        "option": "links",
+        "flag": "",
+        "kind": "positional"
+      },
+      {
+        "option": "config",
+        "flag": "--config",
+        "kind": "value"
+      },
+      {
+        "option": "format",
+        "flag": "--format",
+        "kind": "value"
+      }
+    ],
+    "uncovered": []
   }
 ]

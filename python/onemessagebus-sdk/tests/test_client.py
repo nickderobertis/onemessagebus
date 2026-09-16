@@ -10,7 +10,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import fcntl
+import functools
+import http.server
 import json
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -22,6 +25,7 @@ from onemessagebus import (
     BusFailed,
     BusRefused,
     Client,
+    ClientConfig,
     Envelope,
     ValidatedPass,
     ValidatedRefuse,
@@ -254,3 +258,83 @@ async def test_validate_answers_a_refusal_verdict_as_data(
         with pytest.raises(BusFailed, match="too loud"):
             await client.send("surfaces", {**SURFACE, "message": "loud"})
         assert (await client.status("surfaces"))[0].records == 0
+
+
+class _Origin(http.server.SimpleHTTPRequestHandler):
+    """Serves the bundle directory, answering `If-Modified-Since` with a 304, quietly."""
+
+    def log_message(self, format: str, *args: object) -> None:
+        return None
+
+
+async def test_the_schema_cache_verbs(
+    binary: Path, tmp_path_factory: pytest.TempPathFactory, transport_kind: str
+) -> None:
+    scratch = tmp_path_factory.mktemp("links")
+    origin = scratch / "origin"
+    origin.mkdir()
+    (origin / "frames.json").write_text(
+        json.dumps(
+            {
+                "version": "8.1",
+                "schemas": [
+                    {"id": "demo.frame@1", "schema": {"type": "object", "required": ["hello"]}}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    server = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 0), functools.partial(_Origin, directory=str(origin))
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_address[1]}/frames.json"
+    link = f"{url}@8"
+    (scratch / "onemessagebus.yaml").write_text(
+        "version: 1\n"
+        f"transport: {{kind: local, dir: {scratch / 'channel'}}}\n"
+        f"schemas: [{json.dumps(link)}]\n",
+        encoding="utf-8",
+    )
+    cache = scratch / "cache"
+    config = ClientConfig(
+        binary=binary,
+        cwd=scratch,
+        env={"ONEMESSAGEBUS_SCHEMA_CACHE_DIR": str(cache), "ONEMESSAGEBUS_SCHEMA_TTL": "3600"},
+    )
+    try:
+        async with Client(config, make_transport(transport_kind, scratch)) as client:
+            empty = await client.schemas()
+            assert (empty.cache, empty.entries) == (str(cache), [])
+
+            fetched = await client.schemas_fetch(config=scratch / "onemessagebus.yaml")
+            assert [
+                (each.link, each.outcome, each.version and each.version.root)
+                for each in fetched.links
+            ] == [(link, "fetched", "8.1")]
+            listed = await client.schemas()
+            assert [(entry.url, entry.version) for entry in listed.entries] == [(url, "8.1")]
+            assert (await client.schemas(format="text")).startswith(f"cache {cache}\n{url} 8.1 ")
+
+            config_file = scratch / "onemessagebus.yaml"
+            assert await client.schema_check("demo.frame@1", {"hello": 1}, config=config_file) == ""
+            with pytest.raises(BusFailed, match='"hello" is a required property'):
+                await client.schema_check("demo.frame@1", {}, config=config_file)
+
+            confirmed = await client.schemas_fetch([link], format="text")
+            assert confirmed == f"{link} confirmed 8.1\n"
+            absent = "http://127.0.0.1:9/absent.json@1"
+            with pytest.raises(BusFailed) as failed:
+                await client.schemas_fetch([absent])
+            assert failed.value.message.startswith(
+                f"schemas fetch: 1 of 1 links did not resolve: {absent}: cannot fetch the bundle"
+            )
+            with pytest.raises(BusRefused, match="only for a loopback host"):
+                await client.schemas_fetch(["http://example.org/frames.json@1"])
+
+            cleared = await client.schemas_clear()
+            assert (cleared.cache, cleared.removed) == (str(cache), 1)
+            assert await client.schemas_clear(format="text") == f"removed 0 from {cache}\n"
+    finally:
+        server.shutdown()
+        server.server_close()

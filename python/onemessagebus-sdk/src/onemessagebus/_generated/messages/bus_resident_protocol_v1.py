@@ -145,6 +145,9 @@ class ResidentRequest(BaseModel):
         "validate",
         "ask",
         "serve",
+        "schemas",
+        "schemasClear",
+        "schemasFetch",
     ]
     """
     The capability to run, by its SDK method: one of the manifest's and no other.

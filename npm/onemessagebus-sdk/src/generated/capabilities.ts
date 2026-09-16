@@ -23,6 +23,15 @@ import {
   type SchemaRegisterOptions,
   SchemaRegisterOptionsSchema,
 } from "./options/schema-register-options.js";
+import {
+  type SchemasClearOptions,
+  SchemasClearOptionsSchema,
+} from "./options/schemas-clear-options.js";
+import {
+  type SchemasFetchOptions,
+  SchemasFetchOptionsSchema,
+} from "./options/schemas-fetch-options.js";
+import { type SchemasOptions, SchemasOptionsSchema } from "./options/schemas-options.js";
 import { type SendOptions, SendOptionsSchema } from "./options/send-options.js";
 import { type ServeOptions, ServeOptionsSchema } from "./options/serve-options.js";
 import { type StatusOptions, StatusOptionsSchema } from "./options/status-options.js";
@@ -38,7 +47,10 @@ import { type Envelope, EnvelopeSchema } from "./roots/envelope.js";
 import { type LogRecord, LogRecordSchema } from "./roots/log-record.js";
 import { type QueueStatuses, QueueStatusesSchema } from "./roots/queue-statuses.js";
 import { type Replied, RepliedSchema } from "./roots/replied.js";
+import { type SchemaCache, SchemaCacheSchema } from "./roots/schema-cache.js";
 import { type SchemaList, SchemaListSchema } from "./roots/schema-list.js";
+import { type SchemasCleared, SchemasClearedSchema } from "./roots/schemas-cleared.js";
+import { type SchemasFetched, SchemasFetchedSchema } from "./roots/schemas-fetched.js";
 import { type Sent, SentSchema } from "./roots/sent.js";
 import { type TransportKinds, TransportKindsSchema } from "./roots/transport-kinds.js";
 import { type Validated, ValidatedSchema } from "./roots/validated.js";
@@ -85,6 +97,11 @@ export const CAPABILITIES = {
         kind: "value",
       },
       {
+        option: "config",
+        flag: "--config",
+        kind: "value",
+      },
+      {
         option: "format",
         flag: "--format",
         kind: "value",
@@ -116,6 +133,11 @@ export const CAPABILITIES = {
         flag: "--registry",
         kind: "value",
       },
+      {
+        option: "config",
+        flag: "--config",
+        kind: "value",
+      },
     ],
     uncovered: [],
   },
@@ -143,6 +165,11 @@ export const CAPABILITIES = {
         flag: "--registry",
         kind: "value",
       },
+      {
+        option: "config",
+        flag: "--config",
+        kind: "value",
+      },
     ],
     uncovered: [],
   },
@@ -168,6 +195,11 @@ export const CAPABILITIES = {
       {
         option: "registry",
         flag: "--registry",
+        kind: "value",
+      },
+      {
+        option: "config",
+        flag: "--config",
         kind: "value",
       },
     ],
@@ -705,6 +737,67 @@ export const CAPABILITIES = {
       },
     ],
   },
+  schemas: {
+    method: "schemas",
+    verb: ["schemas"],
+    options: "schemas_options",
+    output: "schema_cache",
+    stdout: "json",
+    stdin: false,
+    library_entry: "onemessagebus::LinkResolver::cached",
+    bindings: [
+      {
+        option: "format",
+        flag: "--format",
+        kind: "value",
+      },
+    ],
+    uncovered: [],
+  },
+  schemasClear: {
+    method: "schemasClear",
+    verb: ["schemas", "clear"],
+    options: "schemas_clear_options",
+    output: "schemas_cleared",
+    stdout: "json",
+    stdin: false,
+    library_entry: "onemessagebus::LinkResolver::clear",
+    bindings: [
+      {
+        option: "format",
+        flag: "--format",
+        kind: "value",
+      },
+    ],
+    uncovered: [],
+  },
+  schemasFetch: {
+    method: "schemasFetch",
+    verb: ["schemas", "fetch"],
+    options: "schemas_fetch_options",
+    output: "schemas_fetched",
+    stdout: "json",
+    stdin: false,
+    library_entry: "onemessagebus::LinkResolver::resolve",
+    bindings: [
+      {
+        option: "links",
+        flag: "",
+        kind: "positional",
+      },
+      {
+        option: "config",
+        flag: "--config",
+        kind: "value",
+      },
+      {
+        option: "format",
+        flag: "--format",
+        kind: "value",
+      },
+    ],
+    uncovered: [],
+  },
 } as const satisfies Record<string, Capability>;
 
 export type CapabilityMethod = keyof typeof CAPABILITIES;
@@ -728,6 +821,9 @@ export interface CapabilityOptions {
   validate: ValidateOptions;
   ask: AskOptions;
   serve: ServeOptions;
+  schemas: SchemasOptions;
+  schemasClear: SchemasClearOptions;
+  schemasFetch: SchemasFetchOptions;
 }
 
 /** What one document (or one line, for a `jsonl` verb) of each capability's stdout is. */
@@ -749,6 +845,9 @@ export interface CapabilityOutputs {
   validate: Validated;
   ask: Asked;
   serve: CodecResponse;
+  schemas: SchemaCache;
+  schemasClear: SchemasCleared;
+  schemasFetch: SchemasFetched;
 }
 
 /** The schema each capability's options are validated by before a call. */
@@ -770,6 +869,9 @@ export const OPTION_SCHEMAS: { [M in CapabilityMethod]: z.ZodType<CapabilityOpti
   validate: ValidateOptionsSchema,
   ask: AskOptionsSchema,
   serve: ServeOptionsSchema,
+  schemas: SchemasOptionsSchema,
+  schemasClear: SchemasClearOptionsSchema,
+  schemasFetch: SchemasFetchOptionsSchema,
 };
 
 /** The schema one document (or one line) of each capability's stdout is parsed by; `null` for text. */
@@ -791,6 +893,9 @@ export const OUTPUT_SCHEMAS: { [M in CapabilityMethod]: z.ZodType<CapabilityOutp
   validate: ValidatedSchema,
   ask: AskedSchema,
   serve: CodecResponseSchema,
+  schemas: SchemaCacheSchema,
+  schemasClear: SchemasClearedSchema,
+  schemasFetch: SchemasFetchedSchema,
 };
 
 export const METHODS = [
@@ -811,4 +916,7 @@ export const METHODS = [
   "validate",
   "ask",
   "serve",
+  "schemas",
+  "schemasClear",
+  "schemasFetch",
 ] as const;
