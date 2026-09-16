@@ -1380,8 +1380,8 @@ fn schemas_lists_clears_and_fetch_warms_revalidating_whatever_the_window() {
     assert_eq!(as_text.stdout.lines().count(), 1);
 
     // A link whose bundle its pin does not admit refuses the input.
-    let unpinned = format!("{}@9", second.url());
-    let pin_refused = scratch.run(&["schemas", "fetch", &two, &unpinned], None, &[]);
+    let unadmitted = format!("{}@9", second.url());
+    let pin_refused = scratch.run(&["schemas", "fetch", &two, &unadmitted], None, &[]);
     assert_eq!(pin_refused.code, 2, "{}", pin_refused.stderr);
     let report: Value = serde_json::from_str(&pin_refused.stdout).expect("JSON");
     assert_eq!(report["links"][1]["outcome"], json!("failed"), "{report}");

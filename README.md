@@ -21,7 +21,8 @@ Three artifacts:
   `crates/onemessagebus-agent/tests/recorded/` prove byte for byte.
 - **`onemessagebus`**, the binary — `schema list|check|gen|register` over the
   registry, `schemas` with `schemas clear|fetch` over the cache of schema
-  bundles a configuration links by URL (`docs/schema-links.md`), `events merge|emit` over streams with `--profile agent` (the
+  bundles a configuration links by URL, `events merge|emit` over streams with
+  `--profile agent` (the
   default) or `--profile open`, `deliver` and `inbox carried` over the inbox —
   a typed channel into a running process whose sender learns what the receiver
   did with each message — and `send`, `next`, `reply`, `subscribe` and `status`
