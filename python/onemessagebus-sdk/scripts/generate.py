@@ -325,14 +325,18 @@ def typeable(source: str) -> str:
 
 def domain_typed(source: str, *, message: bool) -> str:
     """Use shared aliases for open author and layout-dependent operation names."""
-    uses_author = "author: str | None" in source or "authors: dict[str, AuthorConfig]" in source
-    uses_operation = "refusals: dict[str, str]" in source or "capabilities: list[str]" in source
-    rewritten = source.replace("author: str | None", "author: Author | None")
-    rewritten = rewritten.replace(
-        "authors: dict[str, AuthorConfig]", "authors: dict[Author, AuthorConfig]"
+    uses_author = "author: str | None" in source
+    uses_operation = (
+        "refusals: dict[str, str]" in source
+        or "refusals: dict[str, RefusalReason]" in source
+        or "capabilities: list[str]" in source
     )
+    rewritten = source.replace("author: str | None", "author: Author | None")
     rewritten = rewritten.replace("capabilities: list[str]", "capabilities: list[Operation]")
     rewritten = rewritten.replace("refusals: dict[str, str]", "refusals: dict[Operation, str]")
+    rewritten = rewritten.replace(
+        "refusals: dict[str, RefusalReason]", "refusals: dict[Operation, RefusalReason]"
+    )
     names = [
         name for name, used in (("Author", uses_author), ("Operation", uses_operation)) if used
     ]

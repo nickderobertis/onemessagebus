@@ -242,14 +242,14 @@ fn resolve_refuses_a_widened_grant_an_unknown_profile_and_a_dangling_key_by_name
         ));
         assert!(failure.starts_with(key), "{failure}");
     }
-    let planner = Config::parse(&format!(
+    let ledger_bus = Config::parse(&format!(
         "version: 1\n{local}\nprofile: ledger\nauthors:\n  teller: {{capabilities: [post], refusals: {{audit: 'reserved for review'}}}}\n"
     ))
     .expect("a built-in author may configure a refusal")
     .resolve(&layouts(), &kinds)
     .expect("the narrowing resolves");
     assert_eq!(
-        planner
+        ledger_bus
             .allowlist()
             .allows(&Author::from("teller"), &OpWord("audit".to_owned()))
             .expect_err("audit was narrowed")

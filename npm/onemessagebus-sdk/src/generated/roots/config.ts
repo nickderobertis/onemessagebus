@@ -40,6 +40,12 @@ export type QueueName = string;
  */
 export type ConsumerName = string;
 /**
+ * An operation known only by its word: what a configuration's
+ * `capabilities` list names, and what an allowlist is read as by a consumer
+ * that does not link the profile's own type.
+ */
+export type OpWord = string;
+/**
  * A non-empty explanation for refusing an operation.
  */
 export type RefusalReason = string;
@@ -342,12 +348,15 @@ export interface Predicate2 {
 }
 /**
  * One author of a configuration.
+ *
+ * This interface was referenced by `undefined`'s JSON-Schema definition
+ * via the `patternProperty` "^[a-z][a-z0-9-]{0,63}$".
  */
 export interface AuthorConfig {
   /**
    * The operations the author may issue.
    */
-  capabilities: string[];
+  capabilities: OpWord[];
   /**
    * Reasons ungranted operations are refused, by operation word.
    */
@@ -542,7 +551,7 @@ const $QueueName: z.ZodType = z.string();
 const $ConsumerName: z.ZodType = z.string();
 
 const $AuthorConfig: z.ZodType = z.strictObject({
-  capabilities: z.array(z.string()),
+  capabilities: z.array(z.lazy(() => $OpWord)),
   refusals: z
     .record(
       z.string(),
@@ -551,7 +560,9 @@ const $AuthorConfig: z.ZodType = z.strictObject({
     .optional(),
 });
 
-const $RefusalReason: z.ZodType = z.string();
+const $OpWord: z.ZodType = z.string();
+
+const $RefusalReason: z.ZodType = z.string().regex(new RegExp(".*\\S.*", "u"));
 
 const $ValidatorConfig: z.ZodType = z.strictObject({
   on: z.lazy(() => $QueueName),
@@ -639,7 +650,7 @@ export const ConfigSchema = contract<Config>(
       .optional(),
     authors: z
       .record(
-        z.string(),
+        z.string().regex(new RegExp("^[a-z][a-z0-9-]{0,63}$", "u")),
         z.lazy(() => $AuthorConfig),
       )
       .optional(),

@@ -67,6 +67,7 @@ pub struct Config {
     pub queues: BTreeMap<QueueName, QueueConfig>,
     /// Authors declared by the configuration. The built-in planner may only be narrowed.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[schemars(with = "BTreeMap<ConfiguredAuthor, AuthorConfig>")]
     pub authors: BTreeMap<Author, AuthorConfig>,
     /// Validators judging what is offered to a queue before anything is
     /// appended, in the order each queue judges by them.
@@ -252,7 +253,7 @@ impl PolicyConfig {
 #[serde(deny_unknown_fields)]
 pub struct AuthorConfig {
     /// The operations the author may issue.
-    pub capabilities: Vec<String>,
+    pub capabilities: Vec<OpWord>,
     /// Reasons ungranted operations are refused, by operation word.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub refusals: BTreeMap<OpWord, RefusalReason>,
@@ -261,7 +262,15 @@ pub struct AuthorConfig {
 /// A non-empty explanation for refusing an operation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(transparent)]
-pub struct RefusalReason(String);
+pub struct RefusalReason(#[schemars(regex(pattern = r".*\S.*"))] String);
+
+#[derive(JsonSchema)]
+#[schemars(transparent)]
+#[expect(
+    dead_code,
+    reason = "schema-only mirror constrains configuration map keys without narrowing wire Author"
+)]
+struct ConfiguredAuthor(#[schemars(regex(pattern = r"^[a-z][a-z0-9-]{0,63}$"))] String);
 
 impl RefusalReason {
     /// The configured explanation.
@@ -604,13 +613,14 @@ impl Config {
                     let Some(op) = allowlist
                         .vocabulary()
                         .iter()
-                        .find(|op| op.0 == *word)
+                        .find(|op| op == &word)
                         .cloned()
                     else {
                         return Err(NarrowingRefused {
                             key: capabilities_key.clone(),
                             why: format!(
-                                "`{word}` is not an op; the ops are: {}",
+                                "`{}` is not an op; the ops are: {}",
+                                word.0,
                                 allowlist
                                     .vocabulary()
                                     .iter()
@@ -638,7 +648,7 @@ impl Config {
                     }
                     .into());
                 };
-                if configured.capabilities.contains(&word.0) {
+                if configured.capabilities.contains(word) {
                     return Err(NarrowingRefused {
                         key,
                         why: "a granted op may not have a refusal".to_owned(),

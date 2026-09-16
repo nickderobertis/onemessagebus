@@ -600,7 +600,8 @@ fn the_documented_configuration_loads_and_an_unknown_key_in_it_is_refused_by_nam
     assert_eq!(findings.policy.hold_pending, Some(false));
     assert_eq!(
         config.authors[&onemessagebus::Author::from("sentinel")].capabilities,
-        vec!["retry", "requeue", "cancel", "finding", "add"]
+        ["retry", "requeue", "cancel", "finding", "add"]
+            .map(|word| onemessagebus::OpWord(word.to_owned()))
     );
     assert_eq!(
         config.authors[&onemessagebus::Author::from("sentinel")].refusals

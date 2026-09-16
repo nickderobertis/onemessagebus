@@ -5,9 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from onemessagebus import BusFailed, Client, ClientConfig, Message, messages
+from onemessagebus._generated.contract import Config
 from onemessagebus._message import DRAFT_2020_12
 from onemessagebus.models import PlannerSurface as Surface
 from onemessagebus.models import PlannerSurfaceV1
@@ -17,6 +18,20 @@ from tests.conftest import Greeting, make_transport
 class Farewell(BaseModel):
     text: str
     final: bool = True
+
+
+def test_generated_config_validates_author_names_and_refusal_reasons() -> None:
+    base = {"version": 1, "transport": {"kind": "memory"}}
+    Config.model_validate({**base, "authors": {"sentinel": {"capabilities": ["finding"]}}})
+    with pytest.raises(ValidationError):
+        Config.model_validate({**base, "authors": {"Bad_Name": {"capabilities": []}}})
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                **base,
+                "authors": {"sentinel": {"capabilities": [], "refusals": {"finding": "   "}}},
+            }
+        )
 
 
 def test_a_malformed_id_is_refused_when_the_class_is_created() -> None:

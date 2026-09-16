@@ -774,7 +774,7 @@ fn the_documented_planner_channel_grants_are_the_allowlist() {
 }
 
 #[test]
-fn the_documented_configuration_declares_an_author_and_a_widened_planner_is_refused() {
+fn the_documented_configuration_declares_an_author_and_an_unknown_planner_op_is_refused() {
     use std::sync::Arc;
 
     use onemessagebus::{Author, Config, ConfigError, Layouts, OpWord, TransportKinds};
@@ -813,12 +813,15 @@ fn the_documented_configuration_declares_an_author_and_a_widened_planner_is_refu
         "whether the run is finished is the planner's verdict, not an observation"
     );
 
-    let widened = text.replace(
+    let with_unknown_op = text.replace(
         "capabilities: [add, retry, finding]",
         "capabilities: [add, retry, finding, complete, unknown]",
     );
-    assert_ne!(widened, text, "the widening did not apply to the fixture");
-    let resolved = Config::parse(&widened)
+    assert_ne!(
+        with_unknown_op, text,
+        "the unknown op did not apply to the fixture"
+    );
+    let resolved = Config::parse(&with_unknown_op)
         .expect("the file alone cannot know the profile's grants, so it loads")
         .with_transport_dir(dir.path())
         .resolve(&layouts, &TransportKinds::builtin());
@@ -827,6 +830,6 @@ fn the_documented_configuration_declares_an_author_and_a_widened_planner_is_refu
             assert_eq!(refusal.key, "authors.planner.capabilities");
             assert!(refusal.why.contains("`unknown`"), "{refusal}");
         }
-        other => panic!("a widened grant was not refused by resolve: {other:?}"),
+        other => panic!("an unknown operation was not refused by resolve: {other:?}"),
     }
 }

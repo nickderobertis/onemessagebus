@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, StringConstraints
 
-from .domain import Author, Operation
+from .domain import Operation
 
 
 class Contract(RootModel[Any]):
@@ -279,6 +279,13 @@ class QueueStatus(BaseModel):
     The records waiting to be claimed, oldest first: on an event queue every
     waiting record, abandoned ones included; on a plain one the records after
     the default consumer's cursor that a claim hands out.
+    """
+
+
+class RefusalReason(RootModel[str]):
+    root: str = Field(..., pattern=".*\\S.*")
+    """
+    A non-empty explanation for refusing an operation.
     """
 
 
@@ -849,7 +856,7 @@ class AuthorConfig(BaseModel):
     """
     The operations the author may issue.
     """
-    refusals: dict[Operation, str] | None = None
+    refusals: dict[Operation, RefusalReason] | None = None
     """
     Reasons ungranted operations are refused, by operation word.
     """
@@ -1867,7 +1874,10 @@ class Config(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    authors: dict[Author, AuthorConfig] | None = None
+    authors: (
+        dict[Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,63}$")], AuthorConfig]
+        | None
+    ) = None
     """
     Authors declared by the configuration. The built-in planner may only be narrowed.
     """

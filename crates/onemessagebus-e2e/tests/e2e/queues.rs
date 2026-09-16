@@ -1010,11 +1010,11 @@ fn a_configuration_declares_an_open_author_and_offer_checks_never_block_replay()
         run.stderr
     );
 
-    let widened = write(
-        "widened.yaml",
+    let unknown_op = write(
+        "unknown-op.yaml",
         "authors:\n  planner: {capabilities: [retry, unknown]}\n",
     );
-    let run = run_in(root, &["status", "--config", &widened], None, &[]);
+    let run = run_in(root, &["status", "--config", &unknown_op], None, &[]);
     assert_eq!(run.code, 2);
     assert_eq!(
         run.stderr.trim(),

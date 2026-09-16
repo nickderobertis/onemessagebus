@@ -1348,7 +1348,10 @@ fn desk_bus(
         config.authors.insert(
             Author::from(*author),
             AuthorConfig {
-                capabilities: capabilities.iter().map(|word| (*word).to_owned()).collect(),
+                capabilities: capabilities
+                    .iter()
+                    .map(|word| OpWord((*word).to_owned()))
+                    .collect(),
                 refusals: BTreeMap::new(),
             },
         );

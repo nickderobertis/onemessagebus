@@ -200,7 +200,7 @@ impl<Op: Operation> Allowlist<Op> {
         &mut self,
         key: &str,
         author: &Author,
-        capabilities: &[String],
+        capabilities: &[OpWord],
         reason: &str,
     ) -> Result<(), NarrowingRefused> {
         let Some(granted) = self.grants.get(author) else {
@@ -218,11 +218,12 @@ impl<Op: Operation> Allowlist<Op> {
         };
         let mut kept = Vec::new();
         for word in capabilities {
-            let Some(op) = self.vocabulary.iter().find(|op| op.name() == word) else {
+            let Some(op) = self.vocabulary.iter().find(|op| op.name() == word.0) else {
                 return Err(NarrowingRefused {
                     key: key.to_owned(),
                     why: format!(
-                        "`{word}` is not an op; the ops are: {}",
+                        "`{}` is not an op; the ops are: {}",
+                        word.0,
                         self.vocabulary
                             .iter()
                             .map(Operation::name)
@@ -235,7 +236,8 @@ impl<Op: Operation> Allowlist<Op> {
                 return Err(NarrowingRefused {
                     key: key.to_owned(),
                     why: format!(
-                        "`{word}` is not granted to {author} by the profile, and a configuration may narrow an author's grants but never widen them"
+                        "`{}` is not granted to {author} by the profile, and a configuration may narrow an author's grants but never widen them",
+                        word.0
                     ),
                 });
             }
