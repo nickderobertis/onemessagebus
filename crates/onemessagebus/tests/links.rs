@@ -10,8 +10,8 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
 use onemessagebus::{
-    BundleVersion, Config, ConfigError, Freshness, LinkError, LinkLocation, LinkResolver, Outcome,
-    Registry, SchemaBundle, SchemaLink,
+    BundleVersion, CachedBundle, Config, ConfigError, Freshness, LinkError, LinkLocation,
+    LinkResolver, Outcome, Registry, SchemaBundle, SchemaLink,
 };
 use serde_json::{json, Value};
 
@@ -411,4 +411,22 @@ fn load_parses_links_resolving_nothing_and_refuses_a_malformed_one_by_name() {
     assert!(!serde_json::to_string(&bare)
         .expect("json")
         .contains("schemas"));
+}
+
+#[test]
+fn a_cache_entry_reads_the_listed_shape_and_refuses_an_undeclared_field_by_name() {
+    let listed = json!({
+        "url": "https://example.org/frames.json",
+        "version": "8.1",
+        "confirmed_at": "2026-09-16T13:42:23Z"
+    });
+    let entry: CachedBundle = serde_json::from_value(listed.clone()).expect("the listed shape");
+    assert_eq!(serde_json::to_value(&entry).expect("json"), listed);
+
+    let mut extra = listed;
+    extra["etag"] = json!("\"v1\"");
+    let failure = serde_json::from_value::<CachedBundle>(extra)
+        .expect_err("an undeclared field is refused")
+        .to_string();
+    assert!(failure.contains("unknown field `etag`"), "{failure}");
 }

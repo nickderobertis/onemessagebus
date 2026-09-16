@@ -921,6 +921,7 @@ impl JsonSchema for ConfirmedAt {
 
 /// One entry of the cache, as `schemas` lists it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CachedBundle {
     /// The link's location, without its pin.
     pub url: RemoteUrl,

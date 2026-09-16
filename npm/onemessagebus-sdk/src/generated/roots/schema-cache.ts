@@ -32,10 +32,9 @@ export interface CachedBundle {
    * When the origin last confirmed it.
    */
   confirmed_at: string;
-  [k: string]: unknown;
 }
 
-const $CachedBundle: z.ZodType = z.looseObject({
+const $CachedBundle: z.ZodType = z.strictObject({
   url: z.lazy(() => $RemoteUrl),
   version: z.lazy(() => $BundleVersion),
   confirmed_at: z.lazy(() => $ConfirmedAt),
