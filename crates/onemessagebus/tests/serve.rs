@@ -336,7 +336,7 @@ fn a_refused_or_failed_frame_ends_the_session_with_nothing_it_asked_marked() {
 
 const CONTRACT: &str = include_str!("../../../docs/codecs.md");
 
-/// The fenced block `docs/contract.md` tags `<!-- fixture: name -->`.
+/// The fenced block `docs/codecs.md` tags `<!-- fixture: name -->`.
 fn fixture(name: &str) -> String {
     let tag = format!("<!-- fixture: {name} -->");
     let mut lines = CONTRACT.lines();

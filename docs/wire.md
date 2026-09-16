@@ -113,7 +113,7 @@ another; the redaction walks every string in the payload, however nested.
 
 A schema id is `<namespace>.<name>@<version>`: `agent.event-envelope@2`. The
 namespace ends at the first dot, and the name may itself be dot-joined parts —
-`example.frame.notice@3` is the name `frame.notice` in `agent`. A
+`example.frame.notice@3` is the name `frame.notice` in `example`. A
 *family* is the id without its version. The registry records a JSON Schema
 under an id — a Rust type's generated one through `register::<M>()`, or a
 document handed in through `register_schema` — and refuses a second, different
