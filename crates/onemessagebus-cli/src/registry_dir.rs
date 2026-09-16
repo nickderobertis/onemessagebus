@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use onemessagebus::sdk_schema::RegistryDocument;
-use onemessagebus::{Registry, RegistryError, SchemaId};
+use onemessagebus::{LinkError, Registry, RegistryError, Resolved, SchemaId};
 use serde_json::Value;
 
 /// A registry file could not be read or written.
@@ -149,6 +149,14 @@ impl RegistryDir {
             dir: dir.map(Path::to_path_buf),
             registry,
         })
+    }
+
+    /// Register every document of every `linked` bundle beside the base's and
+    /// the directory's, in memory only.
+    pub fn add_linked(&mut self, linked: &[Resolved]) -> Result<(), LinkError> {
+        linked
+            .iter()
+            .try_for_each(|resolved| resolved.register_into(&mut self.registry))
     }
 
     /// The registry, base and directory together.

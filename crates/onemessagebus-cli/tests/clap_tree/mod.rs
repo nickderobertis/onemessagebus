@@ -10,7 +10,9 @@ use onemessagebus_cli::Cli;
 /// Flags clap generates rather than the CLI declaring them.
 const CLAP_BUILTINS: &[&str] = &["help", "version"];
 
-/// Every leaf verb clap exposes, as its argv path, with the command.
+/// Every verb clap exposes, as its argv path, with the command: each leaf, and
+/// each command that runs on its own as well as through its subcommands
+/// (`schemas`, beside `schemas clear`).
 pub fn clap_verbs() -> Vec<(Vec<String>, clap::Command)> {
     let mut found = Vec::new();
     walk(&Cli::command(), &[], &mut found);
@@ -19,11 +21,9 @@ pub fn clap_verbs() -> Vec<(Vec<String>, clap::Command)> {
 
 fn walk(command: &clap::Command, path: &[String], out: &mut Vec<(Vec<String>, clap::Command)>) {
     let mut children = command.get_subcommands().peekable();
-    if children.peek().is_none() {
-        if !path.is_empty() {
-            out.push((path.to_vec(), command.clone()));
-        }
-        return;
+    let runs_alone = children.peek().is_none() || !command.is_subcommand_required_set();
+    if runs_alone && !path.is_empty() {
+        out.push((path.to_vec(), command.clone()));
     }
     for child in children {
         if child.get_name() == "help" {

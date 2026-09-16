@@ -1,6 +1,7 @@
 # The command line
 
-`onemessagebus` has the `schema` verbs, over the registry; the `events` verbs,
+`onemessagebus` has the `schema` verbs, over the registry; the `schemas` verbs,
+over the cache of linked schema bundles (`docs/schema-links.md`); the `events` verbs,
 over NDJSON streams; `deliver` and `inbox carried`, over the inbox
 (`docs/inbox.md`); `send`, `next`, `reply`, `subscribe` and `status` over
 queues kept on a transport, with `transports` listing the transport kinds
@@ -38,6 +39,16 @@ cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebu
   content for a person, never separate content.
 - **`--registry <dir>` / `ONEMESSAGEBUS_REGISTRY`** on every `schema` verb names
   a directory of registered documents added to the profile's own.
+- **`--config <path>` on every `schema` verb** names a configuration whose
+  `schemas` links are resolved and every linked document registered beside the
+  profile's and the directory's (`docs/schema-links.md`). A `schema` verb reads
+  it from the flag alone, never from the configuration variable the queue verbs
+  read, so an environment set for them changes nothing here.
+- **A verb that loads a configuration resolves its `schemas` links first.** Each
+  link names a schema bundle, and every document of every bundle is registered
+  beside the profile's schemas and the registry directory's; how a link resolves
+  — the pin, the cache, `serve` never waiting on the network — is
+  `docs/schema-links.md`'s to say.
 - **The queue verbs read one configuration.** `send`, `next`, `ask`, `reply`,
   `subscribe`, `status`, `validate` and `serve` take `--config <path>` (or `ONEMESSAGEBUS_CONFIG`),
   the `onemessagebus.yaml` naming the transport, the layout, added or overridden
@@ -74,12 +85,12 @@ The other verbs print clap's usage report for a usage error, at the same exit.
 
 ## `schema`
 
-### `schema list [--registry DIR] [--format json|text]`
+### `schema list [--registry DIR] [--config PATH] [--format json|text]`
 
 Every registered id — the profile's and the registry directory's — and nothing
 else. JSON is a list of `{id, family, version}`; text is one id per line.
 
-### `schema check <id> [--file PATH] [--registry DIR]`
+### `schema check <id> [--file PATH] [--registry DIR] [--config PATH]`
 
 Validate the payload on stdin (or in `--file`) against the schema registered
 under `<id>`. Exit 0 when it conforms; exit 1 naming the id and the JSON
@@ -90,7 +101,7 @@ $ echo '{"run_id":"R","round":"two"}' | onemessagebus schema check agent.labels@
 onemessagebus: agent.labels@1: at /round: "two" is not of types "null", "integer"
 ```
 
-### `schema gen --lang json|rust|python|typescript <id> [--registry DIR]`
+### `schema gen --lang json|rust|python|typescript <id> [--registry DIR] [--config PATH]`
 
 Render the schema registered under `<id>`: for `json`, the document itself,
 byte for byte; for `rust`, a declaration that compiles with serde and schemars
@@ -111,7 +122,7 @@ $ onemessagebus schema gen --lang rust test.bad-property@1
 onemessagebus: test.bad-property@1: cannot render /properties/a.b as Rust: the property name "a.b" is not a Rust identifier: '.' is not an ASCII letter, digit or underscore
 ```
 
-### `schema register <id> --file <schema.json> [--registry DIR]`
+### `schema register <id> --file <schema.json> [--registry DIR] [--config PATH]`
 
 Record the JSON Schema document in `--file` under `<id>`, in the registry
 directory, where every later invocation over the same `--registry` /
@@ -124,6 +135,35 @@ profile's or the directory's — is refused naming the id, and nothing is writte
 a file is self-describing and readable with nothing but `cat`. A file whose id
 disagrees with its name is refused, and so is a `--registry` path that exists
 but is not a directory.
+
+## `schemas`
+
+The cache a configuration's `schemas` links resolve through. Contract L — the
+bundle document, the link and its pin, the cache's rules, and each verb's output
+— is `docs/schema-links.md`; the headings here are the verbs' synopses.
+
+### `schemas [--format json|text]`
+
+List the cache: its directory, and each cached location and declared version
+with when its origin last confirmed it. An empty or absent cache is an empty
+list, exit 0.
+
+### `schemas clear [--format json|text]`
+
+Remove every entry of the cache and report how many there were; exit 0, also
+when there were none.
+
+### `schemas fetch [<link>...] [--config PATH] [--format json|text]`
+
+Resolve each named link, or every link the configuration names (`--config` or
+`ONEMESSAGEBUS_CONFIG`) when none is named, revalidating whatever the cache holds
+regardless of its age, and report how each ended. Exit 0 when every link resolved
+to a version its pin admits; exit 1 naming each link that did not.
+
+```bash
+$ onemessagebus schemas fetch --config onemessagebus.yaml --format text
+https://example.org/frames.json@8 fetched 8.1
+```
 
 ## `events`
 

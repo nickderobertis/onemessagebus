@@ -23,14 +23,16 @@ use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use onemessagebus::sdk_schema::{
-    self, Asked, ClaimedRecord, Lang, LogRecord, Replied, SchemaEntry, Sent, Validated,
+    self, Asked, ClaimedRecord, FetchOutcome, FetchedLink, Lang, LogRecord, Replied, SchemaCache,
+    SchemaEntry, SchemasCleared, SchemasFetched, Sent, Validated,
 };
 use onemessagebus::{
     Address, Admits, Answer, AskOptions, Asker, BackendError, Bus, BusError, Carry, CheckError,
-    CodecName, Config, ConsumerName, Correlation, Emitter, EnvName, Filter, Layouts, Lifetime,
-    Merge, Open, Pending, Position, Predicate, QueueError, QueueName, QueueStatus, Redactor,
-    SchemaId, ServeError, ServeOptions, Served, Spool, Subscription, TransportKinds, Undelivered,
-    Vocabulary, DEFAULT_REPLY_WINDOW, SPOOL_WAIT,
+    CodecName, Config, ConsumerName, Correlation, Emitter, EnvName, Filter, Freshness, Layouts,
+    Lifetime, LinkError, LinkResolver, Merge, Open, Outcome, Pending, Position, Predicate,
+    QueueError, QueueName, QueueStatus, Redactor, Resolved, SchemaId, SchemaLink, ServeError,
+    ServeOptions, Served, Spool, Subscription, TransportKinds, Undelivered, Vocabulary,
+    DEFAULT_REPLY_WINDOW, SPOOL_WAIT,
 };
 use onemessagebus_agent::channel::{PlannerChannel, PLANNER_CHANNEL};
 use onemessagebus_agent::codec::onejudge::{self, Onejudge};
@@ -63,6 +65,9 @@ enum Command {
         #[command(subcommand)]
         verb: SchemaVerb,
     },
+    /// The schema cache: the bundles a configuration's `schemas` links resolved
+    /// to. Alone, it lists the cache; `clear` empties it; `fetch` warms it.
+    Schemas(SchemasArgs),
     /// NDJSON streams: merge several, or append to one.
     Events {
         #[command(subcommand)]
@@ -334,6 +339,48 @@ struct RegistryArgs {
     /// to the profile's own. `schema register` writes here.
     #[arg(long, value_name = "DIR", env = "ONEMESSAGEBUS_REGISTRY")]
     registry: Option<PathBuf>,
+    /// A configuration whose `schemas` links are resolved, and every document
+    /// of every linked bundle registered beside the registry's. Only this flag
+    /// names it here: a `schema` verb does not read `ONEMESSAGEBUS_CONFIG`.
+    #[arg(long, value_name = "PATH")]
+    config: Option<PathBuf>,
+}
+
+/// What `schemas` takes: the cache listing's format, or a verb over the cache.
+#[derive(Debug, Args)]
+#[command(args_conflicts_with_subcommands = true)]
+struct SchemasArgs {
+    #[command(subcommand)]
+    verb: Option<SchemasVerb>,
+    /// How to render the cache.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+    format: OutputFormat,
+}
+
+#[derive(Debug, Subcommand)]
+enum SchemasVerb {
+    /// Remove every entry of the cache, and report how many there were.
+    Clear {
+        /// How to render the count.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+        format: OutputFormat,
+    },
+    /// Resolve each named link — or every link the configuration names —
+    /// revalidating whatever the cache holds regardless of its age, and report
+    /// how each ended.
+    Fetch {
+        /// The links to resolve: a URL or a path, each with an optional
+        /// `@<pin>`; every link `--config` names when none is given.
+        #[arg(value_name = "LINK")]
+        path: Vec<String>,
+        /// The configuration whose `schemas` links are resolved when no link is
+        /// named.
+        #[arg(long, value_name = "PATH", env = "ONEMESSAGEBUS_CONFIG")]
+        config: Option<PathBuf>,
+        /// How to render the report.
+        #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+        format: OutputFormat,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -605,6 +652,7 @@ fn usage_refusal(verb: &str, usage: &clap::Error) -> String {
 fn dispatch(cli: Cli, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {
     match cli.command {
         Command::Schema { verb } => schema(verb, out, io),
+        Command::Schemas(args) => schemas(args, out),
         Command::Events { verb } => events(verb, out, io),
         Command::Deliver(args) => deliver(args, out, io),
         Command::Inbox {
@@ -716,8 +764,61 @@ fn parse_id(text: &str) -> Result<SchemaId, Refusal> {
         .map_err(|failure| invalid(format!("{failure}")))
 }
 
+/// The registry a `schema` verb reads: the binary's schemas, the registry
+/// directory's, and every document of every bundle `--config` links.
 fn load_registry(registry: &RegistryArgs) -> Result<RegistryDir, Refusal> {
-    load_registry_dir(registry.registry.as_deref())
+    let linked = match &registry.config {
+        Some(path) => {
+            let config = Config::load(path).map_err(|failure| invalid(failure.to_string()))?;
+            linked(&config, Freshness::Window)?
+        }
+        None => Vec::new(),
+    };
+    let mut dir = load_registry_dir(registry.registry.as_deref())?;
+    dir.add_linked(&linked).map_err(link_refusal)?;
+    Ok(dir)
+}
+
+/// Every link `config` names, resolved with `freshness`, in order — each entry
+/// reused after a failed revalidation said so on stderr.
+fn linked(config: &Config, freshness: Freshness) -> Result<Vec<Resolved>, Refusal> {
+    if config.schemas.is_empty() {
+        return Ok(Vec::new());
+    }
+    let resolver = LinkResolver::from_env().map_err(link_refusal)?;
+    config
+        .schemas
+        .iter()
+        .map(|link| {
+            let resolved = resolver.resolve(link, freshness).map_err(link_refusal)?;
+            say_reused(&resolved);
+            Ok(resolved)
+        })
+        .collect()
+}
+
+/// A reused entry, said on stderr: the cache is a speed-up, and a revalidation
+/// that could not be made is worth a line but not a refusal.
+fn say_reused(resolved: &Resolved) {
+    if let Outcome::Reused { why } = &resolved.outcome {
+        eprintln!(
+            "onemessagebus: {}: could not revalidate the cached bundle at version {} ({why}); \
+             using the cached entry",
+            resolved.link,
+            resolved.bundle.version()
+        );
+    }
+}
+
+/// A link's refusal, with the verdict its exit code comes from: an origin that
+/// could not be reached, or a cache that could not be written, is a well-formed
+/// no; anything the link, its bundle or the environment got wrong refuses the
+/// input.
+fn link_refusal(failure: LinkError) -> Refusal {
+    match failure {
+        LinkError::Unreachable { .. } | LinkError::Cache { .. } => failed(failure.to_string()),
+        _ => invalid(format!("schemas: {failure}")),
+    }
 }
 
 /// The binary's own schemas, and every document the registry directory `dir`
@@ -803,6 +904,154 @@ fn schema(verb: SchemaVerb, out: &mut impl std::io::Write, io: &Io) -> Result<()
             Ok(())
         }
     }
+}
+
+fn schemas(args: SchemasArgs, out: &mut impl std::io::Write) -> Result<(), Refusal> {
+    let resolver = LinkResolver::from_env().map_err(link_refusal)?;
+    match args.verb {
+        None => {
+            let entries = resolver.cached().map_err(cache_refusal)?;
+            let cache = cache_dir_text(&resolver);
+            let text = match args.format {
+                OutputFormat::Json => pretty(&SchemaCache { cache, entries })?,
+                OutputFormat::Text => {
+                    let mut text = format!("cache {cache}\n");
+                    for entry in entries {
+                        let _ = writeln!(
+                            text,
+                            "{} {} {}",
+                            entry.url, entry.version, entry.confirmed_at
+                        );
+                    }
+                    text
+                }
+            };
+            emit_text(out, &text)
+        }
+        Some(SchemasVerb::Clear { format }) => {
+            let removed = resolver.clear().map_err(cache_refusal)?;
+            let cache = cache_dir_text(&resolver);
+            let text = match format {
+                OutputFormat::Json => pretty(&SchemasCleared {
+                    cache,
+                    removed: u64::try_from(removed).unwrap_or(u64::MAX),
+                })?,
+                OutputFormat::Text => format!("removed {removed} from {cache}\n"),
+            };
+            emit_text(out, &text)
+        }
+        Some(SchemasVerb::Fetch {
+            path,
+            config,
+            format,
+        }) => {
+            let links: Vec<SchemaLink> = if path.is_empty() {
+                let Some(config) = config else {
+                    return Err(invalid(
+                        "schemas fetch: name the links to fetch, or --config <path> (or set \
+                         ONEMESSAGEBUS_CONFIG) to fetch every link it names",
+                    ));
+                };
+                Config::load(&config)
+                    .map_err(|failure| invalid(failure.to_string()))?
+                    .schemas
+            } else {
+                path.iter()
+                    .map(|text| SchemaLink::parse(text).map_err(link_refusal))
+                    .collect::<Result<_, _>>()?
+            };
+            let mut report = SchemasFetched { links: Vec::new() };
+            let mut unresolved = Vec::new();
+            for link in links {
+                let fetched = match resolver.resolve(&link, Freshness::Revalidate) {
+                    Ok(resolved) => {
+                        say_reused(&resolved);
+                        let (outcome, reason) = match resolved.outcome {
+                            Outcome::Read => (FetchOutcome::Read, None),
+                            Outcome::Fetched => (FetchOutcome::Fetched, None),
+                            // Revalidating answers `cached` never: every
+                            // satisfying entry is asked about.
+                            Outcome::Confirmed | Outcome::Cached => (FetchOutcome::Confirmed, None),
+                            Outcome::Reused { why } => (FetchOutcome::Reused, Some(why)),
+                        };
+                        FetchedLink {
+                            link,
+                            outcome,
+                            version: Some(resolved.bundle.version().clone()),
+                            reason,
+                        }
+                    }
+                    Err(failure) => {
+                        unresolved.push(failure.to_string());
+                        FetchedLink {
+                            link,
+                            outcome: FetchOutcome::Failed,
+                            version: None,
+                            reason: Some(failure.to_string()),
+                        }
+                    }
+                };
+                report.links.push(fetched);
+            }
+            let text = match format {
+                OutputFormat::Json => pretty(&report)?,
+                OutputFormat::Text => {
+                    let mut text = String::new();
+                    for fetched in &report.links {
+                        let word = serde_json::to_value(fetched.outcome)
+                            .ok()
+                            .and_then(|word| word.as_str().map(str::to_owned))
+                            .unwrap_or_default();
+                        let version = fetched
+                            .version
+                            .as_ref()
+                            .map_or_else(|| "-".to_owned(), ToString::to_string);
+                        let _ = write!(text, "{} {word} {version}", fetched.link);
+                        if let Some(reason) = &fetched.reason {
+                            let _ = write!(text, " ({reason})");
+                        }
+                        text.push('\n');
+                    }
+                    text
+                }
+            };
+            emit_text(out, &text)?;
+            match unresolved.as_slice() {
+                [] => Ok(()),
+                failures => Err(failed(format!(
+                    "schemas fetch: {} of {} links did not resolve: {}",
+                    failures.len(),
+                    report.links.len(),
+                    failures.join("; ")
+                ))),
+            }
+        }
+    }
+}
+
+/// The cache directory as a report names it.
+fn cache_dir_text(resolver: &LinkResolver) -> String {
+    resolver
+        .cache_dir()
+        .map(|dir| dir.display().to_string())
+        .unwrap_or_default()
+}
+
+/// A cache that cannot be named refuses the input; one that cannot be read or
+/// written is a well-formed no.
+fn cache_refusal(failure: LinkError) -> Refusal {
+    match failure {
+        LinkError::NoCacheDir => invalid(failure.to_string()),
+        _ => failed(failure.to_string()),
+    }
+}
+
+/// One JSON document, pretty-printed, and its newline.
+fn pretty<T: serde::Serialize>(value: &T) -> Result<String, Refusal> {
+    let mut text = serde_json::to_string_pretty(value)
+        .map_err(|failure| failed(format!("cannot render the answer: {failure}")))?;
+    text.push('\n');
+    Ok(text)
 }
 
 fn events(verb: EventsVerb, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {
@@ -1183,7 +1432,8 @@ fn layouts() -> Layouts {
 /// registry directory's schemas beside the layout's.
 fn open_bus(args: &BusArgs, io: &Io) -> Result<Bus, Refusal> {
     let (config, held) = configured(args, io)?;
-    bind(&config, held, args)
+    let linked = linked(&config, Freshness::Window)?;
+    bind(&config, held, &linked, args)
 }
 
 /// The configuration a queue verb opens its bus with, and the transport a
@@ -1199,15 +1449,17 @@ fn configured(
     Ok((configuration(args)?, None))
 }
 
-/// `config` bound to the layouts this binary links, with the schemas this binary
-/// and the registry directory register, over the transport held open or one
-/// opened from `config`.
+/// `config` bound to the layouts this binary links, with the schemas this binary,
+/// the registry directory and the `linked` bundles register, over the transport
+/// held open or one opened from `config`.
 fn bind(
     config: &Config,
     held: Option<Arc<dyn onemessagebus::Transport>>,
+    linked: &[Resolved],
     args: &BusArgs,
 ) -> Result<Bus, Refusal> {
-    let registry = load_registry_dir(args.registry.as_deref())?;
+    let mut registry = load_registry_dir(args.registry.as_deref())?;
+    registry.add_linked(linked).map_err(link_refusal)?;
     match held {
         Some(transport) => config.resolve_over(&layouts(), transport, registry.registry()),
         None => config.resolve_with_registry(
@@ -1674,6 +1926,9 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), 
         )));
     }
     let (config, held) = configured(&args.bus, io)?;
+    // Before anything else, and never waiting on the network for a link the
+    // cache already holds a satisfying entry of, whatever its age.
+    let linked = linked(&config, Freshness::CachedFirst)?;
     let settings = config.codecs.get(&name).cloned().unwrap_or_default();
     if let Some(configured) = &settings.queue {
         if configured != &queue {
@@ -1766,7 +2021,7 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), 
             )),
         },
     };
-    let bus = bind(&config, held, &args.bus)?;
+    let bus = bind(&config, held, &linked, &args.bus)?;
     bus.queue(&queue).map_err(bus_refusal)?;
     let mut codec = Onejudge::new()
         .with_run_env(run_env.clone(), optional_env_text(run_env.as_str())?)

@@ -28,12 +28,12 @@ use onemessagebus::resident::{
     RequestId, ResidentAnswer, ResidentCancel, ResidentEvent, ResidentExit, ResidentFailure,
     ResidentLine, ResidentRefusal, ResidentRequest,
 };
-use onemessagebus::{Capability, FlagKind, StdoutShape, TransportKinds};
+use onemessagebus::{Capability, FlagKind, Freshness, StdoutShape, TransportKinds};
 use serde_json::{Map, Value};
 
 use super::{
-    configuration, dispatch, failed, invalid, load_registry_dir, shape, usage_refusal, BusArgs,
-    Cli, Command, Held, Input, Io, Refusal, SchemaVerb, ServeArgs, Verdict,
+    configuration, dispatch, failed, invalid, linked, load_registry_dir, shape, usage_refusal,
+    BusArgs, Cli, Command, Held, Input, Io, Refusal, SchemaVerb, SchemasVerb, ServeArgs, Verdict,
 };
 
 /// The requests running on one connection, by id, each with the flag that
@@ -49,6 +49,7 @@ pub(super) fn serve(socket: &Path, args: &ServeArgs) -> Result<(), Refusal> {
     // socket is claimed, exactly as a one-shot verb would refuse them.
     let bound = if args.bus.config.is_some() || args.bus.transport_dir.is_some() {
         let config = configuration(&args.bus)?;
+        linked(&config, Freshness::CachedFirst)?;
         let transport = TransportKinds::builtin()
             .open(&config.transport)
             .map_err(|failure| invalid(format!("transport: {failure}")))?;
@@ -564,6 +565,13 @@ impl Held {
                 registry.registry.clone_from(&self.registry);
             }
         }
+        if let Command::Schemas(schemas) = command {
+            if let Some(SchemasVerb::Fetch { path, config, .. }) = &mut schemas.verb {
+                if path.is_empty() && absent("config") {
+                    config.clone_from(&self.config);
+                }
+            }
+        }
     }
 }
 
@@ -579,6 +587,7 @@ fn bus_args(command: &mut Command) -> Option<&mut BusArgs> {
         Command::Validate(args) => Some(&mut args.bus),
         Command::Serve(args) => Some(&mut args.bus),
         Command::Schema { .. }
+        | Command::Schemas(_)
         | Command::Events { .. }
         | Command::Deliver(_)
         | Command::Inbox { .. }
