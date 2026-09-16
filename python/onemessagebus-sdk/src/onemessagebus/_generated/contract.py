@@ -7,6 +7,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, StringConstraints
 
+from .domain import Operation
+
 
 class Contract(RootModel[Any]):
     root: Any = Field(..., title="Contract")
@@ -54,7 +56,7 @@ class AuthorConfig(BaseModel):
     """
     The operations the author may issue.
     """
-    refusals: dict[str, str] | None = None
+    refusals: dict[Operation, str] | None = None
     """
     Reasons ungranted operations are refused, by operation word.
     """

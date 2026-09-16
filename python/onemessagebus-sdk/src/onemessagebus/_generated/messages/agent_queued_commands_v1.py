@@ -7,13 +7,15 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ..domain import Author
+
 
 class QueuedCommands(BaseModel):
     """
     One command envelope as `commands.jsonl` holds it.
     """
 
-    author: str | None = "planner"
+    author: Author | None = "planner"
     """
     Who submitted it.
     """

@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
+from ..domain import Author
+
 
 class Correlation(RootModel[str]):
     root: str = Field(..., pattern="^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -27,7 +29,7 @@ class ReplyEnvelope(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    author: str | None = None
+    author: Author | None = None
     """
     Who wrote it. Omitted, the planner.
     """
