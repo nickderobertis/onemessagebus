@@ -721,6 +721,7 @@ fn validate_codec_keys(raw: &Value) -> Result<(), String> {
     }
     Ok(())
 }
+// llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate] The allowlist is confined to preserving precise unknown-key diagnostics.
 
 fn validate_author_names(raw: &Value) -> Result<(), String> {
     let Some(authors) = raw.get("authors").and_then(Value::as_object) else {
@@ -740,7 +741,6 @@ fn validate_author_names(raw: &Value) -> Result<(), String> {
     }
     Ok(())
 }
-// llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate] The allowlist is confined to preserving precise unknown-key diagnostics.
 
 /// A set of queues, policies, authors, operations and schemas a profile crate
 /// declares under one name, which a configuration names as its `profile`.
