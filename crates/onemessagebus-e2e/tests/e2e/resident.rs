@@ -42,7 +42,7 @@ impl Scratch {
     fn new() -> Self {
         let dir = tempfile::tempdir().expect("a scratch directory");
         let config = format!(
-            "version: 1\ntransport: {{kind: local, dir: {}}}\nprofile: planner-channel\nqueues:\n  greetings: {{schema: demo.greeting@1}}\n",
+            "version: 1\ntransport: {{kind: local, dir: {}}}\nprofile: planner-channel\nqueues:\n  greetings: {{schema: demo.greeting@1}}\ncodecs:\n  example:\n    queue: surfaces\n    select: kind\n    frames:\n      note:\n        schema: agent.note@1\n        bindings:\n          - do: answer\n            response: {{accepted: true}}\n",
             dir.path().join("channel").display()
         );
         std::fs::write(dir.path().join("onemessagebus.yaml"), config).expect("a config");
@@ -474,7 +474,7 @@ fn the_resident_answers_every_capability_as_the_one_shot_verb_does() {
     let served = client.call(
         20,
         "serve",
-        json!({"queue": "surfaces", "codec": "onejudge"}),
+        json!({"queue": "surfaces", "codec": "example"}),
         Some(""),
     );
     assert_eq!(ok(&served), &json!([]), "{served}");

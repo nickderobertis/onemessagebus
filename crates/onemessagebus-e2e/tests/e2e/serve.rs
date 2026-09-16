@@ -1,8 +1,14 @@
 //! Configured codec journeys through the compiled binary and a linked schema.
 
-use serde_json::json;
+use std::io::Write as _;
+use std::process::{Child, Stdio};
+use std::time::{Duration, Instant};
 
-use crate::support::run_in;
+use serde_json::{json, Value};
+
+use crate::support::{onemessagebus, run_in, Run};
+
+const GUARD: Duration = Duration::from_secs(20);
 
 struct Scratch {
     dir: tempfile::TempDir,
@@ -22,7 +28,7 @@ impl Scratch {
                     "schema": {
                         "type": "object",
                         "required": ["op", "value"],
-                        "properties": {"op": {"enum": ["hello", "raise", "fail", "refuse", "conditional"]}, "value": {"type": "integer"}}
+                        "properties": {"op": {"enum": ["hello", "raise", "fail", "refuse", "conditional", "ask"]}, "value": {"type": "integer"}}
                     }
                 }]
             })
@@ -33,7 +39,7 @@ impl Scratch {
         std::fs::write(
             &config,
             format!(
-                "version: 1\ntransport: {{kind: local, dir: {}}}\nqueues:\n  surfaces: {{}}\nschemas:\n  - \"file://{}@3\"\ncodecs:\n  example:\n    queue: surfaces\n    select: op\n    frames:\n      hello:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {{field: mood, equals: lost}}\n            do: refuse\n            message: \"lost: {{frame.value}}\"\n          - do: answer\n            response: {{value: \"{{frame.value}}\", text: \"value={{frame.value}}\"}}\n      raise:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {{kind: example-raised, blocking: false, message: \"raised {{frame.value}}\"}}\n            response: {{raised: true}}\n      fail:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {{kind: example-failed, blocking: false, message: \"failed {{frame.value}}\"}}\n            fail: \"member failed {{frame.value}}\"\n      refuse:\n        schema: example.frame.hello@3\n        bindings:\n          - do: refuse\n            message: \"refused {{frame.value}}\"\n      conditional:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {{field: mood, equals: ready}}\n            do: answer\n            response: {{ready: true}}\n",
+                "version: 1\ntransport: {{kind: local, dir: {}}}\nprofile: planner-channel\nschemas:\n  - \"file://{}@3\"\ncodecs:\n  example:\n    queue: surfaces\n    reply_window_seconds: 1\n    session_env: EXAMPLE_SESSION\n    asker_env: EXAMPLE_ASKER\n    select: op\n    frames:\n      hello:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {{field: mood, equals: lost}}\n            do: refuse\n            message: \"lost: {{frame.value}}\"\n          - do: answer\n            response: {{value: \"{{frame.value}}\", text: \"value={{frame.value}}\"}}\n      raise:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {{kind: example-raised, blocking: false, source: example, message: \"raised {{frame.value}}\"}}\n            response: {{raised: true}}\n      fail:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {{kind: example-failed, blocking: false, source: example, message: \"failed {{frame.value}}\"}}\n            fail: \"member failed {{frame.value}}\"\n      refuse:\n        schema: example.frame.hello@3\n        bindings:\n          - do: refuse\n            message: \"refused {{frame.value}}\"\n      conditional:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {{field: mood, equals: ready}}\n            do: answer\n            response: {{ready: true}}\n      ask:\n        schema: example.frame.hello@3\n        bindings:\n          - do: ask\n            record: {{kind: example-question, source: example, message: \"rule on {{frame.value}}\"}}\n            response:\n              value: {{from: reply.completion}}\n              reason: {{from: [reply.reason, reply.message], default: \"ruled on {{frame.value}} without a reason\"}}\n              literal: \"{{reply.completion}}\"\n            unanswered: {{value: false, reason: \"no ruling for {{frame.value}}\"}}\n",
                 dir.path().join("channel").display(),
                 bundle.display()
             ),
@@ -63,6 +69,65 @@ impl Scratch {
 
     fn run(&self, args: &[&str]) -> crate::support::Run {
         run_in(self.dir.path(), args, None, &[])
+    }
+
+    fn spawn_ask(
+        &self,
+        held: bool,
+        env: &[(&str, &str)],
+    ) -> (Child, Option<std::process::ChildStdin>) {
+        let mut command = onemessagebus();
+        command
+            .args([
+                "serve",
+                "surfaces",
+                "--codec",
+                "example",
+                "--config",
+                &self.config,
+            ])
+            .current_dir(self.dir.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        let mut child = command.spawn().expect("serve spawns");
+        let mut stdin = child.stdin.take().expect("stdin pipe");
+        stdin
+            .write_all(b"{\"op\":\"ask\",\"value\":9}\n")
+            .expect("frame written");
+        stdin.flush().expect("frame flushed");
+        (child, held.then_some(stdin))
+    }
+
+    fn asked(&self) -> Value {
+        let path = self.dir.path().join("channel/surfaces.jsonl");
+        let started = Instant::now();
+        loop {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                if let Some(line) = text.lines().next() {
+                    return serde_json::from_str(line).expect("question JSON");
+                }
+            }
+            assert!(started.elapsed() < GUARD, "serve asked nothing");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+fn finish(mut child: Child) -> Run {
+    let started = Instant::now();
+    while child.try_wait().expect("serve polled").is_none() {
+        assert!(started.elapsed() < GUARD, "serve never finished");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let output = child.wait_with_output().expect("serve output");
+    Run {
+        code: output.status.code().unwrap_or(-1),
+        stdout: String::from_utf8(output.stdout).expect("UTF-8 stdout"),
+        stderr: String::from_utf8(output.stderr).expect("UTF-8 stderr"),
     }
 }
 
@@ -104,6 +169,66 @@ fn configured_answer_preserves_placeholder_types_and_first_matching_refusal_wins
     assert_eq!(refused.code, 2, "{}", refused.stderr);
     assert!(refused.stderr.contains("lost: 8"), "{}", refused.stderr);
     assert!(refused.stdout.is_empty());
+}
+
+#[test]
+fn ask_relays_a_ruling_through_mappings_and_uses_the_configured_asker() {
+    let scratch = Scratch::new();
+    let (child, _) = scratch.spawn_ask(false, &[("EXAMPLE_ASKER", "example-host")]);
+    let question = scratch.asked();
+    assert_eq!(question["asker"], json!("example-host"));
+    assert_eq!(question["message"], json!("rule on 9"));
+    let correlation = question["correlation"].as_str().expect("correlation");
+    let replied = run_in(
+        scratch.dir.path(),
+        &[
+            "reply",
+            "surfaces",
+            "--correlation",
+            correlation,
+            "--config",
+            &scratch.config,
+        ],
+        Some(r#"{"version":3,"completion":true,"message":"accepted"}"#),
+        &[],
+    );
+    assert_eq!(replied.code, 0, "{}", replied.stderr);
+    let served = finish(child);
+    assert_eq!(served.code, 0, "{}", served.stderr);
+    assert_eq!(
+        served.lines(),
+        [json!({"value": true, "reason": "accepted", "literal": true})]
+    );
+}
+
+#[test]
+fn ask_timeout_writes_unanswered_and_a_configured_session_bound_stays_counted() {
+    let timed_out = Scratch::new();
+    let unanswered = timed_out.serve("{\"op\":\"ask\",\"value\":9}\n");
+    assert_eq!(unanswered.code, 0, "{}", unanswered.stderr);
+    assert_eq!(
+        unanswered.lines(),
+        [json!({"value": false, "reason": "no ruling for 9"})]
+    );
+    let status = timed_out.run(&["status", "surfaces", "--config", &timed_out.config]);
+    assert_eq!(status.code, 0, "{}", status.stderr);
+    let status: Vec<Value> = serde_json::from_str(&status.stdout).expect("status JSON");
+    assert_eq!(status[0]["abandoned"].as_array().map(Vec::len), Some(1));
+
+    let bounded = Scratch::new();
+    let (child, held) = bounded.spawn_ask(true, &[("EXAMPLE_SESSION", "2")]);
+    let served = finish(child);
+    drop(held);
+    assert_eq!(served.code, 0, "{}", served.stderr);
+    assert!(
+        served.stderr.contains("2-second bound") && served.stderr.contains("still counted"),
+        "{}",
+        served.stderr
+    );
+    let status = bounded.run(&["status", "surfaces", "--config", &bounded.config]);
+    let status: Vec<Value> = serde_json::from_str(&status.stdout).expect("status JSON");
+    assert_eq!(status[0]["abandoned"].as_array().map(Vec::len), Some(0));
+    assert_eq!(status[0]["unread"], json!(1));
 }
 
 #[test]
