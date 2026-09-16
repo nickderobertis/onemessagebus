@@ -15,7 +15,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -385,10 +385,35 @@ impl JsonSchema for SchemaBundle {
 /// A URL a link fetches its bundle from: `https://` on any host, or `http://`
 /// on a loopback one. Only [`SchemaLink::parse`] makes one, so a location that
 /// holds a `RemoteUrl` has been held to Contract L's schemes.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RemoteUrl(String);
 
 impl RemoteUrl {
+    /// `text` as a remote location, or why it is not one: an `https://` URL
+    /// naming a host, or an `http://` URL naming a loopback host.
+    fn parse(text: &str) -> Result<Self, &'static str> {
+        let lower = text.to_ascii_lowercase();
+        let (rest, loopback_only) = if lower.starts_with("https://") {
+            (&text["https://".len()..], false)
+        } else if lower.starts_with("http://") {
+            (&text["http://".len()..], true)
+        } else {
+            return Err("it is not an https:// or http:// URL");
+        };
+        let host = host_of(rest).ok_or("its URL names no host")?;
+        if loopback_only
+            && !matches!(
+                host.to_ascii_lowercase().as_str(),
+                "localhost" | "127.0.0.1" | "[::1]"
+            )
+        {
+            return Err(
+                "http:// is taken only for a loopback host (localhost, 127.0.0.1 or [::1]); use https://",
+            );
+        }
+        Ok(Self(text.to_owned()))
+    }
+
     /// The URL, as the link wrote it without its pin.
     #[must_use]
     pub fn as_str(&self) -> &str {
@@ -399,6 +424,34 @@ impl RemoteUrl {
 impl fmt::Display for RemoteUrl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+impl Serialize for RemoteUrl {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for RemoteUrl {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Self::parse(&text)
+            .map_err(|why| serde::de::Error::custom(format!("{text:?} is not a remote URL: {why}")))
+    }
+}
+
+impl JsonSchema for RemoteUrl {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("RemoteUrl")
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "description": "A URL a schema link fetches its bundle from: https:// on any host, or http:// on a loopback host.",
+            "pattern": "^[Hh][Tt][Tt][Pp][Ss]?://"
+        })
     }
 }
 
@@ -544,23 +597,8 @@ impl SchemaLink {
             return Err(refuse("it names a pin and no location"));
         }
         let lower = location.to_ascii_lowercase();
-        let location = if lower.starts_with("https://") {
-            host_of(&location["https://".len()..])
-                .ok_or_else(|| refuse("its URL names no host"))?;
-            LinkLocation::Remote(RemoteUrl(location.to_owned()))
-        } else if lower.starts_with("http://") {
-            let host = host_of(&location["http://".len()..])
-                .ok_or_else(|| refuse("its URL names no host"))?;
-            if !matches!(
-                host.to_ascii_lowercase().as_str(),
-                "localhost" | "127.0.0.1" | "[::1]"
-            ) {
-                return Err(refuse(
-                    "http:// is taken only for a loopback host (localhost, 127.0.0.1 or [::1]); \
-                     use https://",
-                ));
-            }
-            LinkLocation::Remote(RemoteUrl(location.to_owned()))
+        let location = if lower.starts_with("https://") || lower.starts_with("http://") {
+            LinkLocation::Remote(RemoteUrl::parse(location).map_err(refuse)?)
         } else if lower.starts_with("file://") {
             let rest = &location["file://".len()..];
             let rest = rest.strip_prefix("localhost").unwrap_or(rest);
@@ -791,6 +829,13 @@ impl ConfirmedAt {
         OffsetDateTime::from_unix_timestamp(secs).ok().map(Self)
     }
 
+    /// Now, to the second.
+    #[must_use]
+    pub fn now() -> Self {
+        let now = OffsetDateTime::now_utc();
+        Self(OffsetDateTime::from_unix_timestamp(now.unix_timestamp()).unwrap_or(now))
+    }
+
     /// Seconds since the epoch.
     #[must_use]
     pub fn unix_seconds(self) -> i64 {
@@ -841,7 +886,7 @@ impl JsonSchema for ConfirmedAt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CachedBundle {
     /// The link's location, without its pin.
-    pub url: String,
+    pub url: RemoteUrl,
     /// The version the cached bundle declares.
     pub version: BundleVersion,
     /// When the origin last confirmed it.
@@ -852,10 +897,9 @@ pub struct CachedBundle {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EntryMeta {
-    url: String,
+    url: RemoteUrl,
     version: BundleVersion,
-    /// Seconds since the Unix epoch.
-    confirmed_at: u64,
+    confirmed_at: ConfirmedAt,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     etag: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -997,14 +1041,14 @@ impl LinkResolver {
                 let bundle = held_to_pin(link, parse_bundle(link, &text)?)?;
                 return Ok(resolved(link, bundle, Outcome::Read));
             }
-            LinkLocation::Remote(url) => url.as_str(),
+            LinkLocation::Remote(url) => url,
         };
         let (Some(pin), Some(cache)) = (link.pin(), &self.cache_dir) else {
             let body = fetch(link, url, None)?.ok_or_else(|| unanswered(link))?;
             let bundle = held_to_pin(link, parse_bundle(link, &body.text)?)?;
             return Ok(resolved(link, bundle, Outcome::Fetched));
         };
-        let dir = url_dir(cache, url);
+        let dir = url_dir(cache, url.as_str());
         if self.refresh && freshness != Freshness::CachedFirst {
             let body = fetch(link, url, None)?.ok_or_else(|| unanswered(link))?;
             let bundle = held_to_pin(link, parse_bundle(link, &body.text)?)?;
@@ -1012,7 +1056,7 @@ impl LinkResolver {
                 let _ = std::fs::remove_file(&entry.body_path);
                 let _ = std::fs::remove_file(&entry.meta_path);
             }
-            store(&dir, url, &bundle, &body, now_secs())?;
+            store(&dir, url, &bundle, &body, ConfirmedAt::now())?;
             return Ok(resolved(link, bundle, Outcome::Fetched));
         }
         let mut satisfying: Vec<Entry> = read_entries(&dir, url)
@@ -1023,11 +1067,14 @@ impl LinkResolver {
         let Some(entry) = satisfying.into_iter().next() else {
             let body = fetch(link, url, None)?.ok_or_else(|| unanswered(link))?;
             let bundle = held_to_pin(link, parse_bundle(link, &body.text)?)?;
-            store(&dir, url, &bundle, &body, now_secs())?;
+            store(&dir, url, &bundle, &body, ConfirmedAt::now())?;
             return Ok(resolved(link, bundle, Outcome::Fetched));
         };
-        let now = now_secs();
-        let fresh = now.saturating_sub(entry.meta.confirmed_at) < self.ttl.as_secs();
+        let now = ConfirmedAt::now();
+        let age = now
+            .unix_seconds()
+            .saturating_sub(entry.meta.confirmed_at.unix_seconds());
+        let fresh = u64::try_from(age).map_or(true, |age| age < self.ttl.as_secs());
         if freshness == Freshness::CachedFirst || (freshness == Freshness::Window && fresh) {
             return Ok(resolved(link, entry.bundle, Outcome::Cached));
         }
@@ -1085,8 +1132,7 @@ impl LinkResolver {
             .map(|entry| CachedBundle {
                 url: entry.meta.url,
                 version: entry.meta.version,
-                confirmed_at: ConfirmedAt::from_unix_seconds(entry.meta.confirmed_at)
-                    .unwrap_or(ConfirmedAt(OffsetDateTime::UNIX_EPOCH)),
+                confirmed_at: entry.meta.confirmed_at,
             })
             .collect();
         entries.sort_by(|a, b| a.url.cmp(&b.url).then_with(|| a.version.cmp(&b.version)));
@@ -1155,12 +1201,6 @@ fn unanswered(link: &SchemaLink) -> LinkError {
     }
 }
 
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs())
-}
-
 const STAMP: &[BorrowedFormatItem<'static>] =
     format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]Z");
 
@@ -1199,26 +1239,26 @@ fn subdirs(cache: &Path) -> Result<Vec<PathBuf>, LinkError> {
 
 /// Every readable entry in one URL's directory, for resolution: a directory that
 /// cannot be read is an empty one, since resolution fetches past the cache.
-fn read_entries(dir: &Path, url: &str) -> Vec<Entry> {
-    entries_in(dir, url).unwrap_or_default()
+fn read_entries(dir: &Path, url: &RemoteUrl) -> Vec<Entry> {
+    entries_in(dir, Some(url)).unwrap_or_default()
 }
 
 /// Every readable entry in one URL's directory, for `schemas` and `schemas
 /// clear`, which answer a question about the cache and so refuse a directory
 /// they cannot read rather than report it empty.
 fn listed_entries(dir: &Path) -> Result<Vec<Entry>, LinkError> {
-    entries_in(dir, "").map_err(|failure| LinkError::Cache {
+    entries_in(dir, None).map_err(|failure| LinkError::Cache {
         path: dir.to_path_buf(),
         why: format!("cannot read it: {failure}"),
     })
 }
 
-/// Every entry in one URL's directory — all of them when `url` is empty — or
+/// Every entry in one URL's directory — all of them when `url` is `None` — or
 /// the failure to list it. Anything in a listed directory that is not an entry
 /// this build wrote — a half-written entry, a body that no longer declares the
 /// version its metadata does, metadata for another URL — is passed over, never
 /// misread.
-fn entries_in(dir: &Path, url: &str) -> std::io::Result<Vec<Entry>> {
+fn entries_in(dir: &Path, url: Option<&RemoteUrl>) -> std::io::Result<Vec<Entry>> {
     let listing = std::fs::read_dir(dir)?;
     let mut entries = Vec::new();
     for meta_path in listing.flatten().map(|entry| entry.path()) {
@@ -1235,8 +1275,8 @@ fn entries_in(dir: &Path, url: &str) -> std::io::Result<Vec<Entry>> {
         else {
             continue;
         };
-        if (!url.is_empty() && meta.url != url)
-            || url_dir(dir.parent().unwrap_or(dir), &meta.url) != dir
+        if url.is_some_and(|url| *url != meta.url)
+            || url_dir(dir.parent().unwrap_or(dir), meta.url.as_str()) != dir
         {
             continue;
         }
@@ -1271,10 +1311,10 @@ fn cache_error(path: &Path, failure: &std::io::Error) -> LinkError {
 /// Write an entry under the version its bundle declares.
 fn store(
     dir: &Path,
-    url: &str,
+    url: &RemoteUrl,
     bundle: &SchemaBundle,
     body: &Body,
-    now: u64,
+    now: ConfirmedAt,
 ) -> Result<(), LinkError> {
     std::fs::create_dir_all(dir).map_err(|failure| cache_error(dir, &failure))?;
     let (body_path, meta_path) = entry_paths(dir, bundle.version());
@@ -1282,7 +1322,7 @@ fn store(
     write_meta(
         &meta_path,
         &EntryMeta {
-            url: url.to_owned(),
+            url: url.clone(),
             version: bundle.version().clone(),
             confirmed_at: now,
             etag: body.etag.clone(),
@@ -1313,7 +1353,7 @@ struct Body {
 /// status.
 fn fetch(
     link: &SchemaLink,
-    url: &str,
+    url: &RemoteUrl,
     meta: Option<&EntryMeta>,
 ) -> Result<Option<Body>, LinkError> {
     let refuse = |why: String| LinkError::Unreachable {
@@ -1321,8 +1361,8 @@ fn fetch(
         doing: Access::Fetch,
         why,
     };
-    let agent = agent(url).map_err(refuse)?;
-    let mut request = agent.get(url);
+    let agent = agent(url.as_str()).map_err(refuse)?;
+    let mut request = agent.get(url.as_str());
     let mut conditional = false;
     if let Some(meta) = meta {
         if let Some(etag) = &meta.etag {

@@ -36,10 +36,12 @@ export interface CachedBundle {
 }
 
 const $CachedBundle: z.ZodType = z.looseObject({
-  url: z.string(),
+  url: z.lazy(() => $RemoteUrl),
   version: z.lazy(() => $BundleVersion),
   confirmed_at: z.lazy(() => $ConfirmedAt),
 });
+
+const $RemoteUrl: z.ZodType = z.string().regex(new RegExp("^[Hh][Tt][Tt][Pp][Ss]?://", "u"));
 
 const $BundleVersion: z.ZodType = z.string().regex(new RegExp("^[0-9]+(\\.[0-9]+){0,2}$", "u"));
 

@@ -62,6 +62,7 @@ getrandom = "0.3"
 # client: rustls over ring, never a system OpenSSL or a spawned `curl`, and no
 # default features, so no bundled root set — the roots are the platform's own,
 # read by rustls-native-certs (which honours SSL_CERT_FILE and SSL_CERT_DIR).
+# llmlint: ignore[new_command_or_client_gets_its_own_project] this declares the version the core crate's `LinkResolver` uses, and Contract L places resolution in the core as a library call beside `Config`: `Config::resolve_links` calls it and the capability manifest names `onemessagebus::LinkResolver::{cached, clear, resolve}` as the `schemas` verbs' library entries, which tests/library_surface.rs requires to be paths in that crate — so a crate of its own could not be called by `Config` without inverting the dependency.
 ureq = { version = "3.4", default-features = false, features = ["rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-native-certs = "0.8"

@@ -860,7 +860,7 @@ class CachedBundle(BaseModel):
     """
     When the origin last confirmed it.
     """
-    url: str
+    url: str = Field(..., pattern="^[Hh][Tt][Tt][Pp][Ss]?://")
     """
     The link's location, without its pin.
     """
