@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -13,7 +13,7 @@ class QueuedCommands(BaseModel):
     One command envelope as `commands.jsonl` holds it.
     """
 
-    author: Literal["planner", "monitor"] | None = "planner"
+    author: str | None = "planner"
     """
     Who submitted it.
     """

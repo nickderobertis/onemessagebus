@@ -52,7 +52,11 @@ class AuthorConfig(BaseModel):
     )
     capabilities: list[str]
     """
-    The operations the author keeps: a subset of what the layout grants.
+    The operations the author may issue.
+    """
+    refusals: dict[str, str] | None = None
+    """
+    Reasons ungranted operations are refused, by operation word.
     """
 
 
@@ -1863,7 +1867,7 @@ class Config(BaseModel):
     )
     authors: dict[str, AuthorConfig] | None = None
     """
-    Authors whose grants the configuration narrows. It may never widen them.
+    Authors declared by the configuration. The built-in planner may only be narrowed.
     """
     codecs: (
         dict[Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,63}$")], CodecConfig]

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
@@ -27,7 +27,7 @@ class ReplyEnvelope(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    author: Literal["planner", "monitor"] | None = None
+    author: str | None = None
     """
     Who wrote it. Omitted, the planner.
     """

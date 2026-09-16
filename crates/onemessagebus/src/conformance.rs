@@ -13,6 +13,7 @@
 //! test support, published so a profile crate can run the table without
 //! copying it.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -1348,6 +1349,7 @@ fn desk_bus(
             Author::from(*author),
             AuthorConfig {
                 capabilities: capabilities.iter().map(|word| (*word).to_owned()).collect(),
+                refusals: BTreeMap::new(),
             },
         );
     }
@@ -1416,9 +1418,9 @@ pub fn an_allowlist_refuses_by_omission_naming_the_author_the_op_and_the_reason(
 }
 
 /// A configuration may narrow an author's grants, and what it narrows away is
-/// refused with the configuration's reason; one widening them, naming an op
-/// that does not exist or an author the layout does not declare is refused
-/// naming the key.
+/// refused with the configuration's reason; one widening a built-in author or
+/// naming an op that does not exist is refused naming the key. A new name
+/// declares an author.
 pub fn a_configuration_narrows_an_author_and_is_refused_widening_one(fresh: Fresh<'_>) {
     let transport = fresh();
     let orders = queue_name("orders");
@@ -1446,11 +1448,6 @@ pub fn a_configuration_narrows_an_author_and_is_refused_widening_one(fresh: Fres
             "authors.visitor.capabilities",
             "`fly` is not an op",
         ),
-        (
-            vec![("stranger", &["note"][..])],
-            "authors.stranger.capabilities",
-            "`stranger` is not an author",
-        ),
     ] {
         match desk_bus(&transport, &authors) {
             Err(ConfigError::Narrowing(refusal)) => {
@@ -1461,6 +1458,13 @@ pub fn a_configuration_narrows_an_author_and_is_refused_widening_one(fresh: Fres
             other => panic!("{authors:?} was not refused as a widening: {other:?}"),
         }
     }
+    let declared = desk_bus(&transport, &[("stranger", &["note"])]).expect("an author is declared");
+    declared
+        .send(
+            &orders,
+            json!({"id": 0, "author": "stranger", "op": "note"}),
+        )
+        .expect("its grant is allowed");
 }
 
 /// A document's name is one document across the transport, whichever queue

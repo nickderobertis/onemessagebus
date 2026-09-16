@@ -50,7 +50,7 @@ fn an_envelope_carrying_only_edits_reaches_the_command_path_alone() {
 }
 
 #[test]
-fn a_framed_reply_is_kept_whole_and_a_monitor_is_refused_what_it_may_not_issue() {
+fn a_framed_reply_is_kept_whole_and_an_undeclared_author_is_refused() {
     let framed = json!({"id": 0, "reply": {"completion": false, "message": "m"}, "at": 1});
     assert_eq!(
         routed(framed.clone()).expect("routed"),
@@ -58,12 +58,12 @@ fn a_framed_reply_is_kept_whole_and_a_monitor_is_refused_what_it_may_not_issue()
     );
     let refused = routed(json!({
         "version": 3,
-        "author": "monitor",
+        "author": "sentinel",
         "commands": [{"op": "drop", "id": "build"}]
     }))
-    .expect_err("a monitor may not drop");
+    .expect_err("an undeclared author may not write");
     assert!(
-        refused.contains("'drop' is not an op the monitor may issue"),
+        refused.contains("author `sentinel` is not declared"),
         "{refused}"
     );
 }

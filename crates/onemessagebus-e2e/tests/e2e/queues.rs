@@ -179,45 +179,18 @@ fn a_reply_sent_to_the_reply_queue_is_routed_by_its_halves_and_checked_against_i
         json!("planner")
     );
 
-    let commands_only = scratch.bus(
+    let undeclared = scratch.bus(
         &["send", "replies"],
-        Some(r#"{"version":3,"author":"monitor","commands":[{"op":"finding","message":"the gate is red"}]}"#),
+        Some(r#"{"version":3,"author":"sentinel","commands":[{"op":"finding","message":"the gate is red"}]}"#),
     );
-    let landed: Vec<Value> = commands_only
-        .lines()
-        .iter()
-        .map(|line| line["queue"].clone())
-        .collect();
-    assert_eq!(
-        landed,
-        vec![json!("commands")],
-        "a commands-only reply reached the reply queue"
-    );
+    assert_eq!(undeclared.code, 1);
+    assert!(undeclared
+        .stderr
+        .contains("author `sentinel` is not declared"));
     assert_eq!(scratch.lines("replies.jsonl").len(), 1);
-
-    let refused = scratch.bus(
-        &["send", "commands"],
-        Some(
-            r#"{"author":"monitor","commands":[{"op":"drop","id":"build","dependents":"detach"}]}"#,
-        ),
-    );
-    assert_eq!(refused.code, 1, "{}", refused.stderr);
-    assert_eq!(
-        refused.stderr.trim(),
-        "onemessagebus: commands: 'drop' is not an op the monitor may issue: removing work from the graph is a decomposition decision the planner owns. Surface it to the planner instead"
-    );
-    let completion = scratch.bus(
-        &["send", "replies"],
-        Some(r#"{"author":"monitor","completion":true}"#),
-    );
-    assert_eq!(completion.code, 1);
-    assert_eq!(
-        completion.stderr.trim(),
-        "onemessagebus: replies: declaring the run complete is not something the monitor may do: whether the run is finished is the planner's verdict, not an observation. Surface it to the planner instead"
-    );
     assert_eq!(
         scratch.lines("commands.jsonl").len(),
-        2,
+        1,
         "a refused envelope was appended"
     );
 }
@@ -1009,7 +982,7 @@ fn a_configuration_reaches_the_binary_by_every_route_and_the_directory_by_preced
 }
 
 #[test]
-fn a_configuration_with_an_unknown_key_or_a_widened_grant_is_refused_naming_the_key() {
+fn a_configuration_declares_an_open_author_and_offer_checks_never_block_replay() {
     let scratch = Scratch::new();
     let root = scratch.root();
     let channel = scratch.channel();
@@ -1039,37 +1012,55 @@ fn a_configuration_with_an_unknown_key_or_a_widened_grant_is_refused_naming_the_
 
     let widened = write(
         "widened.yaml",
-        "authors:\n  monitor: {capabilities: [retry, attest]}\n",
+        "authors:\n  planner: {capabilities: [retry, unknown]}\n",
     );
     let run = run_in(root, &["status", "--config", &widened], None, &[]);
     assert_eq!(run.code, 2);
     assert_eq!(
         run.stderr.trim(),
-        "onemessagebus: authors.monitor.capabilities: `attest` is not granted to monitor by the profile, and a configuration may narrow an author's grants but never widen them"
+        "onemessagebus: authors.planner.capabilities: `unknown` is not an op; the ops are: add, drop, reparent, retry, cancel, requeue, complete, attest, finding, amend, note, settle"
     );
 
-    let narrowed = write(
-        "narrowed.yaml",
-        "authors:\n  monitor: {capabilities: [finding]}\n",
-    );
+    let configured = write("configured.yaml", "authors:\n  sentinel:\n    capabilities: [finding]\n    refusals: {complete: 'the planner decides completion'}\n");
     let run = run_in(
         root,
-        &["send", "commands", "--config", &narrowed],
-        Some(r#"{"author":"monitor","commands":[{"op":"retry","id":"build","node":{}}]}"#),
+        &["send", "commands", "--config", &configured],
+        Some(r#"{"author":"sentinel","commands":[{"op":"retry","id":"build","node":{}}]}"#),
         &[],
     );
     assert_eq!(run.code, 1);
     assert_eq!(
         run.stderr.trim(),
-        "onemessagebus: commands: 'retry' is not an op the monitor may issue: the configuration does not grant it. Surface it to the planner instead"
+        "onemessagebus: commands: 'retry' is not an op the sentinel may issue: nothing grants it to this author. Surface it to the planner instead"
     );
     let allowed = run_in(
         root,
-        &["send", "commands", "--config", &narrowed],
-        Some(r#"{"author":"monitor","commands":[{"op":"finding","message":"look"}]}"#),
+        &["send", "commands", "--config", &configured],
+        Some(r#"{"author":"sentinel","commands":[{"op":"finding","message":"look"}]}"#),
         &[],
     );
     assert_eq!(allowed.code, 0, "{}", allowed.stderr);
+    let completion = run_in(
+        root,
+        &["send", "replies", "--config", &configured],
+        Some(r#"{"author":"sentinel","completion":true}"#),
+        &[],
+    );
+    assert_eq!(completion.code, 1);
+    assert!(completion.stderr.contains("the planner decides completion"));
+    let status = scratch.bus(&["status", "commands"], None);
+    assert_eq!(status.code, 0, "{}", status.stderr);
+    let next = scratch.bus(&["next", "commands"], None);
+    assert_eq!(next.code, 0, "{}", next.stderr);
+    assert!(next.stdout.contains("\"author\":\"sentinel\""));
+    let rejected = scratch.bus(
+        &["send", "commands"],
+        Some(r#"{"author":"sentinel","commands":[{"op":"finding","message":"again"}]}"#),
+    );
+    assert_eq!(rejected.code, 1);
+    assert!(rejected
+        .stderr
+        .contains("author `sentinel` is not declared"));
 }
 
 /// A serving session that ended abandoned what it raised; a later `next` of the

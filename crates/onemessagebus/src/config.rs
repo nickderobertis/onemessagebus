@@ -1,8 +1,8 @@
 //! The configuration file, and the bus it resolves to.
 //!
 //! `onemessagebus.yaml` names a transport, optionally a layout a profile crate
-//! declares, queues added to it or overriding its own, and authors narrowed from
-//! its grants. Reading it is two steps, and the types keep them apart:
+//! declares, queues added to it or overriding its own, and configured authors.
+//! Reading it is two steps, and the types keep them apart:
 //!
 //! 1. [`Config::load`] reads the file and refuses what the file alone decides —
 //!    YAML that is not one document, an unknown key, a version other than
@@ -65,7 +65,7 @@ pub struct Config {
     /// Queues added to the layout's, or overriding one of the layout's by name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub queues: BTreeMap<QueueName, QueueConfig>,
-    /// Authors whose grants the configuration narrows. It may never widen them.
+    /// Authors declared by the configuration. The built-in planner may only be narrowed.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub authors: BTreeMap<Author, AuthorConfig>,
     /// Validators judging what is offered to a queue before anything is
@@ -251,8 +251,11 @@ impl PolicyConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorConfig {
-    /// The operations the author keeps: a subset of what the layout grants.
+    /// The operations the author may issue.
     pub capabilities: Vec<String>,
+    /// Reasons ungranted operations are refused, by operation word.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub refusals: BTreeMap<String, String>,
 }
 
 /// Why a configuration could not be read or resolved, naming the key.
@@ -352,6 +355,10 @@ impl Config {
             why: failure.to_string(),
         })?;
         validate_codec_keys(&raw).map_err(|why| ConfigError::Parse {
+            path: PathBuf::new(),
+            why,
+        })?;
+        validate_author_names(&raw).map_err(|why| ConfigError::Parse {
             path: PathBuf::new(),
             why,
         })?;
@@ -557,13 +564,71 @@ impl Config {
         let mut allowlist = layout
             .map(|layout| layout.allowlist())
             .unwrap_or_else(|| Allowlist::new(Vec::<OpWord>::new()));
-        for (author, narrowed) in &self.authors {
-            allowlist.narrow(
-                &format!("authors.{author}.capabilities"),
-                author,
-                &narrowed.capabilities,
-                NARROWED,
-            )?;
+        for (author, configured) in &self.authors {
+            let capabilities_key = format!("authors.{author}.capabilities");
+            if allowlist.declares(author) {
+                allowlist.narrow(
+                    &capabilities_key,
+                    author,
+                    &configured.capabilities,
+                    NARROWED,
+                )?;
+            } else {
+                allowlist.declare(author.clone());
+                for word in &configured.capabilities {
+                    let Some(op) = allowlist
+                        .vocabulary()
+                        .iter()
+                        .find(|op| op.0 == *word)
+                        .cloned()
+                    else {
+                        return Err(NarrowingRefused {
+                            key: capabilities_key.clone(),
+                            why: format!(
+                                "`{word}` is not an op; the ops are: {}",
+                                allowlist
+                                    .vocabulary()
+                                    .iter()
+                                    .map(|op| op.0.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ),
+                        }
+                        .into());
+                    };
+                    allowlist.grant(author.clone(), op);
+                }
+            }
+            for (word, reason) in &configured.refusals {
+                let key = format!("authors.{author}.refusals.{word}");
+                let Some(op) = allowlist
+                    .vocabulary()
+                    .iter()
+                    .find(|op| op.0 == *word)
+                    .cloned()
+                else {
+                    return Err(NarrowingRefused {
+                        key,
+                        why: format!("`{word}` is not an op"),
+                    }
+                    .into());
+                };
+                if configured.capabilities.contains(word) {
+                    return Err(NarrowingRefused {
+                        key,
+                        why: "a granted op may not have a refusal".to_owned(),
+                    }
+                    .into());
+                }
+                if reason.trim().is_empty() {
+                    return Err(NarrowingRefused {
+                        key,
+                        why: "a refusal reason must be non-empty text".to_owned(),
+                    }
+                    .into());
+                }
+                allowlist.refuse(author.clone(), &op, reason.clone());
+            }
         }
         let mut validators: BTreeMap<QueueName, Validators<Value>> = BTreeMap::new();
         for (index, declared) in self.validators.iter().enumerate() {
@@ -652,6 +717,25 @@ fn validate_codec_keys(raw: &Value) -> Result<(), String> {
                     ));
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_author_names(raw: &Value) -> Result<(), String> {
+    let Some(authors) = raw.get("authors").and_then(Value::as_object) else {
+        return Ok(());
+    };
+    for name in authors.keys() {
+        let valid = name.len() <= 64
+            && name.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+        if !valid {
+            return Err(format!(
+                "authors.{name}: an author name must match ^[a-z][a-z0-9-]{{0,63}}$"
+            ));
         }
     }
     Ok(())

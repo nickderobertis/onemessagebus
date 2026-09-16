@@ -751,57 +751,33 @@ fn the_documented_planner_channel_is_the_layout_the_profile_declares() {
 }
 
 #[test]
-fn the_documented_planner_channel_grants_and_refusals_are_the_allowlists() {
-    use onemessagebus_agent::channel::{allowlist, allows, Op};
+fn the_documented_planner_channel_grants_are_the_allowlist() {
+    use onemessagebus_agent::channel::allowlist;
     let documented: Value = serde_json::from_str(&fixture("planner-channel-grants")).expect("JSON");
     let allowlist = allowlist();
-    for author in ["planner", "monitor"] {
-        let granted: Vec<&str> = allowlist
-            .granted(&onemessagebus::Author::from(author))
-            .iter()
-            .map(|op| op.word())
-            .collect();
-        let stated: Vec<&str> = documented[author]
-            .as_array()
-            .expect("a list")
-            .iter()
-            .map(|word| word.as_str().expect("a word"))
-            .collect();
-        assert_eq!(
-            granted, stated,
-            "the {author}'s grants differ from the contract"
-        );
-    }
-    let monitor = onemessagebus::Author::from("monitor");
-    let refused = documented["refused-monitor"]
-        .as_object()
-        .expect("an object");
-    let mut not_granted: Vec<&str> = Op::ALL
+    assert_eq!(
+        allowlist.authors(),
+        vec![onemessagebus::Author::from("planner")]
+    );
+    let granted: Vec<&str> = allowlist
+        .granted(&onemessagebus::Author::from("planner"))
         .iter()
-        .filter(|op| allows(&allowlist, &monitor, op.word()).is_err())
         .map(|op| op.word())
         .collect();
-    not_granted.sort_unstable();
-    let mut stated: Vec<&str> = refused.keys().map(String::as_str).collect();
-    stated.sort_unstable();
-    assert_eq!(not_granted, stated);
-    for (op, reason) in refused {
-        assert_eq!(
-            allows(&allowlist, &monitor, op).expect_err("refused"),
-            format!(
-                "'{op}' is not an op the monitor may issue: {}. Surface it to the planner instead",
-                reason.as_str().expect("a reason")
-            )
-        );
-    }
+    let stated: Vec<&str> = documented["planner"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .map(|word| word.as_str().expect("a word"))
+        .collect();
+    assert_eq!(granted, stated);
 }
 
 #[test]
-fn the_documented_configuration_resolves_against_the_planner_channel_and_a_widened_one_is_refused()
-{
+fn the_documented_configuration_declares_an_author_and_a_widened_planner_is_refused() {
     use std::sync::Arc;
 
-    use onemessagebus::{Author, Config, ConfigError, Layouts, OpWord, TransportKinds, NARROWED};
+    use onemessagebus::{Author, Config, ConfigError, Layouts, OpWord, TransportKinds};
     use onemessagebus_agent::channel::PlannerChannel;
 
     let dir = tempfile::tempdir().expect("a scratch directory");
@@ -823,20 +799,23 @@ fn the_documented_configuration_resolves_against_the_planner_channel_and_a_widen
             "surfaces"
         ]
     );
-    let monitor = Author::from("monitor");
+    let sentinel = Author::from("sentinel");
     assert!(bus
         .allowlist()
-        .allows(&monitor, &OpWord("retry".to_owned()))
+        .allows(&sentinel, &OpWord("retry".to_owned()))
         .is_ok());
-    let add = bus
+    let complete = bus
         .allowlist()
-        .allows(&monitor, &OpWord("add".to_owned()))
-        .expect_err("add was narrowed away");
-    assert_eq!(add.reason, NARROWED);
+        .allows(&sentinel, &OpWord("complete".to_owned()))
+        .expect_err("complete was not granted");
+    assert_eq!(
+        complete.reason,
+        "whether the run is finished is the planner's verdict, not an observation"
+    );
 
     let widened = text.replace(
-        "capabilities: [retry, requeue, cancel, finding]",
-        "capabilities: [retry, attest]",
+        "capabilities: [add, retry, finding]",
+        "capabilities: [add, retry, finding, complete, unknown]",
     );
     assert_ne!(widened, text, "the widening did not apply to the fixture");
     let resolved = Config::parse(&widened)
@@ -845,8 +824,8 @@ fn the_documented_configuration_resolves_against_the_planner_channel_and_a_widen
         .resolve(&layouts, &TransportKinds::builtin());
     match resolved {
         Err(ConfigError::Narrowing(refusal)) => {
-            assert_eq!(refusal.key, "authors.monitor.capabilities");
-            assert!(refusal.why.contains("`attest`"), "{refusal}");
+            assert_eq!(refusal.key, "authors.planner.capabilities");
+            assert!(refusal.why.contains("`unknown`"), "{refusal}");
         }
         other => panic!("a widened grant was not refused by resolve: {other:?}"),
     }

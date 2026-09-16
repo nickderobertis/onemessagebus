@@ -77,14 +77,12 @@ pub const COMMAND_OUTCOME_SCHEMA: SchemaId = SchemaId::literal("agent", "command
 
 /// What raised a surface.
 pub mod source {
-    /// The durable pacemaker came due; a newer check-in supersedes a waiting one.
+    /// A durable progress timer came due; a newer check-in supersedes a waiting one.
     pub const CHECK_IN: &str = "check-in";
     /// A settled worker, an observer or the orchestrator raised advice.
     pub const PROPOSAL: &str = "proposal";
     /// The reconciler answered an edit it could not apply.
     pub const RECONCILER: &str = "reconciler";
-    /// An observing monitor applied an edit of its own.
-    pub const MONITOR: &str = "monitor";
 }
 
 fn is_false(value: &bool) -> bool {
@@ -110,7 +108,7 @@ pub struct Surface {
     /// Its text.
     pub message: String,
     /// What raised it: see [`source`].
-    // llmlint: ignore[invalid_states_unrepresentable] 0.28.2's `channel::Surface.source` is a `String` its writers fill with words this crate does not own — an observer frame's source, the engine's reconciler and monitor — so a closed enum here would refuse a whole recorded projection over a source word 0.28.2 reads, breaking the byte compatibility this layout exists for.
+    // llmlint: ignore[invalid_states_unrepresentable] 0.28.2's `channel::Surface.source` is a `String` its writers fill with open producer words this crate does not own, so a closed enum here would refuse recorded projections this layout must continue to read byte-for-byte.
     pub source: String,
     /// Whether the run waits on its answer.
     pub blocking: bool,
@@ -152,36 +150,11 @@ impl Message for Surface {
     const SCHEMA: SchemaId = SURFACE_SCHEMA;
 }
 
-/// Who wrote a reply or submitted an envelope.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum ChannelAuthor {
-    /// The planner: it owns decomposition and review, and may issue every op.
-    #[default]
-    Planner,
-    /// An observing monitor: it may correct and re-run work.
-    Monitor,
+fn planner() -> Author {
+    Author::from("planner")
 }
-
-impl ChannelAuthor {
-    /// The author's word.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Planner => "planner",
-            Self::Monitor => "monitor",
-        }
-    }
-
-    fn is_planner(&self) -> bool {
-        matches!(self, Self::Planner)
-    }
-
-    /// The core's open author this word is.
-    #[must_use]
-    pub fn author(self) -> Author {
-        Author::from(self.as_str())
-    }
+fn is_planner(author: &Author) -> bool {
+    author.as_str() == "planner"
 }
 
 /// A declared version this build reads is read as the version it writes; any
@@ -204,7 +177,7 @@ fn read_at_a_version_this_build_reads<'de, D: serde::Deserializer<'de>>(
 /// Its commands are carried as JSON, in the order and with the fields their
 /// author wrote: which ops exist and what each means are `onepipeline`'s, and
 /// this crate reads only each command's `op`.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReplyEnvelope {
     /// The version it was written against, read at [`REPLY_ENVELOPE_VERSION`].
@@ -215,8 +188,8 @@ pub struct ReplyEnvelope {
     )]
     pub version: Option<u32>,
     /// Who wrote it. Omitted, the planner.
-    #[serde(default, skip_serializing_if = "ChannelAuthor::is_planner")]
-    pub author: ChannelAuthor,
+    #[serde(default = "planner", skip_serializing_if = "is_planner")]
+    pub author: Author,
     /// The verdict: whether the author considers the run complete.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion: Option<bool>,
@@ -229,6 +202,19 @@ pub struct ReplyEnvelope {
     /// The graph edits, each an object naming its `op`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commands: Vec<Map<String, Value>>,
+}
+
+impl Default for ReplyEnvelope {
+    fn default() -> Self {
+        Self {
+            version: None,
+            author: planner(),
+            completion: None,
+            message: None,
+            reason: None,
+            commands: Vec::new(),
+        }
+    }
 }
 
 impl ReplyEnvelope {
@@ -276,8 +262,8 @@ pub struct QueuedCommands {
     /// The number of envelopes before it.
     pub id: u64,
     /// Who submitted it.
-    #[serde(default)]
-    pub author: ChannelAuthor,
+    #[serde(default = "planner")]
+    pub author: Author,
     /// The commands, each an object naming its `op`.
     pub commands: Vec<Map<String, Value>>,
 }
@@ -414,54 +400,14 @@ impl Operation for Op {
     }
 }
 
-/// The ops the monitor is granted: the ones that correct and re-run work.
-pub const MONITOR_OPS: [Op; 5] = [Op::Retry, Op::Requeue, Op::Cancel, Op::Finding, Op::Add];
-
-/// The planner channel's allowlist: the planner granted every op, the monitor
-/// granted [`MONITOR_OPS`], and each op the monitor is not granted recorded with
-/// the reason `onepipeline` refuses it with.
+/// The planner channel's allowlist: the planner is its only built-in author and
+/// is granted every operation.
 #[must_use]
 pub fn allowlist() -> Allowlist<Op> {
-    let planner = ChannelAuthor::Planner.author();
-    let monitor = ChannelAuthor::Monitor.author();
+    let planner = planner();
     let mut allowlist = Allowlist::new(Op::ALL);
     for op in Op::ALL {
         allowlist.grant(planner.clone(), op);
-    }
-    for op in MONITOR_OPS {
-        allowlist.grant(monitor.clone(), op);
-    }
-    for (op, reason) in [
-        (
-            Op::Complete,
-            "whether the run is finished is the planner's verdict, not an observation",
-        ),
-        (
-            Op::Attest,
-            "a human action is attested by the person who took it, never by a watcher",
-        ),
-        (
-            Op::Drop,
-            "removing work from the graph is a decomposition decision the planner owns",
-        ),
-        (
-            Op::Reparent,
-            "rewiring dependencies is a decomposition decision the planner owns",
-        ),
-        (
-            Op::Amend,
-            "what a node is judged against is a decomposition decision the planner owns",
-        ),
-        (
-            Op::Note,
-            "a note may bind a criterion the node's judge decides against, which is the planner's decision rather than an observation",
-        ),
-        (
-            Op::Settle,
-            "settling a node from evidence declares an outcome this run never observed, which is the planner's decision rather than an observation",
-        ),
-    ] {
-        allowlist.refuse(monitor.clone(), &op, reason);
     }
     allowlist
 }
@@ -491,6 +437,21 @@ pub fn allows<O: Operation>(
             refusal.op, refusal.author, refusal.reason
         )
     })
+}
+
+fn ensure_declared<O: Operation>(allowlist: &Allowlist<O>, author: &Author) -> Result<(), String> {
+    if allowlist.declares(author) {
+        return Ok(());
+    }
+    Err(format!(
+        "the envelope's author `{author}` is not declared; the declared authors are: {}",
+        allowlist
+            .authors()
+            .iter()
+            .map(Author::as_str)
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
 }
 
 /// Whether `author` may declare the run finished through a verdict's
@@ -621,7 +582,8 @@ impl PlannerChannel {
         }
         let envelope: ReplyEnvelope = serde_json::from_value(envelope)
             .map_err(|failure| format!("the reply is malformed: {failure}"))?;
-        let author = envelope.author.author();
+        let author = envelope.author.clone();
+        ensure_declared(allowlist, &author)?;
         allows_completion(allowlist, &author, envelope.completion)?;
         let mut routed = Vec::new();
         if !envelope.commands.is_empty() {
@@ -739,12 +701,13 @@ impl Layout for PlannerChannel {
             }
             REPLIES => ReplyRouter.route(queue, record, allowlist),
             COMMANDS => {
-                let author: ChannelAuthor = record
+                let author: Author = record
                     .get("author")
                     .map(|author| serde_json::from_value(author.clone()))
                     .transpose()
                     .map_err(|failure| format!("the envelope's author: {failure}"))?
-                    .unwrap_or_default();
+                    .unwrap_or_else(planner);
+                ensure_declared(allowlist, &author)?;
                 for command in record
                     .get("commands")
                     .and_then(Value::as_array)
@@ -754,7 +717,7 @@ impl Layout for PlannerChannel {
                         .get("op")
                         .and_then(Value::as_str)
                         .ok_or("a command names its `op`")?;
-                    allows(allowlist, &author.author(), word)?;
+                    allows(allowlist, &author, word)?;
                 }
                 Ok(vec![(queue.clone(), record)])
             }
@@ -932,7 +895,7 @@ impl Channel {
     /// A queue failure.
     pub fn submit(
         &self,
-        author: ChannelAuthor,
+        author: Author,
         commands: Vec<Map<String, Value>>,
     ) -> Result<u64, QueueError> {
         let pushed = self.commands.push(&QueuedCommands {

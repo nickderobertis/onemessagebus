@@ -14,7 +14,7 @@ export interface AgentQueuedCommandsV1 {
   /**
    * Who submitted it.
    */
-  author?: "planner" | "monitor" | undefined;
+  author?: string | undefined;
   /**
    * The commands, each an object naming its `op`.
    */
@@ -24,12 +24,12 @@ export interface AgentQueuedCommandsV1 {
   [k: string]: unknown;
 }
 
-const $ChannelAuthor: z.ZodType = oneOf([z.literal("planner"), z.literal("monitor")]);
+const $Author: z.ZodType = z.string();
 
 export const AgentQueuedCommandsV1Schema = contract<AgentQueuedCommandsV1>(
   z.looseObject({
     id: z.int().gte(0),
-    author: z.lazy(() => $ChannelAuthor).optional(),
+    author: z.lazy(() => $Author).optional(),
     commands: z.array(z.looseObject({})),
   }),
 );
@@ -47,11 +47,7 @@ export const AgentQueuedCommandsV1 = registeredMessage(
         minimum: 0,
         description: "The number of envelopes before it.",
       },
-      author: {
-        $ref: "#/$defs/ChannelAuthor",
-        description: "Who submitted it.",
-        default: "planner",
-      },
+      author: { $ref: "#/$defs/Author", description: "Who submitted it.", default: "planner" },
       commands: {
         type: "array",
         items: { type: "object", additionalProperties: true },
@@ -62,22 +58,6 @@ export const AgentQueuedCommandsV1 = registeredMessage(
     description: "One command envelope as `commands.jsonl` holds it.",
     title: "QueuedCommands",
     $schema: "https://json-schema.org/draft/2020-12/schema",
-    $defs: {
-      ChannelAuthor: {
-        oneOf: [
-          {
-            type: "string",
-            const: "planner",
-            description: "The planner: it owns decomposition and review, and may issue every op.",
-          },
-          {
-            type: "string",
-            const: "monitor",
-            description: "An observing monitor: it may correct and re-run work.",
-          },
-        ],
-        description: "Who wrote a reply or submitted an envelope.",
-      },
-    },
+    $defs: { Author: { type: "string", description: "Who wrote a record: an open word." } },
   },
 );

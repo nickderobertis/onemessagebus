@@ -23,7 +23,7 @@ use onemessagebus::{
 };
 use onemessagebus_agent::channel::{
     allowlist, allows, allows_completion, Channel, CommandOutcome, Op, PlannerChannel,
-    QueuedCommands, QueuedReply, COMMANDS, COMMAND_OUTCOMES, MONITOR_OPS, REPLIES, SURFACES,
+    QueuedCommands, QueuedReply, COMMANDS, COMMAND_OUTCOMES, REPLIES, SURFACES,
 };
 use serde_json::{json, Value};
 
@@ -376,60 +376,16 @@ fn re_applying_each_recorded_history_reproduces_every_file_byte_for_byte() {
     }
 }
 
-/// Every op the profile does not grant the monitor is refused, naming the op
-/// and the reason, in the words `onepipeline`'s `channel::allows` uses.
+/// The profile declares only the planner and grants it every operation.
 #[test]
-fn every_op_the_monitor_is_not_granted_is_refused_by_omission_in_onepipelines_words() {
+fn the_planner_is_the_only_builtin_author_and_has_every_op() {
     let allowlist = allowlist();
     let planner = Author::from("planner");
-    let monitor = Author::from("monitor");
+    assert_eq!(allowlist.authors(), vec![planner.clone()]);
     for op in Op::ALL {
         allows(&allowlist, &planner, op.word())
             .unwrap_or_else(|refusal| panic!("the planner was refused {op:?}: {refusal}"));
     }
-    for op in MONITOR_OPS {
-        allows(&allowlist, &monitor, op.word())
-            .unwrap_or_else(|refusal| panic!("the monitor was refused {op:?}: {refusal}"));
-    }
-    let expected = [
-        ("complete", "whether the run is finished is the planner's verdict, not an observation"),
-        ("attest", "a human action is attested by the person who took it, never by a watcher"),
-        ("drop", "removing work from the graph is a decomposition decision the planner owns"),
-        ("reparent", "rewiring dependencies is a decomposition decision the planner owns"),
-        ("amend", "what a node is judged against is a decomposition decision the planner owns"),
-        (
-            "note",
-            "a note may bind a criterion the node's judge decides against, which is the planner's decision rather than an observation",
-        ),
-        (
-            "settle",
-            "settling a node from evidence declares an outcome this run never observed, which is the planner's decision rather than an observation",
-        ),
-    ];
-    let mut refused: Vec<&str> = Op::ALL
-        .iter()
-        .filter(|op| !MONITOR_OPS.contains(op))
-        .map(|op| op.word())
-        .collect();
-    refused.sort_unstable();
-    let mut onepipeline_refuses: Vec<&str> = expected.iter().map(|(op, _)| *op).collect();
-    onepipeline_refuses.sort_unstable();
-    assert_eq!(
-        refused, onepipeline_refuses,
-        "the ops refused the monitor are not the ones onepipeline refuses"
-    );
-    for (op, reason) in expected {
-        assert_eq!(
-            allows(&allowlist, &monitor, op).expect_err("refused"),
-            format!("'{op}' is not an op the monitor may issue: {reason}. Surface it to the planner instead")
-        );
-    }
-    assert_eq!(
-        allows_completion(&allowlist, &monitor, Some(true)).expect_err("a monitor's completion"),
-        "declaring the run complete is not something the monitor may do: whether the run is finished is the planner's verdict, not an observation. Surface it to the planner instead"
-    );
-    allows_completion(&allowlist, &monitor, Some(false)).expect("a verdict that continues");
-    allows_completion(&allowlist, &monitor, None).expect("no verdict");
     allows_completion(&allowlist, &planner, Some(true)).expect("the planner's completion");
     assert!(allows(&allowlist, &planner, "context")
         .expect_err("an op the channel does not have")
@@ -443,7 +399,22 @@ fn every_op_the_monitor_is_not_granted_is_refused_by_omission_in_onepipelines_wo
 #[test]
 fn a_reply_is_routed_by_its_halves_and_checked_against_its_author() {
     let layout = PlannerChannel;
-    let grants = layout.allowlist();
+    let mut grants = layout.allowlist();
+    let sentinel = Author::from("sentinel");
+    grants.grant(
+        sentinel.clone(),
+        onemessagebus::OpWord("finding".to_owned()),
+    );
+    grants.refuse(
+        sentinel.clone(),
+        &onemessagebus::OpWord("attest".to_owned()),
+        "only a person may attest",
+    );
+    grants.refuse(
+        sentinel.clone(),
+        &onemessagebus::OpWord("complete".to_owned()),
+        "the planner decides completion",
+    );
     let replies = queue(REPLIES);
     let queues = |routed: &[(QueueName, Value)]| -> Vec<String> {
         routed.iter().map(|(queue, _)| queue.to_string()).collect()
@@ -470,37 +441,37 @@ fn a_reply_is_routed_by_its_halves_and_checked_against_its_author() {
     let commands_only = layout
         .prepare(
             &replies,
-            json!({"version": 3, "author": "monitor", "commands": [{"op": "finding", "message": "look"}]}),
+            json!({"version": 3, "author": "sentinel", "commands": [{"op": "finding", "message": "look"}]}),
             &grants,
         )
-        .expect("the monitor's finding is routed");
+        .expect("the configured author's finding is routed");
     assert_eq!(
         queues(&commands_only),
         vec![COMMANDS],
         "a commands-only reply reached the reply queue"
     );
-    assert_eq!(commands_only[0].1["author"], json!("monitor"));
+    assert_eq!(commands_only[0].1["author"], json!("sentinel"));
 
     let refused = layout
         .prepare(
             &replies,
-            json!({"version": 3, "author": "monitor", "commands": [{"op": "attest", "ref": "x"}]}),
+            json!({"version": 3, "author": "sentinel", "commands": [{"op": "attest", "ref": "x"}]}),
             &grants,
         )
-        .expect_err("the monitor may not attest");
+        .expect_err("the configured author may not attest");
     assert!(
-        refused.starts_with("'attest' is not an op the monitor may issue"),
+        refused.starts_with("'attest' is not an op the sentinel may issue"),
         "{refused}"
     );
     let completion = layout
         .prepare(
             &replies,
-            json!({"author": "monitor", "completion": true}),
+            json!({"author": "sentinel", "completion": true}),
             &grants,
         )
-        .expect_err("the monitor may not declare the run complete");
+        .expect_err("the configured author may not declare the run complete");
     assert!(
-        completion.starts_with("declaring the run complete is not something the monitor may do"),
+        completion.starts_with("declaring the run complete is not something the sentinel may do"),
         "{completion}"
     );
     let old = layout
@@ -532,12 +503,12 @@ fn a_reply_is_routed_by_its_halves_and_checked_against_its_author() {
     let command_refused = layout
         .prepare(
             &queue(COMMANDS),
-            json!({"id": 0, "author": "monitor", "commands": [{"op": "settle", "id": "a"}]}),
+            json!({"id": 0, "author": "sentinel", "commands": [{"op": "settle", "id": "a"}]}),
             &grants,
         )
-        .expect_err("the monitor may not settle");
+        .expect_err("the configured author may not settle");
     assert!(
-        command_refused.starts_with("'settle' is not an op the monitor may issue"),
+        command_refused.starts_with("'settle' is not an op the sentinel may issue"),
         "{command_refused}"
     );
     let surface = layout
@@ -560,7 +531,7 @@ fn a_reply_is_routed_by_its_halves_and_checked_against_its_author() {
 #[test]
 fn the_typed_channel_answers_only_a_verdict_and_names_its_ops_by_word() {
     use onemessagebus::MemoryTransport;
-    use onemessagebus_agent::channel::{ChannelAuthor, ReplyEnvelope, Surface};
+    use onemessagebus_agent::channel::{ReplyEnvelope, Surface};
     let transport: Arc<dyn Transport> = Arc::new(MemoryTransport::new());
     let channel = Channel::open(&transport).expect("opens");
     channel
@@ -604,7 +575,7 @@ fn the_typed_channel_answers_only_a_verdict_and_names_its_ops_by_word() {
     assert_eq!(channel.pending().expect("a read"), None);
 
     channel
-        .submit(ChannelAuthor::Monitor, edits.commands.clone())
+        .submit(Author::from("sentinel"), edits.commands.clone())
         .expect("submitted");
     assert_eq!(channel.commands().unread_count().expect("a count"), 1);
     channel
@@ -705,12 +676,12 @@ fn a_framed_reply_is_checked_and_kept_whole_and_a_surface_that_is_not_an_object_
     let refused = layout
         .prepare(
             &queue(REPLIES),
-            json!({"id": 0, "reply": {"author": "monitor", "completion": true}, "at": 5}),
+            json!({"id": 0, "reply": {"author": "sentinel", "completion": true}, "at": 5}),
             &grants,
         )
-        .expect_err("a framed completion from the monitor");
+        .expect_err("a framed completion from an undeclared author");
     assert!(
-        refused.starts_with("declaring the run complete is not something the monitor may do"),
+        refused.starts_with("the envelope's author `sentinel` is not declared"),
         "{refused}"
     );
     for shapeless in [json!([3]), json!({"id": 0, "reply": [3], "at": 5})] {

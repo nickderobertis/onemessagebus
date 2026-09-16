@@ -138,8 +138,16 @@ fn load_refuses_an_unknown_key_a_version_and_a_malformed_value_by_name() {
             "unknown field `retain`",
         ),
         (
-            "version: 1\ntransport: {kind: local, dir: x}\nauthors:\n  monitor: {capabilities: [retry], extra: 1}\n",
+            "version: 1\ntransport: {kind: local, dir: x}\nauthors:\n  sentinel: {capabilities: [retry], extra: 1}\n",
             "unknown field `extra`",
+        ),
+        (
+            "version: 1\ntransport: {kind: local, dir: x}\nauthors:\n  Bad_Name: {capabilities: []}\n",
+            "authors.Bad_Name",
+        ),
+        (
+            "version: 1\ntransport: {kind: local, dir: x}\nauthors:\n  sentinel: {}\n",
+            "missing field `capabilities`",
         ),
         ("version: 1\ntransport: {kind: local, dir: x}\nqueues:\n  ../escape: {}\n", "is not a queue name"),
         (
@@ -196,13 +204,32 @@ fn resolve_refuses_a_widened_grant_an_unknown_profile_and_a_dangling_key_by_name
         widened,
         "authors.teller.capabilities: `void` is not granted to teller by the profile, and a configuration may narrow an author's grants but never widen them"
     );
-    let added = refused(&format!(
-        "version: 1\n{local}\nprofile: ledger\nauthors:\n  auditor: {{capabilities: [audit]}}\n"
+    let unknown_op = refused(&format!(
+        "version: 1\n{local}\nprofile: ledger\nauthors:\n  sentinel: {{capabilities: [sign]}}\n"
     ));
     assert!(
-        added.starts_with("authors.auditor.capabilities: `auditor` is not an author"),
-        "{added}"
+        unknown_op.starts_with("authors.sentinel.capabilities: `sign` is not an op"),
+        "{unknown_op}"
     );
+    for (fragment, key) in [
+        (
+            "capabilities: [], refusals: {sign: no}",
+            "authors.sentinel.refusals.sign",
+        ),
+        (
+            "capabilities: [post], refusals: {post: no}",
+            "authors.sentinel.refusals.post",
+        ),
+        (
+            "capabilities: [], refusals: {post: '   '}",
+            "authors.sentinel.refusals.post",
+        ),
+    ] {
+        let failure = refused(&format!(
+            "version: 1\n{local}\nprofile: ledger\nauthors:\n  sentinel: {{{fragment}}}\n"
+        ));
+        assert!(failure.starts_with(key), "{failure}");
+    }
     let profile = refused(&format!("version: 1\n{local}\nprofile: bank\n"));
     assert_eq!(
         profile,
@@ -256,7 +283,7 @@ fn the_configuration_schema_accepts_the_documented_file_and_refuses_an_unknown_k
         "transport": {"kind": "local", "dir": "runs/r/channel"},
         "profile": "planner-channel",
         "queues": {"findings": {"policy": {"hold_pending": false}}},
-        "authors": {"monitor": {"capabilities": ["retry", "requeue", "cancel", "finding"]}}
+        "authors": {"sentinel": {"capabilities": ["retry", "finding"], "refusals": {"complete": "the planner decides"}}}
     });
     assert!(
         validator.is_valid(&documented),

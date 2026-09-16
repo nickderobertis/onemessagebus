@@ -146,7 +146,7 @@ export interface Config {
       }
     | undefined;
   /**
-   * Authors whose grants the configuration narrows. It may never widen them.
+   * Authors declared by the configuration. The built-in planner may only be narrowed.
    */
   authors?:
     | {
@@ -341,9 +341,17 @@ export interface Predicate2 {
  */
 export interface AuthorConfig {
   /**
-   * The operations the author keeps: a subset of what the layout grants.
+   * The operations the author may issue.
    */
   capabilities: string[];
+  /**
+   * Reasons ungranted operations are refused, by operation word.
+   */
+  refusals?:
+    | {
+        [k: string]: string;
+      }
+    | undefined;
 }
 /**
  * One validator of a configuration: the external kind, which a Rust
@@ -529,7 +537,10 @@ const $QueueName: z.ZodType = z.string();
 
 const $ConsumerName: z.ZodType = z.string();
 
-const $AuthorConfig: z.ZodType = z.strictObject({ capabilities: z.array(z.string()) });
+const $AuthorConfig: z.ZodType = z.strictObject({
+  capabilities: z.array(z.string()),
+  refusals: z.record(z.string(), z.string()).optional(),
+});
 
 const $ValidatorConfig: z.ZodType = z.strictObject({
   on: z.lazy(() => $QueueName),

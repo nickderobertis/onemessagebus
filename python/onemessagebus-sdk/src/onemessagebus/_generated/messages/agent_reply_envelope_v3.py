@@ -31,7 +31,7 @@ class ReplyEnvelope(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    author: Literal["planner", "monitor"] | None = None
+    author: str | None = None
     """
     Who wrote the reply. Omitted, the planner.
     """

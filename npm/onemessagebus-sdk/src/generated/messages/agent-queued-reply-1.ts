@@ -39,7 +39,7 @@ export interface ReplyEnvelope {
   /**
    * Who wrote it. Omitted, the planner.
    */
-  author?: "planner" | "monitor" | undefined;
+  author?: string | undefined;
   /**
    * The verdict: whether the author considers the run complete.
    */
@@ -64,14 +64,14 @@ export interface ReplyEnvelope {
 
 const $ReplyEnvelope: z.ZodType = z.strictObject({
   version: anyOf([z.int().gte(0), z.null()]).optional(),
-  author: z.lazy(() => $ChannelAuthor).optional(),
+  author: z.lazy(() => $Author).optional(),
   completion: anyOf([z.boolean(), z.null()]).optional(),
   message: anyOf([z.string(), z.null()]).optional(),
   reason: anyOf([z.string(), z.null()]).optional(),
   commands: z.array(z.looseObject({})).optional(),
 });
 
-const $ChannelAuthor: z.ZodType = oneOf([z.literal("planner"), z.literal("monitor")]);
+const $Author: z.ZodType = z.string();
 
 const $Correlation: z.ZodType = z
   .string()
@@ -127,10 +127,7 @@ export const AgentQueuedReplyV1 = registeredMessage(
             minimum: 0,
             description: "The version it was written against, read at [`REPLY_ENVELOPE_VERSION`].",
           },
-          author: {
-            $ref: "#/$defs/ChannelAuthor",
-            description: "Who wrote it. Omitted, the planner.",
-          },
+          author: { $ref: "#/$defs/Author", description: "Who wrote it. Omitted, the planner." },
           completion: {
             type: ["boolean", "null"],
             description: "The verdict: whether the author considers the run complete.",
@@ -146,21 +143,7 @@ export const AgentQueuedReplyV1 = registeredMessage(
         description:
           "One reply envelope: a verdict, a list of graph edits, or both.\n\nIts commands are carried as JSON, in the order and with the fields their\nauthor wrote: which ops exist and what each means are `onepipeline`'s, and\nthis crate reads only each command's `op`.",
       },
-      ChannelAuthor: {
-        oneOf: [
-          {
-            type: "string",
-            const: "planner",
-            description: "The planner: it owns decomposition and review, and may issue every op.",
-          },
-          {
-            type: "string",
-            const: "monitor",
-            description: "An observing monitor: it may correct and re-run work.",
-          },
-        ],
-        description: "Who wrote a reply or submitted an envelope.",
-      },
+      Author: { type: "string", description: "Who wrote a record: an open word." },
       Correlation: {
         type: "string",
         description: "Which question a reply answers: the token the bus minted when it was asked.",
