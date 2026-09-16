@@ -198,6 +198,8 @@ queues:                                          # additions, or overrides of a 
   findings: {policy: {hold_pending: false}}
 authors:                                         # may narrow a layout author's grants, never widen them
   monitor: {capabilities: [retry, requeue, cancel, finding]}
+schemas:                                         # schema bundles linked by URL or path, pinned; docs/schema-links.md
+  - "https://example.org/frames.json@8"
 ```
 
 Reading it is two steps, and the types keep them apart:
