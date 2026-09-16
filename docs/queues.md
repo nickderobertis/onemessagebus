@@ -198,9 +198,10 @@ profile: planner-channel                         # a layout a linked profile dec
 queues:                                          # additions, or overrides of a layout's queue by name
   findings: {policy: {hold_pending: false}}
 authors:                                         # planner may narrow; other names declare authors
+  planner: {capabilities: [add, retry, finding]}
   sentinel:
-    capabilities: [retry, requeue, cancel, finding]
-    refusals: {complete: "the planner decides whether the run is finished"}
+    capabilities: [retry, requeue, cancel, finding, add]
+    refusals: {complete: "whether the run is finished is the planner's verdict, not an observation"}
 schemas:                                         # schema bundles linked by URL or path, pinned; docs/schema-links.md
   - "https://example.org/frames.json@8"
 ```

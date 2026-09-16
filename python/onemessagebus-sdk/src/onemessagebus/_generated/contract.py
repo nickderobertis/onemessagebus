@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, StringConstraints
 
-from .domain import Operation
+from .domain import Author, Operation
 
 
 class Contract(RootModel[Any]):
@@ -41,24 +41,6 @@ class ArtifactRef(BaseModel):
     kind: str
     """
     What the artifact is — a gate log, a check log, a transcript, a report.
-    """
-
-
-class AuthorConfig(BaseModel):
-    """
-    One author of a configuration.
-    """
-
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    capabilities: list[str]
-    """
-    The operations the author may issue.
-    """
-    refusals: dict[Operation, str] | None = None
-    """
-    Reasons ungranted operations are refused, by operation word.
     """
 
 
@@ -852,6 +834,24 @@ class AskedTimeout(BaseModel):
     correlation: str = Field(..., pattern="^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
     """
     The question's correlation.
+    """
+
+
+class AuthorConfig(BaseModel):
+    """
+    One author of a configuration.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    capabilities: list[Operation]
+    """
+    The operations the author may issue.
+    """
+    refusals: dict[Operation, str] | None = None
+    """
+    Reasons ungranted operations are refused, by operation word.
     """
 
 
@@ -1867,7 +1867,7 @@ class Config(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    authors: dict[str, AuthorConfig] | None = None
+    authors: dict[Author, AuthorConfig] | None = None
     """
     Authors declared by the configuration. The built-in planner may only be narrowed.
     """

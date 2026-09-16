@@ -146,6 +146,22 @@ fn load_refuses_an_unknown_key_a_version_and_a_malformed_value_by_name() {
             "authors.Bad_Name",
         ),
         (
+            "version: 1\ntransport: {kind: local, dir: x}\nauthors:\n  '': {capabilities: []}\n",
+            "authors.",
+        ),
+        (
+            "version: 1\ntransport: {kind: local, dir: x}\nauthors:\n  bad_name: {capabilities: []}\n",
+            "authors.bad_name",
+        ),
+        (
+            "version: 1\ntransport: {kind: local, dir: x}\nauthors:\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: {capabilities: []}\n",
+            "authors.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ),
+        (
+            "version: 1\ntransport: {kind: local, dir: x}\nauthors:\n  sentinel: {capabilities: [], refusals: {post: '   '}}\n",
+            "a refusal reason must be non-empty text",
+        ),
+        (
             "version: 1\ntransport: {kind: local, dir: x}\nauthors:\n  sentinel: {}\n",
             "missing field `capabilities`",
         ),
@@ -220,16 +236,26 @@ fn resolve_refuses_a_widened_grant_an_unknown_profile_and_a_dangling_key_by_name
             "capabilities: [post], refusals: {post: no}",
             "authors.sentinel.refusals.post",
         ),
-        (
-            "capabilities: [], refusals: {post: '   '}",
-            "authors.sentinel.refusals.post",
-        ),
     ] {
         let failure = refused(&format!(
             "version: 1\n{local}\nprofile: ledger\nauthors:\n  sentinel: {{{fragment}}}\n"
         ));
         assert!(failure.starts_with(key), "{failure}");
     }
+    let planner = Config::parse(&format!(
+        "version: 1\n{local}\nprofile: ledger\nauthors:\n  teller: {{capabilities: [post], refusals: {{audit: 'reserved for review'}}}}\n"
+    ))
+    .expect("a built-in author may configure a refusal")
+    .resolve(&layouts(), &kinds)
+    .expect("the narrowing resolves");
+    assert_eq!(
+        planner
+            .allowlist()
+            .allows(&Author::from("teller"), &OpWord("audit".to_owned()))
+            .expect_err("audit was narrowed")
+            .reason,
+        "reserved for review"
+    );
     let profile = refused(&format!("version: 1\n{local}\nprofile: bank\n"));
     assert_eq!(
         profile,

@@ -40,6 +40,10 @@ export type QueueName = string;
  */
 export type ConsumerName = string;
 /**
+ * A non-empty explanation for refusing an operation.
+ */
+export type RefusalReason = string;
+/**
  * When a validator judges a message: `{carries: <field path>}`, or any queue predicate.
  */
 export type When =
@@ -349,7 +353,7 @@ export interface AuthorConfig {
    */
   refusals?:
     | {
-        [k: string]: string;
+        [k: string]: RefusalReason;
       }
     | undefined;
 }
@@ -539,8 +543,15 @@ const $ConsumerName: z.ZodType = z.string();
 
 const $AuthorConfig: z.ZodType = z.strictObject({
   capabilities: z.array(z.string()),
-  refusals: z.record(z.string(), z.string()).optional(),
+  refusals: z
+    .record(
+      z.string(),
+      z.lazy(() => $RefusalReason),
+    )
+    .optional(),
 });
+
+const $RefusalReason: z.ZodType = z.string();
 
 const $ValidatorConfig: z.ZodType = z.strictObject({
   on: z.lazy(() => $QueueName),

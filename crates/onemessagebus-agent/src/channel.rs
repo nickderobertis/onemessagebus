@@ -5,8 +5,8 @@
 //! surfaces a planner is asked about, the replies it writes, the command
 //! envelopes a reconciler drains and what each was answered with. This module
 //! declares that directory as the `planner-channel` [`Layout`] — four queues,
-//! their policies, the channel's authors and operations and the refusals each
-//! makes — so a directory `onepipeline` 0.28.2 wrote is read by this crate, and a
+//! their policies, the channel's operations, and its one built-in author, the
+//! planner — so a directory `onepipeline` 0.28.2 wrote is read by this crate, and a
 //! directory this crate writes is read by `onepipeline` 0.28.2.
 //!
 //! | queue | policy | files |

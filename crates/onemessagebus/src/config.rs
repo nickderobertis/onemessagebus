@@ -255,7 +255,32 @@ pub struct AuthorConfig {
     pub capabilities: Vec<String>,
     /// Reasons ungranted operations are refused, by operation word.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub refusals: BTreeMap<OpWord, String>,
+    pub refusals: BTreeMap<OpWord, RefusalReason>,
+}
+
+/// A non-empty explanation for refusing an operation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(transparent)]
+pub struct RefusalReason(String);
+
+impl RefusalReason {
+    /// The configured explanation.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for RefusalReason {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let reason = String::deserialize(deserializer)?;
+        if reason.trim().is_empty() {
+            return Err(serde::de::Error::custom(
+                "a refusal reason must be non-empty text",
+            ));
+        }
+        Ok(Self(reason))
+    }
 }
 
 /// Why a configuration could not be read or resolved, naming the key.
@@ -620,14 +645,7 @@ impl Config {
                     }
                     .into());
                 }
-                if reason.trim().is_empty() {
-                    return Err(NarrowingRefused {
-                        key,
-                        why: "a refusal reason must be non-empty text".to_owned(),
-                    }
-                    .into());
-                }
-                allowlist.refuse(author.clone(), &op, reason.clone());
+                allowlist.refuse(author.clone(), &op, reason.as_str());
             }
         }
         let mut validators: BTreeMap<QueueName, Validators<Value>> = BTreeMap::new();

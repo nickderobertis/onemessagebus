@@ -604,7 +604,8 @@ fn the_documented_configuration_loads_and_an_unknown_key_in_it_is_refused_by_nam
     );
     assert_eq!(
         config.authors[&onemessagebus::Author::from("sentinel")].refusals
-            [&onemessagebus::OpWord("complete".to_owned())],
+            [&onemessagebus::OpWord("complete".to_owned())]
+            .as_str(),
         "whether the run is finished is the planner's verdict, not an observation"
     );
     let refused = onemessagebus::Config::parse(&text.replace("queues:", "queus:"))
