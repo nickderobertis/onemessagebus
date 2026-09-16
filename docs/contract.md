@@ -617,6 +617,7 @@ validators:
 
 ### Contract K — configured codecs behind `serve`
 
+<!-- llmlint: ignore[no_redundant_instruction_pointers] Contract B explicitly requires this contract — the source consumers restate from — to point to its single normative statement in codecs.md rather than duplicate a binding grammar that could drift. -->
 The binding contract is stated once in [`codecs.md`](codecs.md). The `serve` CLI entry points to it and does not restate it.
 
 ### Contract L — schema links

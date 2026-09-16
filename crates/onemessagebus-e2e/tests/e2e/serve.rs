@@ -39,7 +39,7 @@ impl Scratch {
         std::fs::write(
             &config,
             format!(
-                "version: 1\ntransport: {{kind: local, dir: {}}}\nprofile: planner-channel\nschemas:\n  - \"file://{}@3\"\ncodecs:\n  example:\n    queue: surfaces\n    reply_window_seconds: 1\n    session_env: EXAMPLE_SESSION\n    asker_env: EXAMPLE_ASKER\n    select: op\n    frames:\n      hello:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {{field: mood, equals: lost}}\n            do: refuse\n            message: \"lost: {{frame.value}}\"\n          - do: answer\n            response: {{value: \"{{frame.value}}\", text: \"value={{frame.value}}\"}}\n      raise:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {{kind: example-raised, blocking: false, source: example, message: \"raised {{frame.value}}\"}}\n            response: {{raised: true}}\n      fail:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {{kind: example-failed, blocking: false, source: example, message: \"failed {{frame.value}}\"}}\n            fail: \"member failed {{frame.value}}\"\n      refuse:\n        schema: example.frame.hello@3\n        bindings:\n          - do: refuse\n            message: \"refused {{frame.value}}\"\n      conditional:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {{field: mood, equals: ready}}\n            do: answer\n            response: {{ready: true}}\n      ask:\n        schema: example.frame.hello@3\n        bindings:\n          - do: ask\n            record: {{kind: example-question, source: example, message: \"rule on {{frame.value}}\"}}\n            response:\n              value: {{from: reply.completion}}\n              reason: {{from: [reply.reason, reply.message], default: \"ruled on {{frame.value}} without a reason\"}}\n              literal: \"{{reply.completion}}\"\n            unanswered: {{value: false, reason: \"no ruling for {{frame.value}}\"}}\n",
+                "version: 1\ntransport: {{kind: local, dir: {}}}\nprofile: planner-channel\nschemas:\n  - \"file://{}@3\"\ncodecs:\n  example:\n    queue: surfaces\n    reply_window_seconds: 1\n    session_env: EXAMPLE_SESSION\n    asker_env: EXAMPLE_ASKER\n    about_env: EXAMPLE_ABOUT\n    select: op\n    frames:\n      hello:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {{field: mood, equals: lost}}\n            do: refuse\n            message: \"lost: {{frame.value}}\"\n          - do: answer\n            response:\n              value: \"{{frame.value}}\"\n              text: \"value={{frame.value}}\"\n              nested: {{items: [\"{{{{\", \"missing={{frame.missing}}\"], object: {{close: \"}}}}\"}}}}\n      raise:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {{kind: example-raised, blocking: false, source: example, message: \"raised {{frame.value}}\"}}\n            response: {{raised: true}}\n      fail:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {{kind: example-failed, blocking: false, source: example, message: \"failed {{frame.value}}\"}}\n            fail: \"member failed {{frame.value}}\"\n      refuse:\n        schema: example.frame.hello@3\n        bindings:\n          - do: refuse\n            message: \"refused {{frame.value}}\"\n      conditional:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {{field: mood, equals: ready}}\n            do: answer\n            response: {{ready: true}}\n      ask:\n        schema: example.frame.hello@3\n        bindings:\n          - do: ask\n            record: {{kind: example-question, source: example, message: \"rule on {{frame.value}}\"}}\n            response:\n              value: {{from: reply.completion}}\n              reason: {{from: [reply.reason, reply.message], default: \"ruled on {{frame.value}} without a reason\"}}\n              literal: \"{{reply.completion}}\"\n            unanswered: {{value: false, reason: \"no ruling for {{frame.value}}\"}}\n",
                 dir.path().join("channel").display(),
                 bundle.display()
             ),
@@ -103,13 +103,11 @@ impl Scratch {
     }
 
     fn asked(&self) -> Value {
-        let path = self.dir.path().join("channel/surfaces.jsonl");
         let started = Instant::now();
         loop {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                if let Some(line) = text.lines().next() {
-                    return serde_json::from_str(line).expect("question JSON");
-                }
+            let claimed = self.run(&["next", "surfaces", "--config", &self.config]);
+            if claimed.code == 0 {
+                return claimed.lines()[0]["record"].clone();
             }
             assert!(started.elapsed() < GUARD, "serve asked nothing");
             std::thread::sleep(Duration::from_millis(20));
@@ -163,7 +161,14 @@ fn configured_answer_preserves_placeholder_types_and_first_matching_refusal_wins
     let scratch = Scratch::new();
     let answered = scratch.serve("{\"op\":\"hello\",\"value\":7}\n");
     assert_eq!(answered.code, 0, "{}", answered.stderr);
-    assert_eq!(answered.lines(), [json!({"value": 7, "text": "value=7"})]);
+    assert_eq!(
+        answered.lines(),
+        [json!({
+            "value": 7,
+            "text": "value=7",
+            "nested": {"items": ["{", "missing="], "object": {"close": "}"}}
+        })]
+    );
 
     let refused = scratch.serve("{\"op\":\"hello\",\"value\":8,\"mood\":\"lost\"}\n");
     assert_eq!(refused.code, 2, "{}", refused.stderr);
@@ -174,9 +179,16 @@ fn configured_answer_preserves_placeholder_types_and_first_matching_refusal_wins
 #[test]
 fn ask_relays_a_ruling_through_mappings_and_uses_the_configured_asker() {
     let scratch = Scratch::new();
-    let (child, _) = scratch.spawn_ask(false, &[("EXAMPLE_ASKER", "example-host")]);
+    let (child, _) = scratch.spawn_ask(
+        false,
+        &[
+            ("EXAMPLE_ASKER", "example-host"),
+            ("EXAMPLE_ABOUT", "build-9"),
+        ],
+    );
     let question = scratch.asked();
     assert_eq!(question["asker"], json!("example-host"));
+    assert_eq!(question["workstream"], json!("build-9"));
     assert_eq!(question["message"], json!("rule on 9"));
     let correlation = question["correlation"].as_str().expect("correlation");
     let replied = run_in(
@@ -198,6 +210,139 @@ fn ask_relays_a_ruling_through_mappings_and_uses_the_configured_asker() {
     assert_eq!(
         served.lines(),
         [json!({"value": true, "reason": "accepted", "literal": true})]
+    );
+}
+
+#[test]
+fn nested_paths_and_malformed_templates_are_handled_at_the_binary_boundary() {
+    let nested = Scratch::new();
+    let text = std::fs::read_to_string(&nested.config).expect("config read");
+    std::fs::write(
+        &nested.config,
+        text.replace("select: op", "select: turn.op")
+            .replace("field: mood", "field: turn.mood"),
+    )
+    .expect("nested-path config written");
+    let refused = nested
+        .serve("{\"op\":\"hello\",\"turn\":{\"op\":\"hello\",\"mood\":\"lost\"},\"value\":8}\n");
+    assert_eq!(refused.code, 2, "{}", refused.stderr);
+    assert!(refused.stderr.contains("lost: 8"), "{}", refused.stderr);
+
+    let malformed = Scratch::new();
+    let text = std::fs::read_to_string(&malformed.config).expect("config read");
+    std::fs::write(
+        &malformed.config,
+        text.replace("value={frame.value}", "value=}"),
+    )
+    .expect("malformed config written");
+    let refused = malformed.serve("not JSON\n");
+    assert_eq!(refused.code, 2, "{}", refused.stderr);
+    assert!(
+        refused
+            .stderr
+            .contains("codecs.example.frames.hello.bindings[1]")
+            && refused.stderr.contains("unescaped `}`"),
+        "{}",
+        refused.stderr
+    );
+}
+
+#[test]
+fn configured_about_is_validated_and_raise_reports_a_queue_refusal() {
+    let invalid_about = Scratch::new();
+    let refused = run_in(
+        invalid_about.dir.path(),
+        &[
+            "serve",
+            "surfaces",
+            "--codec",
+            "example",
+            "--config",
+            &invalid_about.config,
+        ],
+        Some("not JSON\n"),
+        &[("EXAMPLE_ABOUT", " ")],
+    );
+    assert_eq!(refused.code, 2, "{}", refused.stderr);
+    assert!(
+        refused.stderr.contains("EXAMPLE_ABOUT"),
+        "{}",
+        refused.stderr
+    );
+
+    let invalid_record = Scratch::new();
+    let text = std::fs::read_to_string(&invalid_record.config).expect("config read");
+    std::fs::write(
+        &invalid_record.config,
+        text.replacen("source: example, ", "", 1),
+    )
+    .expect("invalid record config written");
+    let refused = invalid_record.serve("{\"op\":\"raise\",\"value\":4}\n");
+    assert_eq!(refused.code, 1, "{}", refused.stderr);
+    assert!(
+        refused.stderr.contains("queue refused the raised record")
+            && refused.stderr.contains("source"),
+        "{}",
+        refused.stderr
+    );
+}
+
+#[test]
+// llmlint: ignore[tests_mirror_real_usage] The public `reply` boundary rejects this schema-invalid answer before appending it, so corrupting the local transport is the only reachable representation of the persisted bad answer this runtime recovery path must refuse; `serve`, the behavior under test, remains driven through the compiled binary.
+fn ask_uses_unanswered_for_an_unresolved_mapping_and_fails_on_a_corrupt_answer() {
+    let unresolved = Scratch::new();
+    let text = std::fs::read_to_string(&unresolved.config).expect("config read");
+    std::fs::write(
+        &unresolved.config,
+        text.replace(
+            "value: {from: reply.completion}",
+            "value: {from: reply.missing}",
+        ),
+    )
+    .expect("mapping config written");
+    let (child, _) = unresolved.spawn_ask(false, &[]);
+    let question = unresolved.asked();
+    let correlation = question["correlation"].as_str().expect("correlation");
+    let replied = run_in(
+        unresolved.dir.path(),
+        &[
+            "reply",
+            "surfaces",
+            "--correlation",
+            correlation,
+            "--config",
+            &unresolved.config,
+        ],
+        Some(r#"{"version":3,"completion":true}"#),
+        &[],
+    );
+    assert_eq!(replied.code, 0, "{}", replied.stderr);
+    let served = finish(child);
+    assert_eq!(
+        served.lines(),
+        [json!({"value": false, "reason": "no ruling for 9"})]
+    );
+
+    let corrupt = Scratch::new();
+    let (child, _) = corrupt.spawn_ask(false, &[]);
+    let question = corrupt.asked();
+    let record = json!({
+        "id": 0,
+        "reply": {"version": 3, "completion": "not-a-boolean"},
+        "at": 1_789_300_000_000u64,
+        "correlation": question["correlation"]
+    });
+    std::fs::write(
+        corrupt.dir.path().join("channel/replies.jsonl"),
+        format!("{record}\n"),
+    )
+    .expect("corrupt reply injected");
+    let served = finish(child);
+    assert_eq!(served.code, 1, "{}", served.stderr);
+    assert!(
+        served.stderr.contains("answer was refused"),
+        "{}",
+        served.stderr
     );
 }
 
@@ -279,13 +424,13 @@ fn undeclared_codec_is_refused_before_a_frame_is_read() {
 
 #[test]
 fn queue_mismatch_and_unregistered_schema_are_refused_before_input() {
-    for (change, expected) in [
+    for (change, replacement) in [
         ("queue: surfaces", "queue: replies"),
         ("example.frame.hello@3", "example.frame.missing@3"),
     ] {
         let scratch = Scratch::new();
         let text = std::fs::read_to_string(&scratch.config).expect("config read");
-        std::fs::write(&scratch.config, text.replace(change, expected)).expect("config changed");
+        std::fs::write(&scratch.config, text.replace(change, replacement)).expect("config changed");
         let refused = scratch.serve("not-json\n");
         assert_eq!(refused.code, 2, "{}", refused.stderr);
         assert!(
