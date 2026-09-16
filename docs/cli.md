@@ -394,19 +394,8 @@ $ onemessagebus validate replies --file reply.json --config onemessagebus.yaml
 ### `serve <queue> --codec NAME [--session-seconds SECONDS] [--asker WORD] [--file PATH] [--config PATH] [--transport-dir DIR] [--registry DIR]`
 
 <!-- llmlint: ignore[no_redundant_instruction_pointers] Contract B explicitly requires the CLI entry to point to its single normative statement in codecs.md rather than restating it. -->
-Serve a configured member protocol ([`codecs.md`](codecs.md)): read its frames
-protocol one line at a time from stdin (or `--file`), and write each frame's
-response as one line of JSON on stdout, raising and asking on `<queue>`.
-The name must be declared in the configuration's `codecs` block; there are no
-built-in codecs. An undeclared name exits 2 and names the declared ones.
-
-With `--session-seconds` (or the codec's session variable) the session stops of
-its own accord after that many seconds with exit 0, leaving what it asked counted
-and saying so on stderr; when the frame stream ends instead, what it asked and
-nobody answered is marked abandoned. `--asker` (or the codec's asker variable)
-names who the session listens for. The selected `codecs.<name>` entry names the
-reply window, optional queue and environment variables, selector, frame schemas,
-and bindings.
+Serve a configured member protocol according to Contract B in
+[`codecs.md`](codecs.md).
 
 With `--resident --socket <path>` in place of a queue and a codec, `serve` runs
 the resident core instead, described below. `--registry` is the queue verbs' own.

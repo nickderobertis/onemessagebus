@@ -15,7 +15,7 @@ fn files(path: &Path, found: &mut Vec<PathBuf>) {
 }
 
 #[test]
-fn retired_codec_words_are_absent_and_author_words_have_one_allowlist() {
+fn retired_codec_words_are_absent_from_scanned_paths_and_author_words_have_one_allowlist() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut paths = Vec::new();
     for relative in [
