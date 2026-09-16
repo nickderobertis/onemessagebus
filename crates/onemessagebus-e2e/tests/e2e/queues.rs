@@ -1021,7 +1021,7 @@ fn a_configuration_declares_an_open_author_and_offer_checks_never_block_replay()
         "onemessagebus: authors.planner.capabilities: `unknown` is not an op; the ops are: add, drop, reparent, retry, cancel, requeue, complete, attest, finding, amend, note, settle"
     );
 
-    let configured = write("configured.yaml", "authors:\n  sentinel:\n    capabilities: [finding]\n    refusals: {complete: 'the planner decides completion'}\n");
+    let configured = write("configured.yaml", "authors:\n  sentinel:\n    capabilities: [finding]\n    refusals: {retry: 'retry needs fresh evidence', complete: 'the planner decides completion'}\n");
     let run = run_in(
         root,
         &["send", "commands", "--config", &configured],
@@ -1031,8 +1031,16 @@ fn a_configuration_declares_an_open_author_and_offer_checks_never_block_replay()
     assert_eq!(run.code, 1);
     assert_eq!(
         run.stderr.trim(),
-        "onemessagebus: commands: 'retry' is not an op the sentinel may issue: nothing grants it to this author. Surface it to the planner instead"
+        "onemessagebus: commands: 'retry' is not an op the sentinel may issue: retry needs fresh evidence. Surface it to the planner instead"
     );
+    let generic = run_in(
+        root,
+        &["send", "commands", "--config", &configured],
+        Some(r#"{"author":"sentinel","commands":[{"op":"cancel","id":"build"}]}"#),
+        &[],
+    );
+    assert_eq!(generic.code, 1);
+    assert!(generic.stderr.contains("nothing grants it to this author"));
     let allowed = run_in(
         root,
         &["send", "commands", "--config", &configured],
