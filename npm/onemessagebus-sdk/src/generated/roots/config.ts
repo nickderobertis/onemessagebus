@@ -349,8 +349,6 @@ export interface Predicate2 {
 /**
  * One author of a configuration.
  *
- * This interface was referenced by `undefined`'s JSON-Schema definition
- * via the `patternProperty` "^[a-z][a-z0-9-]{0,63}$".
  */
 export interface AuthorConfig {
   /**
@@ -415,8 +413,6 @@ export interface CacheConfig {
  * What a host configures for one codec, under its name in the configuration's
  * `codecs` block.
  *
- * This interface was referenced by `undefined`'s JSON-Schema definition
- * via the `patternProperty` "^[a-z][a-z0-9-]{0,63}$".
  */
 export interface CodecConfig {
   /**

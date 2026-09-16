@@ -67,6 +67,14 @@ function exactOptionalProperties(declarations) {
   return lines.join("\n");
 }
 
+/** Remove json-schema-to-typescript provenance comments whose owner is absent. */
+function meaningfulComments(declarations) {
+  return declarations.replace(
+    /\n \* This interface was referenced by `undefined`'s JSON-Schema definition\n \* via the `patternProperty` "[^"]+"\./gu,
+    "",
+  );
+}
+
 /** The declarations of `document`, its root named `typeName`. */
 export async function typescriptDeclarations(document, typeName) {
   const prepared = { ...unknownWhereUnconstrained(document), title: typeName };
@@ -79,5 +87,5 @@ export async function typescriptDeclarations(document, typeName) {
     strictIndexSignatures: false,
     unknownAny: true,
   });
-  return exactOptionalProperties(source.trim());
+  return exactOptionalProperties(meaningfulComments(source.trim()));
 }
