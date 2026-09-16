@@ -32,7 +32,7 @@ use serde_json::Value;
 
 use crate::ask::{Address, Answer, AskOptions, Correlation, Pending};
 use crate::config::{Bus, BusError};
-use crate::queue::{Asker, Pushed};
+use crate::queue::{Asker, FieldPath, Pushed};
 use crate::schema::SchemaId;
 use crate::transport::QueueName;
 
@@ -215,6 +215,7 @@ pub struct CodecConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub about_env: Option<EnvName>,
     /// The frame field whose string value selects an entry in [`Self::frames`].
+    #[schemars(with = "FieldPath")]
     pub select: String,
     /// The protocol's entries, keyed by the selected field's value.
     pub frames: BTreeMap<String, FrameConfig>,
@@ -246,6 +247,7 @@ pub struct Binding {
 #[serde(deny_unknown_fields)]
 pub struct FieldEquals {
     /// Dot-separated object keys.
+    #[schemars(with = "FieldPath")]
     pub field: String,
     /// A JSON scalar. SDKs intentionally expose this as their arbitrary-JSON
     /// type because its runtime type participates in equality.

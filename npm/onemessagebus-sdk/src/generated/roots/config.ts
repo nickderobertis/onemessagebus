@@ -422,7 +422,7 @@ export interface CodecConfig {
    */
   about_env?: EnvName | null | undefined;
   /**
-   * The frame field whose string value selects an entry in [`Self::frames`].
+   * Object keys joined by `.`: the path to one field of a record.
    */
   select: string;
   /**
@@ -450,7 +450,7 @@ export interface FrameConfig {
  */
 export interface FieldEquals {
   /**
-   * Dot-separated object keys.
+   * Object keys joined by `.`: the path to one field of a record.
    */
   field: string;
   /**
@@ -557,7 +557,7 @@ const $CodecConfig: z.ZodType = z.strictObject({
   session_env: anyOf([z.lazy(() => $EnvName), z.null()]).optional(),
   asker_env: anyOf([z.lazy(() => $EnvName), z.null()]).optional(),
   about_env: anyOf([z.lazy(() => $EnvName), z.null()]).optional(),
-  select: z.string(),
+  select: z.lazy(() => $FieldPath),
   frames: z.record(
     z.string(),
     z.lazy(() => $FrameConfig),
@@ -596,7 +596,7 @@ const $Binding: z.ZodType = z.intersection(
 );
 
 const $FieldEquals: z.ZodType = z.strictObject({
-  field: z.string(),
+  field: z.lazy(() => $FieldPath),
   equals: z.unknown().refine((value) => value !== undefined, { message: "required" }),
 });
 
