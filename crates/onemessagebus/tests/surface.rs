@@ -67,7 +67,25 @@ fn an_allowlist_reports_its_declared_authors_and_grants() {
         allowlist.authors().as_slice(),
         std::slice::from_ref(&sentinel)
     );
-    assert_eq!(allowlist.granted(&sentinel), [retry]);
+    assert_eq!(
+        allowlist.granted(&sentinel).as_slice(),
+        std::slice::from_ref(&retry)
+    );
+
+    let stranger = Author::from("stranger");
+    let refusal = allowlist
+        .narrow(
+            "authors.stranger.capabilities",
+            &stranger,
+            &[retry],
+            "configured narrowing",
+        )
+        .expect_err("a configuration cannot introduce an author by narrowing it");
+    assert_eq!(refusal.key, "authors.stranger.capabilities");
+    assert!(
+        refusal.why.contains("`stranger` is not an author") && refusal.why.contains("sentinel"),
+        "{refusal}"
+    );
 }
 
 #[test]
