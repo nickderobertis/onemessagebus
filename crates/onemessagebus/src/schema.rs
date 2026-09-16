@@ -24,8 +24,8 @@ use serde_json::Value;
 ///
 /// The namespace is a non-empty run of ASCII letters, digits, `-` and `_`, and
 /// the first `.` ends it. The name is everything after it up to the `@`: one or
-/// more such runs joined by single dots — `agent.onejudge-frame.judge@6` is the
-/// name `onejudge-frame.judge` in the namespace `agent`. The version is a
+/// more such runs joined by single dots — `example.frame.notice@3` is the
+/// name `frame.notice` in the namespace `example`. The version is a
 /// positive integer. Every id whose name has no dot parses as it always did.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SchemaId {

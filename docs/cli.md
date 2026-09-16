@@ -7,7 +7,7 @@ over NDJSON streams; `deliver` and `inbox carried`, over the inbox
 queues kept on a transport, with `transports` listing the transport kinds
 (`docs/queues.md`, `docs/transport.md`); `ask`, a question and the answer that
 echoes its correlation (`docs/ask.md`); `validate`, a record judged by a
-queue's validators (`docs/validators.md`); and `serve`, a member's judge side
+queue's validators (`docs/validators.md`); and `serve`, a member protocol
 over a queue (`docs/codecs.md`). Every verb is a capability in
 `onemessagebus::CAPABILITIES`, which is what the SDK clients are generated from
 and what the clap tree is held to, so a verb or flag here exists nowhere the
@@ -393,35 +393,12 @@ $ onemessagebus validate replies --file reply.json --config onemessagebus.yaml
 
 ### `serve <queue> --codec NAME [--session-seconds SECONDS] [--asker WORD] [--file PATH] [--config PATH] [--transport-dir DIR] [--registry DIR]`
 
-Serve a member's judge side (`docs/codecs.md`): read the frames of the `--codec`
-protocol one line at a time from stdin (or `--file`), and write each frame's
-response as one line of JSON on stdout, raising and asking on `<queue>`.
-`onejudge` is the codec this build links; any other is refused with exit 2,
-naming the ones it links. A `supervisor` frame whose turn produced content is
-answered with a non-completion and raises nothing; one whose turn was lost raises
-one bounded, non-blocking `monitor-failed` surface naming the cause and the
-identity, and exits 1. A `judge` frame raises its criterion as a non-blocking
-question and answers the ruling as the score, `{"value", "reason"}` — or, with no
-ruling within the codec's reply window, `{"value": false, "reason"}`, never a
-pass. `assess`, a numeric `judge` and every other operation are refused with exit
-2, naming it.
-
-With `--session-seconds` (or the codec's session variable) the session stops of
-its own accord after that many seconds with exit 0, leaving what it asked counted
-and saying so on stderr; when the frame stream ends instead, what it asked and
-nobody answered is marked abandoned. `--asker` (or the codec's asker variable)
-names who the session listens for. The configuration's `codecs.onejudge` block
-names the reply window, the queue and the variables read; a codec — by
-`--codec` or as a key of `codecs` — this build does not link, a session bound, an asker or a queue it cannot take, and a frame naming no run, are refused
-with exit 2.
+<!-- llmlint: ignore[no_redundant_instruction_pointers] Contract B explicitly requires the CLI entry to point to its single normative statement in codecs.md rather than restating it. -->
+Serve a configured member protocol according to Contract B in
+[`codecs.md`](codecs.md).
 
 With `--resident --socket <path>` in place of a queue and a codec, `serve` runs
 the resident core instead, described below. `--registry` is the queue verbs' own.
-
-```bash
-$ onemessagebus serve surfaces --codec onejudge --config onemessagebus.yaml < frame.json
-{"completion":false,"message":"Your turn was taken and no planner surface was raised for it: …","reason":"the monitor took its turn; a report reaches the planner as a finding"}
-```
 
 ### `serve --resident --socket PATH [--config PATH] [--transport-dir DIR] [--registry DIR]`
 

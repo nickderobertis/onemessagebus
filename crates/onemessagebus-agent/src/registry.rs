@@ -11,9 +11,7 @@
 //! message ([`Note`](crate::note::Note)). The planner channel's four record
 //! types are `agent.planner-surface@1`, `agent.queued-reply@1`,
 //! `agent.queued-commands@1` and `agent.command-outcome@1`
-//! ([`channel`](crate::channel)); `onejudge`'s five command-provider frames are
-//! `agent.onejudge-frame.<op>@6` ([`codec::onejudge`](crate::codec::onejudge));
-//! and the transport plugin protocol's three shapes are registered under the
+//! ([`channel`](crate::channel)); and the transport plugin protocol's three shapes are registered under the
 //! core's `onemessagebus` namespace so a client in another language validates
 //! against them.
 
@@ -108,11 +106,6 @@ pub fn registry() -> Registry {
     registry
         .register::<crate::channel::CommandOutcome>()
         .expect("the command outcome schema registers");
-    for (id, schema) in crate::codec::onejudge::schemas() {
-        registry
-            .register_schema(id, schema.to_value())
-            .expect("the onejudge frame schemas register");
-    }
     onemessagebus::transport::register_protocol(&mut registry)
         .expect("the transport plugin protocol's schemas register");
     registry

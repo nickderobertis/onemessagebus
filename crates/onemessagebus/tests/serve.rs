@@ -8,8 +8,9 @@ use std::sync::{mpsc, LazyLock};
 use std::time::{Duration, Instant};
 
 use onemessagebus::{
-    Answer, Asker, Bus, BusError, Codec, CodecConfig, CodecFailure, CodecName, Config, ConfigError,
-    EnvName, Layouts, QueueName, ServeError, ServeOptions, ServeSession, Served, TransportKinds,
+    Answer, Asker, Bus, BusError, Codec, CodecFailure, CodecName, Config, ConfigError,
+    ConfiguredCodec, EnvName, Layouts, QueueName, Registry, SchemaId, ServeError, ServeOptions,
+    ServeSession, Served, TransportKinds,
 };
 use serde_json::{json, Value};
 
@@ -51,6 +52,11 @@ impl Codec for Scripted {
                     .map_err(|failure| CodecFailure::Failed(failure.to_string()))?;
                 Ok(json!({"raised": raised.len()}))
             }
+            Some("inspect") => Ok(json!({
+                "queue": session.queue().as_str(),
+                "reply_window_ms": session.options().reply_window.as_millis(),
+                "debug": format!("{session:?}"),
+            })),
             Some("refuse") => Err(CodecFailure::Refused(
                 "`refuse` is refused by name".to_owned(),
             )),
@@ -150,6 +156,30 @@ fn each_frame_is_answered_with_one_line_in_order_and_blank_lines_are_passed_over
         vec![json!({"echo": "a"}), json!({"echo": "b"})]
     );
     assert_eq!(Scripted.name().as_str(), "scripted");
+}
+
+#[test]
+fn a_codec_can_inspect_the_public_session_context() {
+    let rig = Rig::new();
+    let mut output = Vec::new();
+    rig.bus()
+        .serve(
+            &queue("questions"),
+            &mut Scripted,
+            &options(Duration::from_millis(25)),
+            frames("{\"do\":\"inspect\"}\n"),
+            &mut output,
+        )
+        .expect("served");
+    let response = &lines(&output)[0];
+    assert_eq!(response["queue"], "questions");
+    assert_eq!(response["reply_window_ms"], 25);
+    assert!(
+        response["debug"]
+            .as_str()
+            .is_some_and(|text| text.contains("ServeSession") && text.contains("asked: 0")),
+        "{response}"
+    );
 }
 
 #[test]
@@ -334,9 +364,9 @@ fn a_refused_or_failed_frame_ends_the_session_with_nothing_it_asked_marked() {
     );
 }
 
-const CONTRACT: &str = include_str!("../../../docs/contract.md");
+const CONTRACT: &str = include_str!("../../../docs/codecs.md");
 
-/// The fenced block `docs/contract.md` tags `<!-- fixture: name -->`.
+/// The fenced block `docs/codecs.md` tags `<!-- fixture: name -->`.
 fn fixture(name: &str) -> String {
     let tag = format!("<!-- fixture: {name} -->");
     let mut lines = CONTRACT.lines();
@@ -358,24 +388,11 @@ fn the_documented_codecs_block_loads_by_name_into_the_config_schema_the_sdk_bund
         fixture("codecs-config")
     );
     let config = Config::parse(&text).expect("the documented codecs block loads");
-    let block = &config.codecs[&"onejudge".parse::<CodecName>().expect("a codec name")];
+    let block = &config.codecs[&"example".parse::<CodecName>().expect("a codec name")];
     assert_eq!(block.queue, Some(queue("surfaces")));
     assert_eq!(block.reply_window_seconds.map(u64::from), Some(3000));
-    let named = |env: &Option<EnvName>| env.as_ref().map(|name| name.as_str().to_owned());
-    assert_eq!(
-        [
-            named(&block.session_env),
-            named(&block.asker_env),
-            named(&block.run_env),
-            named(&block.about_env)
-        ],
-        [
-            Some("ONEPIPELINE_SERVE_SESSION_SECONDS".to_owned()),
-            Some("ONEPIPELINE_CHANNEL_ASKER".to_owned()),
-            Some("ONEPIPELINE_RUN_ID".to_owned()),
-            Some("ORCHESTRATOR_ASK_MANAGER_NODE".to_owned())
-        ]
-    );
+    assert_eq!(block.select, "op");
+    assert!(!block.frames.is_empty());
     let refused = Config::parse(&text.replace("about_env", "node_env")).expect_err("unknown");
     assert!(
         refused.to_string().contains("unknown field `node_env`"),
@@ -399,30 +416,26 @@ fn a_codecs_block_loads_by_name_and_is_refused_by_the_key_it_is_wrong_at() {
         )
     };
     let config = Config::parse(&text(
-        "  onejudge: {queue: surfaces, reply_window_seconds: 5, session_env: SERVE_SESSION, asker_env: CHANNEL_ASKER, run_env: RUN_ID, about_env: NODE}\n",
+        "  example:\n    queue: surfaces\n    reply_window_seconds: 5\n    session_env: SERVE_SESSION\n    asker_env: CHANNEL_ASKER\n    about_env: NODE\n    select: op\n    frames:\n      hello:\n        schema: example.hello@1\n        bindings:\n          - do: answer\n            response: {ok: true}\n",
     ))
     .expect("the block loads");
-    let name: CodecName = "onejudge".parse().expect("a codec name");
-    let settings: &CodecConfig = &config.codecs[&name];
+    let name: CodecName = "example".parse().expect("a codec name");
+    let settings = &config.codecs[&name];
     assert_eq!(settings.queue, Some(queue("surfaces")));
     assert_eq!(settings.reply_window_seconds.map(u64::from), Some(5));
-    assert_eq!(
-        settings.run_env,
-        Some("RUN_ID".parse::<EnvName>().expect("a name"))
-    );
     let written = serde_norway::to_string(&config).expect("writes");
     assert_eq!(Config::parse(&written).expect("reads back"), config);
 
     for (codecs, names) in [
-        ("  onejudge: {window: 5}\n", "unknown field `window`"),
-        ("  onejudge: {reply_window_seconds: 0}\n", "nonzero"),
-        ("  onejudge: {run_env: \"1RUN\"}\n", "starts with a digit"),
+        ("  example: {window: 5}\n", "unknown field `window`"),
+        ("  example: {reply_window_seconds: 0}\n", "nonzero"),
+        ("  example: {run_env: RUN}\n", "unknown field `run_env`"),
         (
-            "  onejudge: {asker_env: \"CHANNEL-ASKER\"}\n",
+            "  example: {asker_env: \"CHANNEL-ASKER\"}\n",
             "ASCII letters, digits and `_`",
         ),
-        ("  OneJudge: {}\n", "does not start with a lowercase letter"),
-        ("  onejudge: {queue: \"no queue\"}\n", "no queue"),
+        ("  Example: {}\n", "does not start with a lowercase letter"),
+        ("  example: {queue: \"no queue\"}\n", "no queue"),
     ] {
         let refused = Config::parse(&text(codecs)).expect_err(codecs);
         assert!(
@@ -438,7 +451,211 @@ fn a_codecs_block_loads_by_name_and_is_refused_by_the_key_it_is_wrong_at() {
         let refused = text.parse::<CodecName>().expect_err(text);
         assert!(refused.to_string().contains(names), "{text}: {refused}");
     }
-    assert!("".parse::<EnvName>().is_err());
-    assert!("A".repeat(129).parse::<EnvName>().is_err());
-    assert_eq!(name.to_string(), "onejudge");
+    assert_eq!(name.to_string(), "example");
+    assert_eq!(name.as_str(), "example");
+
+    for (text, names) in [
+        ("", "it is empty"),
+        ("7CHANNEL", "starts with a digit"),
+        ("CHANNEL-NAME", "ASCII letters, digits and `_`"),
+        (&"A".repeat(129), "longer than"),
+    ] {
+        let refused = text.parse::<EnvName>().expect_err(text);
+        assert!(refused.to_string().contains(names), "{text}: {refused}");
+    }
+    assert_eq!(
+        "CHANNEL_NAME"
+            .parse::<EnvName>()
+            .expect("an env name")
+            .as_str(),
+        "CHANNEL_NAME"
+    );
+
+    let codec = ConfiguredCodec::new(name, settings.clone()).expect("a configured codec");
+    assert_eq!(codec.name().as_str(), "example");
+}
+
+#[test]
+fn binding_semantics_are_checked_at_load_with_their_full_location() {
+    let config = |binding: &str| {
+        Config::parse(&format!(
+            "version: 1\ntransport: {{kind: memory}}\ncodecs:\n  example:\n    select: op\n    frames:\n      hello:\n        schema: example.hello@1\n        bindings:\n          - {binding}\n"
+        ))
+        .expect_err("binding is malformed")
+        .to_string()
+    };
+    for (binding, reason) in [
+        ("when: {field: '', equals: x}\n            do: answer\n            response: {}", "when.field"),
+        ("when: {field: mood, equals: {nested: x}}\n            do: answer\n            response: {}", "when.equals"),
+        ("do: raise\n            record: {}", "exactly one"),
+        ("do: raise\n            record: {}\n            response: {}\n            fail: bad", "exactly one"),
+        ("do: answer\n            response: '{reply.value}'", "only allowed in an ask response"),
+        ("do: ask\n            record: {}\n            response: {value: {from: frame.value}}\n            unanswered: {}", "under `reply`"),
+        ("do: answer\n            response: '{frame.value'", "no closing"),
+        ("do: answer\n            response: '{frame}'", "no root and path"),
+        ("do: answer\n            response: '{other.value}'", "not a frame or reply path"),
+        ("do: answer\n            response: 'value}'", "no opening"),
+        ("do: ask\n            record: {}\n            response: {value: {from: reply.value, extra: no}}\n            unanswered: {}", "key other than"),
+        ("do: ask\n            record: {}\n            response: {value: {from: []}}\n            unanswered: {}", "non-empty list"),
+        ("do: ask\n            record: {}\n            response: {value: {from: [reply.value, 7]}}\n            unanswered: {}", "non-string path"),
+        ("do: ask\n            record: {}\n            response: {value: {from: reply.}}\n            unanswered: {}", "under `reply`"),
+        ("do: ask\n            record: {}\n            response: {value: {from: reply.value, default: '{broken}'}}\n            unanswered: {}", "no root and path"),
+    ] {
+        let failure = config(binding);
+        assert!(
+            failure.contains("codecs.example.frames.hello.bindings[0]")
+                && failure.contains(reason),
+            "{failure}"
+        );
+    }
+
+    for (body, reason) in [
+        ("select: ''\n    frames: {}", "select"),
+        ("select: op\n    frames: {}", "frames is empty"),
+        (
+            "select: op\n    frames:\n      hello: {schema: example.hello@1, bindings: []}",
+            "bindings is empty",
+        ),
+    ] {
+        let failure = Config::parse(&format!(
+            "version: 1\ntransport: {{kind: memory}}\ncodecs:\n  example:\n    {body}\n"
+        ))
+        .expect_err("codec is malformed")
+        .to_string();
+        assert!(failure.contains(reason), "{failure}");
+    }
+}
+
+#[test]
+fn a_configured_codec_selects_validates_conditions_and_renders_typed_responses() {
+    let config = Config::parse(
+        "version: 1
+transport: {kind: memory}
+queues:
+  surfaces: {}
+codecs:
+  example:
+    select: turn.op
+    frames:
+      hello:
+        schema: example.hello@1
+        bindings:
+          - when: {field: mood, equals: ready}
+            do: answer
+            response:
+              exact: '{frame.count}'
+              text: 'hello {frame.name}: {frame.count} {{ok}} {frame.missing}'
+              nested: ['{frame.enabled}', 3]
+          - do: refuse
+            message: 'not ready: {frame.mood}'
+      maybe:
+        schema: example.maybe@1
+        bindings:
+          - when: {field: mood, equals: ready}
+            do: answer
+            response: {ok: true}
+      raise:
+        schema: example.raise@1
+        bindings:
+          - do: raise
+            record: {kind: notice, message: 'raised {frame.count}'}
+            response: {raised: true}
+",
+    )
+    .expect("loads");
+    let name: CodecName = "example".parse().expect("a codec name");
+    let mut codec = ConfiguredCodec::new(name.clone(), config.codecs[&name].clone())
+        .expect("a configured codec");
+    let mut registry = Registry::new();
+    registry
+        .register_schema(
+            "example.hello@1".parse::<SchemaId>().expect("a schema id"),
+            json!({
+                "type": "object",
+                "required": ["turn", "count", "enabled"],
+                "properties": {
+                    "turn": {"type": "object", "required": ["op"], "properties": {"op": {"const": "hello"}}},
+                    "count": {"type": "number"},
+                    "enabled": {"type": "boolean"}
+                }
+            }),
+        )
+        .expect("registers");
+    for id in ["example.maybe@1", "example.raise@1"] {
+        registry
+            .register_schema(
+                id.parse::<SchemaId>().expect("a schema id"),
+                json!({"type": "object"}),
+            )
+            .expect("registers");
+    }
+    let bus = config
+        .resolve_with_registry(&Layouts::new(), &TransportKinds::builtin(), &registry)
+        .expect("resolves");
+
+    let mut output = Vec::new();
+    bus.serve(
+        &queue("surfaces"),
+        &mut codec,
+        &ServeOptions::default(),
+        frames("{\"turn\":{\"op\":\"hello\"},\"mood\":\"ready\",\"name\":\"Ada\",\"count\":7,\"enabled\":true}\n"),
+        &mut output,
+    )
+    .expect("served");
+    assert_eq!(
+        lines(&output),
+        [json!({"exact": 7, "text": "hello Ada: 7 {ok} ", "nested": [true, 3]})]
+    );
+
+    let mut raised_output = Vec::new();
+    bus.serve(
+        &queue("surfaces"),
+        &mut codec,
+        &ServeOptions::default(),
+        frames("{\"turn\":{\"op\":\"raise\"},\"count\":8}\n"),
+        &mut raised_output,
+    )
+    .expect("raised and answered");
+    assert_eq!(lines(&raised_output), [json!({"raised": true})]);
+    assert_eq!(
+        bus.queue(&queue("surfaces"))
+            .expect("a queue")
+            .status()
+            .expect("status")
+            .unread,
+        1
+    );
+
+    for (frame, names) in [
+        (json!(7), "not a JSON object"),
+        (json!({"turn": {"op": 7}}), "absent or not a string"),
+        (json!({"turn": {"op": "maybe"}}), "no binding holds"),
+        (
+            json!({"turn": {"op": "hello"}, "count": 1, "enabled": true}),
+            "not ready",
+        ),
+        (
+            json!({"turn": {"op": "other"}, "count": 1, "enabled": true}),
+            "declared entries",
+        ),
+        (
+            json!({"turn": {}, "count": 1, "enabled": true}),
+            "absent or not a string",
+        ),
+        (
+            json!({"turn": {"op": "hello"}, "count": "wrong", "enabled": true}),
+            "does not validate",
+        ),
+    ] {
+        let failure = bus
+            .serve(
+                &queue("surfaces"),
+                &mut codec,
+                &ServeOptions::default(),
+                frames(&format!("{frame}\n")),
+                &mut Vec::new(),
+            )
+            .expect_err("the frame is refused");
+        assert!(failure.to_string().contains(names), "{failure}");
+    }
 }

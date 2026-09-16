@@ -61,7 +61,7 @@ async def test_a_streamed_verb_with_input_runs_over_either_transport(
     config = bus_config(binary, scratch)
     args = {
         "queue": "surfaces",
-        "codec": "onejudge",
+        "codec": "example",
         "config": str(config.config),
         "registry": str(config.registry),
     }

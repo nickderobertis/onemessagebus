@@ -130,7 +130,7 @@ One NDJSON line per event, byte-identical to what `oneagentgraph`, `onevcs` and
 ### Contract R — the schema registry
 
 - `onemessagebus::SchemaId` is `<namespace>.<name>@<version>` —
-  `agent.finding@1`, `agent.event-envelope@2`, `agent.onejudge-frame.judge@6` —
+  `agent.finding@1`, `agent.event-envelope@2`, `agent.former producer-frame.judge@6` —
   parsed and refused at the boundary (empty parts, a version that is not a
   positive integer). The namespace is the first dot-separated part alone; the
   name is everything after it up to the `@`, one or more parts joined by single
@@ -267,7 +267,7 @@ record lines:
 ### Contract N — the agent note contract
 
 `onemessagebus_agent::note` declares, with the same names, the same serde shapes
-and the same refusals as `onejudge::note` at release 0.8.1: `Addressee::{Worker,
+and the same refusals as `former producer::note` at release 0.8.1: `Addressee::{Worker,
 Supervisor, Both}` (lowercase on the wire), `Party`, `Criterion` (the newtype and
 its refusals), `CriterionRefused`, `NoteText`, `Note` (`new`, `to`, `binding`,
 `binds`), `NoteRefused`, `DeliveredNote`, `Accepted::{Queued, Interrupted {
@@ -277,7 +277,7 @@ and `supervisor_block`. `Note: Message` with schema `agent.note@1`; `Accepted:
 Disposition`, with `Carried` answering `Accepted::Queued`. `type Notes =
 Sender<Note, Accepted>` and `type NoteInbox = Inbox<Note, Accepted>`, with
 `Notes::channel()` building the in-process pair. What a conversation does with a
-delivered note stays in `onejudge`.
+delivered note stays in `former producer`.
 
 <!-- fixture: note -->
 ```json
@@ -303,18 +303,18 @@ adopting nodes read them where they read the contract:
    From<onemessagebus::Undelivered>` reads a note refusal carried in a close
    (`Closed::from(&note::Undelivered)`) back into the same variant, a close in
    anyone else's words into `MemberSettled`, and a backend failure into
-   `NoConversation`, so `onejudge` adapts with one `.map_err(Into::into)`.
+   `NoConversation`, so `former producer` adapts with one `.map_err(Into::into)`.
    `Notes::channel()` keeps its signature through the core's `Sender::channel()`.
 2. `NoteInbox::delivered()` is `note::NoteInboxExt::delivered`, re-exported by
    `note::prelude`. It lists the notes answered `Interrupted` (reaching the party
    named) and `JudgedWith` (reaching the supervisor); a `Queued` note has reached
    no party yet.
-3. `onejudge`'s seven note shape tests moved verbatim. Its five channel tests
-   drive the phase machine that stays in `onejudge`, and the core's inbox tests
+3. `former producer`'s seven note shape tests moved verbatim. Its five channel tests
+   drive the phase machine that stays in `former producer`, and the core's inbox tests
    prove the inbox-level equivalents: a dropped inbox answers every blocked
    sender, and a closed inbox stays closed with its first reason.
 4. `worker_block` is public, the one item beyond the list above, because
-   `onejudge`'s engine renders a worker's turn with it and a copy left there
+   `former producer`'s engine renders a worker's turn with it and a copy left there
    drifts.
 5. `deliver` takes `--wait <SECONDS>` (default 30), a named option bound in
    `CAPABILITIES`, so the lost state is observable through the binary;
@@ -615,104 +615,10 @@ validators:
   (`Bus::with_validator`, `Queue::with_validators`) is not configurable from the
   file, because it is code. Every key is refused by name when unknown.
 
-### Contract K — the onejudge codec behind `serve`
+### Contract K — configured codecs behind `serve`
 
-`onemessagebus serve <queue> --codec onejudge [--config <path>]` is a member's
-judge-side command provider in the sense of `onejudge`'s `docs/protocol.md`: one
-request frame in on stdin, one response object out on stdout, per op. It replaces
-the pair `onepipeline channel serve` and `channel-serve.py` with **one** process
-that reads the frames `onejudge` writes.
-
-- `supervisor` → **liveness only**: any assistant content in the last turn means
-  the member took its turn — no surface is raised, and the response is a
-  non-completion the member can act on. A turn with **no** assistant content, or
-  whose last assistant message is a machine transcript proving the turn was lost
-  (JSON-RPC frames ending in an `error` frame or a failed `turn/completed`), is a
-  failure: one bounded, non-blocking `monitor-failed` surface naming the cause and
-  the identity is raised on the configured queue, and the process exits non-zero.
-  Nothing else in a turn's prose is ever raised — a monitor reports through the
-  `finding` op it issues itself.
-- `judge` → the criterion is raised as its own non-blocking ask on the queue; the
-  ruling that comes back is the score (`completion` → the boolean, the prose → the
-  reason); a timeout is the conservative `unsatisfied`, never a fabricated pass.
-- `assess` and a non-boolean `judge` → refused by name.
-- The run this member belongs to is read from the frame's `task` opening line
-  where `onejudge` writes one, and from the environment variable the codec's
-  configuration names (`run_env`) otherwise; what a frame is about is validated
-  against a predicate the consumer configures (`Onejudge::with_about_check`;
-  `onepipeline` supplies "the run's graph has it").
-- A reply that is a live edit (commands, no verdict) never reaches this process —
-  it is routed by Contract A — and if one arrives anyway (a regressed transport)
-  it is recognised, the member is answered with a non-completion naming the edits,
-  and nothing is re-applied.
-- The session bound and the asker are `serve`'s `--session-seconds` and
-  `--asker`, each also readable from a configured environment name; a session
-  reaching its bound leaves what it raised counted, and a stream ending marks it
-  abandoned — `onepipeline`'s `Served` distinction, kept.
-- Every fixed string this codec reads or writes — the frame ops, the response
-  fields, the transcript-frame shape — is declared once in
-  `onemessagebus_agent::codec::onejudge`. The frames are `Message` types
-  registered as `agent.onejudge-frame.<op>@6`, transcribed field for field from
-  `onejudge`'s `docs/protocol.md` and `crates/onejudge/src/command.rs` at 0.8.1,
-  exposed as `codec::onejudge::schemas() -> Vec<(SchemaId, Schema)>`, and covered
-  by `schema gen`:
-
-<!-- fixture: onejudge-frames -->
-```json
-{"protocol": 6, "transcribed from": "onejudge 0.8.1",
- "frames": ["agent.onejudge-frame.respond@6", "agent.onejudge-frame.user@6", "agent.onejudge-frame.supervisor@6", "agent.onejudge-frame.judge@6", "agent.onejudge-frame.assess@6"],
- "served": ["supervisor", "judge"]}
-```
-
-- The constants a host configures — the reply window, the queue, and the
-  session, asker, run and about variable names — are the `codecs.onejudge` block
-  of `onemessagebus.yaml`:
-
-<!-- fixture: codecs-config -->
-```yaml
-codecs:
-  onejudge: {queue: surfaces, reply_window_seconds: 3000, session_env: ONEPIPELINE_SERVE_SESSION_SECONDS,
-             asker_env: ONEPIPELINE_CHANNEL_ASKER, run_env: ONEPIPELINE_RUN_ID, about_env: ORCHESTRATOR_ASK_MANAGER_NODE}
-```
-
-**Departures, ruled by the manager over the ask seam** for this node's contracts
-(R, V, A, K and C), recorded here so the adopting nodes read them where they read
-the contract:
-
-1. Contract R's name is widened to dot-joined parts so the onejudge frame ids
-   are exactly `agent.onejudge-frame.<op>@6`; the namespace stays the first part
-   alone, and every id that parsed before parses to the same namespace, name and
-   version (held over every registered id and every recorded fixture).
-2. `when` takes `{carries: <field path>}` — the field is present and non-empty —
-   or any Contract Q predicate; `carries` is not a form of the predicate grammar.
-3. `Bus` stays the non-generic type over `Arc<dyn Transport>` Contract Q shipped
-   (Contract A wrote `impl<T: Transport> Bus<T>`): `ask`, `listen`, `reply`,
-   `reply_at` and `validate` are its methods.
-4. The ask types live in `onemessagebus::ask` and are re-exported at the root as
-   `Answer`, `Pending`, `AskOptions`, `Correlation`, `Address` and `AskRefusal` —
-   the last because the root's `Refusal` is Contract Q's allowlist refusal, which
-   keeps its name and meaning.
-5. `ask <queue> --correlation <c>` re-attaches to a question already asked
-   (`Bus::listen`), so abandonment and re-arm are reachable through the binary as
-   two processes: under the question's own `--asker` it re-arms it and waits;
-   under none or another it attends nothing, and a question left abandoned
-   answers `abandoned`. An `ask` process — or a listener that re-armed — ending
-   without its answer abandons its question, as `serve`'s stream end does;
-   `Pending::abandon()` is the library's explicit form, with no `Drop` side
-   effect. Abandonment is state on the queue, which `status` reads as nobody
-   waiting now, and an answer arriving for an abandoned question is still matched
-   to it.
-6. The `codecs` block is generic in the core, which names no agent word:
-   `Config.codecs` maps a codec name to one block (`queue`,
-   `reply_window_seconds`, `session_env`, `asker_env`, `run_env`, `about_env`),
-   every key refused by name when unknown at `Config::load`. The binary owns the
-   set of codec names it resolves and refuses one it does not link, naming those
-   it does; every onejudge fixed string lives in
-   `onemessagebus_agent::codec::onejudge`; and the serving loop is the core's
-   `Bus::serve` over a `Codec` trait that names no protocol.
-7. A `judge` score's prose is written as `reason`, the field `onejudge` 0.8.1's
-   `JudgePayload` reads. The host's `channel-serve.py` wrote `rationale`, which
-   `onejudge` drops, so every score it relayed arrived unexplained.
+<!-- llmlint: ignore[no_redundant_instruction_pointers] Contract B explicitly requires this contract — the source consumers restate from — to point to its single normative statement in codecs.md rather than duplicate a binding grammar that could drift. -->
+The binding contract is stated once in [`codecs.md`](codecs.md). The `serve` CLI entry points to it and does not restate it.
 
 ### Contract L — schema links
 

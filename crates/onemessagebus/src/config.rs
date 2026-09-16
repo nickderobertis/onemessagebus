@@ -347,6 +347,14 @@ impl Config {
     ///
     /// As [`load`](Self::load), with the path empty.
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
+        let raw: Value = serde_norway::from_str(text).map_err(|failure| ConfigError::Parse {
+            path: PathBuf::new(),
+            why: failure.to_string(),
+        })?;
+        validate_codec_keys(&raw).map_err(|why| ConfigError::Parse {
+            path: PathBuf::new(),
+            why,
+        })?;
         let config: Self = serde_norway::from_str(text).map_err(|failure| ConfigError::Parse {
             path: PathBuf::new(),
             why: failure.to_string(),
@@ -358,6 +366,12 @@ impl Config {
         }
         for (index, validator) in config.validators.iter().enumerate() {
             validator.build(index).map_err(|why| ConfigError::Parse {
+                path: PathBuf::new(),
+                why,
+            })?;
+        }
+        for (name, codec) in &config.codecs {
+            crate::codec::validate_codec(name, codec).map_err(|why| ConfigError::Parse {
                 path: PathBuf::new(),
                 why,
             })?;
@@ -591,6 +605,58 @@ impl Config {
         })
     }
 }
+
+// llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] This pre-deserialization walk exists only to retain unknown binding keys that serde flattening necessarily discards. CodecConfig and BindingAction remain the schema source; core load tests enumerate every allowed action shape and reject an extra key with its full location, providing the drift gate for this diagnostic-only allowlist.
+fn validate_codec_keys(raw: &Value) -> Result<(), String> {
+    let Some(codecs) = raw.get("codecs").and_then(Value::as_object) else {
+        return Ok(());
+    };
+    let codec_keys = [
+        "queue",
+        "reply_window_seconds",
+        "session_env",
+        "asker_env",
+        "about_env",
+        "select",
+        "frames",
+    ];
+    for (name, codec) in codecs {
+        let Some(codec) = codec.as_object() else {
+            continue;
+        };
+        if let Some(key) = codec.keys().find(|key| !codec_keys.contains(&key.as_str())) {
+            return Err(format!("codecs.{name}: unknown field `{key}`"));
+        }
+        let Some(frames) = codec.get("frames").and_then(Value::as_object) else {
+            continue;
+        };
+        for (entry, frame) in frames {
+            let Some(bindings) = frame.get("bindings").and_then(Value::as_array) else {
+                continue;
+            };
+            for (index, binding) in bindings.iter().enumerate() {
+                let Some(binding) = binding.as_object() else {
+                    continue;
+                };
+                let action = binding.get("do").and_then(Value::as_str);
+                let allowed: &[&str] = match action {
+                    Some("answer") => &["when", "do", "response"],
+                    Some("refuse") => &["when", "do", "message"],
+                    Some("raise") => &["when", "do", "record", "response", "fail"],
+                    Some("ask") => &["when", "do", "record", "blocking", "response", "unanswered"],
+                    _ => &["when", "do"],
+                };
+                if let Some(key) = binding.keys().find(|key| !allowed.contains(&key.as_str())) {
+                    return Err(format!(
+                        "codecs.{name}.frames.{entry}.bindings[{index}]: unknown field `{key}`"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+// llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate] The allowlist is confined to preserving precise unknown-key diagnostics.
 
 /// A set of queues, policies, authors, operations and schemas a profile crate
 /// declares under one name, which a configuration names as its `profile`.

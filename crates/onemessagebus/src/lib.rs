@@ -72,8 +72,9 @@ pub use capability::{
 pub use carry::{CarriedEntry, Carry, CARRY_SCHEMA_VERSION};
 pub use clock::now_rfc3339;
 pub use codec::{
-    Codec, CodecConfig, CodecFailure, CodecName, EnvName, NameRefused, ServeError, ServeOptions,
-    ServeSession, Served, DEFAULT_REPLY_WINDOW,
+    Binding, BindingAction, Codec, CodecConfig, CodecFailure, CodecName, ConfiguredCodec, EnvName,
+    FieldEquals, FrameConfig, NameRefused, ServeError, ServeOptions, ServeSession, Served,
+    DEFAULT_REPLY_WINDOW,
 };
 pub use config::{
     AuthorConfig, Bus, BusError, CacheConfig, Config, ConfigError, Layout, Layouts, PolicyConfig,

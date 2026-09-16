@@ -17,7 +17,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use onemessagebus_agent::codec::onejudge;
 use serde_json::{json, Value};
 
 use crate::support::{onemessagebus, Run};
@@ -1215,102 +1214,6 @@ fn https_proxy_carries_the_fetch_and_no_proxy_naming_the_host_bypasses_it() {
         proxy.log()
     );
     assert_eq!(origin.seen().len(), 2, "the bundle was reached directly");
-}
-
-/// A supervisor frame whose turn is taken: `serve` answers it at once, raising
-/// nothing.
-fn frame() -> String {
-    json!({
-        "op": "supervisor",
-        "task": "onepipeline run `r-7`.\nwatch",
-        "persona": "A careful monitor.",
-        "done_when": "the watch is kept",
-        "worktree": "/repo",
-        "history_name": "r-7-monitor",
-        "messages": [{"role": "user", "content": "watch"}, {"role": "assistant", "content": "nothing drifted"}],
-        "session": "r-7-user"
-    })
-    .to_string()
-}
-
-/// `serve surfaces --codec onejudge` over a planner channel whose configuration
-/// links `link`.
-fn serve(scratch: &Scratch, link: &str, env: &[(&str, &str)]) -> Run {
-    std::fs::write(
-        scratch.path("serve.yaml"),
-        format!(
-            "version: 1\ntransport: {{kind: local, dir: {}}}\nprofile: planner-channel\nschemas:\n  - {}\n",
-            serde_json::to_string(&scratch.path("channel")).expect("a path"),
-            serde_json::to_string(link).expect("a string")
-        ),
-    )
-    .expect("written");
-    let mut env = env.to_vec();
-    env.push((onejudge::CODEX_ALT_HOME_ENV, "/nowhere/codex-alt"));
-    scratch.run(
-        &[
-            "serve",
-            "surfaces",
-            "--codec",
-            "onejudge",
-            "--config",
-            &scratch.text("serve.yaml"),
-        ],
-        Some(&format!("{}\n", frame())),
-        &env,
-    )
-}
-
-#[test]
-fn serve_uses_a_warmed_cache_whatever_its_age_and_refuses_before_a_frame_with_nothing_cached() {
-    let scratch = Scratch::new();
-    let origin = Origin::http("8.1");
-    let link = origin.link(Some("8"));
-    let warmed = scratch.run(&["schemas", "fetch", &link], None, &[]);
-    assert_eq!(warmed.code, 0, "{}", warmed.stderr);
-    assert_eq!(origin.seen().len(), 1);
-
-    // Every entry is past a zero window, and a refresh is asked for: serve still
-    // makes no request.
-    let stale = [
-        ("ONEMESSAGEBUS_SCHEMA_TTL", "0"),
-        ("ONEMESSAGEBUS_SCHEMA_REFRESH", "1"),
-    ];
-    let answered = serve(&scratch, &link, &stale);
-    assert_eq!(answered.code, 0, "{}", answered.stderr);
-    assert_eq!(answered.lines().len(), 1, "{}", answered.stdout);
-    assert_eq!(
-        origin.seen().len(),
-        1,
-        "serve asked the origin about a cached entry"
-    );
-
-    origin.down();
-    let answered = serve(&scratch, &link, &stale);
-    assert_eq!(answered.code, 0, "{}", answered.stderr);
-    assert_eq!(
-        answered.lines()[0]["completion"],
-        json!(false),
-        "{}",
-        answered.stdout
-    );
-    assert!(
-        !answered.stderr.contains("revalidate"),
-        "no revalidation was attempted: {}",
-        answered.stderr
-    );
-
-    let cold = Scratch::new();
-    let refused = serve(&cold, &link, &[]);
-    assert_eq!(refused.code, 1, "{}", refused.stderr);
-    assert_eq!(refused.stdout, "", "a frame was answered");
-    assert!(
-        refused
-            .stderr
-            .contains(&format!("{link}: cannot fetch the bundle")),
-        "{}",
-        refused.stderr
-    );
 }
 
 #[test]

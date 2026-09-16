@@ -14,15 +14,6 @@ from ._generated.messages.agent_event_envelope_v2 import Envelope as EventEnvelo
 from ._generated.messages.agent_event_filter_v1 import Filter as EventFilterV1
 from ._generated.messages.agent_labels_v1 import Labels as LabelsV1
 from ._generated.messages.agent_note_v1 import Note as NoteV1
-from ._generated.messages.agent_onejudge_frame_assess_v6 import AssessFrame as OnejudgeFrameAssessV6
-from ._generated.messages.agent_onejudge_frame_judge_v6 import JudgeFrame as OnejudgeFrameJudgeV6
-from ._generated.messages.agent_onejudge_frame_respond_v6 import (
-    RespondFrame as OnejudgeFrameRespondV6,
-)
-from ._generated.messages.agent_onejudge_frame_supervisor_v6 import (
-    SupervisorFrame as OnejudgeFrameSupervisorV6,
-)
-from ._generated.messages.agent_onejudge_frame_user_v6 import UserFrame as OnejudgeFrameUserV6
 from ._generated.messages.agent_planner_surface_v1 import Surface as PlannerSurfaceV1
 from ._generated.messages.agent_queued_commands_v1 import QueuedCommands as QueuedCommandsV1
 from ._generated.messages.agent_queued_reply_v1 import QueuedReply as QueuedReplyV1
@@ -41,11 +32,6 @@ EventEnvelope = EventEnvelopeV2
 EventFilter = EventFilterV1
 Labels = LabelsV1
 Note = NoteV1
-OnejudgeFrameAssess = OnejudgeFrameAssessV6
-OnejudgeFrameJudge = OnejudgeFrameJudgeV6
-OnejudgeFrameRespond = OnejudgeFrameRespondV6
-OnejudgeFrameSupervisor = OnejudgeFrameSupervisorV6
-OnejudgeFrameUser = OnejudgeFrameUserV6
 PlannerSurface = PlannerSurfaceV1
 QueuedCommands = QueuedCommandsV1
 QueuedReply = QueuedReplyV1
@@ -69,16 +55,6 @@ __all__ = [
     "LabelsV1",
     "Note",
     "NoteV1",
-    "OnejudgeFrameAssess",
-    "OnejudgeFrameAssessV6",
-    "OnejudgeFrameJudge",
-    "OnejudgeFrameJudgeV6",
-    "OnejudgeFrameRespond",
-    "OnejudgeFrameRespondV6",
-    "OnejudgeFrameSupervisor",
-    "OnejudgeFrameSupervisorV6",
-    "OnejudgeFrameUser",
-    "OnejudgeFrameUserV6",
     "PlannerSurface",
     "PlannerSurfaceV1",
     "QueuedCommands",

@@ -123,7 +123,7 @@ def pascal(word: str) -> str:
 
 
 def module_for(schema_id: str) -> str:
-    """`agent.onejudge-frame.judge@6` → `agent_onejudge_frame_judge_v6`."""
+    """`example.frame.notice@3` becomes `example_frame_notice_v3`."""
     family, version = schema_id.rsplit("@", 1)
     return f"{re.sub(r'[^A-Za-z0-9]+', '_', family).lower()}_v{version}"
 
@@ -283,6 +283,17 @@ def render(document: dict[str, Any], class_name: str | None, destination: Path) 
 # datamodel-code-generator spells a `propertyNames` pattern as a `constr(...)` dict key.
 CONSTR = re.compile(r'constr\((pattern=r?"(?:[^"\\]|\\.)*")\)')
 FUTURE = "from __future__ import annotations\n"
+CODEC_FIELD_PATH = re.compile(
+    r"(class (?:FieldEquals|CodecConfig)\(BaseModel\):.*?\n    (?:field|select)):"
+    r' str = Field\(\.\.\., pattern="\^\[\^\.\]\+\(\\\\\.\[\^\.\]\+\)\*\$"\)',
+    re.DOTALL,
+)
+CODEC_SCHEMA_ID = re.compile(
+    r"(class FrameConfig\(BaseModel\):.*?\n    schema_): str = Field\(\n"
+    r'        \.\.\.,\n        alias="schema",\n        pattern="[^"]+",\n'
+    r'        title="SchemaId",\n    \)',
+    re.DOTALL,
+)
 
 
 def typeable(source: str) -> str:
@@ -292,6 +303,8 @@ def typeable(source: str) -> str:
     pydantic's `constr(pattern=p)` is exactly `Annotated[str, StringConstraints(pattern=p)]`,
     which is one. The imports it needs are added, and the formatting pass sorts them.
     """
+    source = CODEC_FIELD_PATH.sub(r"\1: FieldPath", source)
+    source = CODEC_SCHEMA_ID.sub(r'\1: SchemaId = Field(..., alias="schema")', source)
     rewritten, count = CONSTR.subn(r"Annotated[str, StringConstraints(\1)]", source)
     if count == 0:
         return source

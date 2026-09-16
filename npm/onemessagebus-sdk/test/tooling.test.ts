@@ -19,9 +19,12 @@ import { caughtAs, PACKAGE, removeScratch, scratch } from "./support.js";
 afterAll(removeScratch);
 
 function node(args: string[]) {
+  const env = { ...process.env };
+  if (env.FORCE_COLOR !== undefined) delete env.NO_COLOR;
   return spawnSync(process.execPath === "bun" ? "node" : "node", args, {
     cwd: PACKAGE,
     encoding: "utf8",
+    env,
   });
 }
 

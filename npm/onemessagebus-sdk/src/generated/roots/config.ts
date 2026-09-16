@@ -52,6 +52,69 @@ export type When =
  */
 export type EnvName = string;
 /**
+ * One optional field-equality condition and its action.
+ */
+export type Binding = {
+  /**
+   * The condition; absent means this binding always holds.
+   */
+  when?: FieldEquals | null | undefined;
+  [k: string]: unknown;
+} & Binding1;
+export type Binding1 =
+  | {
+      /**
+       * The frame response as arbitrary JSON, preserving template value types.
+       */
+      response: unknown;
+      do: "answer";
+      [k: string]: unknown;
+    }
+  | {
+      /**
+       * The refusal written on stderr.
+       */
+      message: string;
+      do: "refuse";
+      [k: string]: unknown;
+    }
+  | {
+      /**
+       * The record raised on the served queue as arbitrary JSON.
+       */
+      record: unknown;
+      /**
+       * The response written after raising as arbitrary JSON.
+       */
+      response?: unknown | undefined;
+      /**
+       * The failure written after raising.
+       */
+      fail?: string | null | undefined;
+      do: "raise";
+      [k: string]: unknown;
+    }
+  | {
+      /**
+       * The question asked on the served queue as arbitrary JSON.
+       */
+      record: unknown;
+      /**
+       * Whether the question blocks its queue.
+       */
+      blocking?: boolean | undefined;
+      /**
+       * The arbitrary-JSON response resolved from a ruling.
+       */
+      response: unknown;
+      /**
+       * The arbitrary-JSON response used when no ruling can be resolved.
+       */
+      unanswered: unknown;
+      do: "ask";
+      [k: string]: unknown;
+    };
+/**
  * A schema bundle's location — an https:// URL, an http:// URL on a loopback host, a file:// URL, or a path relative to the configuration's directory — and, after a final @, the version pin it is held to: https://example.org/frames.json@8.
  */
 export type SchemaLink = string;
@@ -329,8 +392,7 @@ export interface CacheConfig {
 }
 /**
  * What a host configures for one codec, under its name in the configuration's
- * `codecs` block. Every key is optional; every one names a constant the host
- * would otherwise pass on the command line or leave at its default.
+ * `codecs` block.
  *
  * This interface was referenced by `undefined`'s JSON-Schema definition
  * via the `patternProperty` "^[a-z][a-z0-9-]{0,63}$".
@@ -356,13 +418,46 @@ export interface CodecConfig {
    */
   asker_env?: EnvName | null | undefined;
   /**
-   * The variable the run is read from, when a frame does not name it.
-   */
-  run_env?: EnvName | null | undefined;
-  /**
    * The variable what the member's questions are about is read from.
    */
   about_env?: EnvName | null | undefined;
+  /**
+   * Object keys joined by `.`: the path to one field of a record.
+   */
+  select: string;
+  /**
+   * The protocol's entries, keyed by the selected field's value.
+   */
+  frames: {
+    [k: string]: FrameConfig;
+  };
+}
+/**
+ * One selected frame in a configured codec.
+ */
+export interface FrameConfig {
+  /**
+   * <namespace>.<name>@<version>: which schema a message is.
+   */
+  schema: string;
+  /**
+   * Actions tried in order; the first whose condition holds is applied.
+   */
+  bindings: Binding[];
+}
+/**
+ * Equality against one frame field.
+ */
+export interface FieldEquals {
+  /**
+   * Object keys joined by `.`: the path to one field of a record.
+   */
+  field: string;
+  /**
+   * A JSON scalar. SDKs intentionally expose this as their arbitrary-JSON
+   * type because its runtime type participates in equality.
+   */
+  equals: unknown;
 }
 
 const $TransportConfig: z.ZodType = z.looseObject({
@@ -461,11 +556,49 @@ const $CodecConfig: z.ZodType = z.strictObject({
   reply_window_seconds: anyOf([z.int().gte(1), z.null()]).optional(),
   session_env: anyOf([z.lazy(() => $EnvName), z.null()]).optional(),
   asker_env: anyOf([z.lazy(() => $EnvName), z.null()]).optional(),
-  run_env: anyOf([z.lazy(() => $EnvName), z.null()]).optional(),
   about_env: anyOf([z.lazy(() => $EnvName), z.null()]).optional(),
+  select: z.lazy(() => $FieldPath),
+  frames: z.record(
+    z.string(),
+    z.lazy(() => $FrameConfig),
+  ),
 });
 
 const $EnvName: z.ZodType = z.string().regex(new RegExp("^[A-Za-z_][A-Za-z0-9_]{0,127}$", "u"));
+
+const $FrameConfig: z.ZodType = z.strictObject({
+  schema: z.lazy(() => $SchemaId),
+  bindings: z.array(z.lazy(() => $Binding)),
+});
+
+const $Binding: z.ZodType = z.intersection(
+  z.looseObject({ when: anyOf([z.lazy(() => $FieldEquals), z.null()]).optional() }),
+  oneOf([
+    z.looseObject({
+      response: z.unknown().refine((value) => value !== undefined, { message: "required" }),
+      do: z.literal("answer"),
+    }),
+    z.looseObject({ message: z.string(), do: z.literal("refuse") }),
+    z.looseObject({
+      record: z.unknown().refine((value) => value !== undefined, { message: "required" }),
+      response: z.unknown().optional(),
+      fail: anyOf([z.string(), z.null()]).optional(),
+      do: z.literal("raise"),
+    }),
+    z.looseObject({
+      record: z.unknown().refine((value) => value !== undefined, { message: "required" }),
+      blocking: z.boolean().optional(),
+      response: z.unknown().refine((value) => value !== undefined, { message: "required" }),
+      unanswered: z.unknown().refine((value) => value !== undefined, { message: "required" }),
+      do: z.literal("ask"),
+    }),
+  ]),
+);
+
+const $FieldEquals: z.ZodType = z.strictObject({
+  field: z.lazy(() => $FieldPath),
+  equals: z.unknown().refine((value) => value !== undefined, { message: "required" }),
+});
 
 const $SchemaLink: z.ZodType = z
   .string()

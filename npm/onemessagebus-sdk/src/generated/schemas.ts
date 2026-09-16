@@ -8,11 +8,6 @@ export { AgentEventEnvelopeV2 as EventEnvelopeV2 } from "./messages/agent-event-
 export { AgentEventFilterV1 as EventFilterV1 } from "./messages/agent-event-filter-1.js";
 export { AgentLabelsV1 as LabelsV1 } from "./messages/agent-labels-1.js";
 export { AgentNoteV1 as NoteV1 } from "./messages/agent-note-1.js";
-export { AgentOnejudgeFrameAssessV6 as OnejudgeFrameAssessV6 } from "./messages/agent-onejudge-frame-assess-6.js";
-export { AgentOnejudgeFrameJudgeV6 as OnejudgeFrameJudgeV6 } from "./messages/agent-onejudge-frame-judge-6.js";
-export { AgentOnejudgeFrameRespondV6 as OnejudgeFrameRespondV6 } from "./messages/agent-onejudge-frame-respond-6.js";
-export { AgentOnejudgeFrameSupervisorV6 as OnejudgeFrameSupervisorV6 } from "./messages/agent-onejudge-frame-supervisor-6.js";
-export { AgentOnejudgeFrameUserV6 as OnejudgeFrameUserV6 } from "./messages/agent-onejudge-frame-user-6.js";
 export { AgentPlannerSurfaceV1 as PlannerSurfaceV1 } from "./messages/agent-planner-surface-1.js";
 export { AgentQueuedCommandsV1 as QueuedCommandsV1 } from "./messages/agent-queued-commands-1.js";
 export { AgentQueuedReplyV1 as QueuedReplyV1 } from "./messages/agent-queued-reply-1.js";
@@ -28,11 +23,6 @@ export { AgentEventEnvelopeV2 as EventEnvelope } from "./messages/agent-event-en
 export { AgentEventFilterV1 as EventFilter } from "./messages/agent-event-filter-1.js";
 export { AgentLabelsV1 as Labels } from "./messages/agent-labels-1.js";
 export { AgentNoteV1 as Note } from "./messages/agent-note-1.js";
-export { AgentOnejudgeFrameAssessV6 as OnejudgeFrameAssess } from "./messages/agent-onejudge-frame-assess-6.js";
-export { AgentOnejudgeFrameJudgeV6 as OnejudgeFrameJudge } from "./messages/agent-onejudge-frame-judge-6.js";
-export { AgentOnejudgeFrameRespondV6 as OnejudgeFrameRespond } from "./messages/agent-onejudge-frame-respond-6.js";
-export { AgentOnejudgeFrameSupervisorV6 as OnejudgeFrameSupervisor } from "./messages/agent-onejudge-frame-supervisor-6.js";
-export { AgentOnejudgeFrameUserV6 as OnejudgeFrameUser } from "./messages/agent-onejudge-frame-user-6.js";
 export { AgentPlannerSurfaceV1 as PlannerSurface } from "./messages/agent-planner-surface-1.js";
 export { AgentQueuedCommandsV1 as QueuedCommands } from "./messages/agent-queued-commands-1.js";
 export { AgentQueuedReplyV1 as QueuedReply } from "./messages/agent-queued-reply-1.js";

@@ -1,11 +1,11 @@
 //! The agent note contract: a role-addressed correction delivered into a running
 //! two-party conversation, as the first message family over the core's inbox.
 //!
-//! The shapes are `onejudge::note`'s at release 0.8.1, moved here as they were —
+//! These shapes moved here unchanged from their original producer —
 //! the same names, the same serde shapes and the same refusals — so that
-//! `onejudge`, `oneagentgraph` and `onepipeline` re-export one declaration instead of
-//! each carrying the seam. `tests/golden/onejudge-0.8.1-note.json` holds the bytes
-//! and the refusal words to what `onejudge`'s own source produced.
+//! every stack consumer re-exports one declaration instead of
+//! each carrying the seam. The golden fixture holds the original bytes and
+//! refusal words.
 //!
 //! * A [`Note`] is a [`Message`] (`agent.note@1`): who it is for ([`Addressee`]), what
 //!   the addressee reads ([`NoteText`]), and the property it binds, if any
@@ -19,10 +19,10 @@
 //!
 //! What a conversation *does* with a delivered note — reopen the worker's turn,
 //! re-take the supervisor's decision — is the conversation's, and stays in
-//! `onejudge`. So does routing: the inbox promises only that a note reaches
+//! its original producer. So does routing: the inbox promises only that a note reaches
 //! [`Inbox::take`] or its sender learns why not.
 //!
-//! # Where this departs from `onejudge::note`
+//! # Where this departs from the original module
 //!
 //! [`Notes::send`] is the core's `Sender::send`, so it answers the core's
 //! [`InboxUndelivered`] rather than this module's [`Undelivered`];
@@ -30,7 +30,7 @@
 //! back into the variant it was, so a caller keeps its old error with one
 //! `.map_err(Into::into)`. [`NoteInbox`]'s `delivered()` is [`NoteInboxExt`]'s,
 //! re-exported by [`prelude`], because a crate cannot add a method to the core's
-//! type. [`worker_block`] is public, where `onejudge` kept it to itself.
+//! type. [`worker_block`] is public, where the original module kept it private.
 //!
 //! # Example
 //!
@@ -324,7 +324,7 @@ impl Note {
     /// If `text` is empty or whitespace.
     #[must_use]
     pub fn to(addressee: Addressee, text: impl Into<String>) -> Self {
-        // llmlint: ignore[no_panics_on_recoverable_errors] Contract N moves `Note::to` from `onejudge::note` at 0.8.1 with the same signature and its documented panic, for a caller holding a literal where blank text is a programming error; `Note::new` beside it is the `Result` for text from outside, and consumers call `to` today.
+        // llmlint: ignore[no_panics_on_recoverable_errors] Contract N preserves `Note::to` with the same signature and its documented panic, for a caller holding a literal where blank text is a programming error; `Note::new` beside it is the `Result` for text from outside, and consumers call `to` today.
         Note::new(addressee, text).expect("a note carries text")
     }
 
@@ -611,7 +611,7 @@ impl From<InboxUndelivered> for Undelivered {
 /// The block a party is handed when notes reach it, framed by the role each note
 /// is addressed to. Empty when `notes` is empty.
 ///
-/// Public here, where `onejudge` kept it to its own crate: its engine renders a
+/// Public here, where the original module kept it private: consumers render a
 /// worker's turn with it, and a copy left behind there is a rendering that drifts.
 #[must_use]
 pub fn worker_block(notes: &[DeliveredNote]) -> String {

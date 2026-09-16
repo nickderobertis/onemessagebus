@@ -52,7 +52,16 @@ async def scratch(binary: Path, tmp_path_factory: pytest.TempPathFactory) -> Pat
         f"transport: {{kind: local, dir: {directory / 'channel'}}}\n"
         "profile: planner-channel\n"
         "queues:\n"
-        "  greetings: {schema: demo.greeting@1}\n",
+        "  greetings: {schema: demo.greeting@1}\n"
+        "codecs:\n"
+        "  example:\n"
+        "    select: kind\n"
+        "    frames:\n"
+        "      finding:\n"
+        "        schema: agent.planner-surface@1\n"
+        "        bindings:\n"
+        "          - do: answer\n"
+        "            response: {completion: false}\n",
         encoding="utf-8",
     )
     registry = ClientConfig(binary=binary, registry=directory / "registry", cwd=directory)
