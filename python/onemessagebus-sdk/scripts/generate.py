@@ -123,7 +123,7 @@ def pascal(word: str) -> str:
 
 
 def module_for(schema_id: str) -> str:
-    """`agent.onejudge-frame.judge@6` → `agent_onejudge_frame_judge_v6`."""
+    """`example.frame.notice@3` becomes `example_frame_notice_v3`."""
     family, version = schema_id.rsplit("@", 1)
     return f"{re.sub(r'[^A-Za-z0-9]+', '_', family).lower()}_v{version}"
 

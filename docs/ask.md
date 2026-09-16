@@ -137,7 +137,7 @@ pending question's correlation on the reply where it carries one.
   `reason` string; here the shape is unrepresentable instead — a timeout is
   `Answer::Timeout`, and there is no `R` in it.
 - **A reply was claimed by whichever reader arrived next.** On a live run a
-  re-ask was handed a monitor's live graph edit addressed to the engine, because
+  re-ask was handed a observer's live graph edit addressed to the engine, because
   it happened to be the next reader of the reply queue. The wrapper minted a
   correlation token per question, asked the manager to echo it inside the
   ruling's `message`, and discarded rulings that did not. Here the correlation is

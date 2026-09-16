@@ -101,8 +101,7 @@ export const SURFACE = {
 /**
  * A configuration over a local transport in `dir/channel`: the planner channel's
  * queues; `greetings`, typed `demo.greeting@1`; `judged`, whose validator refuses
- * a record that does not say `quiet`; and the onejudge codec reading its run from
- * `TEST_SERVE_RUN`.
+ * a record that does not say `quiet`; and one configured example codec.
  */
 export function writeConfig(dir: string): string {
   const path = join(dir, "onemessagebus.yaml");
@@ -119,7 +118,17 @@ export function writeConfig(dir: string): string {
       "validators:",
       `  - {on: judged, kind: command, command: [sh, -c, ${JSON.stringify(judge)}]}`,
       "codecs:",
-      "  onejudge: {reply_window_seconds: 1, run_env: TEST_SERVE_RUN, asker_env: TEST_SERVE_ASKER, session_env: TEST_SERVE_SESSION}",
+      "  example:",
+      "    reply_window_seconds: 1",
+      "    asker_env: TEST_SERVE_ASKER",
+      "    session_env: TEST_SERVE_SESSION",
+      "    select: kind",
+      "    frames:",
+      "      finding:",
+      "        schema: agent.planner-surface@1",
+      "        bindings:",
+      "          - do: answer",
+      "            response: {completion: false}",
       "",
     ].join("\n"),
   );
@@ -133,7 +142,7 @@ export function baseConfig(dir: string): ClientConfig {
     config: writeConfig(dir),
     registry: join(dir, "registry"),
     cwd: dir,
-    env: { TEST_SERVE_RUN: "r-7", CODEX_ALT_HOME: "/nowhere/codex-alt" },
+    env: {},
   };
 }
 

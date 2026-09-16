@@ -159,7 +159,7 @@ const EVERY_OPTION: Record<CapabilityMethod, (client: Client, v: typeof VALUES) 
   serve: (c, v) =>
     c.serve({
       queue: v.queue,
-      codec: "onejudge",
+      codec: "example",
       sessionSeconds: v.sessionSeconds,
       asker: v.asker,
       file: v.file,

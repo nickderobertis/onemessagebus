@@ -6,11 +6,6 @@ import { AgentEventEnvelopeV2 } from "./agent-event-envelope-2.js";
 import { AgentEventFilterV1 } from "./agent-event-filter-1.js";
 import { AgentLabelsV1 } from "./agent-labels-1.js";
 import { AgentNoteV1 } from "./agent-note-1.js";
-import { AgentOnejudgeFrameAssessV6 } from "./agent-onejudge-frame-assess-6.js";
-import { AgentOnejudgeFrameJudgeV6 } from "./agent-onejudge-frame-judge-6.js";
-import { AgentOnejudgeFrameRespondV6 } from "./agent-onejudge-frame-respond-6.js";
-import { AgentOnejudgeFrameSupervisorV6 } from "./agent-onejudge-frame-supervisor-6.js";
-import { AgentOnejudgeFrameUserV6 } from "./agent-onejudge-frame-user-6.js";
 import { AgentPlannerSurfaceV1 } from "./agent-planner-surface-1.js";
 import { AgentQueuedCommandsV1 } from "./agent-queued-commands-1.js";
 import { AgentQueuedReplyV1 } from "./agent-queued-reply-1.js";
@@ -28,26 +23,6 @@ export { AgentEventEnvelopeV2, AgentEventEnvelopeV2Schema } from "./agent-event-
 export { AgentEventFilterV1, AgentEventFilterV1Schema } from "./agent-event-filter-1.js";
 export { AgentLabelsV1, AgentLabelsV1Schema } from "./agent-labels-1.js";
 export { AgentNoteV1, AgentNoteV1Schema } from "./agent-note-1.js";
-export {
-  AgentOnejudgeFrameAssessV6,
-  AgentOnejudgeFrameAssessV6Schema,
-} from "./agent-onejudge-frame-assess-6.js";
-export {
-  AgentOnejudgeFrameJudgeV6,
-  AgentOnejudgeFrameJudgeV6Schema,
-} from "./agent-onejudge-frame-judge-6.js";
-export {
-  AgentOnejudgeFrameRespondV6,
-  AgentOnejudgeFrameRespondV6Schema,
-} from "./agent-onejudge-frame-respond-6.js";
-export {
-  AgentOnejudgeFrameSupervisorV6,
-  AgentOnejudgeFrameSupervisorV6Schema,
-} from "./agent-onejudge-frame-supervisor-6.js";
-export {
-  AgentOnejudgeFrameUserV6,
-  AgentOnejudgeFrameUserV6Schema,
-} from "./agent-onejudge-frame-user-6.js";
 export { AgentPlannerSurfaceV1, AgentPlannerSurfaceV1Schema } from "./agent-planner-surface-1.js";
 export { AgentQueuedCommandsV1, AgentQueuedCommandsV1Schema } from "./agent-queued-commands-1.js";
 export { AgentQueuedReplyV1, AgentQueuedReplyV1Schema } from "./agent-queued-reply-1.js";
@@ -76,11 +51,6 @@ export const MESSAGES = {
   "agent.event-filter@1": AgentEventFilterV1,
   "agent.labels@1": AgentLabelsV1,
   "agent.note@1": AgentNoteV1,
-  "agent.onejudge-frame.assess@6": AgentOnejudgeFrameAssessV6,
-  "agent.onejudge-frame.judge@6": AgentOnejudgeFrameJudgeV6,
-  "agent.onejudge-frame.respond@6": AgentOnejudgeFrameRespondV6,
-  "agent.onejudge-frame.supervisor@6": AgentOnejudgeFrameSupervisorV6,
-  "agent.onejudge-frame.user@6": AgentOnejudgeFrameUserV6,
   "agent.planner-surface@1": AgentPlannerSurfaceV1,
   "agent.queued-commands@1": AgentQueuedCommandsV1,
   "agent.queued-reply@1": AgentQueuedReplyV1,

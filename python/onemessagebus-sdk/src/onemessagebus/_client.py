@@ -720,7 +720,7 @@ class Client:
         transport_dir: StrPath | None = None,
         registry: StrPath | None = None,
     ) -> list[dict[str, Any]]:
-        """Serve a member's judge side over `frames`, answering each frame's response."""
+        """Serve a member protocol over `frames`, answering each frame's response."""
         values = {
             "queue": queue,
             "codec": codec,

@@ -226,8 +226,8 @@ async def test_the_queue_verbs(client: Client, scratch: Path) -> None:
     with pytest.raises(BusRefused, match="declares no queue its replies"):
         await client.reply("greetings", None, {})
 
-    assert await client.serve("surfaces", "onejudge", []) == []
-    with pytest.raises(BusRefused, match="`nope` is not a codec this build links"):
+    assert await client.serve("surfaces", "example", []) == []
+    with pytest.raises(BusRefused, match="`nope` is not declared by the configuration"):
         await client.serve("surfaces", "nope", [])
 
 

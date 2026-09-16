@@ -8,8 +8,8 @@ use std::sync::{mpsc, LazyLock};
 use std::time::{Duration, Instant};
 
 use onemessagebus::{
-    Answer, Asker, Bus, BusError, Codec, CodecConfig, CodecFailure, CodecName, Config, ConfigError,
-    EnvName, Layouts, QueueName, ServeError, ServeOptions, ServeSession, Served, TransportKinds,
+    Answer, Asker, Bus, BusError, Codec, CodecFailure, CodecName, Config, ConfigError, Layouts,
+    QueueName, ServeError, ServeOptions, ServeSession, Served, TransportKinds,
 };
 use serde_json::{json, Value};
 
@@ -334,7 +334,7 @@ fn a_refused_or_failed_frame_ends_the_session_with_nothing_it_asked_marked() {
     );
 }
 
-const CONTRACT: &str = include_str!("../../../docs/contract.md");
+const CONTRACT: &str = include_str!("../../../docs/codecs.md");
 
 /// The fenced block `docs/contract.md` tags `<!-- fixture: name -->`.
 fn fixture(name: &str) -> String {
@@ -358,24 +358,11 @@ fn the_documented_codecs_block_loads_by_name_into_the_config_schema_the_sdk_bund
         fixture("codecs-config")
     );
     let config = Config::parse(&text).expect("the documented codecs block loads");
-    let block = &config.codecs[&"onejudge".parse::<CodecName>().expect("a codec name")];
+    let block = &config.codecs[&"example".parse::<CodecName>().expect("a codec name")];
     assert_eq!(block.queue, Some(queue("surfaces")));
     assert_eq!(block.reply_window_seconds.map(u64::from), Some(3000));
-    let named = |env: &Option<EnvName>| env.as_ref().map(|name| name.as_str().to_owned());
-    assert_eq!(
-        [
-            named(&block.session_env),
-            named(&block.asker_env),
-            named(&block.run_env),
-            named(&block.about_env)
-        ],
-        [
-            Some("ONEPIPELINE_SERVE_SESSION_SECONDS".to_owned()),
-            Some("ONEPIPELINE_CHANNEL_ASKER".to_owned()),
-            Some("ONEPIPELINE_RUN_ID".to_owned()),
-            Some("ORCHESTRATOR_ASK_MANAGER_NODE".to_owned())
-        ]
-    );
+    assert_eq!(block.select, "op");
+    assert!(!block.frames.is_empty());
     let refused = Config::parse(&text.replace("about_env", "node_env")).expect_err("unknown");
     assert!(
         refused.to_string().contains("unknown field `node_env`"),
@@ -399,30 +386,26 @@ fn a_codecs_block_loads_by_name_and_is_refused_by_the_key_it_is_wrong_at() {
         )
     };
     let config = Config::parse(&text(
-        "  onejudge: {queue: surfaces, reply_window_seconds: 5, session_env: SERVE_SESSION, asker_env: CHANNEL_ASKER, run_env: RUN_ID, about_env: NODE}\n",
+        "  example:\n    queue: surfaces\n    reply_window_seconds: 5\n    session_env: SERVE_SESSION\n    asker_env: CHANNEL_ASKER\n    about_env: NODE\n    select: op\n    frames:\n      hello:\n        schema: example.hello@1\n        bindings:\n          - do: answer\n            response: {ok: true}\n",
     ))
     .expect("the block loads");
-    let name: CodecName = "onejudge".parse().expect("a codec name");
-    let settings: &CodecConfig = &config.codecs[&name];
+    let name: CodecName = "example".parse().expect("a codec name");
+    let settings = &config.codecs[&name];
     assert_eq!(settings.queue, Some(queue("surfaces")));
     assert_eq!(settings.reply_window_seconds.map(u64::from), Some(5));
-    assert_eq!(
-        settings.run_env,
-        Some("RUN_ID".parse::<EnvName>().expect("a name"))
-    );
     let written = serde_norway::to_string(&config).expect("writes");
     assert_eq!(Config::parse(&written).expect("reads back"), config);
 
     for (codecs, names) in [
-        ("  onejudge: {window: 5}\n", "unknown field `window`"),
-        ("  onejudge: {reply_window_seconds: 0}\n", "nonzero"),
-        ("  onejudge: {run_env: \"1RUN\"}\n", "starts with a digit"),
+        ("  example: {window: 5}\n", "unknown field `window`"),
+        ("  example: {reply_window_seconds: 0}\n", "nonzero"),
+        ("  example: {run_env: RUN}\n", "unknown field `run_env`"),
         (
-            "  onejudge: {asker_env: \"CHANNEL-ASKER\"}\n",
+            "  example: {asker_env: \"CHANNEL-ASKER\"}\n",
             "ASCII letters, digits and `_`",
         ),
-        ("  OneJudge: {}\n", "does not start with a lowercase letter"),
-        ("  onejudge: {queue: \"no queue\"}\n", "no queue"),
+        ("  Example: {}\n", "does not start with a lowercase letter"),
+        ("  example: {queue: \"no queue\"}\n", "no queue"),
     ] {
         let refused = Config::parse(&text(codecs)).expect_err(codecs);
         assert!(
@@ -438,7 +421,31 @@ fn a_codecs_block_loads_by_name_and_is_refused_by_the_key_it_is_wrong_at() {
         let refused = text.parse::<CodecName>().expect_err(text);
         assert!(refused.to_string().contains(names), "{text}: {refused}");
     }
-    assert!("".parse::<EnvName>().is_err());
-    assert!("A".repeat(129).parse::<EnvName>().is_err());
-    assert_eq!(name.to_string(), "onejudge");
+    assert_eq!(name.to_string(), "example");
+}
+
+#[test]
+fn binding_semantics_are_checked_at_load_with_their_full_location() {
+    let config = |binding: &str| {
+        Config::parse(&format!(
+            "version: 1\ntransport: {{kind: memory}}\ncodecs:\n  example:\n    select: op\n    frames:\n      hello:\n        schema: example.hello@1\n        bindings:\n          - {binding}\n"
+        ))
+        .expect_err("binding is malformed")
+        .to_string()
+    };
+    for (binding, reason) in [
+        ("when: {field: '', equals: x}\n            do: answer\n            response: {}", "when.field"),
+        ("when: {field: mood, equals: {nested: x}}\n            do: answer\n            response: {}", "when.equals"),
+        ("do: raise\n            record: {}", "exactly one"),
+        ("do: raise\n            record: {}\n            response: {}\n            fail: bad", "exactly one"),
+        ("do: answer\n            response: '{reply.value}'", "only allowed in an ask response"),
+        ("do: ask\n            record: {}\n            response: {value: {from: frame.value}}\n            unanswered: {}", "under `reply`"),
+    ] {
+        let failure = config(binding);
+        assert!(
+            failure.contains("codecs.example.frames.hello.bindings[0]")
+                && failure.contains(reason),
+            "{failure}"
+        );
+    }
 }

@@ -130,6 +130,25 @@ class EnvName(RootModel[str]):
     """
 
 
+class FieldEquals(BaseModel):
+    """
+    Equality against one frame field.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    equals: Any
+    """
+    A JSON scalar. SDKs intentionally expose this as their arbitrary-JSON
+    type because its runtime type participates in equality.
+    """
+    field: str
+    """
+    Dot-separated object keys.
+    """
+
+
 class FieldPath(RootModel[str]):
     root: str = Field(..., pattern="^[^.]+(\\.[^.]+)*$")
     """
@@ -849,6 +868,90 @@ class AskedTimeout(BaseModel):
     """
 
 
+class BindingAnswer(BaseModel):
+    """
+    Write a response and do nothing on the bus.
+    """
+
+    do: Literal["answer"]
+    response: Any
+    """
+    The frame response as arbitrary JSON, preserving template value types.
+    """
+    when: FieldEquals | None = None
+    """
+    The condition; absent means this binding always holds.
+    """
+
+
+class BindingAsk(BaseModel):
+    """
+    Ask a question and relay its ruling.
+    """
+
+    blocking: bool | None = False
+    """
+    Whether the question blocks its queue.
+    """
+    do: Literal["ask"]
+    record: Any
+    """
+    The question asked on the served queue as arbitrary JSON.
+    """
+    response: Any
+    """
+    The arbitrary-JSON response resolved from a ruling.
+    """
+    unanswered: Any
+    """
+    The arbitrary-JSON response used when no ruling can be resolved.
+    """
+    when: FieldEquals | None = None
+    """
+    The condition; absent means this binding always holds.
+    """
+
+
+class BindingRaise(BaseModel):
+    """
+    Raise a record, then respond or fail.
+    """
+
+    do: Literal["raise"]
+    fail: str | None = None
+    """
+    The failure written after raising.
+    """
+    record: Any
+    """
+    The record raised on the served queue as arbitrary JSON.
+    """
+    response: Any | None = None
+    """
+    The response written after raising as arbitrary JSON.
+    """
+    when: FieldEquals | None = None
+    """
+    The condition; absent means this binding always holds.
+    """
+
+
+class BindingRefuse(BaseModel):
+    """
+    Refuse the frame and write nothing.
+    """
+
+    do: Literal["refuse"]
+    message: str
+    """
+    The refusal written on stderr.
+    """
+    when: FieldEquals | None = None
+    """
+    The condition; absent means this binding always holds.
+    """
+
+
 class CachedBundle(BaseModel):
     """
     One entry of the cache, as `schemas` lists it.
@@ -923,45 +1026,6 @@ class ClaimedRecord(BaseModel):
     record: Any
     """
     The record.
-    """
-
-
-class CodecConfig(BaseModel):
-    """
-    What a host configures for one codec, under its name in the configuration's
-    `codecs` block. Every key is optional; every one names a constant the host
-    would otherwise pass on the command line or leave at its default.
-    """
-
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    about_env: EnvName | None = None
-    """
-    The variable what the member's questions are about is read from.
-    """
-    asker_env: EnvName | None = None
-    """
-    The variable the asker is read from, when `--asker` is not given.
-    """
-    queue: str | None = None
-    """
-    The queue the codec raises and asks on; `serve <queue>` must name the
-    same one.
-    """
-    reply_window_seconds: int | None = Field(None, ge=1)
-    """
-    Whole seconds a question the codec asks waits for its ruling before the
-    codec answers without one.
-    """
-    run_env: EnvName | None = None
-    """
-    The variable the run is read from, when a frame does not name it.
-    """
-    session_env: EnvName | None = None
-    """
-    The variable the session bound is read from, in whole seconds, when
-    `--session-seconds` is not given.
     """
 
 
@@ -1597,6 +1661,29 @@ class Filter(BaseModel):
     """
 
 
+class FrameConfig(BaseModel):
+    """
+    One selected frame in a configured codec.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    bindings: list[BindingAnswer | BindingRefuse | BindingRaise | BindingAsk]
+    """
+    Actions tried in order; the first whose condition holds is applied.
+    """
+    schema_: str = Field(
+        ...,
+        alias="schema",
+        pattern="^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$",
+        title="SchemaId",
+    )
+    """
+    The registered schema that validates this frame.
+    """
+
+
 class PolicyConfig(BaseModel):
     """
     The policy keys a configuration sets on a queue.
@@ -1722,6 +1809,48 @@ class ValidatorConfig(BaseModel):
     when: When1 | Predicate | None = None
     """
     Which of them it judges; every one when absent.
+    """
+
+
+class CodecConfig(BaseModel):
+    """
+    What a host configures for one codec, under its name in the configuration's
+    `codecs` block.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    about_env: EnvName | None = None
+    """
+    The variable what the member's questions are about is read from.
+    """
+    asker_env: EnvName | None = None
+    """
+    The variable the asker is read from, when `--asker` is not given.
+    """
+    frames: dict[str, FrameConfig]
+    """
+    The protocol's entries, keyed by the selected field's value.
+    """
+    queue: str | None = None
+    """
+    The queue the codec raises and asks on; `serve <queue>` must name the
+    same one.
+    """
+    reply_window_seconds: int | None = Field(None, ge=1)
+    """
+    Whole seconds a question the codec asks waits for its ruling before the
+    codec answers without one.
+    """
+    select: str
+    """
+    The frame field whose string value selects an entry in [`Self::frames`].
+    """
+    session_env: EnvName | None = None
+    """
+    The variable the session bound is read from, in whole seconds, when
+    `--session-seconds` is not given.
     """
 
 

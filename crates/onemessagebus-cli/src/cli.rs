@@ -28,15 +28,13 @@ use onemessagebus::sdk_schema::{
 };
 use onemessagebus::{
     Address, Admits, Answer, AskOptions, Asker, BackendError, Bus, BusError, Carry, CheckError,
-    CodecName, Config, ConsumerName, Correlation, Emitter, EnvName, Filter, Freshness, Layouts,
-    Lifetime, LinkError, LinkResolver, Merge, Open, Outcome, Pending, Position, Predicate,
+    CodecName, Config, ConfiguredCodec, ConsumerName, Correlation, Emitter, Filter, Freshness,
+    Layouts, Lifetime, LinkError, LinkResolver, Merge, Open, Outcome, Pending, Position, Predicate,
     QueueError, QueueName, QueueStatus, Redactor, Resolved, SchemaId, SchemaLink, ServeError,
     ServeOptions, Served, Spool, Subscription, TransportKinds, Undelivered, Vocabulary,
     DEFAULT_REPLY_WINDOW, SPOOL_WAIT,
 };
 use onemessagebus_agent::channel::{PlannerChannel, PLANNER_CHANNEL};
-use onemessagebus_agent::codec::onejudge::{self, Onejudge};
-use onemessagebus_agent::codec::CODECS;
 use onemessagebus_agent::Agent;
 use serde_json::{Map, Value};
 
@@ -107,7 +105,7 @@ enum Command {
     /// Judge a record by a queue's validators, appending nothing, and print the
     /// verdict.
     Validate(ValidateArgs),
-    /// Serve a member's judge side: frames of a codec's protocol in, one
+    /// Serve a member protocol: frames of a codec's protocol in, one
     /// response per frame out, over a queue — or, with `--resident`, hold the
     /// configured transport open and answer every capability over a unix socket.
     Serve(ServeArgs),
@@ -1508,26 +1506,10 @@ fn configuration(args: &BusArgs) -> Result<Config, Refusal> {
             ))
         }
     };
-    // The configuration's codec names are the binary's to say, as `--codec`'s are.
-    if let Some(name) = config.codecs.keys().find(|name| !CODECS.contains(name)) {
-        return Err(invalid(format!(
-            "codecs.{name}: `{name}` is not a codec this build links; it links: {}",
-            linked_codecs()
-        )));
-    }
     Ok(match &args.transport_dir {
         Some(dir) => config.with_transport_dir(dir),
         None => config,
     })
-}
-
-/// The codecs this build links, comma-separated.
-fn linked_codecs() -> String {
-    CODECS
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 fn parse_queue(text: &str) -> Result<QueueName, Refusal> {
@@ -1941,17 +1923,21 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), 
     let name: CodecName = codec
         .parse()
         .map_err(|failure| invalid(format!("--codec: {failure}")))?;
-    if !CODECS.contains(&name) {
-        return Err(invalid(format!(
-            "--codec: `{name}` is not a codec this build links; it links: {}",
-            linked_codecs()
-        )));
-    }
     let (config, held) = configured(&args.bus, io)?;
     // Before anything else, and never waiting on the network for a link the
     // cache already holds a satisfying entry of, whatever its age.
     let linked = linked(&config, Freshness::CachedFirst)?;
-    let settings = config.codecs.get(&name).cloned().unwrap_or_default();
+    let settings = config.codecs.get(&name).cloned().ok_or_else(|| {
+        invalid(format!(
+            "--codec: `{name}` is not declared by the configuration; declared codecs: {}",
+            config
+                .codecs
+                .keys()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    })?;
     if let Some(configured) = &settings.queue {
         if configured != &queue {
             return Err(invalid(format!(
@@ -1960,10 +1946,6 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), 
             )));
         }
     }
-    let session_env = settings
-        .session_env
-        .as_ref()
-        .map_or(onejudge::SESSION_ENV, EnvName::as_str);
     let bound = "a whole number of seconds greater than zero";
     let session = match args.session_seconds {
         Some(0) => {
@@ -1973,9 +1955,13 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), 
             )))
         }
         Some(seconds) => Some(seconds),
-        None => match std::env::var_os(session_env) {
+        None => match settings
+            .session_env
+            .as_ref()
+            .and_then(|env| std::env::var_os(env.as_str()).map(|value| (env, value)))
+        {
             None => None,
-            Some(value) => Some(
+            Some((session_env, value)) => Some(
                 value
                     .to_str()
                     .and_then(|text| text.trim().parse::<u64>().ok())
@@ -1989,13 +1975,11 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), 
             ),
         },
     };
-    let asker_env = settings
-        .asker_env
-        .as_ref()
-        .map_or(onejudge::ASKER_ENV, EnvName::as_str);
     let asker = match &args.asker {
         Some(value) => Some(Asker::named(value, "--asker")),
-        None => std::env::var_os(asker_env).map(|value| Asker::named(&value, asker_env)),
+        None => settings.asker_env.as_ref().and_then(|env| {
+            std::env::var_os(env.as_str()).map(|value| Asker::named(&value, env.as_str()))
+        }),
     }
     .transpose()
     .map_err(|failure| invalid(failure.to_string()))?;
@@ -2016,11 +2000,6 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), 
             ),
         },
     };
-    let run_env = settings.run_env.clone().unwrap_or_else(|| {
-        onejudge::RUN_ENV
-            .parse()
-            .expect("the linked onejudge run variable is a valid environment name")
-    });
     let options = ServeOptions {
         asker,
         about,
@@ -2045,9 +2024,15 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), 
     };
     let bus = bind(&config, held, &linked, &args.bus)?;
     bus.queue(&queue).map_err(bus_refusal)?;
-    let mut codec = Onejudge::new()
-        .with_run_env(run_env.clone(), optional_env_text(run_env.as_str())?)
-        .with_alternate_home(optional_env_text(onejudge::CODEX_ALT_HOME_ENV)?);
+    for frame in settings.frames.values() {
+        if bus.registry().schema(&frame.schema).is_none() {
+            return Err(invalid(format!(
+                "codecs.{name}: schema {} is not registered",
+                frame.schema
+            )));
+        }
+    }
+    let mut codec = ConfiguredCodec::new(name, settings).map_err(invalid)?;
     match bus.serve(&queue, &mut codec, &options, input, out) {
         Ok(Served::StreamEnded { .. }) => Ok(()),
         Ok(Served::SessionOver { standing }) => {
@@ -2087,18 +2072,6 @@ fn resident_core(_: &Path, _: &ServeArgs) -> Result<(), Refusal> {
         "serve --resident listens on a unix socket, which this platform does not have; run \
          each verb as its own invocation instead",
     ))
-}
-
-fn optional_env_text(name: &str) -> Result<Option<String>, Refusal> {
-    std::env::var_os(name)
-        .map(|value| {
-            value.into_string().map_err(|value| {
-                invalid(format!(
-                    "{name} is set to a value this host cannot read as text: {value:?}"
-                ))
-            })
-        })
-        .transpose()
 }
 
 fn validate(args: ValidateArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {

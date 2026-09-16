@@ -191,25 +191,28 @@ fn exercised() -> Vec<Exercise> {
                     &TransportKinds::builtin(),
                 )
                 .expect("resolves");
-                let frame = json!({
-                    "op": "supervisor", "task": "onepipeline run `r-1`.", "persona": "p",
-                    "worktree": "/w", "history_name": "h",
-                    "messages": [{ "role": "assistant", "content": "here" }]
-                });
+                let codec_config = onemessagebus::Config::parse(
+                    "version: 1\ntransport: {kind: memory}\ncodecs:\n  example:\n    select: op\n    frames:\n      hello:\n        schema: example.hello@1\n        bindings:\n          - do: answer\n            response: {ok: true}\n",
+                )
+                .expect("codec config loads");
+                let name: onemessagebus::CodecName = "example".parse().expect("a codec name");
+                let mut codec = onemessagebus::ConfiguredCodec::new(
+                    name.clone(),
+                    codec_config.codecs[&name].clone(),
+                )
+                .expect("configured codec");
                 let mut output = Vec::new();
-                let served = bus
+                let refused = bus
                     .serve(
                         &queue("surfaces"),
-                        &mut onemessagebus_agent::codec::onejudge::Onejudge::new(),
+                        &mut codec,
                         &onemessagebus::ServeOptions::default(),
-                        Box::new(std::io::Cursor::new(format!("{frame}\n"))),
+                        Box::new(std::io::Cursor::new("[]\n")),
                         &mut output,
                     )
-                    .expect("served");
-                assert_eq!(served, onemessagebus::Served::StreamEnded { abandoned: 0 });
-                let response: serde_json::Value =
-                    serde_json::from_slice(&output).expect("a response");
-                assert_eq!(response["completion"], json!(false));
+                    .expect_err("a non-object frame is refused");
+                assert!(matches!(refused, onemessagebus::ServeError::Refused(_)));
+                assert!(output.is_empty());
             }),
         ),
         (

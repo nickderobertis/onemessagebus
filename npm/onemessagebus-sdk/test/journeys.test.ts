@@ -427,29 +427,15 @@ for (const transport of TRANSPORTS) {
     });
 
     test("serve answers each frame of a codec session, and refuses an operation it does not serve", async () => {
-      expect(await client.serve({ queue: "surfaces", codec: "onejudge" }, "")).toEqual([]);
-      const [response] = await client.serve({ queue: "surfaces", codec: "onejudge" }, [
-        {
-          op: "supervisor",
-          task: "onepipeline run `r-7`.\nWatch the build.",
-          persona: "A careful monitor.",
-          done_when: "the watch is kept",
-          worktree: "/repo",
-          history_name: "r-7-monitor",
-          messages: [
-            { role: "user", content: "watch" },
-            { role: "assistant", content: "nothing drifted this turn" },
-          ],
-          session: "r-7-user",
-        },
+      expect(await client.serve({ queue: "surfaces", codec: "example" }, "")).toEqual([]);
+      const [response] = await client.serve({ queue: "surfaces", codec: "example" }, [
+        { ...SURFACE, id: 1, queued_at: 1 },
       ]);
       expect(response?.completion).toBe(false);
       const refused = await refusedWith(BusRefused, () =>
-        client.serve({ queue: "surfaces", codec: "onejudge" }, [
-          { op: "assess", prompt: "Identify follow-up work.", messages: [] },
-        ]),
+        client.serve({ queue: "surfaces", codec: "example" }, [{ kind: "unknown" }]),
       );
-      expect(refused.message).toContain("assess");
+      expect(refused.message).toContain("unknown");
     });
 
     test("a profile's Rust-registered message round-trips through its generated schema", async () => {

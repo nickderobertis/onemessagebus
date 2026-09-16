@@ -30,7 +30,7 @@ Three artifacts:
   `transports` listing the kinds a transport can be, `ask` raising a question and
   waiting for the one reply that echoes its correlation, `validate` judging a
   record by a queue's validators before anything is sent, and `serve` answering a
-  `onejudge` member's frames as its judge side. The local transport keeps
+  a configured member protocol's frames. The local transport keeps
   the planner channel's files byte-compatible with `onepipeline`, and a
   distributed one is a plugin rather than a consumer change.
 
