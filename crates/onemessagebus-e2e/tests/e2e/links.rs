@@ -1505,7 +1505,7 @@ fn a_response_past_the_bundle_bound_is_refused_naming_the_bound() {
     assert!(scratch.versions().is_empty());
 }
 
-// llmlint: ignore-block[tests_mirror_real_usage] both journeys to the ignore-end below write into the cache directory: the cache directory is a user-facing input — it is the directory ONEMESSAGEBUS_SCHEMA_CACHE_DIR, XDG_CACHE_HOME or HOME names, shared, editable and possibly written by another release — and what this journey holds is the binary's boundary validation of that input, which no verb can produce a corrupt or unreadable entry to exercise; the binary is still driven only through its command line.
+// llmlint: ignore-block[tests_mirror_real_usage] every journey to the ignore-end below write into the cache directory: the cache directory is a user-facing input — it is the directory ONEMESSAGEBUS_SCHEMA_CACHE_DIR, XDG_CACHE_HOME or HOME names, shared, editable and possibly written by another release — and what this journey holds is the binary's boundary validation of that input, which no verb can produce a corrupt or unreadable entry to exercise; the binary is still driven only through its command line.
 #[cfg(unix)]
 #[test]
 fn a_cache_directory_that_cannot_be_read_is_refused_by_the_verbs_that_report_on_it() {
@@ -1625,6 +1625,62 @@ fn a_cache_entry_past_its_bound_is_passed_over_and_refetched() {
         "the unusable entry was revalidated"
     );
     assert_eq!(scratch.versions(), vec!["8.1"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_cache_write_replaces_a_symbolic_link_at_an_entry_rather_than_following_it() {
+    let scratch = Scratch::new();
+    let origin = Origin::http("8.1");
+    let link = origin.link(Some("8"));
+    assert_eq!(scratch.run(&["schemas", "fetch", &link], None, &[]).code, 0);
+    let entry_dir = std::fs::read_dir(scratch.path("cache"))
+        .expect("the cache")
+        .flatten()
+        .map(|entry| entry.path())
+        .next()
+        .expect("one entry directory");
+
+    // Each file of the entry becomes a link to a file outside the cache.
+    let mut outside = Vec::new();
+    for name in ["8.1.json", "8.1.meta.json"] {
+        let target = scratch.path(&format!("outside-{name}"));
+        std::fs::write(&target, "untouched").expect("a file outside the cache");
+        let entry = entry_dir.join(name);
+        std::fs::remove_file(&entry).expect("the entry file");
+        std::os::unix::fs::symlink(&target, &entry).expect("a symbolic link");
+        outside.push((entry, target));
+    }
+
+    let refreshed = scratch.run(
+        &["schemas", "fetch", &link],
+        None,
+        &[("ONEMESSAGEBUS_SCHEMA_REFRESH", "1")],
+    );
+    assert_eq!(refreshed.code, 0, "{}", refreshed.stderr);
+    for (entry, target) in &outside {
+        assert_eq!(
+            std::fs::read_to_string(target).expect("the outside file"),
+            "untouched",
+            "the write to {} followed its link",
+            entry.display()
+        );
+        assert!(
+            std::fs::symlink_metadata(entry)
+                .expect("the entry")
+                .file_type()
+                .is_file(),
+            "{} is still a link",
+            entry.display()
+        );
+    }
+    assert_eq!(scratch.versions(), vec!["8.1"]);
+    let names: Vec<String> = std::fs::read_dir(&entry_dir)
+        .expect("the entry directory")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names.len(), 2, "a staged write was left behind: {names:?}");
 }
 // llmlint: ignore-end[tests_mirror_real_usage]
 

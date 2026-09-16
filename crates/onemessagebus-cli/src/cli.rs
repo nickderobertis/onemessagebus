@@ -372,7 +372,7 @@ enum SchemasVerb {
         /// The links to resolve: a URL or a path, each with an optional
         /// `@<pin>`; every link `--config` names when none is given.
         #[arg(value_name = "LINK")]
-        links: Vec<String>,
+        links: Vec<SchemaLink>,
         /// The configuration whose `schemas` links are resolved when no link is
         /// named.
         #[arg(long, value_name = "PATH", env = "ONEMESSAGEBUS_CONFIG")]
@@ -965,9 +965,6 @@ fn schemas(args: SchemasArgs, out: &mut impl std::io::Write) -> Result<(), Refus
                     .schemas
             } else {
                 named
-                    .iter()
-                    .map(|text| SchemaLink::parse(text).map_err(link_refusal))
-                    .collect::<Result<_, _>>()?
             };
             let mut report = SchemasFetched { links: Vec::new() };
             let mut unresolved = Vec::new();

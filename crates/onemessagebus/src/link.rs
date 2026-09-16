@@ -1409,7 +1409,8 @@ fn store(
 ) -> Result<(), LinkError> {
     std::fs::create_dir_all(dir).map_err(|failure| cache_error(dir, &failure))?;
     let (body_path, meta_path) = entry_paths(dir, bundle.version());
-    std::fs::write(&body_path, &body.text).map_err(|failure| cache_error(&body_path, &failure))?;
+    write_replacing(&body_path, body.text.as_bytes())
+        .map_err(|failure| cache_error(&body_path, &failure))?;
     write_meta(
         &meta_path,
         &EntryMeta {
@@ -1425,7 +1426,32 @@ fn store(
 fn write_meta(path: &Path, meta: &EntryMeta) -> Result<(), LinkError> {
     let mut text = serde_json::to_string_pretty(meta).unwrap_or_default();
     text.push('\n');
-    std::fs::write(path, text).map_err(|failure| cache_error(path, &failure))
+    write_replacing(path, text.as_bytes()).map_err(|failure| cache_error(path, &failure))
+}
+
+/// Write `bytes` to `path` by way of a file of its own beside it, renamed over
+/// `path` once whole: a reader never sees a half-written entry, and whatever
+/// `path` already is — a symbolic link included — is replaced rather than
+/// followed, so a write stays inside the cache directory.
+fn write_replacing(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("entry");
+    let sequence = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let staged = path.with_file_name(format!(".{name}.{}.{sequence}.tmp", std::process::id()));
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&staged)
+        .and_then(|mut file| file.write_all(bytes))
+        .and_then(|()| std::fs::rename(&staged, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&staged);
+    }
+    written
 }
 
 /// A fetched document and the validators its origin answered with.
