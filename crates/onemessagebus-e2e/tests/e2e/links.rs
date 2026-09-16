@@ -1493,6 +1493,7 @@ fn a_response_past_the_bundle_bound_is_refused_naming_the_bound() {
     assert!(scratch.versions().is_empty());
 }
 
+// llmlint: ignore[tests_mirror_real_usage] the cache directory is a user-facing input — it is the directory ONEMESSAGEBUS_SCHEMA_CACHE_DIR, XDG_CACHE_HOME or HOME names, shared, editable and possibly written by another release — and what this journey holds is the binary's boundary validation of that input, which no verb can produce a corrupt or unreadable entry to exercise; the binary is still driven only through its command line.
 #[cfg(unix)]
 #[test]
 fn a_cache_directory_that_cannot_be_read_is_refused_by_the_verbs_that_report_on_it() {
@@ -1551,6 +1552,7 @@ fn a_cache_directory_that_cannot_be_read_is_refused_by_the_verbs_that_report_on_
     );
 }
 
+// llmlint: ignore[tests_mirror_real_usage] the cache directory is a user-facing input — it is the directory ONEMESSAGEBUS_SCHEMA_CACHE_DIR, XDG_CACHE_HOME or HOME names, shared, editable and possibly written by another release — and what this journey holds is the binary's boundary validation of that input, which no verb can produce a corrupt or unreadable entry to exercise; the binary is still driven only through its command line.
 #[test]
 fn a_cache_entry_past_its_bound_is_passed_over_and_refetched() {
     let scratch = Scratch::new();
@@ -1591,6 +1593,27 @@ fn a_cache_entry_past_its_bound_is_passed_over_and_refetched() {
         scratch.versions().is_empty(),
         "oversized metadata was listed"
     );
+
+    // Metadata whose validator no request could carry is passed over too, and
+    // the link refetched rather than a malformed header sent.
+    let unusable = text.replace(r#""\"8.1\"""#, r#""bad\nvalue""#);
+    assert_ne!(unusable, text, "the metadata records the tag: {text}");
+    std::fs::write(&meta, unusable).expect("rewritten");
+    assert!(
+        scratch.versions().is_empty(),
+        "metadata with an unusable validator was listed"
+    );
+    let refetched = scratch.check(
+        &config,
+        &json!({"hello": 1}),
+        &[("ONEMESSAGEBUS_SCHEMA_TTL", "0")],
+    );
+    assert_eq!(refetched.code, 0, "{}", refetched.stderr);
+    assert!(
+        !origin.seen().last().expect("a request").conditional(),
+        "the unusable entry was revalidated"
+    );
+    assert_eq!(scratch.versions(), vec!["8.1"]);
 }
 
 #[test]

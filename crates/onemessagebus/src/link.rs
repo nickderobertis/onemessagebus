@@ -938,9 +938,44 @@ struct EntryMeta {
     version: BundleVersion,
     confirmed_at: ConfirmedAt,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    etag: Option<String>,
+    etag: Option<Validator>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    last_modified: Option<String>,
+    last_modified: Option<Validator>,
+}
+
+/// A revalidation validator an origin answered with (`ETag`, `Last-Modified`):
+/// only ever one a later request can carry as a header value, whether it came
+/// off the wire or out of a cache file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Validator(String);
+
+/// The longest validator kept; an origin's are a few dozen bytes.
+const MAX_VALIDATOR_BYTES: usize = 512;
+
+impl Validator {
+    fn new(text: &str) -> Option<Self> {
+        (text.len() <= MAX_VALIDATOR_BYTES && ureq::http::HeaderValue::from_str(text).is_ok())
+            .then(|| Self(text.to_owned()))
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Serialize for Validator {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Validator {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Self::new(&text).ok_or_else(|| {
+            serde::de::Error::custom("a validator is not a header value a request could carry")
+        })
+    }
 }
 
 /// One readable cache entry: its metadata, its bundle, and the files holding
@@ -1404,8 +1439,8 @@ fn write_meta(path: &Path, meta: &EntryMeta) -> Result<(), LinkError> {
 /// A fetched document and the validators its origin answered with.
 struct Body {
     text: String,
-    etag: Option<String>,
-    last_modified: Option<String>,
+    etag: Option<Validator>,
+    last_modified: Option<Validator>,
 }
 
 /// GET `url`: `Ok(None)` for a `304` to a conditional request — one carrying a
@@ -1481,7 +1516,7 @@ fn fetch(
             .headers()
             .get(name)
             .and_then(|value| value.to_str().ok())
-            .map(str::to_owned)
+            .and_then(Validator::new)
     };
     let etag = header("etag");
     let last_modified = header("last-modified");
