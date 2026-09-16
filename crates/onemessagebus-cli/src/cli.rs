@@ -815,9 +815,17 @@ fn say_reused(resolved: &Resolved) {
 /// no; anything the link, its bundle or the environment got wrong refuses the
 /// input.
 fn link_refusal(failure: LinkError) -> Refusal {
+    match link_refusal_verdict(&failure) {
+        Verdict::Failed => failed(failure.to_string()),
+        Verdict::Invalid => invalid(format!("schemas: {failure}")),
+    }
+}
+
+/// The verdict a link's refusal carries; see [`link_refusal`].
+const fn link_refusal_verdict(failure: &LinkError) -> Verdict {
     match failure {
-        LinkError::Unreachable { .. } | LinkError::Cache { .. } => failed(failure.to_string()),
-        _ => invalid(format!("schemas: {failure}")),
+        LinkError::Unreachable { .. } | LinkError::Cache { .. } => Verdict::Failed,
+        _ => Verdict::Invalid,
     }
 }
 
@@ -963,6 +971,7 @@ fn schemas(args: SchemasArgs, out: &mut impl std::io::Write) -> Result<(), Refus
             };
             let mut report = SchemasFetched { links: Vec::new() };
             let mut unresolved = Vec::new();
+            let mut refused = false;
             for link in links {
                 let fetched = match resolver.resolve(&link, Freshness::Revalidate) {
                     Ok(resolved) => {
@@ -984,6 +993,7 @@ fn schemas(args: SchemasArgs, out: &mut impl std::io::Write) -> Result<(), Refus
                         }
                     }
                     Err(failure) => {
+                        refused |= matches!(link_refusal_verdict(&failure), Verdict::Invalid);
                         unresolved.push(failure.to_string());
                         FetchedLink::Failed {
                             link,
@@ -1023,12 +1033,22 @@ fn schemas(args: SchemasArgs, out: &mut impl std::io::Write) -> Result<(), Refus
             emit_text(out, &text)?;
             match unresolved.as_slice() {
                 [] => Ok(()),
-                failures => Err(failed(format!(
-                    "schemas fetch: {} of {} links did not resolve: {}",
-                    failures.len(),
-                    report.links.len(),
-                    failures.join("; ")
-                ))),
+                failures => {
+                    let message = format!(
+                        "schemas fetch: {} of {} links did not resolve: {}",
+                        failures.len(),
+                        report.links.len(),
+                        failures.join("; ")
+                    );
+                    // A link whose bundle or pin is wrong refuses the input, as
+                    // any other verb resolving it would; an origin out of reach
+                    // alone is a well-formed no.
+                    Err(if refused {
+                        invalid(message)
+                    } else {
+                        failed(message)
+                    })
+                }
             }
         }
     }

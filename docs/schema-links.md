@@ -182,7 +182,9 @@ clients (`schemas`, `schemasClear` / `schemas_clear`, `schemasFetch` /
   its `reason`), `read` (a file link) or `failed` (with its `reason` and no
   `version`). Text is `<link> <outcome> <version|-> [(<reason>)]` per line. Exit 0
   when every link ended resolved to a version its pin admits — a reused entry
-  included; otherwise exit 1 after the report, naming each link that did not.
+  included; otherwise, after the report, exit 1 naming each link that did not,
+  or exit 2 when any of them served a document that is not a bundle or a version
+  its pin does not admit.
   This is the verb a host runs at session setup to warm the cache.
 
 ```bash

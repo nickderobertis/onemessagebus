@@ -159,7 +159,8 @@ when there were none.
 Resolve each named link, or every link the configuration names (`--config` or
 `ONEMESSAGEBUS_CONFIG`) when none is named, revalidating whatever the cache holds
 regardless of its age, and report how each ended. Exit 0 when every link resolved
-to a version its pin admits; exit 1 naming each link that did not.
+to a version its pin admits; otherwise exit 1 naming each link that did not, or
+exit 2 when one of them served no bundle or a version its pin does not admit.
 
 ```bash
 $ onemessagebus schemas fetch --config onemessagebus.yaml --format text

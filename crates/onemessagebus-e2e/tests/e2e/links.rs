@@ -902,6 +902,58 @@ fn a_configuration_registers_every_linked_entry_for_the_verbs_that_load_it() {
     );
     assert_eq!(validated.code, 0, "{}", validated.stderr);
 
+    let generated = scratch.run(
+        &[
+            "schema", "gen", "--lang", "json", FRAME, "--config", &config,
+        ],
+        None,
+        &[],
+    );
+    assert_eq!(generated.code, 0, "{}", generated.stderr);
+    assert_eq!(
+        serde_json::from_str::<Value>(&generated.stdout).expect("JSON"),
+        json!({"type": "object", "required": ["hello"]}),
+        "schema gen renders the linked document"
+    );
+    let unlinked_gen = scratch.run(&["schema", "gen", "--lang", "json", FRAME], None, &[]);
+    assert_eq!(unlinked_gen.code, 2, "{}", unlinked_gen.stderr);
+
+    // Registering a different document under a linked id is refused, and
+    // nothing is written.
+    let linked_registry = scratch.text("linked-registry");
+    std::fs::write(
+        scratch.path("array.json"),
+        json!({"type": "array"}).to_string(),
+    )
+    .expect("a schema");
+    let contradicted = scratch.run(
+        &[
+            "schema",
+            "register",
+            FRAME,
+            "--file",
+            &scratch.text("array.json"),
+            "--registry",
+            &linked_registry,
+            "--config",
+            &config,
+        ],
+        None,
+        &[],
+    );
+    assert_eq!(contradicted.code, 2, "{}", contradicted.stderr);
+    assert!(
+        contradicted.stderr.contains(&format!(
+            "{FRAME} is already registered with a different document"
+        )),
+        "{}",
+        contradicted.stderr
+    );
+    assert!(
+        !scratch.path("linked-registry").exists(),
+        "a refused register wrote the registry"
+    );
+
     // A linked entry contradicting an id the profile registers.
     let profile_document = scratch.run(
         &["schema", "gen", "--lang", "json", "agent.labels@1"],
@@ -975,6 +1027,53 @@ fn a_configuration_registers_every_linked_entry_for_the_verbs_that_load_it() {
         )),
         "{}",
         conflict.stderr
+    );
+}
+
+#[test]
+fn http_proxy_carries_an_http_link_and_https_proxy_alone_does_not() {
+    let scratch = Scratch::new();
+    let origin = Origin::http("8.1");
+    let proxy = Proxy::start(false);
+    let link = origin.link(None);
+    let config = scratch.config(&[&link]);
+    let proxy_url = proxy.url();
+
+    let direct = scratch.check(
+        &config,
+        &json!({"hello": 1}),
+        &[("HTTPS_PROXY", proxy_url.as_str())],
+    );
+    assert_eq!(direct.code, 0, "{}", direct.stderr);
+    assert!(
+        proxy.log().is_empty(),
+        "an http:// link went through HTTPS_PROXY: {:?}",
+        proxy.log()
+    );
+
+    let proxied = scratch.check(
+        &config,
+        &json!({"hello": 1}),
+        &[("HTTP_PROXY", proxy_url.as_str())],
+    );
+    assert_eq!(proxied.code, 0, "{}", proxied.stderr);
+    assert_eq!(proxy.log(), vec![format!("CONNECT {}", origin.addr)]);
+    assert_eq!(origin.seen().len(), 2, "both fetches reached the bundle");
+
+    let bypassed = scratch.check(
+        &config,
+        &json!({"hello": 1}),
+        &[
+            ("http_proxy", proxy_url.as_str()),
+            ("no_proxy", "127.0.0.1"),
+        ],
+    );
+    assert_eq!(bypassed.code, 0, "{}", bypassed.stderr);
+    assert_eq!(
+        proxy.log().len(),
+        1,
+        "the lower-case spellings: {:?}",
+        proxy.log()
     );
 }
 
@@ -1232,6 +1331,31 @@ fn schemas_lists_clears_and_fetch_warms_revalidating_whatever_the_window() {
         "{}",
         failed.stderr
     );
+    let as_text = scratch.run(&["schemas", "fetch", absent, "--format", "text"], None, &[]);
+    assert_eq!(as_text.code, 1, "{}", as_text.stderr);
+    assert!(
+        as_text.stdout.starts_with(&format!(
+            "{absent} failed - ({absent}: cannot fetch the bundle: "
+        )),
+        "{}",
+        as_text.stdout
+    );
+    assert_eq!(as_text.stdout.lines().count(), 1);
+
+    // A link whose bundle its pin does not admit refuses the input.
+    let unpinned = format!("{}@9", second.url());
+    let pin_refused = scratch.run(&["schemas", "fetch", &two, &unpinned], None, &[]);
+    assert_eq!(pin_refused.code, 2, "{}", pin_refused.stderr);
+    let report: Value = serde_json::from_str(&pin_refused.stdout).expect("JSON");
+    assert_eq!(report["links"][1]["outcome"], json!("failed"), "{report}");
+    assert!(
+        pin_refused
+            .stderr
+            .contains("the bundle declares version 3, which the pin @9 does not admit"),
+        "{}",
+        pin_refused.stderr
+    );
+
     let malformed = scratch.run(
         &["schemas", "fetch", "http://example.org/frames.json@1"],
         None,
