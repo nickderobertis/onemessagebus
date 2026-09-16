@@ -255,7 +255,7 @@ pub struct AuthorConfig {
     pub capabilities: Vec<String>,
     /// Reasons ungranted operations are refused, by operation word.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub refusals: BTreeMap<String, String>,
+    pub refusals: BTreeMap<OpWord, String>,
 }
 
 /// Why a configuration could not be read or resolved, naming the key.
@@ -600,20 +600,20 @@ impl Config {
                 }
             }
             for (word, reason) in &configured.refusals {
-                let key = format!("authors.{author}.refusals.{word}");
+                let key = format!("authors.{author}.refusals.{}", word.0);
                 let Some(op) = allowlist
                     .vocabulary()
                     .iter()
-                    .find(|op| op.0 == *word)
+                    .find(|op| op == &word)
                     .cloned()
                 else {
                     return Err(NarrowingRefused {
                         key,
-                        why: format!("`{word}` is not an op"),
+                        why: format!("`{}` is not an op", word.0),
                     }
                     .into());
                 };
-                if configured.capabilities.contains(word) {
+                if configured.capabilities.contains(&word.0) {
                     return Err(NarrowingRefused {
                         key,
                         why: "a granted op may not have a refusal".to_owned(),
