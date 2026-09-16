@@ -179,6 +179,15 @@ fn configured_answer_preserves_placeholder_types_and_first_matching_refusal_wins
 #[test]
 fn ask_relays_a_ruling_through_mappings_and_uses_the_configured_asker() {
     let scratch = Scratch::new();
+    let text = std::fs::read_to_string(&scratch.config).expect("config read");
+    std::fs::write(
+        &scratch.config,
+        text.replace(
+            "literal: \"{reply.completion}\"",
+            "literal: \"{reply.completion}\"\n              nested: [{from: reply.completion}, \"frame {frame.value}\"]",
+        ),
+    )
+    .expect("array mapping config written");
     let (child, _) = scratch.spawn_ask(
         false,
         &[
@@ -209,7 +218,12 @@ fn ask_relays_a_ruling_through_mappings_and_uses_the_configured_asker() {
     assert_eq!(served.code, 0, "{}", served.stderr);
     assert_eq!(
         served.lines(),
-        [json!({"value": true, "reason": "accepted", "literal": true})]
+        [json!({
+            "value": true,
+            "reason": "accepted",
+            "literal": true,
+            "nested": [true, "frame 9"]
+        })]
     );
 }
 

@@ -565,6 +565,16 @@ fn ruling(value: &Value) -> &Value {
 }
 
 fn resolve_ask(value: &Value, frame: &Value, reply: &Value) -> Result<Option<Value>, String> {
+    if let Value::Array(values) = value {
+        let mut output = Vec::with_capacity(values.len());
+        for value in values {
+            let Some(value) = resolve_ask(value, frame, reply)? else {
+                return Ok(None);
+            };
+            output.push(value);
+        }
+        return Ok(Some(Value::Array(output)));
+    }
     let Value::Object(fields) = value else {
         return render(value, frame, Some(reply)).map(Some);
     };
