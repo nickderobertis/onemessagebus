@@ -1304,8 +1304,9 @@ fn agent(url: &str) -> Result<ureq::Agent, String> {
     Ok(config.into())
 }
 
-/// The platform's root certificates, as rustls-native-certs reads them — on
-/// Linux and the BSDs, `SSL_CERT_FILE` and `SSL_CERT_DIR` over the system store.
+/// The platform's root certificates, as rustls-native-certs reads them: the
+/// system store, or only what `SSL_CERT_FILE` and `SSL_CERT_DIR` name when
+/// either is set.
 fn root_certs() -> Result<ureq::tls::RootCerts, String> {
     let loaded = rustls_native_certs::load_native_certs();
     if loaded.certs.is_empty() {

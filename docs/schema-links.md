@@ -106,8 +106,8 @@ An **unpinned remote** link is fetched on every resolution and never cached.
 
 **HTTP** is ureq over rustls with the ring provider — no system OpenSSL and no
 spawned `curl` — trusting the platform's root certificates as
-`rustls-native-certs` reads them (on Linux, `SSL_CERT_FILE` and `SSL_CERT_DIR`
-over the system store). A request to an `https://` link goes through
+`rustls-native-certs` reads them: the system store, or, when `SSL_CERT_FILE` or
+`SSL_CERT_DIR` is set, only the certificates those name. A request to an `https://` link goes through
 `HTTPS_PROXY` and one to an `http://` link through `HTTP_PROXY` (either
 spelling, the upper case first), unless `NO_PROXY` names the host — exactly, as a
 `.example.org` or `*.example.org` suffix, or `*`. The bounds are fixed:

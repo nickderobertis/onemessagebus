@@ -38,6 +38,8 @@ onemessagebus-agent = { workspace = true }
 onemessagebus-cli = { workspace = true }
 assert_cmd = { workspace = true }
 predicates = { workspace = true }
+rcgen = { workspace = true }
+rustls = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }
