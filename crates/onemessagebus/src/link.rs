@@ -1425,22 +1425,50 @@ fn fetch(
         doing: Access::Fetch,
         why,
     };
-    let agent = agent(url.as_str()).map_err(refuse)?;
-    let mut request = agent.get(url.as_str());
-    let mut conditional = false;
-    if let Some(meta) = meta {
-        if let Some(etag) = &meta.etag {
-            request = request.header("If-None-Match", etag.as_str());
-            conditional = true;
+    let conditional = meta.is_some_and(|meta| meta.etag.is_some() || meta.last_modified.is_some());
+    // Redirects are followed here rather than by the client, so every hop is
+    // held to the schemes and hosts a link itself may name.
+    let mut target = url.clone();
+    let mut response = None;
+    for _ in 0..=MAX_REDIRECTS {
+        let agent = agent(target.as_str()).map_err(refuse)?;
+        let mut request = agent.get(target.as_str());
+        if let Some(meta) = meta {
+            if let Some(etag) = &meta.etag {
+                request = request.header("If-None-Match", etag.as_str());
+            }
+            if let Some(modified) = &meta.last_modified {
+                request = request.header("If-Modified-Since", modified.as_str());
+            }
         }
-        if let Some(modified) = &meta.last_modified {
-            request = request.header("If-Modified-Since", modified.as_str());
-            conditional = true;
+        let answered = request
+            .call()
+            .map_err(|failure| refuse(transport_failure(&failure)))?;
+        if !matches!(answered.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+            response = Some(answered);
+            break;
         }
+        let location = answered
+            .headers()
+            .get("location")
+            .and_then(|value| value.to_str().ok())
+            .ok_or_else(|| {
+                refuse(format!(
+                    "the origin answered HTTP {} with no Location",
+                    answered.status().as_u16()
+                ))
+            })?;
+        target = redirected(&target, location).map_err(|why| {
+            refuse(format!(
+                "the origin redirected to {location:?}, which {why}"
+            ))
+        })?;
     }
-    let mut response = request
-        .call()
-        .map_err(|failure| refuse(transport_failure(&failure)))?;
+    let mut response = response.ok_or_else(|| {
+        refuse(format!(
+            "the origin redirected more than {MAX_REDIRECTS} times"
+        ))
+    })?;
     let status = response.status().as_u16();
     if conditional && status == 304 {
         return Ok(None);
@@ -1475,6 +1503,24 @@ fn fetch(
     }))
 }
 
+/// How many redirects one fetch follows.
+const MAX_REDIRECTS: usize = 5;
+
+/// The URL a `Location` names from `from`: absolute, or rooted at `from`'s
+/// scheme and authority — held to [`RemoteUrl::parse`] either way.
+fn redirected(from: &RemoteUrl, location: &str) -> Result<RemoteUrl, String> {
+    let absolute = if location.starts_with('/') && !location.starts_with("//") {
+        let rest_at = from.as_str().find("://").map_or(0, |at| at + 3);
+        let authority_end = from.as_str()[rest_at..]
+            .find(['/', '?', '#'])
+            .map_or(from.as_str().len(), |end| rest_at + end);
+        format!("{}{location}", &from.as_str()[..authority_end])
+    } else {
+        location.to_owned()
+    };
+    RemoteUrl::parse(&absolute).map_err(|why| format!("a link may not follow: {why}"))
+}
+
 /// A transport failure in words naming the bound a timeout crossed.
 fn transport_failure(failure: &ureq::Error) -> String {
     match failure {
@@ -1507,6 +1553,7 @@ fn agent(url: &str) -> Result<ureq::Agent, String> {
     let config = ureq::Agent::config_builder()
         .proxy(proxy)
         .http_status_as_error(false)
+        .max_redirects(0)
         .timeout_resolve(Some(CONNECT_TIMEOUT))
         .timeout_connect(Some(CONNECT_TIMEOUT))
         .timeout_send_request(Some(READ_TIMEOUT))

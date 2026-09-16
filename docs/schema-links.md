@@ -109,7 +109,10 @@ spawned `curl` — trusting the platform's root certificates as
 `SSL_CERT_DIR` is set, only the certificates those name. A request to an `https://` link goes through
 `HTTPS_PROXY` and one to an `http://` link through `HTTP_PROXY` (either
 spelling, the upper case first), unless `NO_PROXY` names the host — exactly, as a
-`.example.org` or `*.example.org` suffix, or `*`. The bounds are fixed:
+`.example.org` or `*.example.org` suffix, or `*`. Up to five redirects are
+followed, each `Location` — absolute, or rooted at the URL that answered — held to
+the schemes and hosts a link may name; one that is not is refused naming it. The
+bounds are fixed:
 
 - **connect timeout, 5 seconds**: establishing the connection — TCP, a proxy's
   `CONNECT`, and the TLS handshake together.

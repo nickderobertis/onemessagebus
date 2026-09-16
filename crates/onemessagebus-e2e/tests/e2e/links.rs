@@ -297,10 +297,19 @@ fn answer(mut stream: impl Read + Write, served: &Mutex<Served>) {
     let response = {
         let mut served = served.lock().expect("the origin's state");
         served.seen.push(Seen {
-            path,
+            path: path.clone(),
             headers: headers.clone(),
         });
-        if headers.get("if-none-match") == Some(&served.etag) {
+        let redirect = match path.as_str() {
+            "/moved.json" => Some("/frames.json"),
+            "/away.json" => Some("http://example.org/frames.json"),
+            _ => None,
+        };
+        if let Some(location) = redirect {
+            format!(
+                "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+        } else if headers.get("if-none-match") == Some(&served.etag) {
             format!(
                 "HTTP/1.1 304 Not Modified\r\nETag: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
                 served.etag
@@ -1092,7 +1101,31 @@ fn an_https_link_is_fetched_from_a_loopback_tls_origin_the_client_trusts_through
         &[("SSL_CERT_FILE", ca.as_str())],
     );
     assert_eq!(trusted.code, 0, "{}", trusted.stderr);
-    assert_eq!(origin.seen().len(), 1, "fetched over TLS");
+    let cert_dir = scratch.path("certs");
+    std::fs::create_dir_all(&cert_dir).expect("a certificate directory");
+    std::fs::copy(scratch.path("ca.pem"), cert_dir.join("ca.pem")).expect("the CA copied");
+    let by_dir = Scratch::new();
+    let dir_config = by_dir.config(&[&link]);
+    let trusted_by_dir = by_dir.check(
+        &dir_config,
+        &json!({"hello": 1}),
+        &[("SSL_CERT_DIR", cert_dir.to_str().expect("UTF-8"))],
+    );
+    assert_eq!(
+        trusted_by_dir.code, 0,
+        "SSL_CERT_DIR: {}",
+        trusted_by_dir.stderr
+    );
+    assert_eq!(
+        origin.seen().len(),
+        2,
+        "fetched over TLS through SSL_CERT_DIR"
+    );
+    assert_eq!(
+        origin.seen().len(),
+        2,
+        "fetched over TLS, once per root store"
+    );
     assert_eq!(scratch.versions(), vec!["8.1"]);
 
     // A root store that does not hold the journey's CA refuses the origin.
@@ -1121,7 +1154,7 @@ fn an_https_link_is_fetched_from_a_loopback_tls_origin_the_client_trusts_through
     );
     assert_eq!(
         origin.seen().len(),
-        1,
+        2,
         "no request crossed an untrusted handshake"
     );
 }
@@ -1557,5 +1590,101 @@ fn a_cache_entry_past_its_bound_is_passed_over_and_refetched() {
     assert!(
         scratch.versions().is_empty(),
         "oversized metadata was listed"
+    );
+}
+
+#[test]
+fn a_redirect_is_followed_only_to_a_location_a_link_may_name() {
+    let scratch = Scratch::new();
+    let origin = Origin::http("8.1");
+    let moved = format!("http://{}/moved.json@8", origin.addr);
+    let followed = scratch.run(&["schemas", "fetch", &moved], None, &[]);
+    assert_eq!(followed.code, 0, "{}", followed.stderr);
+    let paths: Vec<String> = origin.seen().into_iter().map(|seen| seen.path).collect();
+    assert_eq!(paths, vec!["/moved.json", "/frames.json"]);
+
+    let away = format!("http://{}/away.json@8", origin.addr);
+    let refused = scratch.run(&["schemas", "fetch", &away], None, &[]);
+    assert_eq!(refused.code, 1, "{}", refused.stderr);
+    assert!(
+        refused.stderr.contains(&format!(
+            "{away}: cannot fetch the bundle: the origin redirected to \"http://example.org/frames.json\", which a link may not follow: http:// is taken only for a loopback host"
+        )),
+        "{}",
+        refused.stderr
+    );
+    assert_eq!(origin.seen().len(), 3, "the refused redirect was followed");
+}
+
+#[cfg(unix)]
+#[test]
+fn the_resident_core_starts_from_a_warmed_cache_and_refuses_to_start_with_nothing_cached() {
+    let scratch = Scratch::new();
+    let origin = Origin::http("8.1");
+    let link = origin.link(Some("8"));
+    let config = scratch.config(&[&link]);
+    assert_eq!(scratch.run(&["schemas", "fetch", &link], None, &[]).code, 0);
+    origin.down();
+
+    let socket = scratch.path("bus.sock");
+    let socket_text = socket.to_str().expect("UTF-8").to_owned();
+    let args = [
+        "serve",
+        "--resident",
+        "--socket",
+        socket_text.as_str(),
+        "--config",
+        config.as_str(),
+    ];
+    let stale = [("ONEMESSAGEBUS_SCHEMA_TTL", "0")];
+    let mut warm = scratch.spawn(&args, None, &stale);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while !socket.exists() {
+        assert!(
+            matches!(warm.try_wait(), Ok(None)),
+            "the resident exited before it listened"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the resident never listened"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::fs::remove_file(&socket).expect("the socket is removed");
+    let output = warm.wait_with_output().expect("the resident stops");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("revalidate"));
+
+    let cold = Scratch::new();
+    let cold_config = cold.config(&[&link]);
+    let cold_socket = cold.path("bus.sock");
+    let refused = cold.run(
+        &[
+            "serve",
+            "--resident",
+            "--socket",
+            cold_socket.to_str().expect("UTF-8"),
+            "--config",
+            &cold_config,
+        ],
+        None,
+        &[],
+    );
+    assert_eq!(refused.code, 1, "{}", refused.stderr);
+    assert!(
+        refused
+            .stderr
+            .contains(&format!("{link}: cannot fetch the bundle")),
+        "{}",
+        refused.stderr
+    );
+    assert!(
+        !cold_socket.exists(),
+        "the resident listened with nothing cached"
     );
 }
