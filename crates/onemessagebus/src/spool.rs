@@ -333,6 +333,13 @@ fn exchange(
             if let Some(disposition) = read_answer(dir, &answer)? {
                 return Ok((disposition, answer));
             }
+            // Closing records its reason before moving each offer from offered
+            // to taken and writing its answer. An unbound sender can observe
+            // that middle state; the recorded close still decides the result.
+            if let Some(closed) = closed_record(dir)? {
+                let _ = fs::remove_file(&taken);
+                return Err(Undelivered::Closed(closed));
+            }
             let _ = fs::remove_file(&taken);
             return Err(Undelivered::Backend(BackendError::Abandoned {
                 spool: dir.to_path_buf(),
