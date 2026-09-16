@@ -156,6 +156,10 @@ fn resident_command(scratch: &Scratch, socket: &Path) -> std::process::Command {
         .arg(socket)
         .args(["--config", &scratch.text("onemessagebus.yaml")])
         .args(["--registry", &scratch.text("registry")])
+        .env(
+            "ONEMESSAGEBUS_SCHEMA_CACHE_DIR",
+            scratch.path("schema-cache"),
+        )
         .current_dir(scratch.dir.path())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -492,6 +496,37 @@ fn the_resident_answers_every_capability_as_the_one_shot_verb_does() {
     };
     assert_eq!(ok(&subscribed), &json!("until"));
     answered.insert("subscribe");
+
+    // The schema cache verbs, over the cache directory the resident was started
+    // with: a linked bundle read from a file, nothing cached, nothing to clear.
+    std::fs::write(
+        scratch.path("frames.json"),
+        json!({"version": "8.1", "schemas": [{"id": "demo.frame@1", "schema": {"type": "object"}}]})
+            .to_string(),
+    )
+    .expect("a bundle");
+    let link = format!("{}@8", scratch.text("frames.json"));
+    let fetched = client.call(22, "schemasFetch", json!({"links": [link]}), None);
+    assert_eq!(
+        ok(&fetched),
+        &json!({"links": [{"link": link, "outcome": "read", "version": "8.1"}]}),
+        "{fetched}"
+    );
+    answered.insert("schemasFetch");
+    let cache = client.call(23, "schemas", json!({}), None);
+    assert_eq!(
+        ok(&cache),
+        &json!({"cache": scratch.text("schema-cache"), "entries": []}),
+        "{cache}"
+    );
+    answered.insert("schemas");
+    let cleared = client.call(24, "schemasClear", json!({"format": "text"}), None);
+    assert_eq!(
+        ok(&cleared),
+        &json!(format!("removed 0 from {}\n", scratch.text("schema-cache"))),
+        "{cleared}"
+    );
+    answered.insert("schemasClear");
 
     let every: BTreeSet<&str> = CAPABILITIES.iter().map(|c| c.method).collect();
     assert_eq!(

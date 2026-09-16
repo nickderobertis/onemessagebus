@@ -20,6 +20,11 @@ export interface SchemaListOptions {
    * How the list is rendered.
    */
   format?: Format | null | undefined;
+  /**
+   * A configuration whose `schemas` links are resolved and registered beside
+   * the registry; not read from `ONEMESSAGEBUS_CONFIG`.
+   */
+  config?: string | null | undefined;
 }
 
 const $Format: z.ZodType = oneOf([z.literal("json"), z.literal("text")]);
@@ -28,5 +33,6 @@ export const SchemaListOptionsSchema = contract<SchemaListOptions>(
   z.strictObject({
     registry: anyOf([z.string(), z.null()]).optional(),
     format: anyOf([z.lazy(() => $Format), z.null()]).optional(),
+    config: anyOf([z.string(), z.null()]).optional(),
   }),
 );

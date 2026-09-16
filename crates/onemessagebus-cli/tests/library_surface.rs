@@ -13,9 +13,10 @@ use std::time::Duration;
 
 use onemessagebus::sdk_schema::{self, Lang};
 use onemessagebus::{
-    Carried, Carry, Changed, Config, ConsumerName, Disposition, Emitter, Inbox, Layouts,
-    MemoryTransport, Merge, Message, Open, Policy, QueueConfig, QueueName, QueueSpec, RawQueue,
-    Reader, Reading, Redactor, Registry, SchemaId, Source, Spool, TransportKinds, CAPABILITIES,
+    Carried, Carry, Changed, Config, ConsumerName, Disposition, Emitter, Freshness, Inbox, Layouts,
+    LinkResolver, MemoryTransport, Merge, Message, Open, Outcome, Policy, QueueConfig, QueueName,
+    QueueSpec, RawQueue, Reader, Reading, Redactor, Registry, SchemaId, SchemaLink, Source, Spool,
+    TransportKinds, CAPABILITIES,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -280,6 +281,47 @@ fn exercised() -> Vec<Exercise> {
                 notes.push(json!({ "n": 0 })).expect("appended");
                 let status = notes.status().expect("a status");
                 assert_eq!((status.records, status.unread), (1, 1));
+            }),
+        ),
+        (
+            "onemessagebus::LinkResolver::resolve",
+            Box::new(|| {
+                let dir = tempfile::tempdir().expect("a temp dir");
+                let path = dir.path().join("frames.json");
+                std::fs::write(
+                    &path,
+                    json!({"version": "8.1", "schemas": [{"id": "test.frame@1", "schema": {"type": "object"}}]})
+                        .to_string(),
+                )
+                .expect("written");
+                let link = SchemaLink::parse(&format!("{}@8", path.display())).expect("a link");
+                let resolved = LinkResolver::new(Some(dir.path().join("cache")))
+                    .resolve(&link, Freshness::Window)
+                    .expect("resolves");
+                assert_eq!(resolved.outcome(), &Outcome::Read);
+                let mut registry = Registry::new();
+                resolved.register_into(&mut registry).expect("registers");
+                assert_eq!(registry.ids(), vec!["test.frame@1".parse().expect("an id")]);
+            }),
+        ),
+        (
+            "onemessagebus::LinkResolver::cached",
+            Box::new(|| {
+                let dir = tempfile::tempdir().expect("a temp dir");
+                let resolver = LinkResolver::new(Some(dir.path().join("absent")));
+                assert!(resolver
+                    .cached()
+                    .expect("an absent cache is empty")
+                    .is_empty());
+                assert!(LinkResolver::new(None).cached().is_err());
+            }),
+        ),
+        (
+            "onemessagebus::LinkResolver::clear",
+            Box::new(|| {
+                let dir = tempfile::tempdir().expect("a temp dir");
+                let resolver = LinkResolver::new(Some(dir.path().to_path_buf()));
+                assert_eq!(resolver.clear().expect("clears"), 0);
             }),
         ),
         (

@@ -113,10 +113,11 @@ fn every_flag_is_bound_or_declined_with_a_reason_and_every_binding_is_a_real_fla
 }
 
 /// Payloads never travel as a positional: the only positionals in the tree
-/// are ids, names and paths — a spool's address and a carry store are paths, a
-/// queue is a name, and a position is the number `next` printed — so a verb
-/// that takes a payload takes it on stdin or `--file` and a document passed as
-/// an argument is a usage error.
+/// are ids, names and locations — a spool's address and a carry store are
+/// paths, a queue is a name, a position is the number `next` printed, and a
+/// schema link is a URL or path with its pin — so a verb that takes a payload
+/// takes it on stdin or `--file` and a document passed as an argument is a
+/// usage error.
 #[test]
 fn no_verb_reads_a_payload_from_a_positional() {
     for (path, command) in clap_verbs() {
@@ -129,7 +130,7 @@ fn no_verb_reads_a_payload_from_a_positional() {
             assert!(
                 matches!(
                     name.as_str(),
-                    "id" | "files" | "path" | "address" | "store" | "queue" | "position"
+                    "id" | "files" | "path" | "address" | "store" | "queue" | "position" | "links"
                 ),
                 "`onemessagebus {}` has a positional `{name}` that is not an id, a name or a path",
                 path.join(" ")

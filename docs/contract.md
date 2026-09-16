@@ -494,6 +494,9 @@ authors:
   does not register or an `answers` naming no queue (`queues.<queue>.<key>`), and
   a transport its kind refuses. A loaded `Config` opens nothing; the `Bus`
   `resolve` answers is the one type that opens a queue or authors a record.
+- `schemas` lists links to schema bundles another program publishes, each a URL
+  or path pinned to a version; `Config::load` parses each and resolves none, as
+  Contract L below states.
 - The binary reads it from `--config <path>` or `ONEMESSAGEBUS_CONFIG`, and
   `--transport-dir <path>` or `ONEMESSAGEBUS_TRANSPORT_DIR` replaces
   `transport.dir` for one invocation: the flag over the variable, the variable
@@ -711,6 +714,16 @@ the contract:
    `JudgePayload` reads. The host's `channel-serve.py` wrote `rationale`, which
    `onejudge` drops, so every score it relayed arrived unexplained.
 
+### Contract L — schema links
+
+<!-- llmlint: ignore-block[no_redundant_instruction_pointers] Contract L's owner node was required to state it once, in docs/schema-links.md, and to have this contract — the source every consumer restates from — point at it rather than restate it; this section is that one pointer, so the contract lists every lettered contract and a copy of L here cannot drift from its source. -->
+Stated once, in [`docs/schema-links.md`](schema-links.md): the bundle document
+(`onemessagebus::SchemaBundle`), the link and its pin (`SchemaLink`), the cache a
+pinned remote link resolves through (`LinkResolver`), the configuration's
+`schemas` key and the verbs that resolve it, and the `schemas`, `schemas clear`
+and `schemas fetch` verbs. Every consumer restates it from there.
+<!-- llmlint: ignore-end[no_redundant_instruction_pointers] -->
+
 ### Contract C — the command line and the capability manifest
 
 - `onemessagebus schema list` (no input; every registered id), `schema check
@@ -770,10 +783,15 @@ the contract:
   `RawQueue::wait_for_change`, `RawQueue::status`, `TransportKinds::kinds`).
 - `--format json|text` on every reading verb; text is a deterministic rendering
   of the same events.
+- `onemessagebus schemas`, `schemas clear` and `schemas fetch [<link>...]` list,
+  empty and warm the cache of linked schema bundles; each `schema` verb takes
+  `--config <path>`, whose links it registers. Each is a `Capability` with a
+  library entry (`LinkResolver::cached`, `LinkResolver::clear`,
+  `LinkResolver::resolve`); what they do is Contract L's.
 
 <!-- fixture: verbs -->
 ```json
-["schema list", "schema check", "schema gen", "schema register", "events merge", "events emit", "deliver", "inbox carried", "send", "next", "reply", "subscribe", "status", "transports", "validate", "ask", "serve"]
+["schema list", "schema check", "schema gen", "schema register", "events merge", "events emit", "deliver", "inbox carried", "send", "next", "reply", "subscribe", "status", "transports", "validate", "ask", "serve", "schemas", "schemas clear", "schemas fetch"]
 ```
 
 **Departures, ruled by the manager over the ask seam** for Contracts S and P —

@@ -43,6 +43,7 @@ const VALUES = {
   timeout: 30,
   about: "task-7",
   sessionSeconds: 60,
+  links: ["https://example.org/frames.json@8"],
 };
 
 class Stop extends Error {}
@@ -66,10 +67,16 @@ class Recording implements Transport {
 
 /** Each method, called with every option its capability binds. */
 const EVERY_OPTION: Record<CapabilityMethod, (client: Client, v: typeof VALUES) => unknown> = {
-  schemaList: (c, v) => c.schemaList({ registry: v.registry, format: "json" }),
-  schemaCheck: (c, v) => c.schemaCheck({ id: v.id, file: v.file, registry: v.registry }),
-  schemaGen: (c, v) => c.schemaGen({ id: v.id, lang: "rust", registry: v.registry }),
-  schemaRegister: (c, v) => c.schemaRegister({ id: v.id, file: v.file, registry: v.registry }),
+  schemaList: (c, v) => c.schemaList({ registry: v.registry, config: v.config, format: "json" }),
+  schemaCheck: (c, v) =>
+    c.schemaCheck({ id: v.id, file: v.file, registry: v.registry, config: v.config }),
+  schemaGen: (c, v) =>
+    c.schemaGen({ id: v.id, lang: "rust", registry: v.registry, config: v.config }),
+  schemaRegister: (c, v) =>
+    c.schemaRegister({ id: v.id, file: v.file, registry: v.registry, config: v.config }),
+  schemas: (c) => c.schemas({ format: "json" }),
+  schemasClear: (c) => c.schemasClear({ format: "json" }),
+  schemasFetch: (c, v) => c.schemasFetch({ links: v.links, config: v.config, format: "json" }),
   eventsMerge: (c, v) =>
     c.eventsMerge({ files: v.files, filter: v.filter, profile: v.profile, format: "json" }),
   eventsEmit: (c, v) =>

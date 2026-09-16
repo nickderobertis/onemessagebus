@@ -60,7 +60,7 @@ def client_body() -> str:
 def test_client_has_exactly_one_public_method_per_capability() -> None:
     declared = set(METHOD.findall(client_body()))
     assert declared == {snake_case(method) for method in CAPABILITIES}
-    assert len(CAPABILITIES) == 17
+    assert len(CAPABILITIES) == 20
 
 
 @pytest.mark.parametrize("method", sorted(CAPABILITIES))

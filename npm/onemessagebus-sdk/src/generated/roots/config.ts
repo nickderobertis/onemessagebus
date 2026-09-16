@@ -51,6 +51,10 @@ export type When =
  * The name of an environment variable: ASCII letters, digits and `_`, not starting with a digit.
  */
 export type EnvName = string;
+/**
+ * A schema bundle's location — an https:// URL, an http:// URL on a loopback host, a file:// URL, or a path relative to the configuration's directory — and, after a final @, the version pin it is held to: https://example.org/frames.json@8.
+ */
+export type SchemaLink = string;
 
 /**
  * What a configuration file says, read and checked on its own.
@@ -101,6 +105,13 @@ export interface Config {
         [k: string]: CodecConfig;
       }
     | undefined;
+  /**
+   * Schema bundles another program publishes, each linked by a URL or path
+   * and pinned to a version (`docs/schema-links.md`). [`load`](Self::load)
+   * parses each link and resolves nothing; [`resolve_links`](Self::resolve_links)
+   * is the call that does.
+   */
+  schemas?: SchemaLink[] | undefined;
 }
 /**
  * The transport the queues are kept on.
@@ -456,6 +467,10 @@ const $CodecConfig: z.ZodType = z.strictObject({
 
 const $EnvName: z.ZodType = z.string().regex(new RegExp("^[A-Za-z_][A-Za-z0-9_]{0,127}$", "u"));
 
+const $SchemaLink: z.ZodType = z
+  .string()
+  .refine((value) => [...value].length >= 1, { message: "shorter than 1 characters" });
+
 export const ConfigSchema = contract<Config>(
   z.strictObject({
     version: z.int().gte(0),
@@ -480,5 +495,6 @@ export const ConfigSchema = contract<Config>(
         z.lazy(() => $CodecConfig),
       )
       .optional(),
+    schemas: z.array(z.lazy(() => $SchemaLink)).optional(),
   }),
 );

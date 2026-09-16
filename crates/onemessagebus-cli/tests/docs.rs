@@ -345,10 +345,14 @@ fn the_readme_lists_every_verb_and_only_the_binarys() {
     }
     let mut stated: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for span in ticked(&flat(&prose(doc))) {
-        // A verb with no family (`deliver`) is stated by its own name.
+        // A verb with no family (`deliver`), or a family that runs on its own
+        // as well as through its verbs (`schemas`), is stated by its own name.
         let (family, verbs) = match span.split_once(' ') {
             Some(split) => split,
-            None if declared.get(&span) == Some(&BTreeSet::from([String::new()])) => {
+            None if declared
+                .get(&span)
+                .is_some_and(|verbs| verbs.contains(&String::new())) =>
+            {
                 (span.as_str(), "")
             }
             None => continue,
@@ -400,9 +404,15 @@ fn every_sample_invocation_names_a_real_verb_and_its_real_flags() {
             };
             samples += 1;
             let words: Vec<&str> = args.split_whitespace().collect();
-            let Some((path, command)) = verbs.iter().find(|(path, _)| {
-                words.starts_with(&path.iter().map(String::as_str).collect::<Vec<_>>())
-            }) else {
+            // The longest verb the words begin with: `schemas fetch`, not the
+            // `schemas` it is a verb of.
+            let Some((path, command)) = verbs
+                .iter()
+                .filter(|(path, _)| {
+                    words.starts_with(&path.iter().map(String::as_str).collect::<Vec<_>>())
+                })
+                .max_by_key(|(path, _)| path.len())
+            else {
                 panic!("{file}: `onemessagebus {args}` names no verb the binary has");
             };
             let real = long_flags(command);

@@ -23,6 +23,7 @@ use crate::config::Config;
 use crate::envelope::Envelope;
 use crate::filter::{Filter, Matcher};
 use crate::kinds::KindEntry;
+use crate::link::{BundleVersion, CachedBundle, SchemaLink};
 use crate::queue::{Asker, QueueStatus};
 use crate::schema::{Registry, SchemaId};
 use crate::transport::{ConsumerName, Position, QueueName};
@@ -78,6 +79,10 @@ pub struct SchemaListOptions {
     /// How the list is rendered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<Format>,
+    /// A configuration whose `schemas` links are resolved and registered beside
+    /// the registry; not read from `ONEMESSAGEBUS_CONFIG`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
 }
 
 /// The options of `schema check`.
@@ -92,6 +97,10 @@ pub struct SchemaCheckOptions {
     /// The registry directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registry: Option<String>,
+    /// A configuration whose `schemas` links are resolved and registered beside
+    /// the registry; not read from `ONEMESSAGEBUS_CONFIG`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
 }
 
 /// The options of `schema gen`.
@@ -105,6 +114,10 @@ pub struct SchemaGenOptions {
     /// The registry directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registry: Option<String>,
+    /// A configuration whose `schemas` links are resolved and registered beside
+    /// the registry; not read from `ONEMESSAGEBUS_CONFIG`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
 }
 
 /// The options of `schema register`.
@@ -118,6 +131,10 @@ pub struct SchemaRegisterOptions {
     /// The registry directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registry: Option<String>,
+    /// A configuration whose `schemas` links are resolved and registered beside
+    /// the registry; not read from `ONEMESSAGEBUS_CONFIG`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
 }
 
 /// The options of `events merge`.
@@ -324,6 +341,39 @@ pub struct StatusOptions {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TransportsOptions {
     /// How the list is rendered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<Format>,
+}
+
+/// The options of `schemas`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SchemasOptions {
+    /// How the cache is rendered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<Format>,
+}
+
+/// The options of `schemas clear`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SchemasClearOptions {
+    /// How the count is rendered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<Format>,
+}
+
+/// The options of `schemas fetch`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SchemasFetchOptions {
+    /// The links to resolve; every link the configuration names when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<Vec<SchemaLink>>,
+    /// The configuration whose links are resolved when none is named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<String>,
+    /// How the report is rendered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<Format>,
 }
@@ -576,6 +626,79 @@ pub struct RegistryDocument {
     pub schema: Value,
 }
 
+/// The output of `schemas`: the cache directory and every entry it holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SchemaCache {
+    /// The cache directory.
+    pub cache: String,
+    /// One entry per cached location and declared version, by location then
+    /// version.
+    pub entries: Vec<CachedBundle>,
+}
+
+/// The output of `schemas clear`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SchemasCleared {
+    /// The cache directory.
+    pub cache: String,
+    /// How many entries were removed.
+    pub removed: u64,
+}
+
+/// How `schemas fetch` ended for one link, named in `outcome`: a version for
+/// every link that resolved, and a reason for one reused or failed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "outcome", rename_all = "lowercase", deny_unknown_fields)]
+pub enum FetchedLink {
+    /// A `file://` or bare-path bundle, read.
+    Read {
+        /// The link, as named.
+        link: SchemaLink,
+        /// The version the bundle declares.
+        version: BundleVersion,
+    },
+    /// Fetched from the origin, and stored when the link is pinned.
+    Fetched {
+        /// The link, as named.
+        link: SchemaLink,
+        /// The version the bundle declares.
+        version: BundleVersion,
+    },
+    /// The cached entry, confirmed current by the origin.
+    Confirmed {
+        /// The link, as named.
+        link: SchemaLink,
+        /// The version the cached bundle declares.
+        version: BundleVersion,
+    },
+    /// The cached entry, reused because its revalidation could not be made.
+    Reused {
+        /// The link, as named.
+        link: SchemaLink,
+        /// The version the cached bundle declares.
+        version: BundleVersion,
+        /// Why the revalidation failed.
+        reason: String,
+    },
+    /// Not resolved.
+    Failed {
+        /// The link, as named.
+        link: SchemaLink,
+        /// Why not.
+        reason: String,
+    },
+}
+
+/// The output of `schemas fetch`: one report per link, in the order named.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SchemasFetched {
+    /// Each link and how it ended.
+    pub links: Vec<FetchedLink>,
+}
+
 /// What one vocabulary declares, as the SDK manifest carries it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct VocabularyManifest {
@@ -632,6 +755,12 @@ pub struct Bundle {
     pub validated: Schema,
     /// The output of `ask`: the answer, named.
     pub asked: Schema,
+    /// The output of `schemas`: the schema cache and its entries.
+    pub schema_cache: Schema,
+    /// The output of `schemas clear`: how many entries were removed.
+    pub schemas_cleared: Schema,
+    /// The output of `schemas fetch`: how each link resolved.
+    pub schemas_fetched: Schema,
     /// One line of `serve`: the response to one frame, in the protocol of the
     /// codec served.
     pub codec_response: Schema,
@@ -663,6 +792,9 @@ pub fn bundle<V: Vocabulary>(registry: &Registry) -> Bundle {
     options.insert("status_options", schema_for!(StatusOptions));
     options.insert("transports_options", schema_for!(TransportsOptions));
     options.insert("validate_options", schema_for!(ValidateOptions));
+    options.insert("schemas_options", schema_for!(SchemasOptions));
+    options.insert("schemas_clear_options", schema_for!(SchemasClearOptions));
+    options.insert("schemas_fetch_options", schema_for!(SchemasFetchOptions));
     options.insert("ask_options", schema_for!(AskVerbOptions));
     options.insert("serve_options", schema_for!(ServeVerbOptions));
     Bundle {
@@ -693,6 +825,9 @@ pub fn bundle<V: Vocabulary>(registry: &Registry) -> Bundle {
         transport_kinds: schema_for!(Vec<KindEntry>),
         validated: schema_for!(Validated),
         asked: schema_for!(Asked),
+        schema_cache: schema_for!(SchemaCache),
+        schemas_cleared: schema_for!(SchemasCleared),
+        schemas_fetched: schema_for!(SchemasFetched),
         codec_response: schemars::json_schema!({
             "title": "CodecResponse",
             "description": "The response to one frame, in the protocol of the codec served: one JSON object per line.",

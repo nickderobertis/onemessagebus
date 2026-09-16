@@ -37,7 +37,10 @@ export interface ResidentRequest {
     | "transports"
     | "validate"
     | "ask"
-    | "serve";
+    | "serve"
+    | "schemas"
+    | "schemasClear"
+    | "schemasFetch";
   /**
    * The capability's options, keyed as its options root keys them (camelCase).
    */
@@ -148,6 +151,9 @@ const $ResidentVerb: z.ZodType = z.union([
   z.literal("validate"),
   z.literal("ask"),
   z.literal("serve"),
+  z.literal("schemas"),
+  z.literal("schemasClear"),
+  z.literal("schemasFetch"),
 ]);
 
 const $ResidentCancel: z.ZodType = z.strictObject({ id: z.int().gte(0), cancel: z.literal(true) });
@@ -263,6 +269,9 @@ export const BusResidentProtocolV1 = registeredMessage(
           "validate",
           "ask",
           "serve",
+          "schemas",
+          "schemasClear",
+          "schemasFetch",
         ],
         description: "A capability's SDK method, camelCase, as the capability manifest names it.",
       },

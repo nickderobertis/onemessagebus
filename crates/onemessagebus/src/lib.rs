@@ -41,6 +41,7 @@ mod envelope;
 mod filter;
 mod inbox;
 mod kinds;
+mod link;
 mod plugin;
 mod queue;
 mod read;
@@ -88,6 +89,12 @@ pub use inbox::{
 pub use kinds::{
     KindEntry, KindOrigin, TransportConfig, TransportFactory, TransportKind, TransportKinds, LOCAL,
     MEMORY,
+};
+pub use link::{
+    Access, BundleError, BundleVersion, CachedBundle, ConfirmedAt, Freshness, LinkError,
+    LinkLocation, LinkResolver, Outcome, RemoteUrl, Resolved, SchemaBundle, SchemaLink,
+    VersionError, CONNECT_TIMEOUT, DEFAULT_SCHEMA_TTL, READ_TIMEOUT, SCHEMA_CACHE_DIR_ENV,
+    SCHEMA_REFRESH_ENV, SCHEMA_TTL_ENV,
 };
 pub use queue::{
     Asker, AskerRefused, Claimed, Delivery, FieldPath, FieldPathError, Lifetime, Ordering, Policy,

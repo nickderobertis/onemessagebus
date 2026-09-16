@@ -28,6 +28,7 @@ use crate::ask::Correlation;
 use crate::author::{Allowlist, Author, NarrowingRefused, OpWord};
 use crate::codec::{CodecConfig, CodecName};
 use crate::kinds::{TransportConfig, TransportKinds};
+use crate::link::{Freshness, LinkError, LinkResolver, Resolved, SchemaLink};
 use crate::queue::{
     shape_word, Delivery, Ordering, Policy, Predicate, Pushed, QueueError, QueueSpec, RawQueue,
     Retention, Supersede,
@@ -76,6 +77,12 @@ pub struct Config {
     /// refused where `serve` resolves it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub codecs: BTreeMap<CodecName, CodecConfig>,
+    /// Schema bundles another program publishes, each linked by a URL or path
+    /// and pinned to a version (`docs/schema-links.md`). [`load`](Self::load)
+    /// parses each link and resolves nothing; [`resolve_links`](Self::resolve_links)
+    /// is the call that does.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub schemas: Vec<SchemaLink>,
 }
 
 /// One validator of a configuration: the external kind, which a Rust
@@ -301,25 +308,37 @@ pub enum ConfigError {
 impl Config {
     /// Read and check a configuration file.
     ///
+    /// Each of its `schemas` links is parsed — a relative bare path resolved
+    /// against the file's directory — and none is resolved: loading a
+    /// configuration touches neither the network nor the schema cache.
+    ///
     /// # Errors
     ///
     /// [`ConfigError::Read`] for a file that cannot be read,
     /// [`ConfigError::Parse`] for one that is not a configuration — naming the
-    /// unknown key, or the key a malformed value is at — and
-    /// [`ConfigError::Version`] for a version other than [`CONFIG_VERSION`].
+    /// unknown key, or the key a malformed value is at, a malformed link among
+    /// them — and [`ConfigError::Version`] for a version other than
+    /// [`CONFIG_VERSION`].
     pub fn load(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
         let path = path.as_ref();
         let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
             path: path.to_path_buf(),
             source,
         })?;
-        Self::parse(&text).map_err(|failure| match failure {
+        let mut config = Self::parse(&text).map_err(|failure| match failure {
             ConfigError::Parse { why, .. } => ConfigError::Parse {
                 path: path.to_path_buf(),
                 why,
             },
             other => other,
-        })
+        })?;
+        // A relative bare path names a bundle beside the file that links it.
+        let dir = path.parent().unwrap_or_else(|| Path::new(""));
+        config.schemas = std::mem::take(&mut config.schemas)
+            .into_iter()
+            .map(|link| link.rebased(dir))
+            .collect();
+        Ok(config)
     }
 
     /// Read and check a configuration from its text; see [`load`](Self::load).
@@ -357,7 +376,26 @@ impl Config {
             authors: BTreeMap::new(),
             validators: Vec::new(),
             codecs: BTreeMap::new(),
+            schemas: Vec::new(),
         }
+    }
+
+    /// Resolve every link the `schemas` key names, in order, through
+    /// `resolver`: the explicit call [`load`](Self::load) never makes.
+    ///
+    /// # Errors
+    ///
+    /// The first link that does not resolve, named as [`LinkResolver::resolve`]
+    /// names it.
+    pub fn resolve_links(
+        &self,
+        resolver: &LinkResolver,
+        freshness: Freshness,
+    ) -> Result<Vec<Resolved>, LinkError> {
+        self.schemas
+            .iter()
+            .map(|link| resolver.resolve(link, freshness))
+            .collect()
     }
 
     /// The same configuration with its transport keeping its queues in `dir`:

@@ -17,13 +17,22 @@ from ._generated.contract import AskedRefused as Refused
 from ._generated.contract import AskedReply as Reply
 from ._generated.contract import AskedTimeout as Timeout
 from ._generated.contract import (
+    CachedBundle,
     CarriedEntry,
     Envelope,
+    FetchedLinkConfirmed,
+    FetchedLinkFailed,
+    FetchedLinkFetched,
+    FetchedLinkRead,
+    FetchedLinkReused,
     KindEntry,
     LogRecord,
     QueueStatus,
     Replied,
+    SchemaCache,
     SchemaEntry,
+    SchemasCleared,
+    SchemasFetched,
     Sent,
     ValidatedPass,
     ValidatedRefuse,
@@ -37,6 +46,15 @@ StrPath: TypeAlias = str | os.PathLike[str]
 #: What `ask` answered: a reply, or the named reason there is none.
 Answer: TypeAlias = Reply | Timeout | Abandoned | Refused
 
+#: How `schemas fetch` ended for one link, told apart by `outcome`.
+FetchedLink: TypeAlias = (
+    FetchedLinkRead
+    | FetchedLinkFetched
+    | FetchedLinkConfirmed
+    | FetchedLinkReused
+    | FetchedLinkFailed
+)
+
 #: What `validate` judged, told apart by `verdict`.
 Validated: TypeAlias = ValidatedPass | ValidatedRefuse | ValidatedUnjudged
 
@@ -49,9 +67,16 @@ Payload: TypeAlias = (
 __all__ = [
     "Abandoned",
     "Answer",
+    "CachedBundle",
     "CarriedEntry",
     "Claimed",
     "Envelope",
+    "FetchedLink",
+    "FetchedLinkConfirmed",
+    "FetchedLinkFailed",
+    "FetchedLinkFetched",
+    "FetchedLinkRead",
+    "FetchedLinkReused",
     "KindEntry",
     "LogRecord",
     "Payload",
@@ -59,7 +84,10 @@ __all__ = [
     "Refused",
     "Replied",
     "Reply",
+    "SchemaCache",
     "SchemaEntry",
+    "SchemasCleared",
+    "SchemasFetched",
     "Sent",
     "StrPath",
     "Timeout",

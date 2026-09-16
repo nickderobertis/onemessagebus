@@ -344,6 +344,13 @@ class SchemaId(RootModel[str]):
     """
 
 
+class SchemaLink(RootModel[str]):
+    root: str = Field(..., min_length=1)
+    """
+    A schema bundle's location — an https:// URL, an http:// URL on a loopback host, a file:// URL, or a path relative to the configuration's directory — and, after a final @, the version pin it is held to: https://example.org/frames.json@8.
+    """
+
+
 class SchemaListOptions(BaseModel):
     """
     The options of `schema list`.
@@ -352,6 +359,11 @@ class SchemaListOptions(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    config: str | None = None
+    """
+    A configuration whose `schemas` links are resolved and registered beside
+    the registry; not read from `ONEMESSAGEBUS_CONFIG`.
+    """
     format: Literal["json", "text"] | None = None
     """
     How the list is rendered.
@@ -371,6 +383,11 @@ class SchemaRegisterOptions(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    config: str | None = None
+    """
+    A configuration whose `schemas` links are resolved and registered beside
+    the registry; not read from `ONEMESSAGEBUS_CONFIG`.
+    """
     file: str
     """
     The file holding the JSON Schema document.
@@ -386,6 +403,74 @@ class SchemaRegisterOptions(BaseModel):
     registry: str | None = None
     """
     The registry directory.
+    """
+
+
+class SchemasClearOptions(BaseModel):
+    """
+    The options of `schemas clear`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    format: Literal["json", "text"] | None = None
+    """
+    How the count is rendered.
+    """
+
+
+class SchemasCleared(BaseModel):
+    """
+    The output of `schemas clear`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    cache: str
+    """
+    The cache directory.
+    """
+    removed: int = Field(..., ge=0)
+    """
+    How many entries were removed.
+    """
+
+
+class SchemasFetchOptions(BaseModel):
+    """
+    The options of `schemas fetch`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    config: str | None = None
+    """
+    The configuration whose links are resolved when none is named.
+    """
+    format: Literal["json", "text"] | None = None
+    """
+    How the report is rendered.
+    """
+    links: list[SchemaLink] | None = None
+    """
+    The links to resolve; every link the configuration names when absent.
+    """
+
+
+class SchemasOptions(BaseModel):
+    """
+    The options of `schemas`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    format: Literal["json", "text"] | None = None
+    """
+    How the cache is rendered.
     """
 
 
@@ -764,6 +849,30 @@ class AskedTimeout(BaseModel):
     """
 
 
+class CachedBundle(BaseModel):
+    """
+    One entry of the cache, as `schemas` lists it.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    confirmed_at: str = Field(
+        ..., pattern="^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    )
+    """
+    When the origin last confirmed it.
+    """
+    url: str = Field(..., pattern="^[Hh][Tt][Tt][Pp][Ss]?://")
+    """
+    The link's location, without its pin.
+    """
+    version: str = Field(..., pattern="^[0-9]+(\\.[0-9]+){0,2}$")
+    """
+    The version the cached bundle declares.
+    """
+
+
 class CarriedEntry(BaseModel):
     """
     One carried message, as the store holds it.
@@ -985,6 +1094,105 @@ class EventsMergeOptions(BaseModel):
     """
 
 
+class FetchedLinkConfirmed(BaseModel):
+    """
+    The cached entry, confirmed current by the origin.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    link: str = Field(..., min_length=1)
+    """
+    The link, as named.
+    """
+    outcome: Literal["confirmed"]
+    version: str = Field(..., pattern="^[0-9]+(\\.[0-9]+){0,2}$")
+    """
+    The version the cached bundle declares.
+    """
+
+
+class FetchedLinkFailed(BaseModel):
+    """
+    Not resolved.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    link: str = Field(..., min_length=1)
+    """
+    The link, as named.
+    """
+    outcome: Literal["failed"]
+    reason: str
+    """
+    Why not.
+    """
+
+
+class FetchedLinkFetched(BaseModel):
+    """
+    Fetched from the origin, and stored when the link is pinned.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    link: str = Field(..., min_length=1)
+    """
+    The link, as named.
+    """
+    outcome: Literal["fetched"]
+    version: str = Field(..., pattern="^[0-9]+(\\.[0-9]+){0,2}$")
+    """
+    The version the bundle declares.
+    """
+
+
+class FetchedLinkRead(BaseModel):
+    """
+    A `file://` or bare-path bundle, read.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    link: str = Field(..., min_length=1)
+    """
+    The link, as named.
+    """
+    outcome: Literal["read"]
+    version: str = Field(..., pattern="^[0-9]+(\\.[0-9]+){0,2}$")
+    """
+    The version the bundle declares.
+    """
+
+
+class FetchedLinkReused(BaseModel):
+    """
+    The cached entry, reused because its revalidation could not be made.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    link: str = Field(..., min_length=1)
+    """
+    The link, as named.
+    """
+    outcome: Literal["reused"]
+    reason: str
+    """
+    Why the revalidation failed.
+    """
+    version: str = Field(..., pattern="^[0-9]+(\\.[0-9]+){0,2}$")
+    """
+    The version the cached bundle declares.
+    """
+
+
 class KindEntry(BaseModel):
     """
     One kind a build can open.
@@ -1189,6 +1397,25 @@ class Replied(BaseModel):
     """
 
 
+class SchemaCache(BaseModel):
+    """
+    The output of `schemas`: the cache directory and every entry it holds.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    cache: str
+    """
+    The cache directory.
+    """
+    entries: list[CachedBundle]
+    """
+    One entry per cached location and declared version, by location then
+    version.
+    """
+
+
 class SchemaCheckOptions(BaseModel):
     """
     The options of `schema check`.
@@ -1197,6 +1424,11 @@ class SchemaCheckOptions(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    config: str | None = None
+    """
+    A configuration whose `schemas` links are resolved and registered beside
+    the registry; not read from `ONEMESSAGEBUS_CONFIG`.
+    """
     file: str | None = None
     """
     The payload file; stdin when absent.
@@ -1253,6 +1485,11 @@ class SchemaGenOptions(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    config: str | None = None
+    """
+    A configuration whose `schemas` links are resolved and registered beside
+    the registry; not read from `ONEMESSAGEBUS_CONFIG`.
+    """
     id: str = Field(
         ...,
         pattern="^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$",
@@ -1434,6 +1671,26 @@ class QueueConfig(BaseModel):
     """
 
 
+class SchemasFetched(BaseModel):
+    """
+    The output of `schemas fetch`: one report per link, in the order named.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    links: list[
+        FetchedLinkRead
+        | FetchedLinkFetched
+        | FetchedLinkConfirmed
+        | FetchedLinkReused
+        | FetchedLinkFailed
+    ]
+    """
+    Each link and how it ended.
+    """
+
+
 class ValidatorConfig(BaseModel):
     """
     One validator of a configuration: the external kind, which a Rust
@@ -1501,6 +1758,13 @@ class Config(BaseModel):
     queues: dict[str, QueueConfig] | None = None
     """
     Queues added to the layout's, or overriding one of the layout's by name.
+    """
+    schemas: list[SchemaLink] | None = None
+    """
+    Schema bundles another program publishes, each linked by a URL or path
+    and pinned to a version (`docs/schema-links.md`). [`load`](Self::load)
+    parses each link and resolves nothing; [`resolve_links`](Self::resolve_links)
+    is the call that does.
     """
     transport: TransportConfig
     """

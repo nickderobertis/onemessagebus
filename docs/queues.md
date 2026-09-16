@@ -190,6 +190,7 @@ by the 0.28.2 binary itself in `crates/onemessagebus-e2e/tests/e2e/onepipeline.r
 
 ## The configuration file
 
+<!-- llmlint: ignore-block[no_redundant_instruction_pointers] the node that added the `schemas` key was required to have this configuration's key listing point at docs/schema-links.md, where Contract L is stated once, rather than restate the link, pin and cache rules beside each key; the comment on that one key is the pointer. -->
 ```yaml
 version: 1
 transport: {kind: local, dir: runs/r1/channel}  # kind: local | memory | a registered or plugin kind
@@ -198,7 +199,10 @@ queues:                                          # additions, or overrides of a 
   findings: {policy: {hold_pending: false}}
 authors:                                         # may narrow a layout author's grants, never widen them
   monitor: {capabilities: [retry, requeue, cancel, finding]}
+schemas:                                         # schema bundles linked by URL or path, pinned; docs/schema-links.md
+  - "https://example.org/frames.json@8"
 ```
+<!-- llmlint: ignore-end[no_redundant_instruction_pointers] -->
 
 Reading it is two steps, and the types keep them apart:
 
@@ -215,11 +219,14 @@ Reading it is two steps, and the types keep them apart:
    its kind refuses. What it answers, a `Bus`, is the one type that opens a queue
    or authors a record.
 
-Two more blocks sit beside these: `validators`, what a queue judges a message by
-before anything is appended (`docs/validators.md`), and `codecs`, what a host
-configures for each codec `serve` runs (`docs/codecs.md`). Each refuses an
-unknown key by name at `Config::load`, and `validators[<index>].on` naming no
-declared queue is refused by `Config::resolve`.
+Three more blocks sit beside these: `validators`, what a queue judges a message
+by before anything is appended (`docs/validators.md`); `codecs`, what a host
+configures for each codec `serve` runs (`docs/codecs.md`); and `schemas`, links to
+schema bundles another program publishes, each pinned to a version, whose
+documents the command line registers beside the layout's.
+Each refuses an unknown key by name at `Config::load` — `schemas` a malformed
+link, resolving none — and `validators[<index>].on` naming no declared queue is
+refused by `Config::resolve`.
 
 The binary reads the file from `--config <path>` or `ONEMESSAGEBUS_CONFIG`, and
 `--transport-dir <dir>` or `ONEMESSAGEBUS_TRANSPORT_DIR` replaces `transport.dir`

@@ -28,6 +28,9 @@ import type { SchemaCheckOptions } from "./generated/options/schema-check-option
 import type { SchemaGenOptions } from "./generated/options/schema-gen-options.js";
 import type { SchemaListOptions } from "./generated/options/schema-list-options.js";
 import type { SchemaRegisterOptions } from "./generated/options/schema-register-options.js";
+import type { SchemasClearOptions } from "./generated/options/schemas-clear-options.js";
+import type { SchemasFetchOptions } from "./generated/options/schemas-fetch-options.js";
+import type { SchemasOptions } from "./generated/options/schemas-options.js";
 import type { SendOptions } from "./generated/options/send-options.js";
 import type { ServeOptions } from "./generated/options/serve-options.js";
 import type { StatusOptions } from "./generated/options/status-options.js";
@@ -43,7 +46,10 @@ import type { Envelope } from "./generated/roots/envelope.js";
 import type { LogRecord } from "./generated/roots/log-record.js";
 import type { QueueStatuses } from "./generated/roots/queue-statuses.js";
 import type { Replied } from "./generated/roots/replied.js";
+import type { SchemaCache } from "./generated/roots/schema-cache.js";
 import type { SchemaList } from "./generated/roots/schema-list.js";
+import type { SchemasCleared } from "./generated/roots/schemas-cleared.js";
+import type { SchemasFetched } from "./generated/roots/schemas-fetched.js";
 import type { Sent } from "./generated/roots/sent.js";
 import type { TransportKinds } from "./generated/roots/transport-kinds.js";
 import type { Validated } from "./generated/roots/validated.js";
@@ -177,6 +183,34 @@ export class Client {
 
   async schemaRegister(options: SchemaRegisterOptions): Promise<string> {
     return this.#text("schemaRegister", options);
+  }
+
+  /** The schema cache: its directory, and each linked bundle it holds. */
+  schemas(options: AsText<SchemasOptions>): Promise<string>;
+  schemas(options?: AsJson<SchemasOptions>): Promise<SchemaCache>;
+  schemas(options?: SchemasOptions): Promise<SchemaCache | string>;
+  async schemas(options: SchemasOptions = {}): Promise<SchemaCache | string> {
+    return this.#reading("schemas", options);
+  }
+
+  /** Remove every entry of the schema cache, and report how many there were. */
+  schemasClear(options: AsText<SchemasClearOptions>): Promise<string>;
+  schemasClear(options?: AsJson<SchemasClearOptions>): Promise<SchemasCleared>;
+  schemasClear(options?: SchemasClearOptions): Promise<SchemasCleared | string>;
+  async schemasClear(options: SchemasClearOptions = {}): Promise<SchemasCleared | string> {
+    return this.#reading("schemasClear", options);
+  }
+
+  /**
+   * Resolve each link — or every link the configuration names — revalidating the
+   * cache whatever its age. A link that does not resolve rejects with `BusFailed`,
+   * whose `output` is the report.
+   */
+  schemasFetch(options: AsText<SchemasFetchOptions>): Promise<string>;
+  schemasFetch(options?: AsJson<SchemasFetchOptions>): Promise<SchemasFetched>;
+  schemasFetch(options?: SchemasFetchOptions): Promise<SchemasFetched | string>;
+  async schemasFetch(options: SchemasFetchOptions = {}): Promise<SchemasFetched | string> {
+    return this.#reading("schemasFetch", options);
   }
 
   eventsMerge(options: AsText<EventsMergeOptions>): Promise<string>;

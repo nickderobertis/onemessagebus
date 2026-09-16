@@ -18,6 +18,11 @@ export interface SchemaRegisterOptions {
    * The registry directory.
    */
   registry?: string | null | undefined;
+  /**
+   * A configuration whose `schemas` links are resolved and registered beside
+   * the registry; not read from `ONEMESSAGEBUS_CONFIG`.
+   */
+  config?: string | null | undefined;
 }
 
 const $SchemaId: z.ZodType = z
@@ -29,5 +34,6 @@ export const SchemaRegisterOptionsSchema = contract<SchemaRegisterOptions>(
     id: z.lazy(() => $SchemaId),
     file: z.string(),
     registry: anyOf([z.string(), z.null()]).optional(),
+    config: anyOf([z.string(), z.null()]).optional(),
   }),
 );
