@@ -57,6 +57,13 @@ sha2 = "0.10"
 # A correlation is minted from the operating system's randomness, so a reply
 # written for one question cannot be mistaken for another's. Already in the lock.
 getrandom = "0.3"
+# A schema link names a bundle over HTTPS (docs/schema-links.md). A pure-Rust
+# client: rustls over ring, never a system OpenSSL or a spawned `curl`, and no
+# default features, so no bundled root set — the roots are the platform's own,
+# read by rustls-native-certs (which honours SSL_CERT_FILE and SSL_CERT_DIR).
+ureq = { version = "3.4", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8"
 
 assert_cmd = "2"
 predicates = "3"
