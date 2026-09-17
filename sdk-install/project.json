@@ -25,7 +25,10 @@
     },
     "test": {
       "command": "just _sdk-install-test",
-      "dependsOn": [{ "projects": ["onemessagebus-pypi"], "target": "build" }],
+      "dependsOn": [
+        { "projects": ["onemessagebus-pypi"], "target": "build" },
+        { "projects": ["onemessagebus-cli"], "target": "build" }
+      ],
       "inputs": [
         "{projectRoot}/**/*",
         "^default",
