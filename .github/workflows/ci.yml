@@ -23,7 +23,8 @@ env:
 jobs:
   # Which projects this pull request's diff can reach, derived once so every
   # Rust-artifact job below can skip on a change that cannot touch a crate
-  # instead of paying the full matrix.
+  # instead of paying the full matrix — at job level where one context is
+  # reported, step by step where a matrix leg's context is required by name.
   #
   # `just affected-crate` fails closed: with no derivable merge base — a shallow
   # clone, a missing base branch — it says the crate is affected and the matrices
@@ -101,9 +102,16 @@ jobs:
   # platform can change. Formatting and lints are platform-independent and the
   # gate job already ran them, so they are not repeated; coverage is measured
   # on Linux alone.
+  #
+  # No job-level condition on the `changes` output, on purpose: main's branch
+  # protection requires each leg's context by name (`cross (macos-latest)`,
+  # `cross (windows-latest)`), and a matrix job skipped at job level reports
+  # only a bare skipped `cross`, so a crate-free change would wait for ever on
+  # contexts that never appear. Every leg is scheduled on every change; when the
+  # diff reaches no crate, the real steps are conditioned off one by one and the
+  # leg succeeds through the single step that says so.
   cross:
     needs: changes
-    if: needs.changes.outputs.crate == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -113,27 +121,39 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Nothing to prove (the diff reaches no crate)
+        if: needs.changes.outputs.crate != 'true'
+        run: echo "the diff reaches no crate, so cross has nothing to build or test on ${{ matrix.os }}"
       - uses: actions/checkout@v4
+        if: needs.changes.outputs.crate == 'true'
       - uses: Swatinem/rust-cache@v2
+        if: needs.changes.outputs.crate == 'true'
       - uses: actions/setup-node@v4
+        if: needs.changes.outputs.crate == 'true'
         with:
           node-version: "22"
       - uses: taiki-e/install-action@v2
+        if: needs.changes.outputs.crate == 'true'
         with:
           tool: nextest
       - uses: ./.github/actions/setup-just
+        if: needs.changes.outputs.crate == 'true'
       # The journey crate runs the onepipeline-cli 0.28.2 wheel's reader through
       # `uv tool run` to read a channel directory this build wrote.
       - uses: astral-sh/setup-uv@v6
+        if: needs.changes.outputs.crate == 'true'
       # The SDK projects bootstrap with bun and uv, and on macOS the
       # cross-language journey spawns both.
       - uses: oven-sh/setup-bun@v2
+        if: needs.changes.outputs.crate == 'true'
         with:
           bun-version-file: .bun-version
       - name: Bootstrap
+        if: needs.changes.outputs.crate == 'true'
         run: just bootstrap
       # llmlint: ignore-block[external_service_suite_stays_out_of_the_affected_tier, live_tier_compiles_and_requires_credential] the onepipeline 0.28.2 byte-compatibility journey fetches one exact pinned wheel (onepipeline-cli==0.28.2, the anchored engine release the compatibility promise is made against) anonymously from PyPI, so no credential exists to require, and uv caches it after the first run; the task placed this journey in the gate deliberately, because byte compatibility with that release is this node's central acceptance criterion and must gate every pull request.
       - name: Tests (every crate and the npm packaging)
+        if: needs.changes.outputs.crate == 'true'
         # llmlint: ignore[no_second_broader_sweep_over_an_already_gated_commit] not the same sweep twice: `gate` runs on ubuntu alone, and this is the only run of the suites on macOS and Windows, which the create-repo CI guidance requires for a cross-platform binary; formatting, lints and coverage are platform-independent and are not repeated here.
         run: just test-uninstrumented
       # llmlint: ignore-end[external_service_suite_stays_out_of_the_affected_tier, live_tier_compiles_and_requires_credential]
@@ -181,9 +201,12 @@ jobs:
   # release verify jobs run against PyPI and npm. `cargo install --path` is the
   # same code path as the documented `cargo install --git`, minus the fetch — so
   # the path users take is exercised on every PR, not only after a release.
+  #
+  # Like `cross`, no job-level condition: each leg's context is required by
+  # name, so every leg runs on every change and a crate-free one succeeds through
+  # the single step that says there is nothing to install.
   install:
     needs: [changes, gate]
-    if: needs.changes.outputs.crate == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -193,15 +216,22 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Nothing to prove (the diff reaches no crate)
+        if: needs.changes.outputs.crate != 'true'
+        run: echo "the diff reaches no crate, so install has nothing to install or smoke-test on ${{ matrix.os }}"
       - uses: actions/checkout@v4
+        if: needs.changes.outputs.crate == 'true'
       - uses: Swatinem/rust-cache@v2
+        if: needs.changes.outputs.crate == 'true'
       # On a PR the change is not on the remote yet, so `--path` is the only way to
       # install *this* revision.
       - name: Install (this revision)
+        if: needs.changes.outputs.crate == 'true'
         env:
           RUSTFLAGS: "-D warnings"
         run: cargo install --path crates/onemessagebus-cli --locked
       - name: Smoke-test the installed binary
+        if: needs.changes.outputs.crate == 'true'
         run: |
           version="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -n1)"
           bash scripts/smoke-published.sh \

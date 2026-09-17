@@ -28,6 +28,7 @@
         "{workspaceRoot}/release-targets.toml",
         "{workspaceRoot}/pyproject.toml",
         "{workspaceRoot}/.github/workflows/release.yml",
+        "{workspaceRoot}/.github/workflows/ci.yml",
         "{workspaceRoot}/crates/**/*",
         "{workspaceRoot}/Cargo.toml",
         "{workspaceRoot}/Cargo.lock",
