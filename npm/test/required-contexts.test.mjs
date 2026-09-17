@@ -13,6 +13,17 @@
 // `if`, their steps' `if` — and evaluating each condition for both values the
 // `changes` job can report, rather than by matching text: a job-level `if` spelled
 // any other way, or a real step whose `if` drifts, is the same defect.
+//
+// A structural assertion rather than an end-to-end one, on purpose. The behavior is
+// GitHub's scheduling of these jobs on a pull request against this repository's
+// branch protection, and its only end-to-end proof is such a pull request: two
+// runners per matrix leg on a hosted service, driven by a push, read back through
+// an authenticated API — which no offline run can stand up, and which every pull
+// request already performs. What this repository authors is exactly the `if`
+// fields GitHub reads to decide that scheduling, so evaluating them the way GitHub
+// does is the whole of the check that can run here; the steps they condition are
+// the ones that ran before the condition existed, unchanged, and are proven by
+// running on every crate change.
 
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -25,6 +36,14 @@ import { parse } from "yaml";
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /// The contexts branch protection requires, by job and matrix leg.
+///
+/// The one source is main's branch-protection setting on GitHub, which nothing in
+/// this tree declares and only an authenticated API call can read; the `check`
+/// tier is offline and credential-free by rule, so this list cannot be reconciled
+/// with it here. It is held instead to the tree's own statement of the required
+/// checks in AGENTS.md, below, so the two in-tree restatements cannot drift apart,
+/// and the credentialed reconciliation with GitHub is a follow-up.
+// llmlint: ignore[contracts_have_one_source_or_a_drift_gate] the authoritative source is GitHub's branch-protection configuration, outside the tree and readable only with a credential the offline deterministic tier must not require; the gate that can run here reconciles this list with AGENTS.md's declaration of the required checks (the `AGENTS.md names every context this test holds` case), and the credentialed drift gate against GitHub itself is recorded as a follow-up.
 const REQUIRED = {
   cross: ["macos-latest", "windows-latest"],
   install: ["ubuntu-latest", "macos-latest", "windows-latest"],
@@ -179,6 +198,21 @@ function pullRequestContext(crate, os) {
 
 describe("the required per-platform contexts", () => {
   const workflow = parse(readFileSync(join(REPO_ROOT, ".github", "workflows", "ci.yml"), "utf8"));
+
+  it("AGENTS.md names every context this test holds", () => {
+    const agents = readFileSync(join(REPO_ROOT, "AGENTS.md"), "utf8");
+    const named = new Set(
+      [...agents.matchAll(/`([a-z-]+) \(([a-z-]+)\)`/g)].map((m) => `${m[1]} (${m[2]})`),
+    );
+    for (const [job, legs] of Object.entries(REQUIRED)) {
+      for (const os of legs) {
+        assert.ok(
+          named.has(`${job} (${os})`),
+          `AGENTS.md's list of required checks no longer names \`${job} (${os})\``,
+        );
+      }
+    }
+  });
 
   it("knows the crate output the conditions read", () => {
     assert.match(

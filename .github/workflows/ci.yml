@@ -109,7 +109,11 @@ jobs:
   # only a bare skipped `cross`, so a crate-free change would wait for ever on
   # contexts that never appear. Every leg is scheduled on every change; when the
   # diff reaches no crate, the real steps are conditioned off one by one and the
-  # leg succeeds through the single step that says so.
+  # leg succeeds through the single step that says so. Which steps GitHub
+  # schedules for each value of the crate output is held by
+  # npm/test/required-contexts.test.mjs, which evaluates these `if` fields the
+  # way GitHub does — the only proof of the scheduling that can run offline; the
+  # steps themselves are unchanged and run on every crate change.
   cross:
     needs: changes
     strategy:
