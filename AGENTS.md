@@ -181,8 +181,13 @@ you:
   `install (ubuntu-latest)`, `install (macos-latest)`, `install (windows-latest)`,
   `wheel`, `sdk-install (ubuntu-latest)`, `sdk-install (macos-latest)`,
   `pr-title`, and `llmlint`. A matrix job reports one context per
-  platform, and `changes` is required because the jobs it gates are skipped —
-  which counts as passing — when it fails. `install-documented.yml` runs
+  platform — and only when it is scheduled, so `cross` and `install` carry no
+  job-level condition on `changes`: on a crate-free change each leg succeeds
+  through one step that says so, because a leg skipped at job level reports
+  no per-platform context and the required check waits for ever
+  (`npm/test/required-contexts.test.mjs` holds this). `changes` is required
+  because the jobs it gates are skipped — which counts as passing — when it
+  fails. `install-documented.yml` runs
   on a push to `main`, never on a pull request, so it cannot be required. `notignored` is deliberately
   not: it is the review artifact naming the suppressions a PR adds, and a fork's
   read-only token cannot post it.

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Build the publishable package and prove it installs: `just python-sdk-dist` packs a
 # copy with every placeholder version stamped from Cargo.toml and builds its sdist
-# and wheel into dist/packages; the wheel is installed into a fresh virtualenv beside
-# pydantic (the onemessagebus-cli pin is the release's, installed by a user's
-# resolver) and imported. Quiet on success but for one line; each failure names
-# what to do next.
+# and wheel into dist/packages; scripts/typed.py holds the wheel to the py.typed
+# marker and the `Typing :: Typed` classifier the manifest promises; then the wheel
+# is installed into a fresh virtualenv beside pydantic (the onemessagebus-cli pin is
+# the release's, installed by a user's resolver) and imported. Quiet on success but
+# for one line; each failure names what to do next.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
@@ -18,6 +19,8 @@ shopt -s nullglob
 wheels=("$here"/dist/packages/onemessagebus-*.whl)
 [ "${#wheels[@]}" -eq 1 ] \
   || fail "dist/packages holds ${#wheels[@]} onemessagebus wheels where the build leaves one; rerun this script, which empties it first"
+uv run --no-project python scripts/typed.py "${wheels[0]}" >/dev/null \
+  || fail "the built wheel is not typed — the typed.py output above says why"
 uv venv --quiet "$venv" \
   || fail "cannot create the smoke virtualenv at $venv — install uv (https://docs.astral.sh/uv/) and a Python 3.10+, then rerun"
 uv pip install --quiet --python "$venv/bin/python" --no-deps "${wheels[0]}" \
@@ -67,5 +70,5 @@ if models.PlannerSurface.__name__ != "Surface":
         "not the generated Surface model",
         REGENERATE,
     )
-print(f"build: onemessagebus {stamped} wheel installs and imports")
+print(f"build: onemessagebus {stamped} wheel is typed, installs and imports")
 EOF
