@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/nickderobertis/onemessagebus/compare/v0.6.0...v0.7.0) - 2026-09-17
+
+### Added
+
+- *(channel)* [**breaking**] declare every planner-channel author but the planner in configuration ([#115](https://github.com/nickderobertis/onemessagebus/pull/115))
+
 ## [0.6.0](https://github.com/nickderobertis/onemessagebus/compare/v0.5.0...v0.6.0) - 2026-09-16
 
 ### Added
