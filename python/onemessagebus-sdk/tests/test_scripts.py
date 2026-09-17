@@ -157,6 +157,7 @@ def rewrite_wheel(
     return out
 
 
+# llmlint: ignore[test_tiers_split_by_project_not_by_marker] the wheel this test builds is a pure-Python package through the cached uv_build backend, about three seconds, inside a `test` target that already depends on the Rust binary's cargo build and drives it in every other module; the costly tier of this project is that binary, split already, and a three-second `uv build` is not one to schedule apart. The sibling install journey (`onemessagebus-sdk-install-e2e`) is the split tier and installs the SDK; what this test holds is the dist recipe's wheel carrying the marker, which belongs beside the other script tests.
 def test_typed_holds_the_built_wheel_to_the_marker_and_the_classifier(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
