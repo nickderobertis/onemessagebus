@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Build the publishable package and prove it installs: `just python-sdk-dist` packs a
 # copy with every placeholder version stamped from Cargo.toml and builds its sdist
-# and wheel into dist/packages; the wheel is read as the zip it is for the py.typed
-# marker and the `Typing :: Typed` classifier the manifest promises, then installed
-# into a fresh virtualenv beside pydantic (the onemessagebus-cli pin is the
-# release's, installed by a user's resolver) and imported. Quiet on success but for
-# one line; each failure names what to do next.
+# and wheel into dist/packages; scripts/typed.py holds the wheel to the py.typed
+# marker and the `Typing :: Typed` classifier the manifest promises; then the wheel
+# is installed into a fresh virtualenv beside pydantic (the onemessagebus-cli pin is
+# the release's, installed by a user's resolver) and imported. Quiet on success but
+# for one line; each failure names what to do next.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
@@ -19,17 +19,17 @@ shopt -s nullglob
 wheels=("$here"/dist/packages/onemessagebus-*.whl)
 [ "${#wheels[@]}" -eq 1 ] \
   || fail "dist/packages holds ${#wheels[@]} onemessagebus wheels where the build leaves one; rerun this script, which empties it first"
+uv run --no-project python scripts/typed.py "${wheels[0]}" >/dev/null \
+  || fail "the built wheel is not typed — the typed.py output above says why"
 uv venv --quiet "$venv" \
   || fail "cannot create the smoke virtualenv at $venv — install uv (https://docs.astral.sh/uv/) and a Python 3.10+, then rerun"
 uv pip install --quiet --python "$venv/bin/python" --no-deps "${wheels[0]}" \
   || fail "the built wheel ${wheels[0]} did not install — the uv output above names what it refused"
 uv pip install --quiet --python "$venv/bin/python" "pydantic>=2.7,<3" \
   || fail "pydantic did not install into the smoke virtualenv — check the package index is reachable, then rerun"
-WHEEL="${wheels[0]}" "$venv/bin/python" - <<'EOF'
+"$venv/bin/python" - <<'EOF'
 import json
-import os
 import sys
-import zipfile
 from pathlib import Path
 
 REGENERATE = "run `just python-sdk-generate`, then build again"
@@ -38,34 +38,6 @@ REGENERATE = "run `just python-sdk-generate`, then build again"
 def refuse(problem: str, action: str) -> None:
     sys.exit(f"build: {problem}\n  fix: {action}")
 
-
-# The marker and the classifier are held on the wheel itself, never the source tree:
-# the classifier is a promise that a consumer's type checker reads every name rather
-# than Any, and only the wheel's contents say whether the release keeps it.
-wheel = Path(os.environ["WHEEL"])
-with zipfile.ZipFile(wheel) as archive:
-    members = {info.filename: info.file_size for info in archive.infolist()}
-    metadata = next((name for name in members if name.endswith(".dist-info/METADATA")), None)
-    if metadata is None:
-        refuse(f"{wheel.name} holds no .dist-info/METADATA", "rerun this script, which rebuilds it")
-    classifiers = archive.read(metadata).decode("utf-8").splitlines()
-if members.get("onemessagebus/py.typed") is None:
-    refuse(
-        f"{wheel.name} ships no onemessagebus/py.typed, so a consumer's type checker reads "
-        "every name as Any",
-        "restore the empty marker at src/onemessagebus/py.typed, then build again",
-    )
-if members["onemessagebus/py.typed"] != 0:
-    refuse(
-        f"{wheel.name}'s onemessagebus/py.typed holds {members['onemessagebus/py.typed']} bytes "
-        "where the marker is empty",
-        "empty src/onemessagebus/py.typed, then build again",
-    )
-if "Classifier: Typing :: Typed" not in classifiers:
-    refuse(
-        f"{wheel.name}'s METADATA carries no `Classifier: Typing :: Typed`",
-        'restore "Typing :: Typed" under [project].classifiers in pyproject.toml, then build again',
-    )
 
 try:
     import onemessagebus
