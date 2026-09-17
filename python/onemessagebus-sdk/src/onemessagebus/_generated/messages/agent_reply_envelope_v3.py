@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from ..domain import Author
+
 
 class Command(BaseModel):
     """
@@ -31,7 +33,7 @@ class ReplyEnvelope(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    author: Literal["planner", "monitor"] | None = None
+    author: Author | None = None
     """
     Who wrote the reply. Omitted, the planner.
     """

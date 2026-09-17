@@ -14,10 +14,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
-use onemessagebus::{Asker, LocalTransport, Transport};
+use onemessagebus::{Asker, Author, LocalTransport, Transport};
 use onemessagebus_agent::channel::{source, Channel};
 use onemessagebus_agent::channel::{
-    ChannelAuthor, CommandOutcome, CommandResult, CommandVerdict, ReplyEnvelope, Surface,
+    CommandOutcome, CommandResult, CommandVerdict, ReplyEnvelope, Surface,
 };
 use serde_json::{json, Map, Value};
 
@@ -204,7 +204,7 @@ fn write_channel(dir: &Path) {
     // planner's envelope, both claimed and answered.
     channel
         .submit(
-            ChannelAuthor::Monitor,
+            Author::from("sentinel"),
             vec![command(
                 json!({"op": "finding", "message": "look at the gate"}),
             )],
@@ -212,7 +212,7 @@ fn write_channel(dir: &Path) {
         .expect("submitted");
     channel
         .submit(
-            ChannelAuthor::Planner,
+            Author::from("planner"),
             vec![command(json!({"op": "note", "id": "plan", "addressee": "worker", "text": "a smaller diff"}))],
         )
         .expect("submitted");

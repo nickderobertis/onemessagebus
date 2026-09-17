@@ -13,10 +13,29 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { BusFailed, defineMessage, type MessageType } from "../src/index.js";
+import { BusFailed, ConfigSchema, defineMessage, type MessageType } from "../src/index.js";
 import { caughtAs, PACKAGE, removeScratch, scratch } from "./support.js";
 
 afterAll(removeScratch);
+
+test("generated config validates author names and refusal reasons", () => {
+  const base = { version: 1, transport: { kind: "memory" } };
+  expect(
+    ConfigSchema.safeParse({
+      ...base,
+      authors: { sentinel: { capabilities: ["finding"] } },
+    }).success,
+  ).toBe(true);
+  expect(
+    ConfigSchema.safeParse({ ...base, authors: { Bad_Name: { capabilities: [] } } }).success,
+  ).toBe(false);
+  expect(
+    ConfigSchema.safeParse({
+      ...base,
+      authors: { sentinel: { capabilities: [], refusals: { finding: "   " } } },
+    }).success,
+  ).toBe(false);
+});
 
 function node(args: string[]) {
   const env = { ...process.env };

@@ -3,6 +3,7 @@
 
 use onemessagebus::sdk_schema;
 use onemessagebus::{CheckError, Read, SchemaId, Vocabulary as _, CAPABILITIES};
+use onemessagebus_agent::channel::ReplyEnvelope;
 use onemessagebus_agent::{registry, Agent, EVENT_ENVELOPE_FAMILY, REPLY_ENVELOPE_FAMILY};
 use serde_json::{json, Value};
 
@@ -121,6 +122,37 @@ fn the_golden_reply_envelopes_validate_against_their_versions_and_read_at_three(
     match registry.check(&id("agent.reply-envelope@2"), &headless) {
         Err(CheckError::Violation(violation)) => assert_eq!(violation.pointer, "/commands/0"),
         other => panic!("a headless command validated: {other:?}"),
+    }
+}
+
+/// The hand-authored version schemas may specialize commands, but their open
+/// author field stays exactly the shape generated from the Rust wire type.
+#[test]
+fn reply_version_schemas_share_the_wire_types_author_shape() {
+    let generated = schemars::schema_for!(ReplyEnvelope).to_value();
+    let author = &generated["properties"]["author"];
+    let mut expected = author
+        .get("$ref")
+        .and_then(Value::as_str)
+        .and_then(|reference| generated.pointer(reference.trim_start_matches('#')))
+        .unwrap_or(author)
+        .clone();
+    expected
+        .as_object_mut()
+        .expect("the generated author schema is an object")
+        .remove("description");
+
+    let registry = registry();
+    for version in [2, 3] {
+        let mut actual = registry
+            .schema(&id(&format!("{REPLY_ENVELOPE_FAMILY}@{version}")))
+            .expect("the reply version is registered")["properties"]["author"]
+            .clone();
+        actual
+            .as_object_mut()
+            .expect("the registered author schema is an object")
+            .remove("description");
+        assert_eq!(actual, expected, "reply-envelope@{version} author drifted");
     }
 }
 

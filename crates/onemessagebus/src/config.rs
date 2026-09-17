@@ -1,8 +1,8 @@
 //! The configuration file, and the bus it resolves to.
 //!
 //! `onemessagebus.yaml` names a transport, optionally a layout a profile crate
-//! declares, queues added to it or overriding its own, and authors narrowed from
-//! its grants. Reading it is two steps, and the types keep them apart:
+//! declares, queues added to it or overriding its own, and configured authors.
+//! Reading it is two steps, and the types keep them apart:
 //!
 //! 1. [`Config::load`] reads the file and refuses what the file alone decides —
 //!    YAML that is not one document, an unknown key, a version other than
@@ -65,8 +65,9 @@ pub struct Config {
     /// Queues added to the layout's, or overriding one of the layout's by name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub queues: BTreeMap<QueueName, QueueConfig>,
-    /// Authors whose grants the configuration narrows. It may never widen them.
+    /// Authors declared by the configuration. The built-in planner may only be narrowed.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[schemars(with = "BTreeMap<ConfiguredAuthor, AuthorConfig>")]
     pub authors: BTreeMap<Author, AuthorConfig>,
     /// Validators judging what is offered to a queue before anything is
     /// appended, in the order each queue judges by them.
@@ -251,8 +252,44 @@ impl PolicyConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorConfig {
-    /// The operations the author keeps: a subset of what the layout grants.
-    pub capabilities: Vec<String>,
+    /// The operations the author may issue.
+    pub capabilities: Vec<OpWord>,
+    /// Reasons ungranted operations are refused, by operation word.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub refusals: BTreeMap<OpWord, RefusalReason>,
+}
+
+/// A non-empty explanation for refusing an operation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(transparent)]
+pub struct RefusalReason(#[schemars(regex(pattern = r".*\S.*"))] String);
+
+#[derive(JsonSchema)]
+#[schemars(transparent)]
+#[expect(
+    dead_code,
+    reason = "schema-only mirror constrains configuration map keys without narrowing wire Author"
+)]
+struct ConfiguredAuthor(#[schemars(regex(pattern = r"^[a-z][a-z0-9-]{0,63}$"))] String);
+
+impl RefusalReason {
+    /// The configured explanation.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for RefusalReason {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let reason = String::deserialize(deserializer)?;
+        if reason.trim().is_empty() {
+            return Err(serde::de::Error::custom(
+                "a refusal reason must be non-empty text",
+            ));
+        }
+        Ok(Self(reason))
+    }
 }
 
 /// Why a configuration could not be read or resolved, naming the key.
@@ -352,6 +389,10 @@ impl Config {
             why: failure.to_string(),
         })?;
         validate_codec_keys(&raw).map_err(|why| ConfigError::Parse {
+            path: PathBuf::new(),
+            why,
+        })?;
+        validate_author_names(&raw).map_err(|why| ConfigError::Parse {
             path: PathBuf::new(),
             why,
         })?;
@@ -557,13 +598,65 @@ impl Config {
         let mut allowlist = layout
             .map(|layout| layout.allowlist())
             .unwrap_or_else(|| Allowlist::new(Vec::<OpWord>::new()));
-        for (author, narrowed) in &self.authors {
-            allowlist.narrow(
-                &format!("authors.{author}.capabilities"),
-                author,
-                &narrowed.capabilities,
-                NARROWED,
-            )?;
+        for (author, configured) in &self.authors {
+            let capabilities_key = format!("authors.{author}.capabilities");
+            if allowlist.declares(author) {
+                allowlist.narrow(
+                    &capabilities_key,
+                    author,
+                    &configured.capabilities,
+                    NARROWED,
+                )?;
+            } else {
+                allowlist.declare(author.clone());
+                for word in &configured.capabilities {
+                    let Some(op) = allowlist
+                        .vocabulary()
+                        .iter()
+                        .find(|op| op == &word)
+                        .cloned()
+                    else {
+                        return Err(NarrowingRefused {
+                            key: capabilities_key.clone(),
+                            why: format!(
+                                "`{}` is not an op; the ops are: {}",
+                                word.0,
+                                allowlist
+                                    .vocabulary()
+                                    .iter()
+                                    .map(|op| op.0.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ),
+                        }
+                        .into());
+                    };
+                    allowlist.grant(author.clone(), op);
+                }
+            }
+            for (word, reason) in &configured.refusals {
+                let key = format!("authors.{author}.refusals.{}", word.0);
+                let Some(op) = allowlist
+                    .vocabulary()
+                    .iter()
+                    .find(|op| op == &word)
+                    .cloned()
+                else {
+                    return Err(NarrowingRefused {
+                        key,
+                        why: format!("`{}` is not an op", word.0),
+                    }
+                    .into());
+                };
+                if configured.capabilities.contains(word) {
+                    return Err(NarrowingRefused {
+                        key,
+                        why: "a granted op may not have a refusal".to_owned(),
+                    }
+                    .into());
+                }
+                allowlist.refuse(author.clone(), &op, reason.as_str());
+            }
         }
         let mut validators: BTreeMap<QueueName, Validators<Value>> = BTreeMap::new();
         for (index, declared) in self.validators.iter().enumerate() {
@@ -657,6 +750,26 @@ fn validate_codec_keys(raw: &Value) -> Result<(), String> {
     Ok(())
 }
 // llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate] The allowlist is confined to preserving precise unknown-key diagnostics.
+
+fn validate_author_names(raw: &Value) -> Result<(), String> {
+    let Some(authors) = raw.get("authors").and_then(Value::as_object) else {
+        return Ok(());
+    };
+    let schema = schemars::schema_for!(ConfiguredAuthor).to_value();
+    let validator = jsonschema::validator_for(&schema)
+        .expect("the configured-author schema generated by this build is usable");
+    for name in authors.keys() {
+        let candidate = Value::String(name.clone());
+        let failure = validator
+            .iter_errors(&candidate)
+            .next()
+            .map(|failure| failure.to_string());
+        if let Some(failure) = failure {
+            return Err(format!("authors.{name}: invalid author name: {failure}"));
+        }
+    }
+    Ok(())
+}
 
 /// A set of queues, policies, authors, operations and schemas a profile crate
 /// declares under one name, which a configuration names as its `profile`.

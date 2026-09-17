@@ -424,21 +424,13 @@ projection's `accounted` and `seal` account.
 - `Author(String)` is open in the core; `Allowlist<Op: Operation>` with
   `grant(author, op)` and `allows(author, op) -> Result<(), Refusal>` refuses an op
   not granted **by omission**, naming the author, the op and the reason recorded.
-  The profile's `planner-channel` layout declares the ops, the planner's and the
-  monitor's grants, and each refusal's text as `channel::allows` states it, with
-  `complete` granted or refused for a legacy verdict carrying `completion: true`:
+  The profile's `planner-channel` layout declares the ops and only the planner,
+  granted every op. A configuration declares every other author and its grants;
+  `complete` also governs a legacy verdict carrying `completion: true`:
 
 <!-- fixture: planner-channel-grants -->
 ```json
-{"planner": ["add", "drop", "reparent", "retry", "cancel", "requeue", "complete", "attest", "finding", "amend", "note", "settle"],
- "monitor": ["retry", "requeue", "cancel", "finding", "add"],
- "refused-monitor": {"complete": "whether the run is finished is the planner's verdict, not an observation",
-                     "attest": "a human action is attested by the person who took it, never by a watcher",
-                     "drop": "removing work from the graph is a decomposition decision the planner owns",
-                     "reparent": "rewiring dependencies is a decomposition decision the planner owns",
-                     "amend": "what a node is judged against is a decomposition decision the planner owns",
-                     "note": "a note may bind a criterion the node's judge decides against, which is the planner's decision rather than an observation",
-                     "settle": "settling a node from evidence declares an outcome this run never observed, which is the planner's decision rather than an observation"}}
+{"planner": ["add", "drop", "reparent", "retry", "cancel", "requeue", "complete", "attest", "finding", "amend", "note", "settle"]}
 ```
 
 - The `planner-channel` layout's queues, as declared — the files a directory
@@ -478,19 +470,25 @@ profile: planner-channel
 queues:
   findings: {policy: {hold_pending: false}}
 authors:
-  monitor: {capabilities: [retry, requeue, cancel, finding]}
+  planner: {capabilities: [add, retry, finding]}
+  sentinel:
+    capabilities: [retry, requeue, cancel, finding, add]
+    refusals:
+      complete: "whether the run is finished is the planner's verdict, not an observation"
 ```
 
 - `kind` is `local`, `memory`, or a registered or plugin kind; `profile` names a
   layout a linked profile declares; `queues` adds queues or overrides a layout's
-  by name; `authors` may narrow a layout author's grants and never widen them.
+  by name. `authors.planner` may narrow the built-in planner and never widen it;
+  every other entry declares an author, with required `capabilities` and optional
+  refusal reasons for ungranted operations.
 - **Two steps, which the types keep apart.** `onemessagebus::Config::load(path)`
   refuses what the file alone decides, naming the key: YAML that is not one
   document, an unknown key, a version other than 1, a name, schema id or
   predicate that does not parse. `Config::resolve(&layouts, &kinds)` refuses what
   only the linked layouts and transport kinds decide, naming the key: a profile no
-  layout declares, a widened grant, an op that does not exist or an author the
-  layout does not declare (`authors.<author>.capabilities`), a `schema` the layout
+  layout declares, a widened planner grant, or an op that does not exist
+  (`authors.<author>.capabilities`), a `schema` the layout
   does not register or an `answers` naming no queue (`queues.<queue>.<key>`), and
   a transport its kind refuses. A loaded `Config` opens nothing; the `Bus`
   `resolve` answers is the one type that opens a queue or authors a record.

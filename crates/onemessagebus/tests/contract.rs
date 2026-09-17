@@ -599,8 +599,15 @@ fn the_documented_configuration_loads_and_an_unknown_key_in_it_is_refused_by_nam
     let findings = &config.queues[&"findings".parse().expect("a queue")];
     assert_eq!(findings.policy.hold_pending, Some(false));
     assert_eq!(
-        config.authors[&onemessagebus::Author::from("monitor")].capabilities,
-        vec!["retry", "requeue", "cancel", "finding"]
+        config.authors[&onemessagebus::Author::from("sentinel")].capabilities,
+        ["retry", "requeue", "cancel", "finding", "add"]
+            .map(|word| onemessagebus::OpWord(word.to_owned()))
+    );
+    assert_eq!(
+        config.authors[&onemessagebus::Author::from("sentinel")].refusals
+            [&onemessagebus::OpWord("complete".to_owned())]
+            .as_str(),
+        "whether the run is finished is the planner's verdict, not an observation"
     );
     let refused = onemessagebus::Config::parse(&text.replace("queues:", "queus:"))
         .expect_err("an unknown key is refused by load");

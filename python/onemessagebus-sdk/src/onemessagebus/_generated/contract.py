@@ -7,6 +7,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, StringConstraints
 
+from .domain import Operation
+
 
 class Contract(RootModel[Any]):
     root: Any = Field(..., title="Contract")
@@ -39,20 +41,6 @@ class ArtifactRef(BaseModel):
     kind: str
     """
     What the artifact is — a gate log, a check log, a transcript, a report.
-    """
-
-
-class AuthorConfig(BaseModel):
-    """
-    One author of a configuration.
-    """
-
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    capabilities: list[str]
-    """
-    The operations the author keeps: a subset of what the layout grants.
     """
 
 
@@ -291,6 +279,13 @@ class QueueStatus(BaseModel):
     The records waiting to be claimed, oldest first: on an event queue every
     waiting record, abandoned ones included; on a plain one the records after
     the default consumer's cursor that a claim hands out.
+    """
+
+
+class RefusalReason(RootModel[str]):
+    root: str = Field(..., pattern=".*\\S.*")
+    """
+    A non-empty explanation for refusing an operation.
     """
 
 
@@ -846,6 +841,24 @@ class AskedTimeout(BaseModel):
     correlation: str = Field(..., pattern="^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
     """
     The question's correlation.
+    """
+
+
+class AuthorConfig(BaseModel):
+    """
+    One author of a configuration.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    capabilities: list[Operation]
+    """
+    The operations the author may issue.
+    """
+    refusals: dict[Operation, RefusalReason] | None = None
+    """
+    Reasons ungranted operations are refused, by operation word.
     """
 
 
@@ -1861,9 +1874,12 @@ class Config(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    authors: dict[str, AuthorConfig] | None = None
+    authors: (
+        dict[Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,63}$")], AuthorConfig]
+        | None
+    ) = None
     """
-    Authors whose grants the configuration narrows. It may never widen them.
+    Authors declared by the configuration. The built-in planner may only be narrowed.
     """
     codecs: (
         dict[Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,63}$")], CodecConfig]

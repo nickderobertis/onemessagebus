@@ -14,7 +14,7 @@ export interface AgentReplyEnvelopeV2 {
   /**
    * Who wrote the reply. Omitted, the planner.
    */
-  author?: "planner" | "monitor" | undefined;
+  author?: string | undefined;
   /**
    * The verdict: whether the author considers the run complete.
    */
@@ -48,7 +48,7 @@ const $Command: z.ZodType = z.looseObject({ op: z.string() });
 export const AgentReplyEnvelopeV2Schema = contract<AgentReplyEnvelopeV2>(
   z.strictObject({
     version: z.literal(2).optional(),
-    author: z.union([z.literal("planner"), z.literal("monitor")]).optional(),
+    author: z.string().optional(),
     completion: z.boolean().optional(),
     message: z.string().optional(),
     reason: z.string().optional(),
@@ -72,11 +72,7 @@ export const AgentReplyEnvelopeV2 = registeredMessage(
         type: "integer",
         const: 2,
       },
-      author: {
-        description: "Who wrote the reply. Omitted, the planner.",
-        type: "string",
-        enum: ["planner", "monitor"],
-      },
+      author: { description: "Who wrote the reply. Omitted, the planner.", type: "string" },
       completion: {
         description: "The verdict: whether the author considers the run complete.",
         type: "boolean",

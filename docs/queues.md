@@ -182,11 +182,11 @@ by the 0.28.2 binary itself in `crates/onemessagebus-e2e/tests/e2e/onepipeline.r
   `commands` alone. A version this build reads (`[3, 2]`) is read at 3, and an
   edit envelope at any other is refused: `an edit envelope requires version 3`.
 - The ops are `add`, `drop`, `reparent`, `retry`, `cancel`, `requeue`, `complete`,
-  `attest`, `finding`, `amend`, `note` and `settle`. The planner is granted every
-  op; the monitor `retry`, `requeue`, `cancel`, `finding` and `add`. Every other op
-  is refused the monitor in `onepipeline`'s words — `'<op>' is not an op the
-  monitor may issue: <reason>. Surface it to the planner instead` — and a verdict
-  carrying `completion: true` is granted or refused as `complete` is.
+  `attest`, `finding`, `amend`, `note` and `settle`. The planner is the only
+  built-in author and is granted every op. A configuration declares every other
+  author, its grants, and optional refusal reasons. An omitted grant is refused
+  as `'<op>' is not an op the <author> may issue: <reason>. Surface it to the
+  planner instead`; a verdict carrying `completion: true` is governed by `complete`.
 
 ## The configuration file
 
@@ -197,8 +197,11 @@ transport: {kind: local, dir: runs/r1/channel}  # kind: local | memory | a regis
 profile: planner-channel                         # a layout a linked profile declares; optional
 queues:                                          # additions, or overrides of a layout's queue by name
   findings: {policy: {hold_pending: false}}
-authors:                                         # may narrow a layout author's grants, never widen them
-  monitor: {capabilities: [retry, requeue, cancel, finding]}
+authors:                                         # planner may narrow; other names declare authors
+  planner: {capabilities: [add, retry, finding]}
+  sentinel:
+    capabilities: [retry, requeue, cancel, finding, add]
+    refusals: {complete: "whether the run is finished is the planner's verdict, not an observation"}
 schemas:                                         # schema bundles linked by URL or path, pinned; docs/schema-links.md
   - "https://example.org/frames.json@8"
 ```
@@ -212,9 +215,8 @@ Reading it is two steps, and the types keep them apart:
    id, document name or predicate that does not parse. A `Config` opens nothing.
 2. `Config::resolve(&layouts, &kinds)` binds it to the layouts a process links and
    the transport kinds it can open, and refuses what only those decide, each by
-   the key it is at: a `profile` no layout declares; a widened grant, an op that
-   does not exist or an author the layout does not declare
-   (`authors.<author>.capabilities`); a `schema` the layout does not register or
+   the key it is at: a `profile` no layout declares; a widened planner grant or
+   an op that does not exist (`authors.<author>.capabilities`); a `schema` the layout does not register or
    an `answers` naming no declared queue (`queues.<queue>.<key>`); and a transport
    its kind refuses. What it answers, a `Bus`, is the one type that opens a queue
    or authors a record.

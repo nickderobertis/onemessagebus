@@ -1,7 +1,9 @@
 //! Who wrote a record, and which operations each author may carry.
 //!
-//! An [`Author`] is an open word in the core; a profile declares its authors
-//! and its operation vocabulary. An [`Allowlist`] is exhaustive: an operation
+//! An [`Author`] is an open word in the core; a profile declares its operation
+//! vocabulary and may provide built-in authors, while configuration declares
+//! additional names such as `sentinel` and the operations each may issue. An
+//! [`Allowlist`] is exhaustive: an operation
 //! not granted to an author is refused **by omission**, so an operation added to
 //! the vocabulary later is refused for every author nobody granted it to, and
 //! the refusal names the author, the operation and the reason recorded for it.
@@ -12,7 +14,7 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Who wrote a record: an open word, which a profile closes.
+/// Who wrote a record: an open word.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
 )]
@@ -79,7 +81,7 @@ pub struct Refusal {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{key}: {why}")]
 pub struct NarrowingRefused {
-    /// The configuration key, e.g. `authors.monitor.capabilities`.
+    /// The configuration key, e.g. `authors.sentinel.capabilities`.
     pub key: String,
     /// What is wrong with it.
     pub why: String,
@@ -173,6 +175,12 @@ impl<Op: Operation> Allowlist<Op> {
         self.grants.keys().cloned().collect()
     }
 
+    /// Whether `author` is declared.
+    #[must_use]
+    pub fn declares(&self, author: &Author) -> bool {
+        self.grants.contains_key(author)
+    }
+
     /// The vocabulary.
     #[must_use]
     pub fn vocabulary(&self) -> &[Op] {
@@ -192,7 +200,7 @@ impl<Op: Operation> Allowlist<Op> {
         &mut self,
         key: &str,
         author: &Author,
-        capabilities: &[String],
+        capabilities: &[OpWord],
         reason: &str,
     ) -> Result<(), NarrowingRefused> {
         let Some(granted) = self.grants.get(author) else {
@@ -210,11 +218,12 @@ impl<Op: Operation> Allowlist<Op> {
         };
         let mut kept = Vec::new();
         for word in capabilities {
-            let Some(op) = self.vocabulary.iter().find(|op| op.name() == word) else {
+            let Some(op) = self.vocabulary.iter().find(|op| op.name() == word.0) else {
                 return Err(NarrowingRefused {
                     key: key.to_owned(),
                     why: format!(
-                        "`{word}` is not an op; the ops are: {}",
+                        "`{}` is not an op; the ops are: {}",
+                        word.0,
                         self.vocabulary
                             .iter()
                             .map(Operation::name)
@@ -227,7 +236,8 @@ impl<Op: Operation> Allowlist<Op> {
                 return Err(NarrowingRefused {
                     key: key.to_owned(),
                     why: format!(
-                        "`{word}` is not granted to {author} by the profile, and a configuration may narrow an author's grants but never widen them"
+                        "`{}` is not granted to {author} by the profile, and a configuration may narrow an author's grants but never widen them",
+                        word.0
                     ),
                 });
             }

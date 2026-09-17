@@ -485,6 +485,40 @@ fn a_closed_spool_refuses_a_sender_with_the_closers_reason_before_and_after_the_
 }
 
 #[test]
+fn a_sender_observing_a_close_between_take_and_answer_gets_the_close_reason() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let address = dir.path().to_path_buf();
+    let sender = Spool::connect::<Order, Receipt>(&address);
+    let sending = std::thread::spawn(move || sender.send(order("closing")));
+    let offer = loop {
+        if let Some(name) = waiting_offers(&address).into_iter().next() {
+            break name;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let id = offer.trim_end_matches(".offer.json");
+    std::fs::write(
+        address.join("closed.json"),
+        serde_json::to_vec(&json!({
+            "schema_version": SPOOL_SCHEMA_VERSION,
+            "reason": "closed while settling"
+        }))
+        .expect("JSON"),
+    )
+    .expect("a close record");
+    std::fs::rename(
+        address.join(&offer),
+        address.join(format!("{id}.taken.json")),
+    )
+    .expect("taken");
+
+    assert_eq!(
+        sending.join().expect("finishes"),
+        Err(Undelivered::Closed(Closed::new("closed while settling")))
+    );
+}
+
+#[test]
 fn an_answer_document_that_is_not_an_answer_is_reported_naming_the_file() {
     let dir = tempfile::tempdir().expect("a temp dir");
     let address = dir.path().to_path_buf();

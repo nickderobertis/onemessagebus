@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
+
+from ..domain import Author
 
 
 class Correlation(RootModel[str]):
@@ -27,7 +29,7 @@ class ReplyEnvelope(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    author: Literal["planner", "monitor"] | None = None
+    author: Author | None = None
     """
     Who wrote it. Omitted, the planner.
     """
