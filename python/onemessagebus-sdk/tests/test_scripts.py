@@ -53,6 +53,24 @@ def test_the_generator_is_deterministic_and_its_check_goes_red_on_a_stale_copy(
     assert not stray.exists()
 
 
+def test_regeneration_keeps_the_py_typed_marker(tmp_path: Path) -> None:
+    """The marker is the wheel's `Typing :: Typed` promise kept, and it is not the generator's."""
+    marker = SOURCE / "py.typed"
+    assert marker.is_file(), "the marker sits beside __init__.py"
+    assert marker.stat().st_size == 0, "the marker is empty"
+    assert "py.typed" not in generate.owned_files(SOURCE), "--check never reports it as stray"
+
+    package = tmp_path / "onemessagebus"
+    shutil.copytree(SOURCE, package, ignore=shutil.ignore_patterns("__pycache__"))
+    (package / "models.py").write_text('"""Stale, so the generator writes."""\n', encoding="utf-8")
+    assert generate.main(["--check", "--output", str(package)]) == 1
+    assert generate.main(["--output", str(package)]) == 0
+    assert generate.owned_files(package) == generate.owned_files(SOURCE)
+    assert (package / "py.typed").is_file(), "regeneration keeps the marker"
+    assert (package / "py.typed").stat().st_size == 0
+    assert generate.main(["--check", "--output", str(package)]) == 0
+
+
 def test_the_generator_fails_with_a_cause_and_a_next_action_rather_than_a_traceback(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
