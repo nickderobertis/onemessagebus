@@ -322,6 +322,11 @@ describe("the required per-platform contexts", () => {
             /^echo /,
             `${job} (${os}): the crate-free step does more than say so`,
           );
+          assert.match(
+            lines[0],
+            /\$\{\{\s*matrix\.os\s*\}\}/,
+            `${job} (${os}): the crate-free step's line does not name the matrix leg it reports for`,
+          );
         });
 
         it(`${job} (${os}) runs every real step, and not the no-op, when the diff reaches a crate`, () => {

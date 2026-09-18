@@ -135,7 +135,7 @@ jobs:
     steps:
       - name: Nothing to prove (the diff reaches no crate)
         if: needs.changes.outputs.crate != 'true'
-        run: echo "the diff reaches no crate, so cross has nothing to build or test for ${{ matrix.os }}; this leg reports its context from ${{ runner.os }}"
+        run: echo "the diff reaches no crate, so cross has nothing to build or test for ${{ matrix.os }}"
       - uses: actions/checkout@v4
         if: needs.changes.outputs.crate == 'true'
       - uses: Swatinem/rust-cache@v2
@@ -232,7 +232,7 @@ jobs:
     steps:
       - name: Nothing to prove (the diff reaches no crate)
         if: needs.changes.outputs.crate != 'true'
-        run: echo "the diff reaches no crate, so install has nothing to install or smoke-test for ${{ matrix.os }}; this leg reports its context from ${{ runner.os }}"
+        run: echo "the diff reaches no crate, so install has nothing to install or smoke-test for ${{ matrix.os }}"
       - uses: actions/checkout@v4
         if: needs.changes.outputs.crate == 'true'
       - uses: Swatinem/rust-cache@v2
