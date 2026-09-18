@@ -7,21 +7,27 @@
 // the `changes` output leaves every one of those contexts pending for ever on a
 // change that reaches no crate, and the pull request can never merge. So the
 // contract is: both matrix jobs are scheduled on every change, and on a crate-free
-// one each leg succeeds through a single step that says so, with nothing else run.
+// one each leg succeeds through a single step that says so, with nothing else run —
+// and runs on `ubuntu-latest` to do it, because the context name comes from the
+// matrix rather than the runner, and a leg that prints one line has no business
+// waiting an hour for scarce macOS capacity. On a crate change each leg runs on its
+// own `matrix.os`.
 //
 // Held here by reading the workflow the way GitHub does — the YAML's jobs, their
-// `if`, their steps' `if` — and evaluating each condition for both values the
-// `changes` job can report, rather than by matching text: a job-level `if` spelled
-// any other way, or a real step whose `if` drifts, is the same defect.
+// `if`, their `runs-on`, their steps' `if` — and evaluating each expression for
+// both values the `changes` job can report, rather than by matching text: a
+// job-level `if` spelled any other way, a runner expression that sends a no-op
+// leg back to macOS or a real one to ubuntu, or a real step whose `if` drifts, is
+// the same defect.
 //
 // A structural assertion rather than an end-to-end one, on purpose. The behavior is
 // GitHub's scheduling of these jobs on a pull request against this repository's
 // branch protection, and its only end-to-end proof is such a pull request: two
 // runners per matrix leg on a hosted service, driven by a push, read back through
 // an authenticated API — which no offline run can stand up, and which every pull
-// request already performs. What this repository authors is exactly the `if`
-// fields GitHub reads to decide that scheduling, so evaluating them the way GitHub
-// does is the whole of the check that can run here; the steps they condition are
+// request already performs. What this repository authors is exactly the `if` and
+// `runs-on` fields GitHub reads to decide that scheduling, so evaluating them the
+// way GitHub does is the whole of the check that can run here; the steps they condition are
 // the ones that ran before the condition existed, unchanged, and are proven by
 // running on every crate change.
 
@@ -49,10 +55,10 @@ const REQUIRED = {
   install: ["ubuntu-latest", "macos-latest", "windows-latest"],
 };
 
-/// The subset of GitHub's expression grammar a step or job condition here uses:
-/// `!`, `&&`, `||`, `==`, `!=`, parentheses, string literals, `true`/`false`,
+/// The subset of GitHub's expression grammar a condition or runner selection here
+/// uses: `!`, `&&`, `||`, `==`, `!=`, parentheses, string literals, `true`/`false`,
 /// dotted context lookups and the string functions. Any other token is refused,
-/// so a condition this evaluator cannot read fails the test rather than reading
+/// so an expression this evaluator cannot read fails the test rather than reading
 /// as whichever outcome the case wanted.
 function tokenize(expression) {
   const tokens = [];
@@ -176,13 +182,43 @@ function evaluate(expression, context) {
   }
   const value = or();
   assert.equal(at, tokens.length, `trailing tokens in: ${expression}`);
-  return Boolean(value);
+  return value;
 }
 
-/// A step or job with no `if` runs; GitHub reads a bare `if:` the same way.
+/// The expression inside a `${{ }}` wrapper, or the bare text where the field
+/// carries none: GitHub reads a condition either way, and a `runs-on` that is not
+/// an expression is a literal runner label.
+function expression(field) {
+  const text = String(field).trim();
+  const wrapped = /^\$\{\{(.*)\}\}$/s.exec(text);
+  return wrapped ? wrapped[1].trim() : text;
+}
+
+/// A step or job with no `if` runs; GitHub reads a bare `if:` the same way. The
+/// value an `&&` or `||` yields is one of its operands, so the result is coerced
+/// the way GitHub coerces a condition.
 function runs(condition, context) {
   if (condition === undefined || condition === null || condition === "") return true;
-  return evaluate(String(condition), context);
+  return Boolean(evaluate(expression(condition), context));
+}
+
+/// The runner a job's `runs-on` selects in a context: the literal label where it
+/// is one, else the value its expression yields. A label GitHub would not read as
+/// a single hosted runner — a list, a group, an empty or non-string value — is
+/// refused rather than read as any platform.
+function runner(runsOn, context) {
+  assert.equal(
+    typeof runsOn,
+    "string",
+    `\`runs-on\` is not a single label or expression: ${JSON.stringify(runsOn)}`,
+  );
+  const text = expression(runsOn);
+  const value = text === runsOn.trim() ? text : evaluate(text, context);
+  assert.ok(
+    typeof value === "string" && value !== "",
+    `\`runs-on\` resolves to no runner label: ${JSON.stringify(value)} from ${runsOn}`,
+  );
+  return value;
 }
 
 /// The context a pull request's job sees, with the `changes` job's crate output
@@ -248,6 +284,22 @@ describe("the required per-platform contexts", () => {
       });
 
       for (const os of legs) {
+        it(`${job} (${os}) is scheduled on ubuntu-latest when the diff reaches no crate`, () => {
+          assert.equal(
+            runner(definition["runs-on"], pullRequestContext("false", os)),
+            "ubuntu-latest",
+            `${job} (${os}): a crate-free change selects a runner other than ubuntu-latest for a leg that only reports its context`,
+          );
+        });
+
+        it(`${job} (${os}) is scheduled on ${os} when the diff reaches a crate`, () => {
+          assert.equal(
+            runner(definition["runs-on"], pullRequestContext("true", os)),
+            os,
+            `${job} (${os}): a crate change does not run this leg on its own platform`,
+          );
+        });
+
         it(`${job} (${os}) succeeds through one step, and only that step, when the diff reaches no crate`, () => {
           const context = pullRequestContext("false", os);
           const scheduled = definition.steps.filter((step) => runs(step.if, context));
@@ -269,6 +321,11 @@ describe("the required per-platform contexts", () => {
             lines[0],
             /^echo /,
             `${job} (${os}): the crate-free step does more than say so`,
+          );
+          assert.match(
+            lines[0],
+            /\$\{\{\s*matrix\.os\s*\}\}/,
+            `${job} (${os}): the crate-free step's line does not name the matrix leg it reports for`,
           );
         });
 
