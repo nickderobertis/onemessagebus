@@ -28,7 +28,6 @@ import argparse
 import copy
 import difflib
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -43,7 +42,6 @@ ROOT = PACKAGE.parents[1]
 # The package directory whose `_generated/` and `models.py` the generator owns.
 OUTPUT = PACKAGE / "src" / "onemessagebus"
 BUNDLE_ARGS = ["run", "-q", "--locked", "-p", "onemessagebus-cli", "--example", "sdk_bundle"]
-BUNDLE_TARGET = ROOT / "target" / "sdk-bundle"
 RERUN = "just python-sdk-generate"
 # The bundle's keys that are not a schema root: the manifest, the vocabulary, and
 # the two maps whose entries are roots of their own. Every other key is a root,
@@ -101,7 +99,6 @@ def read_bundle() -> dict[str, Any]:
         run = subprocess.run(  # noqa: S603 - argv is cargo as shutil.which resolved it and the constant bundle arguments; a bare name trips S607
             [cargo, *BUNDLE_ARGS],
             cwd=ROOT,
-            env={**os.environ, "CARGO_TARGET_DIR": str(BUNDLE_TARGET)},
             capture_output=True,
             text=True,
             check=False,
