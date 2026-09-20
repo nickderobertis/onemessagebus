@@ -3,9 +3,10 @@
 // Every script that needs the contract — the TypeScript generator, the SDK
 // coverage gate, the parity audit — reads it through here rather than running
 // cargo each its own way: `cargo run -p onemessagebus-cli --example sdk_bundle`,
-// in a target directory of its own so a generator never waits on (or races) the
-// workspace build, with a failure reported as which script needed the bundle,
-// the tail of what cargo said, and the command to see all of it.
+// into the clone's one target directory (.cargo/config.toml), so the example
+// shares every dependency the workspace build already compiled, with a failure
+// reported as which script needed the bundle, the tail of what cargo said, and
+// the command to see all of it.
 import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,9 +24,6 @@ export const BUNDLE_ARGS = [
   "--example",
   "sdk_bundle",
 ];
-
-/** Where that build keeps its artifacts. */
-export const BUNDLE_TARGET = resolve(ROOT, "target/sdk-bundle");
 
 /** A cargo failure can run to hundreds of lines; its tail is where the error is. */
 const CAUSE_LINES = 20;
@@ -56,7 +54,6 @@ export function schemaBundle({ script, rerun }) {
       cwd: ROOT,
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
-      env: { ...process.env, CARGO_TARGET_DIR: BUNDLE_TARGET },
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (error) {
