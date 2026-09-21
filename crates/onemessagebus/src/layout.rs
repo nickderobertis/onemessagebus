@@ -1023,7 +1023,10 @@ impl CheckStep {
                 };
                 Err(fill(self.refusal.as_str(), &[("why", &why)]))
             }
-            Err(CheckError::Registry(failure)) => Err(failure.to_string()),
+            // Not measured by coverage, and cannot run: `LinkedLayout::new` refuses a
+            // `check` step naming a schema its registry does not hold, and holding
+            // the id is the only thing a registry check can fail on.
+            Err(CheckError::Registry(failure)) => unreachable!("bound when linked: {failure}"),
         }
     }
 }

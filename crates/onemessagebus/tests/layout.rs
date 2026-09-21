@@ -654,3 +654,33 @@ fn a_linked_layout_is_bound_to_its_document() {
     assert_eq!(linked.document(), &document);
     assert_eq!(Layout::name(&linked), "intake");
 }
+
+#[test]
+fn a_linked_layouts_steps_pass_a_record_that_is_no_object_through_unchanged() {
+    // The bus refuses such an offer before any step runs; a program calling
+    // the layout itself is handed the record back as offered.
+    let document: LayoutDocument = serde_json::from_value(intake()).expect("it reads");
+    let mut registry = Registry::new();
+    registry
+        .register_schema(
+            "intake.envelope@2".parse().expect("an id"),
+            envelope_schema(),
+        )
+        .expect("it registers");
+    let linked = LinkedLayout::new(document, &registry).expect("it binds");
+    let allowlist = Layout::allowlist(&linked);
+    assert_eq!(
+        Layout::prepare(&linked, &queue("tickets"), json!("m"), &allowlist).expect("kept"),
+        [(queue("tickets"), json!("m"))]
+    );
+    assert_eq!(
+        Layout::prepare(
+            &linked,
+            &queue("tickets"),
+            json!({"message": "m", "opened_at": 1}),
+            &allowlist
+        )
+        .expect("kept"),
+        [(queue("tickets"), json!({"message": "m", "opened_at": 1}))]
+    );
+}
