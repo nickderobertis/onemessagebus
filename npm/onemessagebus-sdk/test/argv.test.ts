@@ -17,7 +17,7 @@ afterAll(removeScratch);
 
 /** A value for every option any capability binds, each one the option's schema admits. */
 const VALUES = {
-  queue: "surfaces",
+  queue: "questions",
   id: "demo.greeting@1",
   file: "record.json",
   registry: "registry",
@@ -34,7 +34,7 @@ const VALUES = {
   wait: 3,
   store: "carried.ndjson",
   config: "onemessagebus.yaml",
-  transportDir: "channel",
+  transportDir: "bus",
   consumer: "reader",
   asker: "worker-1",
   position: 187,
@@ -301,7 +301,7 @@ describe("the client's validation of options", () => {
     const client = new Client({ transport });
     // Options arriving as JSON, from outside TypeScript's view, as a config file's would.
     const unknownOption = await caught(() =>
-      client.status("surfaces", JSON.parse('{"queues":"x"}')),
+      client.status("questions", JSON.parse('{"queues":"x"}')),
     );
     expect(unknownOption).toBeInstanceOf(BusRefused);
     expect(unknownOption.message).toBe("`queues` is not an option of status");
@@ -317,10 +317,10 @@ describe("the client's validation of options", () => {
       config: { config: "default.yaml", transportDir: "default-dir", registry: "default-registry" },
       transport,
     });
-    await caught(() => client.status("surfaces", { registry: "mine" }));
+    await caught(() => client.status("questions", { registry: "mine" }));
     await caught(() => client.transports());
     expect(transport.calls[0]?.args).toEqual({
-      queue: "surfaces",
+      queue: "questions",
       registry: "mine",
       config: "default.yaml",
       transportDir: "default-dir",

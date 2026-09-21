@@ -35,9 +35,8 @@ fn fixture(name: &str) -> String {
 /// file and the `layout-document` here, where the core's types read them; and
 /// `read-sets`, the inbox's
 /// `spool-documents` and `carry-store`, the note contract's `note`, `accepted`
-/// and `note-undelivered`, and the planner channel's `planner-channel` and
-/// `planner-channel-grants` there alone, since each names the agent profile's
-/// message or layout. The validators' `verdicts` and `validators-config` and
+/// and `note-undelivered` there alone, since each names the agent profile's
+/// message. The validators' `verdicts` and `validators-config` and
 /// the ask's `asked` are driven here. The configured codec fixture lives in
 /// `docs/codecs.md` and is driven by `tests/serve.rs`.
 /// A fixture added to the document is added here beside the test that drives
@@ -52,8 +51,6 @@ const DRIVEN_FIXTURES: &[&str] = &[
     "layout-document",
     "note",
     "note-undelivered",
-    "planner-channel",
-    "planner-channel-grants",
     "plugin-protocol",
     "policy",
     "read-sets",
@@ -568,7 +565,7 @@ fn the_documented_plugin_protocol_lines_are_the_protocols_own_shapes() {
             .expect("a reply conforms");
     }
     let past_end = onemessagebus::TransportError::PastEnd {
-        queue: "surfaces".parse().expect("a queue"),
+        queue: "questions".parse().expect("a queue"),
         position: onemessagebus::Position::from_token(12),
         end: onemessagebus::Position::from_token(9),
     };
@@ -598,21 +595,28 @@ fn the_documented_configuration_loads_and_an_unknown_key_in_it_is_refused_by_nam
     assert_eq!(config.transport.kind.as_str(), "local");
     assert_eq!(
         config.transport.dir.as_deref(),
-        Some(std::path::Path::new("runs/r1/channel"))
+        Some(std::path::Path::new("runs/r1/desk"))
     );
-    assert_eq!(config.profile.as_deref(), Some("planner-channel"));
+    assert_eq!(config.profile.as_deref(), Some("desk"));
+    assert_eq!(
+        config
+            .schemas
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        ["https://example.org/desk.json@1"]
+    );
     let findings = &config.queues[&"findings".parse().expect("a queue")];
     assert_eq!(findings.policy.hold_pending, Some(false));
     assert_eq!(
         config.authors[&onemessagebus::Author::from("sentinel")].capabilities,
-        ["retry", "requeue", "cancel", "finding", "add"]
-            .map(|word| onemessagebus::OpWord(word.to_owned()))
+        ["retry", "note"].map(|word| onemessagebus::OpWord(word.to_owned()))
     );
     assert_eq!(
         config.authors[&onemessagebus::Author::from("sentinel")].refusals
             [&onemessagebus::OpWord("complete".to_owned())]
             .as_str(),
-        "whether the run is finished is the planner's verdict, not an observation"
+        "whether the desk is done is the lead's verdict, not an observation"
     );
     let refused = onemessagebus::Config::parse(&text.replace("queues:", "queus:"))
         .expect_err("an unknown key is refused by load");
@@ -659,26 +663,19 @@ fn the_documented_validators_block_loads_into_the_config_and_an_unknown_key_in_i
     let [validator] = config.validators.as_slice() else {
         panic!("the documented block declares one validator: {config:?}");
     };
-    assert_eq!(validator.on.as_str(), "replies");
+    assert_eq!(validator.on.as_str(), "answers");
     assert_eq!(
         validator.when,
-        Some(When::Carries("commands".parse().expect("a field path")))
+        Some(When::Carries("actions".parse().expect("a field path")))
     );
     assert_eq!(validator.kind, ValidatorKind::Command);
     assert_eq!(
         validator.command,
-        [
-            "uv",
-            "run",
-            "python",
-            "-m",
-            "orchestrator.plan_review",
-            "--envelope"
-        ]
+        ["python3", "-m", "review_actions", "--envelope"]
     );
     let cache = validator.cache.as_ref().expect("the documented cache");
     assert_eq!(cache.dir, std::path::Path::new(".validator-passes"));
-    assert_eq!(cache.bar_fingerprint, ["scripts/llmlint-fingerprint.sh"]);
+    assert_eq!(cache.bar_fingerprint, ["scripts/bar-fingerprint.sh"]);
     for (from, to, named) in [
         ("bar_fingerprint:", "bar:", "unknown field `bar`"),
         (
@@ -687,8 +684,8 @@ fn the_documented_validators_block_loads_into_the_config_and_an_unknown_key_in_i
             "unknown field `retries`",
         ),
         (
-            "{carries: commands}",
-            "{carries: commands, and: x}",
+            "{carries: actions}",
+            "{carries: actions, and: x}",
             "`carries` stands alone",
         ),
     ] {
@@ -741,4 +738,88 @@ fn the_documented_layout_document_reads_as_the_one_type_and_names_every_step() {
         refused.to_string().contains("unknown variant `shout`"),
         "{refused}"
     );
+}
+
+/// The documented configuration resolves against the documented layout — the
+/// layout linked as data, as a bundle serving it would link it — narrowing the
+/// fully granted author, declaring another, and refusing an op the layout does
+/// not have by the key it is at.
+#[test]
+fn the_documented_configuration_resolves_against_the_documented_layout() {
+    use std::sync::Arc;
+
+    use onemessagebus::{Config, ConfigError, Layouts, LinkedLayout, OpWord, TransportKinds};
+
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let document: LayoutDocument =
+        serde_json::from_str(&fixture("layout-document")).expect("the documented layout");
+    let layouts = Layouts::new().with(Arc::new(
+        LinkedLayout::new(document, &Registry::new()).expect("it links"),
+    ));
+    let text = fixture("config");
+    let bus = Config::parse(&text)
+        .expect("the documented configuration loads")
+        .with_transport_dir(dir.path())
+        .resolve(&layouts, &TransportKinds::builtin())
+        .expect("the documented configuration resolves");
+    let names: Vec<String> = bus.queues().iter().map(ToString::to_string).collect();
+    assert_eq!(names, ["actions", "answers", "findings", "questions"]);
+    let allows = |author: &str, op: &str| {
+        bus.allowlist()
+            .allows(&Author::from(author), &OpWord(op.to_owned()))
+    };
+    assert!(allows("lead", "retry").is_ok());
+    assert_eq!(
+        allows("lead", "complete")
+            .expect_err("narrowed away")
+            .reason,
+        onemessagebus::NARROWED
+    );
+    assert!(allows("sentinel", "note").is_ok());
+    assert_eq!(
+        allows("sentinel", "complete")
+            .expect_err("complete was not granted")
+            .reason,
+        "whether the desk is done is the lead's verdict, not an observation"
+    );
+
+    let with_unknown_op = text.replace(
+        "lead: {capabilities: [retry, note]}",
+        "lead: {capabilities: [retry, note, unknown]}",
+    );
+    assert_ne!(with_unknown_op, text, "the unknown op did not apply");
+    match Config::parse(&with_unknown_op)
+        .expect("the file alone cannot know the layout's grants, so it loads")
+        .with_transport_dir(dir.path())
+        .resolve(&layouts, &TransportKinds::builtin())
+    {
+        Err(ConfigError::Narrowing(refusal)) => {
+            assert_eq!(refusal.key, "authors.lead.capabilities");
+            assert!(refusal.why.contains("`unknown`"), "{refusal}");
+        }
+        other => panic!("an unknown operation was not refused by resolve: {other:?}"),
+    }
+}
+
+/// `docs/queues.md` shows the configuration file's author keys as the contract
+/// does.
+#[test]
+fn the_queues_pages_configuration_is_the_contracts() {
+    let yaml = |document: &str| -> Value {
+        document
+            .split("```yaml")
+            .skip(1)
+            .filter_map(|rest| rest.split_once("```").map(|(block, _)| block))
+            .find(|block| block.contains("version: 1") && block.contains("authors:"))
+            .map(|block| serde_norway::from_str(block).expect("the documented block is YAML"))
+            .expect("a configuration block with authors")
+    };
+    let queues = yaml(include_str!("../../../docs/queues.md"));
+    let contract = yaml(CONTRACT);
+    for key in ["profile", "authors", "queues", "schemas"] {
+        assert_eq!(
+            queues[key], contract[key],
+            "docs/queues.md's `{key}` drifted from the contract"
+        );
+    }
 }

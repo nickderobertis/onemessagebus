@@ -13,7 +13,7 @@
 //!    receives it typed; the Rust CLI's `next` claims it and `schema check`
 //!    validates it.
 //! 3. A schema Rust declared with `schemars` and the profile registers
-//!    (`agent.planner-surface@1`) round-trips through both SDKs' generated models.
+//!    (`agent.note@1`) round-trips through both SDKs' generated models.
 //! 4. A payload the registered `demo.greeting@1` refuses, sent from each of the
 //!    three, is refused by the core naming the schema id and the JSON pointer, and
 //!    is appended nowhere.
@@ -96,7 +96,7 @@ impl Said {
     }
 }
 
-/// One journey's registry, channel, configurations and resident socket.
+/// One journey's registry, transport directory, configurations and resident socket.
 struct Scratch {
     dir: tempfile::TempDir,
 }
@@ -116,12 +116,12 @@ impl Scratch {
         self.path(name).to_str().expect("a UTF-8 path").to_owned()
     }
 
-    /// A configuration over the planner channel, with `queues` (name, schema id)
-    /// declared beside its queues, written under `name`.
+    /// A configuration over a local transport in `bus/`, declaring `queues`
+    /// (name, schema id), written under `name`.
     fn config(&self, name: &str, queues: &[(&str, &str)]) -> Config {
         let mut text = format!(
-            "version: 1\ntransport: {{kind: local, dir: {}}}\nprofile: planner-channel\n",
-            self.path("channel").display()
+            "version: 1\ntransport: {{kind: local, dir: {}}}\n",
+            self.path("bus").display()
         );
         if !queues.is_empty() {
             text.push_str("queues:\n");
@@ -139,7 +139,7 @@ impl Scratch {
 
     /// The records a queue's log holds.
     fn log(&self, queue: &str) -> Vec<Value> {
-        std::fs::read_to_string(self.path("channel").join(format!("{queue}.jsonl")))
+        std::fs::read_to_string(self.path("bus").join(format!("{queue}.jsonl")))
             .unwrap_or_default()
             .lines()
             .map(|line| serde_json::from_str(line).expect("a JSON line"))
@@ -466,72 +466,86 @@ fn a_type_defined_in_one_language_is_validated_by_the_rust_core_and_read_typed_i
     assert_eq!(checked.code, 0, "{}", checked.stderr);
 }
 
-const PYTHON_SURFACE: &str = r#"
+const PYTHON_NOTE: &str = r#"
 import asyncio, json, os
 from onemessagebus import Client, ClientConfig
-from onemessagebus.models import PlannerSurface
+from onemessagebus.models import Note
 
 async def main():
     journey = json.loads(os.environ["JOURNEY"])
     config = ClientConfig(config=journey["config"], registry=journey["registry"])
     async with Client(config) as client:
-        claimed = await client.next("surfaces", type=PlannerSurface)
-        assert claimed is not None and isinstance(claimed.record, PlannerSurface)
+        claimed = await client.next("notes", type=Note)
+        assert claimed is not None and isinstance(claimed.record, Note)
         echoed = claimed.record.model_copy(
-            update={"message": claimed.record.message + " (via python)"}
+            update={"text": claimed.record.text + " (via python)"}
         )
-        await client.send("surfaces", echoed)
+        await client.send("notes", echoed)
         print(json.dumps({"read": claimed.record.model_dump(mode="json", exclude_none=True)}))
 
 asyncio.run(main())
 "#;
 
-const TYPESCRIPT_SURFACE: &str = r#"
+const TYPESCRIPT_NOTE: &str = r#"
 import { Client, schemas } from "@SDK@";
 
 const journey = JSON.parse(process.env.JOURNEY ?? "{}");
 const client = new Client({ config: { config: journey.config, registry: journey.registry } });
-const claimed = await client.next("surfaces", { type: schemas.PlannerSurface });
+const claimed = await client.next("notes", { type: schemas.Note });
 if (!claimed) throw new Error("nothing to claim");
-const read = schemas.PlannerSurface.parse(claimed.record);
-await client.send(
-  "surfaces",
-  { ...read, message: `${read.message} (via typescript)` },
-  { type: schemas.PlannerSurface },
-);
+const read = schemas.Note.parse(claimed.record);
+await client.send("notes", { ...read, text: `${read.text} (via typescript)` }, { type: schemas.Note });
 console.log(JSON.stringify({ read }));
 "#;
 
 #[test]
 fn a_rust_declared_profile_type_round_trips_through_both_generated_models() {
     let scratch = Scratch::new();
-    let planner = scratch.config("planner.yaml", &[]);
-    let surface = json!({"kind": "finding", "message": "the base moved", "source": "proposal", "blocking": false});
-    let sent = planner.cli(&["send", "surfaces"], Some(&surface.to_string()));
+    let notes = scratch.config("notes.yaml", &[("notes", "agent.note@1")]);
+    let note =
+        json!({"addressee": "worker", "text": "the base moved", "criterion": "rebased onto main"});
+    let sent = notes.cli(&["send", "notes"], Some(&note.to_string()));
     assert_eq!(sent.code, 0, "{}", sent.stderr);
 
-    let python = planner
-        .python(&scratch, "surface", PYTHON_SURFACE)
-        .answer("python surface");
-    assert_eq!(python["read"]["message"], json!("the base moved"));
-    let typescript = planner
-        .typescript(&scratch, "surface", TYPESCRIPT_SURFACE)
-        .answer("typescript surface");
+    let python = notes
+        .python(&scratch, "note", PYTHON_NOTE)
+        .answer("python note");
+    assert_eq!(python["read"], note);
+    let typescript = notes
+        .typescript(&scratch, "note", TYPESCRIPT_NOTE)
+        .answer("typescript note");
     assert_eq!(
-        typescript["read"]["message"],
-        json!("the base moved (via python)")
+        typescript["read"],
+        json!({"addressee": "worker", "text": "the base moved (via python)", "criterion": "rebased onto main"})
     );
 
     // What each SDK sent back through its generated model is a record the Rust
-    // core accepted against agent.planner-surface@1 when it appended it.
-    let queued: Vec<String> = scratch
-        .log("surfaces")
+    // core accepted against agent.note@1 when it appended it; one it refuses is
+    // appended nowhere.
+    let refused = notes.cli(
+        &["send", "notes"],
+        Some(r#"{"addressee":"judge","text":"look again"}"#),
+    );
+    assert_eq!(refused.code, 1, "{}", refused.stderr);
+    assert!(
+        refused.stderr.contains("agent.note@1"),
+        "the core names no schema id: {}",
+        refused.stderr
+    );
+    let logged: Vec<Value> = scratch.log("notes");
+    assert!(
+        logged
+            .iter()
+            .all(|line| line["addressee"] == json!("worker")
+                && line["criterion"] == json!("rebased onto main")),
+        "{logged:?}"
+    );
+    let texts: Vec<&str> = logged
         .iter()
-        .filter(|line| line["event"] == json!("queued"))
-        .map(|line| line["message"].as_str().expect("a message").to_owned())
+        .map(|line| line["text"].as_str().expect("a text"))
         .collect();
     assert_eq!(
-        queued,
+        texts,
         [
             "the base moved",
             "the base moved (via python)",
@@ -700,8 +714,8 @@ fn rename_definitions(source: &str, definitions: &[&str], from: &str, to: &str) 
 fn the_resident_answers_a_raw_request_the_way_the_sdks_read_it() {
     use std::io::Write as _;
     let scratch = Scratch::new();
-    let planner = scratch.config("planner.yaml", &[]);
-    let resident = Resident::start(&planner);
+    let bare = scratch.config("bare.yaml", &[]);
+    let resident = Resident::start(&bare);
     let mut stream = UnixStream::connect(&resident.socket).expect("a connection");
     stream
         .write_all(b"{\"id\":1,\"verb\":\"transports\"}\n")

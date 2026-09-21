@@ -154,15 +154,13 @@ One NDJSON line per event, byte-identical to what `oneagentgraph`, `onevcs` and
   declared version and the set.
 - The profile registers on construction: `agent.event-envelope` reads `[2, 1]`,
   writes `2` for `pipeline` and `1` for `agentgraph` and `vcs` (per-source write
-  version is a profile fact); `agent.reply-envelope` reads `[3, 2]`, writes `3`
-  — the shape is `onepipeline::channel::Reply` (`version`, `author`,
-  `completion`, `message`, `reason`, `commands`), registered here as JSON
-  Schema so the profile owns the wire shape while `onepipeline` keeps owning
-  the `Command` variants' meaning.
+  version is a profile fact). A protocol one program owns — its records and its
+  queues' layout — is not the profile's to register: that program publishes it
+  as a schema bundle a configuration links (Contract L).
 
 <!-- fixture: read-sets -->
 ```json
-{"agent.event-envelope": [2, 1], "agent.reply-envelope": [3, 2]}
+{"agent.event-envelope": [2, 1]}
 ```
 
 ### Contract E — emitting, reading and merging
@@ -376,14 +374,14 @@ NATS JetStream mapping.
 ```json
 {"hello": {"protocol": "onemessagebus-transport", "version": 1, "config": {"kind": "nats", "dir": "runs/r1/channel", "url": "nats://h:4222"}},
  "hello-answer": {"ok": {"hello": {"protocol": "onemessagebus-transport", "version": 1}}},
- "requests": [{"op": "append", "queue": "surfaces", "record": "{\"id\":0}"},
-              {"op": "read", "queue": "surfaces", "from": 9, "limit": 100},
-              {"op": "begin_exclusive", "queue": "surfaces"},
-              {"op": "end_exclusive", "queue": "surfaces", "failed": false}],
+ "requests": [{"op": "append", "queue": "questions", "record": "{\"id\":0}"},
+              {"op": "read", "queue": "questions", "from": 9, "limit": 100},
+              {"op": "begin_exclusive", "queue": "questions"},
+              {"op": "end_exclusive", "queue": "questions", "failed": false}],
  "replies": [{"ok": {"position": 9}},
              {"ok": {"batch": {"records": [{"record": "{\"id\":0}", "after": 9}]}}},
              {"ok": "done"},
-             {"error": {"kind": "past_end", "message": "surfaces: position 12 is past the end of the queue, which ends at 9; the log was replaced or truncated", "queue": "surfaces", "position": 12, "end": 9}}]}
+             {"error": {"kind": "past_end", "message": "questions: position 12 is past the end of the queue, which ends at 9; the log was replaced or truncated", "queue": "questions", "position": 12, "end": 9}}]}
 ```
 
 ### Contract Q — queues, policies, subscriptions, authors
@@ -410,29 +408,23 @@ projection's `accounted` and `seal` account.
 
 - The projection document, when configured, is the fold of the log with
   `accounted` (the log bytes it accounts for) and a `seal` (FNV-1a 128 over its
-  waiting records, pending record and `next_id`, then over `accounted`), written
-  exactly as `onepipeline::channel::Queue` writes it: a stamped document that
-  does not seal reads as no document, and the log is folded whole.
+  waiting records, pending record and `next_id`, then over `accounted`): a
+  stamped document that does not seal reads as no document, and the log is
+  folded whole.
 - `Subscription { queue, consumer, lifetime: Lifetime::Session |
   Lifetime::Durable(Asker) }`: `abandon()` marks what the listener raised and
   claimed, and has not seen answered, as abandoned (kept, uncounted, still
   readable); a durable listener on opening `attend`s — takes back — what an
   earlier listener of the **same** asker abandoned; a session adopts nothing and
   nothing adopts what it raised. `Asker` is a non-blank Unicode word compared for
-  equality, refused otherwise with `onepipeline`'s two refusals, naming where the
-  value came from.
+  equality, refused otherwise with one of two refusals, naming where the value
+  came from.
 - `Author(String)` is open in the core; `Allowlist<Op: Operation>` with
   `grant(author, op)` and `allows(author, op) -> Result<(), Refusal>` refuses an op
   not granted **by omission**, naming the author, the op and the reason recorded.
-  The profile's `planner-channel` layout declares the ops and only the planner,
-  granted every op. A configuration declares every other author and its grants;
-  `complete` also governs a legacy verdict carrying `completion: true`:
-
-<!-- fixture: planner-channel-grants -->
-```json
-{"planner": ["add", "drop", "reparent", "retry", "cancel", "requeue", "complete", "attest", "finding", "amend", "note", "settle"]}
-```
-
+  A layout declares its ops and its authors; a configuration may narrow what a
+  layout grants and never widen it, and declares every other author and its
+  grants.
 - A layout is declared as code (`Layout`) or as data (`LayoutDocument`), which a
   schema bundle's optional `layouts` member carries and a configuration links
   (Contract L). `Layouts::with_linked(&resolved)` binds each linked document to
@@ -472,62 +464,38 @@ projection's `accounted` and `seal` account.
         "under": "reply", "stamp": ["at"]}]}}]}}
 ```
 
-- The `planner-channel` layout's queues, as declared — the files a directory
-  `onepipeline` 0.28.2 wrote are read by this crate, and those this crate writes
-  are read by 0.28.2:
-
-<!-- fixture: planner-channel -->
-```json
-[{"name": "surfaces",
-  "policy": {"delivery": "at-least-once", "ordering": "per-queue",
-             "supersede_on": {"key": "source", "when": {"field": "source", "equals": "check-in"}},
-             "hold_pending": true, "blocking_first": true, "retention": "keep", "projection": "queue.json"},
-  "schema": "agent.planner-surface@1", "answers": "replies", "consumers": ["default"], "numbered": false},
- {"name": "replies",
-  "policy": {"delivery": "at-least-once", "ordering": "per-queue", "hold_pending": false, "blocking_first": false, "retention": "keep"},
-  "schema": "agent.queued-reply@1",
-  "claims": {"not": {"all": [{"field": "reply.commands", "non_empty": true},
-                             {"not": {"any": [{"field": "reply.completion", "present": true},
-                                              {"field": "reply.message", "present": true},
-                                              {"field": "reply.reason", "present": true}]}}]}},
-  "consumers": ["default"], "numbered": true},
- {"name": "commands",
-  "policy": {"delivery": "at-least-once", "ordering": "per-queue", "hold_pending": false, "blocking_first": false, "retention": "keep"},
-  "schema": "agent.queued-commands@1", "consumers": ["default"], "numbered": true},
- {"name": "command-outcomes",
-  "policy": {"delivery": "at-least-once", "ordering": "per-queue", "hold_pending": false, "blocking_first": false, "retention": "keep"},
-  "schema": "agent.command-outcome@1", "consumers": ["default"], "numbered": false}]
-```
-
 ### The configuration file — `onemessagebus.yaml`, version 1
 
 <!-- fixture: config -->
 ```yaml
 version: 1
-transport: {kind: local, dir: runs/r1/channel}
-profile: planner-channel
+transport: {kind: local, dir: runs/r1/desk}
+profile: desk
+schemas:
+  - "https://example.org/desk.json@1"
 queues:
   findings: {policy: {hold_pending: false}}
 authors:
-  planner: {capabilities: [add, retry, finding]}
+  lead: {capabilities: [retry, note]}
   sentinel:
-    capabilities: [retry, requeue, cancel, finding, add]
+    capabilities: [retry, note]
     refusals:
-      complete: "whether the run is finished is the planner's verdict, not an observation"
+      complete: "whether the desk is done is the lead's verdict, not an observation"
 ```
 
 - `kind` is `local`, `memory`, or a registered or plugin kind; `profile` names a
   layout the program links as code or a bundle the `schemas` key links declares
-  as data, the program's own winning a name both declare; `queues` adds queues or overrides a layout's
-  by name. `authors.planner` may narrow the built-in planner and never widen it;
-  every other entry declares an author, with required `capabilities` and optional
-  refusal reasons for ungranted operations.
+  as data, the program's own winning a name both declare; `queues` adds queues or
+  overrides a layout's by name. An `authors` entry naming an author the layout
+  declares narrows its grants and may never widen them; every other entry
+  declares an author, with required `capabilities` and optional refusal reasons
+  for ungranted operations.
 - **Two steps, which the types keep apart.** `onemessagebus::Config::load(path)`
   refuses what the file alone decides, naming the key: YAML that is not one
   document, an unknown key, a version other than 1, a name, schema id or
   predicate that does not parse. `Config::resolve(&layouts, &kinds)` refuses what
   only the linked layouts and transport kinds decide, naming the key: a profile no
-  layout declares, a widened planner grant, or an op that does not exist
+  layout declares, a widened grant, or an op that does not exist
   (`authors.<author>.capabilities`), a `schema` the layout
   does not register or an `answers` naming no queue (`queues.<queue>.<key>`), and
   a transport its kind refuses. A loaded `Config` opens nothing; the `Bus`
@@ -543,29 +511,20 @@ authors:
 **Departures, ruled by the manager over the ask seam** for Contracts T and Q and
 recorded here so the adopting nodes read them where they read the contract:
 
-1. The surfaces queue supersedes on `source == check-in`, not the `kind ==
-   check-in` Contract Q first stated: that is what 0.28.2's `channel.rs` does, and
-   byte compatibility wins over the wording. The `Supersede { key, when }` shape
-   is unchanged.
-2. The shipped binary reaches a plugin transport through the executable
+1. The shipped binary reaches a plugin transport through the executable
    `onemessagebus-transport-<kind>` on `PATH`, over the versioned line-delimited
    JSON protocol above, whose hello names the version in its first line and whose
    shapes are registered schemas; resolution is built-in, registered, `PATH`.
-3. A local cursor file holds the number of records before the position, as
-   0.28.2 writes `replies-cursor.json` and `commands-cursor.json`; the position
-   stays the byte offset, converted at the transport boundary.
-4. A queue's declaration carries `schema`, `answers`, `claims`, `consumers` and
+2. A local cursor file holds the number of records before the position; the
+   position stays the byte offset, converted at the transport boundary.
+3. A queue's declaration carries `schema`, `answers`, `claims`, `consumers` and
    `numbered` beside its `Policy`, as declaration keys rather than policy fields.
-5. A widened grant is refused by `Config::resolve`, not `Config::load`, since
+4. A widened grant is refused by `Config::resolve`, not `Config::load`, since
    only the linked layouts know a profile's grants; the unresolved `Config` cannot
    open a queue or author a record.
-6. `answer(claimed, reply_position)` releases the slot once the reply is at
+5. `answer(claimed, reply_position)` releases the slot once the reply is at
    `reply_position`, so the reply is appended first, and a position no reply on
-   the `answers` queue ends at is refused; the profile's typed
-   `Channel::answer` releases first and appends after, in 0.28.2's order.
-7. `onepipeline results` at 0.28.2 reads no channel file, so the journey holds
-   `results` over the recorded run root to identical output with the written
-   channel substituted, and compares `next` and `status` with this crate's answers.
+   the `answers` queue ends at is refused.
 
 ### Contract A — ask and answer
 
@@ -604,15 +563,14 @@ recorded here so the adopting nodes read them where they read the contract:
 [{"answer": "reply", "correlation": "c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b", "reply": {"id": 0, "reply": {"version": 3, "completion": true, "reason": "main"}, "at": 1789300000000, "correlation": "c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b"}},
  {"answer": "timeout", "correlation": "c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b"},
  {"answer": "abandoned", "correlation": "c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b"},
- {"answer": "refused", "correlation": "c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b", "reason": "the reply echoing c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b on replies is refused: agent.queued-reply@1: at /reply/completion: \"yes\" is not of type \"boolean\""}]
+ {"answer": "refused", "correlation": "c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b", "reason": "the reply echoing c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b on answers is refused: desk.answer@1: at /reply/completion: \"yes\" is not of type \"boolean\""}]
 ```
 
-- Routing by shape stays where `onepipeline` put it: a reply carrying both a
-  verdict and edits reaches both the pending ask and the command path; a
-  commands-only envelope reaches the command path alone and leaves the pending
-  ask standing. The bus expresses this as two queues and a `Router` the profile
-  declares for the planner-channel layout (`onemessagebus_agent::channel::ReplyRouter`);
-  the meaning of the edits stays the consumer's.
+- Routing by shape is the layout's: a layout that splits an offer onto several
+  queues (a `Router` in code, a `route` step in a layout document) routes a reply
+  the same way, and the reply answers the pending ask only when a record it
+  becomes reaches the `answers` queue — one routed elsewhere alone leaves the ask
+  standing. What the routed records mean stays the consumer's.
 
 ### Contract V — validators
 
@@ -644,8 +602,8 @@ recorded here so the adopting nodes read them where they read the contract:
 <!-- fixture: validators-config -->
 ```yaml
 validators:
-  - {on: replies, when: {carries: commands}, kind: command, command: [uv, run, python, -m, orchestrator.plan_review, --envelope],
-     cache: {dir: .validator-passes, bar_fingerprint: [scripts/llmlint-fingerprint.sh]}}
+  - {on: answers, when: {carries: actions}, kind: command, command: [python3, -m, review_actions, --envelope],
+     cache: {dir: .validator-passes, bar_fingerprint: [scripts/bar-fingerprint.sh]}}
 ```
 
   `on` names a queue, `when` an optional predicate over the envelope, `kind:

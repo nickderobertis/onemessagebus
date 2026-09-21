@@ -2,9 +2,10 @@
 //!
 //! The queue verbs — `send`, `next`, `reply`, `subscribe`, `status` — open the
 //! bus a configuration describes: `--config` (or `ONEMESSAGEBUS_CONFIG`) names the
-//! file, loaded and resolved against the layouts this binary links, and
+//! file, loaded and resolved against the layouts its linked bundles declare and
+//! any a program embedding this command line links ([`run_with`]), and
 //! `--transport-dir` (or `ONEMESSAGEBUS_TRANSPORT_DIR`) overrides its transport's
-//! directory — or, with no file, keeps the `planner-channel` layout there.
+//! directory. With no file, a queue verb is refused naming `--config`.
 //!
 //! Payloads arrive on stdin or `--file` — and `deliver`'s message also through
 //! the named `--message` option, from exactly one of the three — never as a
@@ -34,7 +35,6 @@ use onemessagebus::{
     ServeOptions, Served, Spool, Subscription, TransportKinds, Undelivered, Vocabulary,
     DEFAULT_REPLY_WINDOW, SPOOL_WAIT,
 };
-use onemessagebus_agent::channel::{PlannerChannel, PLANNER_CHANNEL};
 use onemessagebus_agent::Agent;
 use serde_json::{Map, Value};
 
@@ -200,7 +200,7 @@ struct BusArgs {
     #[arg(long, value_name = "PATH", env = "ONEMESSAGEBUS_CONFIG")]
     config: Option<PathBuf>,
     /// The directory the transport keeps its queues in, overriding the
-    /// configuration's; with no configuration, the planner-channel layout's.
+    /// configuration's.
     #[arg(long, value_name = "DIR", env = "ONEMESSAGEBUS_TRANSPORT_DIR")]
     transport_dir: Option<PathBuf>,
     /// A directory of registered documents, one `<id>.json` per schema, added
@@ -580,7 +580,7 @@ fn failed(message: impl Into<String>) -> Refusal {
 /// Run the command line over `args` (the program name first), writing to this
 /// process's stdout and stderr, and answer the exit code.
 pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
-    run_with(args, &layouts())
+    run_with(args, &Layouts::new())
 }
 
 /// [`run`], for a program that links `layouts` as code: a configuration's
@@ -705,7 +705,7 @@ struct Held {
     config: Option<PathBuf>,
     transport_dir: Option<PathBuf>,
     registry: Option<PathBuf>,
-    bound: Option<(Config, Arc<dyn onemessagebus::Transport>)>,
+    bound: (Config, Arc<dyn onemessagebus::Transport>),
 }
 
 impl Io {
@@ -746,7 +746,7 @@ impl Io {
         args: &BusArgs,
     ) -> Option<(Config, Arc<dyn onemessagebus::Transport>)> {
         let held = self.held.as_ref()?;
-        let (config, transport) = held.bound.as_ref()?;
+        let (config, transport) = &held.bound;
         (held.config == args.config && held.transport_dir == args.transport_dir)
             .then(|| (config.clone(), Arc::clone(transport)))
     }
@@ -1452,15 +1452,9 @@ fn shape(value: &Value) -> &'static str {
     }
 }
 
-/// The layouts this binary links, by name: the agent profile's planner channel.
-fn layouts() -> Layouts {
-    Layouts::new().with(Arc::new(PlannerChannel))
-}
-
 /// The bus a queue verb opens: the configuration file loaded and resolved, its
-/// transport directory overridden when one is named — or, with no file, the
-/// planner-channel layout over a local transport in that directory — with the
-/// registry directory's schemas beside the layout's.
+/// transport directory overridden when one is named, with the registry
+/// directory's schemas beside the layout's.
 fn open_bus(args: &BusArgs, io: &Io) -> Result<Bus, Refusal> {
     let (config, held) = configured(args, io)?;
     let linked = linked(&config, Freshness::Window)?;
@@ -1510,18 +1504,14 @@ fn bind(
 /// The configuration a queue verb opens its bus with, loaded and checked but
 /// not yet bound to the layouts and transports this binary has.
 fn configuration(args: &BusArgs) -> Result<Config, Refusal> {
-    let config = match (&args.config, &args.transport_dir) {
-        (Some(path), _) => Config::load(path).map_err(|failure| invalid(failure.to_string()))?,
-        (None, Some(dir)) => Config::local(dir, Some(PLANNER_CHANNEL)),
-        (None, None) => {
-            return Err(invalid(
-                "no configuration to open a queue with: pass --config <path> (or set \
-                 ONEMESSAGEBUS_CONFIG), or --transport-dir <dir> (or set \
-                 ONEMESSAGEBUS_TRANSPORT_DIR) for the planner-channel layout over a local \
-                 transport there",
-            ))
-        }
+    let Some(path) = &args.config else {
+        return Err(invalid(
+            "no configuration to open a queue with: pass --config <path> (or set \
+             ONEMESSAGEBUS_CONFIG) naming the transport and the layout its queues keep; \
+             --transport-dir only moves a configuration's transport",
+        ));
     };
+    let config = Config::load(path).map_err(|failure| invalid(failure.to_string()))?;
     Ok(match &args.transport_dir {
         Some(dir) => config.with_transport_dir(dir),
         None => config,

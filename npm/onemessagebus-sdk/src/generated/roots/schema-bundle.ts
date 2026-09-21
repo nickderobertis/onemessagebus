@@ -19,7 +19,7 @@ export type DocumentName = string;
 export type SchemaId = string;
 /**
  * A queue's name: a non-empty run of ASCII letters, digits, `-` and `_`,
- * starting with a letter or digit — `surfaces`, `command-outcomes`.
+ * starting with a letter or digit — `questions`, `action-outcomes`.
  */
 export type QueueName = string;
 /**
@@ -486,7 +486,7 @@ export interface RouteStep {
 export interface Route {
   /**
    * A queue's name: a non-empty run of ASCII letters, digits, `-` and `_`,
-   * starting with a letter or digit — `surfaces`, `command-outcomes`.
+   * starting with a letter or digit — `questions`, `action-outcomes`.
    */
   queue: string;
   /**

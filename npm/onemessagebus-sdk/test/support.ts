@@ -43,9 +43,7 @@ export function removeScratch(): void {
 
 /** A fresh directory this test file owns, removed after it. */
 export function scratch(label: string): string {
-  const base = process.env.ONEPIPELINE_NODE_SCRATCH_DIR ?? tmpdir();
-  mkdirSync(base, { recursive: true });
-  const dir = mkdtempSync(join(base, `sdk-${label}-`));
+  const dir = mkdtempSync(join(tmpdir(), `sdk-${label}-`));
   made.push(dir);
   return dir;
 }
@@ -90,18 +88,26 @@ export function bindSpool(dir: string, schema = "agent.note@1"): { release(): vo
 /** The message type the journeys declare in TypeScript and register at run time. */
 export const Greeting = defineMessage("demo.greeting@1", z.object({ text: z.string() }));
 
-/** A planner surface, as `agent.planner-surface@1` takes one. */
-export const SURFACE = {
-  kind: "finding",
+/** A question, as the `questions` event queue takes one. */
+export const QUESTION = {
   message: "the base moved",
   source: "proposal",
   blocking: false,
 };
 
 /**
- * A configuration over a local transport in `dir/channel`: the planner channel's
- * queues; `greetings`, typed `demo.greeting@1`; `judged`, whose validator refuses
- * a record that does not say `quiet`; and one configured example codec.
+ * A note, as the profile's Rust-registered `agent.note@1` takes one. `as const`
+ * keeps `addressee` the literal `"worker"` rather than widening it to `string`,
+ * which the generated `Note` type's `"worker" | "supervisor" | "both"` refuses.
+ */
+export const NOTE = { addressee: "worker", text: "the base moved" } as const;
+
+/**
+ * A configuration over a local transport in `dir/bus`: `questions`, an event
+ * queue whose asks are answered on `answers`; `actions`, numbered and empty;
+ * `greetings`, typed `demo.greeting@1`; `notes`, typed by the profile's
+ * `agent.note@1`; `judged`, whose validator refuses a record that does not say
+ * `quiet`; and one configured example codec whose frames are notes.
  */
 export function writeConfig(dir: string): string {
   const path = join(dir, "onemessagebus.yaml");
@@ -110,10 +116,13 @@ export function writeConfig(dir: string): string {
     path,
     [
       "version: 1",
-      `transport: {kind: local, dir: ${JSON.stringify(join(dir, "channel"))}}`,
-      "profile: planner-channel",
+      `transport: {kind: local, dir: ${JSON.stringify(join(dir, "bus"))}}`,
       "queues:",
+      "  questions: {policy: {hold_pending: true, blocking_first: true}, answers: answers}",
+      "  answers: {numbered: true}",
+      "  actions: {numbered: true}",
       "  greetings: {schema: demo.greeting@1}",
+      "  notes: {schema: agent.note@1}",
       "  judged: {}",
       "validators:",
       `  - {on: judged, kind: command, command: [sh, -c, ${JSON.stringify(judge)}]}`,
@@ -125,7 +134,7 @@ export function writeConfig(dir: string): string {
       "    select: kind",
       "    frames:",
       "      finding:",
-      "        schema: agent.planner-surface@1",
+      "        schema: agent.note@1",
       "        bindings:",
       "          - do: answer",
       "            response: {completion: false}",

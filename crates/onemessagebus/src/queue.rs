@@ -817,8 +817,8 @@ const NOTHING_DIGESTED: u128 = 0x6c62_272e_07bb_0142_62b8_2175_6295_c58d;
 /// FNV-1a's 128-bit prime, `2^88 + 0x13b`.
 const FNV_PRIME: u128 = (1 << 88) | 0x13b;
 
-/// FNV-1a over `bytes`, continuing from `from`: the seal `onepipeline` stamps
-/// its projection with. An integrity check against accidents, not a security
+/// FNV-1a over `bytes`, continuing from `from`: the seal a projection is
+/// stamped with. An integrity check against accidents, not a security
 /// boundary: a rewrite crafted to match is not a failure anybody here meets.
 fn digested(from: u128, bytes: &[u8]) -> u128 {
     bytes.iter().fold(from, |digest, byte| {

@@ -17,14 +17,13 @@ shares, declared once here and re-exported by every consumer.
   reaches a live conversation in process, through a spool, or carried to a later
   one.
 - `registry()` — every schema the stack registers: `agent.event-envelope` at
-  `[2, 1]`, `agent.reply-envelope` at `[3, 2]`, and the artifact reference, the
-  filter, the labels, the note, the planner channel's four records and the
+  `[2, 1]`, and the artifact reference, the filter, the labels, the note and the
   transport plugin protocol's three shapes (`agent.artifact-ref`,
-  `agent.event-filter`, `agent.labels`, `agent.note`, `agent.planner-surface`,
-  `agent.queued-reply`, `agent.queued-commands`, `agent.command-outcome`,
+  `agent.event-filter`, `agent.labels`, `agent.note`,
   `onemessagebus.transport-hello`, `onemessagebus.transport-request`,
-  `onemessagebus.transport-reply`) at 1. Member protocol frames are linked as
-  external schema bundles by the host configuration.
+  `onemessagebus.transport-reply`) at 1. Member protocol frames, and a program's
+  own queue layout, are linked as external schema bundles by the host
+  configuration.
 
 ```rust
 use onemessagebus_agent::{Emitter, Labels, Phase, Source};

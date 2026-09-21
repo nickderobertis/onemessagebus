@@ -19,15 +19,27 @@ or Bun.
 
 ## The client
 
+A queue verb opens the queues a configuration file declares, such as this
+`onemessagebus.yaml`:
+
+```yaml
+version: 1
+transport: {kind: local, dir: runs/r1/bus}
+queues:
+  questions: {policy: {hold_pending: true, blocking_first: true}, answers: answers}
+  answers: {numbered: true}
+  notes: {schema: agent.note@1}
+```
+
 ```ts
 import { Client } from "@onemessagebus/sdk";
 
-await using client = new Client({ config: { transportDir: "runs/r1/channel" } });
+await using client = new Client({ config: { config: "onemessagebus.yaml" } });
 
-const [sent] = await client.send("surfaces", { kind: "finding", message: "the base moved", source: "proposal", blocking: true });
-const claimed = await client.next("surfaces");            // undefined when there is nothing to claim
-const statuses = await client.status("surfaces");
-const text = await client.status("surfaces", { format: "text" }); // a string
+const [sent] = await client.send("questions", { message: "which base?", blocking: true });
+const claimed = await client.next("questions");           // undefined when there is nothing to claim
+const statuses = await client.status("questions");
+const text = await client.status("questions", { format: "text" }); // a string
 ```
 
 `new Client({ config?, transport? })`, where `config` is a `ClientConfig`:
@@ -35,7 +47,7 @@ const text = await client.status("surfaces", { format: "text" }); // a string
 | key | meaning |
 | --- | --- |
 | `binary` | the `onemessagebus` executable |
-| `config`, `transportDir`, `registry` | defaults for every call whose capability takes that option and whose caller left it out |
+| `config`, `transportDir`, `registry` | defaults for every call whose capability takes that option and whose caller left it out; `transportDir` only moves the configuration's transport, so a queue verb given no `config` is refused |
 | `cwd`, `env` | the binary's working directory, and variables added to its environment |
 
 The binary is `config.binary`, else `ONEMESSAGEBUS_BIN`, else the installed
@@ -58,7 +70,7 @@ const answer = await client.ask(queue, question, { blocking: true, asker: "worke
 switch (answer.answer) {                                      // "reply" | "timeout" | "abandoned" | "refused"
   case "reply": console.log(answer.reply); break;
 }
-for await (const record of client.subscribe("surfaces", { until: { field: "event", equals: "answered" }, timeout: 600 })) {
+for await (const record of client.subscribe("questions", { until: { field: "event", equals: "answered" }, timeout: 600 })) {
   console.log(record.position, record.record);                // leaving the loop stops the subscription
 }
 ```
@@ -93,15 +105,15 @@ its latest version and at every version:
 ```ts
 import { schemas, type MessageType } from "@onemessagebus/sdk";
 
-const claimed = await client.next("surfaces", { type: schemas.PlannerSurface }); // agent.planner-surface@1
-type Surface = MessageType<typeof schemas.PlannerSurface>;
+const claimed = await client.next("notes", { type: schemas.Note }); // agent.note@1
+type Note = MessageType<typeof schemas.Note>;
 schemas.EventEnvelope;    // agent.event-envelope@2; schemas.EventEnvelopeV1 is @1
-schemas.PlannerSurface.schema; // the Zod schema itself
+schemas.Note.schema;      // the Zod schema itself
 ```
 
 `type` also takes a bare Zod schema; a violation is then reported as the
-payload's (`payload: at /kind: ...`). `messages.AgentPlannerSurfaceV1`,
-`messages.AgentPlannerSurfaceV1Schema` and `messages.MESSAGES` (by id) are the
+payload's (`payload: at /text: ...`). `messages.AgentNoteV1`,
+`messages.AgentNoteV1Schema` and `messages.MESSAGES` (by id) are the
 same definitions by their full names.
 
 ## Transports

@@ -516,7 +516,7 @@ fn when_carries_judges_only_the_messages_carrying_the_field() {
         rig.command()
     ));
     predicate
-        .send(&queue("findings"), json!({"author": "planner"}))
+        .send(&queue("findings"), json!({"author": "lead"}))
         .expect("the predicate does not admit it");
     predicate
         .send(&queue("findings"), json!({"author": "monitor"}))

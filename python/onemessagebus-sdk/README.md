@@ -17,25 +17,28 @@ first call (see [Version pin](#version-pin)).
 
 ## The client
 
+A queue verb opens the queues a configuration file declares, such as this
+`onemessagebus.yaml`:
+
+```yaml
+version: 1
+transport: {kind: local, dir: runs/r1/bus}
+queues:
+  questions: {policy: {hold_pending: true, blocking_first: true}, answers: answers}
+  answers: {numbered: true}
+```
+
 ```python
 import asyncio
 from onemessagebus import Client, ClientConfig
 
 
 async def main() -> None:
-    config = ClientConfig(transport_dir="runs/r1/channel")
+    config = ClientConfig(config="onemessagebus.yaml")
     async with Client(config) as client:
-        [sent] = await client.send(
-            "surfaces",
-            {
-                "kind": "finding",
-                "message": "the base moved",
-                "source": "proposal",
-                "blocking": False,
-            },
-        )
-        claimed = await client.next("surfaces")  # None when there is nothing to claim
-        [status] = await client.status("surfaces")
+        [sent] = await client.send("questions", {"message": "which base?", "blocking": False})
+        claimed = await client.next("questions")  # None when there is nothing to claim
+        [status] = await client.status("questions")
         print(sent.position, claimed and claimed.record, status.records)
 
 
@@ -53,7 +56,8 @@ a Pydantic model, a JSON-able value, or JSON text.
 `ClientConfig(binary, config, transport_dir, registry, cwd, env)`: `binary` is the
 executable, else `ONEMESSAGEBUS_BIN`, else `onemessagebus` on `PATH`; `config`,
 `transport_dir` and `registry` are defaults applied to every call whose verb takes
-them and whose caller left them unset.
+them and whose caller left them unset. `transport_dir` only moves the
+configuration's transport: a queue verb given no `config` is refused.
 
 A few answers are data rather than exceptions:
 
@@ -89,8 +93,9 @@ validates every payload in Rust against the registered schema; one that violates
 it is refused as `BusFailed`, naming the id and the JSON pointer.
 
 Every message the binary registers has a generated model in
-`onemessagebus.models`, by its family's name: `PlannerSurface` is
-`agent.planner-surface@1` at its latest version, `PlannerSurfaceV1` that version.
+`onemessagebus.models`, by its family's name: `Note` is `agent.note@1` at its
+latest version, `NoteV1` that version, and `EventEnvelope` is the latest of
+`agent.event-envelope@1` and `@2`.
 `onemessagebus.messages.MESSAGES` maps each id to its model.
 
 ## Transports

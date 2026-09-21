@@ -2,23 +2,17 @@
 # schema bundle. Do not edit: run the generator.
 """The generated model of every message the registry holds, by its family's name.
 
-`PlannerSurface` is `agent.planner-surface@1`'s model at the latest version the registry
-holds, and `PlannerSurfaceV1` names that version; `messages.MESSAGES` maps each id
-to its model.
+`EventEnvelope` is the `agent.event-envelope` family's model at the latest version the
+registry holds, and `EventEnvelopeV1` names version 1; `messages.MESSAGES` maps each
+id to its model.
 """
 
 from ._generated.messages.agent_artifact_ref_v1 import ArtifactRef as ArtifactRefV1
-from ._generated.messages.agent_command_outcome_v1 import CommandOutcome as CommandOutcomeV1
 from ._generated.messages.agent_event_envelope_v1 import Envelope as EventEnvelopeV1
 from ._generated.messages.agent_event_envelope_v2 import Envelope as EventEnvelopeV2
 from ._generated.messages.agent_event_filter_v1 import Filter as EventFilterV1
 from ._generated.messages.agent_labels_v1 import Labels as LabelsV1
 from ._generated.messages.agent_note_v1 import Note as NoteV1
-from ._generated.messages.agent_planner_surface_v1 import Surface as PlannerSurfaceV1
-from ._generated.messages.agent_queued_commands_v1 import QueuedCommands as QueuedCommandsV1
-from ._generated.messages.agent_queued_reply_v1 import QueuedReply as QueuedReplyV1
-from ._generated.messages.agent_reply_envelope_v2 import ReplyEnvelope as ReplyEnvelopeV2
-from ._generated.messages.agent_reply_envelope_v3 import ReplyEnvelope as ReplyEnvelopeV3
 from ._generated.messages.bus_resident_protocol_v1 import ResidentLine as ResidentProtocolV1
 from ._generated.messages.onemessagebus_transport_hello_v1 import PluginHello as TransportHelloV1
 from ._generated.messages.onemessagebus_transport_reply_v1 import PluginReply as TransportReplyV1
@@ -27,15 +21,10 @@ from ._generated.messages.onemessagebus_transport_request_v1 import (
 )
 
 ArtifactRef = ArtifactRefV1
-CommandOutcome = CommandOutcomeV1
 EventEnvelope = EventEnvelopeV2
 EventFilter = EventFilterV1
 Labels = LabelsV1
 Note = NoteV1
-PlannerSurface = PlannerSurfaceV1
-QueuedCommands = QueuedCommandsV1
-QueuedReply = QueuedReplyV1
-ReplyEnvelope = ReplyEnvelopeV3
 ResidentProtocol = ResidentProtocolV1
 TransportHello = TransportHelloV1
 TransportReply = TransportReplyV1
@@ -44,8 +33,6 @@ TransportRequest = TransportRequestV1
 __all__ = [
     "ArtifactRef",
     "ArtifactRefV1",
-    "CommandOutcome",
-    "CommandOutcomeV1",
     "EventEnvelope",
     "EventEnvelopeV1",
     "EventEnvelopeV2",
@@ -55,15 +42,6 @@ __all__ = [
     "LabelsV1",
     "Note",
     "NoteV1",
-    "PlannerSurface",
-    "PlannerSurfaceV1",
-    "QueuedCommands",
-    "QueuedCommandsV1",
-    "QueuedReply",
-    "QueuedReplyV1",
-    "ReplyEnvelope",
-    "ReplyEnvelopeV2",
-    "ReplyEnvelopeV3",
     "ResidentProtocol",
     "ResidentProtocolV1",
     "TransportHello",

@@ -46,17 +46,14 @@ type Writer = Arc<Mutex<UnixStream>>;
 /// Run the resident core on `socket` until the process is stopped.
 pub(super) fn serve(socket: &Path, args: &ServeArgs, layouts: &Layouts) -> Result<(), Refusal> {
     // The configuration and the registry directory are refused here, before the
-    // socket is claimed, exactly as a one-shot verb would refuse them.
-    let bound = if args.bus.config.is_some() || args.bus.transport_dir.is_some() {
-        let config = configuration(&args.bus)?;
-        linked(&config, Freshness::CachedFirst)?;
-        let transport = TransportKinds::builtin()
-            .open(&config.transport)
-            .map_err(|failure| invalid(format!("transport: {failure}")))?;
-        Some((config, transport))
-    } else {
-        None
-    };
+    // socket is claimed, exactly as a one-shot verb would refuse them — no
+    // configuration at all, or a transport directory alone, among them.
+    let config = configuration(&args.bus)?;
+    linked(&config, Freshness::CachedFirst)?;
+    let transport = TransportKinds::builtin()
+        .open(&config.transport)
+        .map_err(|failure| invalid(format!("transport: {failure}")))?;
+    let bound = (config, transport);
     load_registry_dir(args.bus.registry.as_deref())?;
     let held = Arc::new(Held {
         layouts: layouts.clone(),

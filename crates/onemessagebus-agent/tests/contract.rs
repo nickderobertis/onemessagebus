@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use onemessagebus::{Kind, CAPABILITIES};
 use onemessagebus_agent::{
     registry, AgentEnvelope, AgentFilter, Dimensions, Envelope, EventFilter, Labels, MatchFields,
-    Matcher, Phase, Source, EVENT_ENVELOPE_FAMILY, REPLY_ENVELOPE_FAMILY,
+    Matcher, Phase, Source, EVENT_ENVELOPE_FAMILY,
 };
 use serde_json::{json, Value};
 
@@ -472,10 +472,7 @@ fn the_documented_read_sets_are_the_profiles() {
     let registry = registry();
     assert_eq!(
         documented.keys().cloned().collect::<Vec<_>>(),
-        vec![
-            EVENT_ENVELOPE_FAMILY.to_owned(),
-            REPLY_ENVELOPE_FAMILY.to_owned()
-        ]
+        vec![EVENT_ENVELOPE_FAMILY.to_owned()]
     );
     for (family, read_set) in documented {
         assert_eq!(registry.read_set(&family), read_set, "{family}");
@@ -737,99 +734,4 @@ fn the_documented_note_shapes_round_trip_through_the_note_types() {
         );
     }
     assert_eq!(kinds.len(), 3, "the documented refusals miss a variant");
-}
-
-#[test]
-fn the_documented_planner_channel_is_the_layout_the_profile_declares() {
-    let documented: Value =
-        serde_json::from_str(&fixture("planner-channel")).expect("the layout is JSON");
-    assert_eq!(
-        serde_json::to_value(onemessagebus_agent::channel::queues()).expect("JSON"),
-        documented,
-        "the planner-channel queues differ from the contract"
-    );
-}
-
-#[test]
-fn the_documented_planner_channel_grants_are_the_allowlist() {
-    use onemessagebus_agent::channel::allowlist;
-    let documented: Value = serde_json::from_str(&fixture("planner-channel-grants")).expect("JSON");
-    let allowlist = allowlist();
-    assert_eq!(
-        allowlist.authors(),
-        vec![onemessagebus::Author::from("planner")]
-    );
-    let granted: Vec<&str> = allowlist
-        .granted(&onemessagebus::Author::from("planner"))
-        .iter()
-        .map(|op| op.word())
-        .collect();
-    let stated: Vec<&str> = documented["planner"]
-        .as_array()
-        .expect("a list")
-        .iter()
-        .map(|word| word.as_str().expect("a word"))
-        .collect();
-    assert_eq!(granted, stated);
-}
-
-#[test]
-fn the_documented_configuration_declares_an_author_and_an_unknown_planner_op_is_refused() {
-    use std::sync::Arc;
-
-    use onemessagebus::{Author, Config, ConfigError, Layouts, OpWord, TransportKinds};
-    use onemessagebus_agent::channel::PlannerChannel;
-
-    let dir = tempfile::tempdir().expect("a scratch directory");
-    let layouts = Layouts::new().with(Arc::new(PlannerChannel));
-    let text = fixture("config");
-    let bus = Config::parse(&text)
-        .expect("the documented configuration loads")
-        .with_transport_dir(dir.path())
-        .resolve(&layouts, &TransportKinds::builtin())
-        .expect("the documented configuration resolves");
-    let names: Vec<String> = bus.queues().iter().map(ToString::to_string).collect();
-    assert_eq!(
-        names,
-        [
-            "command-outcomes",
-            "commands",
-            "findings",
-            "replies",
-            "surfaces"
-        ]
-    );
-    let sentinel = Author::from("sentinel");
-    assert!(bus
-        .allowlist()
-        .allows(&sentinel, &OpWord("retry".to_owned()))
-        .is_ok());
-    let complete = bus
-        .allowlist()
-        .allows(&sentinel, &OpWord("complete".to_owned()))
-        .expect_err("complete was not granted");
-    assert_eq!(
-        complete.reason,
-        "whether the run is finished is the planner's verdict, not an observation"
-    );
-
-    let with_unknown_op = text.replace(
-        "capabilities: [add, retry, finding]",
-        "capabilities: [add, retry, finding, complete, unknown]",
-    );
-    assert_ne!(
-        with_unknown_op, text,
-        "the unknown op did not apply to the fixture"
-    );
-    let resolved = Config::parse(&with_unknown_op)
-        .expect("the file alone cannot know the profile's grants, so it loads")
-        .with_transport_dir(dir.path())
-        .resolve(&layouts, &TransportKinds::builtin());
-    match resolved {
-        Err(ConfigError::Narrowing(refusal)) => {
-            assert_eq!(refusal.key, "authors.planner.capabilities");
-            assert!(refusal.why.contains("`unknown`"), "{refusal}");
-        }
-        other => panic!("an unknown operation was not refused by resolve: {other:?}"),
-    }
 }

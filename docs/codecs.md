@@ -9,7 +9,7 @@ key in `codecs`, otherwise `serve` exits 2 and names the declared keys.
 ```yaml
 codecs:
   example:
-    queue: surfaces
+    queue: prompts
     reply_window_seconds: 3000
     session_env: EXAMPLE_SESSION
     asker_env: EXAMPLE_ASKER

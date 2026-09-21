@@ -389,7 +389,7 @@ fn the_documented_codecs_block_loads_by_name_into_the_config_schema_the_sdk_bund
     );
     let config = Config::parse(&text).expect("the documented codecs block loads");
     let block = &config.codecs[&"example".parse::<CodecName>().expect("a codec name")];
-    assert_eq!(block.queue, Some(queue("surfaces")));
+    assert_eq!(block.queue, Some(queue("prompts")));
     assert_eq!(block.reply_window_seconds.map(u64::from), Some(3000));
     assert_eq!(block.select, "op");
     assert!(!block.frames.is_empty());
@@ -412,16 +412,16 @@ fn the_documented_codecs_block_loads_by_name_into_the_config_schema_the_sdk_bund
 fn a_codecs_block_loads_by_name_and_is_refused_by_the_key_it_is_wrong_at() {
     let text = |codecs: &str| {
         format!(
-            "version: 1\ntransport: {{kind: memory}}\nqueues:\n  surfaces: {{}}\ncodecs:\n{codecs}"
+            "version: 1\ntransport: {{kind: memory}}\nqueues:\n  prompts: {{}}\ncodecs:\n{codecs}"
         )
     };
     let config = Config::parse(&text(
-        "  example:\n    queue: surfaces\n    reply_window_seconds: 5\n    session_env: SERVE_SESSION\n    asker_env: CHANNEL_ASKER\n    about_env: NODE\n    select: op\n    frames:\n      hello:\n        schema: example.hello@1\n        bindings:\n          - do: answer\n            response: {ok: true}\n",
+        "  example:\n    queue: prompts\n    reply_window_seconds: 5\n    session_env: SERVE_SESSION\n    asker_env: CHANNEL_ASKER\n    about_env: NODE\n    select: op\n    frames:\n      hello:\n        schema: example.hello@1\n        bindings:\n          - do: answer\n            response: {ok: true}\n",
     ))
     .expect("the block loads");
     let name: CodecName = "example".parse().expect("a codec name");
     let settings = &config.codecs[&name];
-    assert_eq!(settings.queue, Some(queue("surfaces")));
+    assert_eq!(settings.queue, Some(queue("prompts")));
     assert_eq!(settings.reply_window_seconds.map(u64::from), Some(5));
     let written = serde_norway::to_string(&config).expect("writes");
     assert_eq!(Config::parse(&written).expect("reads back"), config);
@@ -532,7 +532,7 @@ fn a_configured_codec_selects_validates_conditions_and_renders_typed_responses()
         "version: 1
 transport: {kind: memory}
 queues:
-  surfaces: {}
+  prompts: {}
 codecs:
   example:
     select: turn.op
@@ -595,7 +595,7 @@ codecs:
 
     let mut output = Vec::new();
     bus.serve(
-        &queue("surfaces"),
+        &queue("prompts"),
         &mut codec,
         &ServeOptions::default(),
         frames("{\"turn\":{\"op\":\"hello\"},\"mood\":\"ready\",\"name\":\"Ada\",\"count\":7,\"enabled\":true}\n"),
@@ -609,7 +609,7 @@ codecs:
 
     let mut raised_output = Vec::new();
     bus.serve(
-        &queue("surfaces"),
+        &queue("prompts"),
         &mut codec,
         &ServeOptions::default(),
         frames("{\"turn\":{\"op\":\"raise\"},\"count\":8}\n"),
@@ -618,7 +618,7 @@ codecs:
     .expect("raised and answered");
     assert_eq!(lines(&raised_output), [json!({"raised": true})]);
     assert_eq!(
-        bus.queue(&queue("surfaces"))
+        bus.queue(&queue("prompts"))
             .expect("a queue")
             .status()
             .expect("status")
@@ -649,7 +649,7 @@ codecs:
     ] {
         let failure = bus
             .serve(
-                &queue("surfaces"),
+                &queue("prompts"),
                 &mut codec,
                 &ServeOptions::default(),
                 frames(&format!("{frame}\n")),

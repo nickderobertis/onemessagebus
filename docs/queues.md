@@ -75,8 +75,8 @@ the log hands it back in that order.
   once the reply is at `reply_position` on the `answers` queue; a position no
   record there ends at, or a queue that declares no `answers`, is refused with
   nothing recorded (`QueueError::NoReply`). The reply is
-  appended first and the slot released after, where `onepipeline` 0.28.2 releases
-  first; the planner channel's typed `Channel::answer` keeps 0.28.2's order.
+  appended first and the slot released after, so a reader that finds the slot
+  released finds the reply.
 - `pending(consumer)` is the record waiting for an answer, abandoned ones passed
   over; `held()` is whatever the slot holds.
 - `waiting()` and `unread_count()`: every waiting record, and how many of them
@@ -123,11 +123,10 @@ refused naming the key.
 ## The projection: `accounted` and `seal`
 
 An event queue's projection is **a projection of its log, and never the truth
-about it**. It used to be the truth in `onepipeline`: read, modified and written
-back whole by every writer and every reader. That lost data — a push landing
-between a reader's read and its write-back was overwritten by the reader's stale
-copy, and a worker's blocking question was destroyed by the manager's own act of
-reading the channel. As a projection, a lost write costs the next reader a fold
+about it**. A document that is the truth — read, modified and written back
+whole by every writer and every reader — loses data: a push landing between a
+reader's read and its write-back is overwritten by the reader's stale copy, and a
+blocking question is destroyed by the act of reading the queue. As a projection, a lost write costs the next reader a fold
 and never a record. It earns its place by being cheap where the log is not: the
 unread count is one read of it, and its modification stamp is what lets a reader
 skip an unchanged queue without opening the log.
@@ -226,54 +225,22 @@ This repository's own journeys run over such a document:
 two authors and every step are what `tests/e2e/layouts.rs` drives through the
 binary.
 
-## The `planner-channel` layout
-
-`onemessagebus_agent::channel` declares `onepipeline`'s channel directory as the
-layout `planner-channel`, so a directory `onepipeline` 0.28.2 wrote is read by this
-crate, and one this crate writes is read by 0.28.2 — proven on the recorded
-channel directories under `crates/onemessagebus-agent/tests/recorded/channel/` and
-by the 0.28.2 binary itself in `crates/onemessagebus-e2e/tests/e2e/onepipeline.rs`.
-
-| queue | policy and keys | files |
-| --- | --- | --- |
-| `surfaces` | `hold_pending`, `blocking_first`, `supersede_on: {key: source, when: source == check-in}`, projection `queue.json`; schema `agent.planner-surface@1`; answers on `replies` | `surfaces.jsonl`, `queue.json` |
-| `replies` | plain, numbered; claims pass over a commands-only envelope; schema `agent.queued-reply@1` | `replies.jsonl`, `replies-cursor.json` |
-| `commands` | plain, numbered; schema `agent.queued-commands@1` | `commands.jsonl`, `commands-cursor.json` |
-| `command-outcomes` | plain; schema `agent.command-outcome@1` | `command-outcomes.jsonl` |
-
-- **Supersede on `source`, not `kind`** (a manager's ruling): Contract Q's wording
-  is `kind == check-in`, and 0.28.2 supersedes on `source == "check-in"` — an
-  observer's frame of kind `check-in` carries source `proposal` and is not
-  superseded there. Byte compatibility wins over the wording, and the
-  `Supersede { key, when }` shape is unchanged.
-- A reply offered as a bare envelope is **routed by its halves**, as 0.28.2 routes
-  it: its commands to `commands` as `{id, author, commands}`, its verdict to
-  `replies` as `{id, reply, at}` — and an envelope with commands and no verdict to
-  `commands` alone. A version this build reads (`[3, 2]`) is read at 3, and an
-  edit envelope at any other is refused: `an edit envelope requires version 3`.
-- The ops are `add`, `drop`, `reparent`, `retry`, `cancel`, `requeue`, `complete`,
-  `attest`, `finding`, `amend`, `note` and `settle`. The planner is the only
-  built-in author and is granted every op. A configuration declares every other
-  author, its grants, and optional refusal reasons. An omitted grant is refused
-  as `'<op>' is not an op the <author> may issue: <reason>. Surface it to the
-  planner instead`; a verdict carrying `completion: true` is governed by `complete`.
-
 ## The configuration file
 
 <!-- llmlint: ignore-block[no_redundant_instruction_pointers] the node that added the `schemas` key was required to have this configuration's key listing point at docs/schema-links.md, where Contract L is stated once, rather than restate the link, pin and cache rules beside each key; the comment on that one key is the pointer. -->
 ```yaml
 version: 1
-transport: {kind: local, dir: runs/r1/channel}  # kind: local | memory | a registered or plugin kind
-profile: planner-channel                         # a layout a linked profile declares; optional
-queues:                                          # additions, or overrides of a layout's queue by name
+transport: {kind: local, dir: runs/r1/desk}    # kind: local | memory | a registered or plugin kind
+profile: desk                                  # a layout the program links, or a linked bundle declares; optional
+queues:                                        # additions, or overrides of a layout's queue by name
   findings: {policy: {hold_pending: false}}
-authors:                                         # planner may narrow; other names declare authors
-  planner: {capabilities: [add, retry, finding]}
+authors:                                       # a layout's author may be narrowed; other names declare authors
+  lead: {capabilities: [retry, note]}
   sentinel:
-    capabilities: [retry, requeue, cancel, finding, add]
-    refusals: {complete: "whether the run is finished is the planner's verdict, not an observation"}
-schemas:                                         # schema bundles linked by URL or path, pinned; docs/schema-links.md
-  - "https://example.org/frames.json@8"
+    capabilities: [retry, note]
+    refusals: {complete: "whether the desk is done is the lead's verdict, not an observation"}
+schemas:                                       # schema bundles linked by URL or path, pinned; docs/schema-links.md
+  - "https://example.org/desk.json@1"
 ```
 <!-- llmlint: ignore-end[no_redundant_instruction_pointers] -->
 
@@ -283,9 +250,10 @@ Reading it is two steps, and the types keep them apart:
    alone decides, each by the key it is at: YAML that is not one document, an
    unknown key, a `version` other than 1, and a queue name, consumer name, schema
    id, document name or predicate that does not parse. A `Config` opens nothing.
-2. `Config::resolve(&layouts, &kinds)` binds it to the layouts a process links and
-   the transport kinds it can open, and refuses what only those decide, each by
-   the key it is at: a `profile` no layout declares; a widened planner grant or
+2. `Config::resolve(&layouts, &kinds)` binds it to the layouts a process links —
+   compiled in, and linked as data (`Layouts::with_linked`) — and the transport
+   kinds it can open, and refuses what only those decide, each by the key it is
+   at: a `profile` no layout declares; a widened grant or
    an op that does not exist (`authors.<author>.capabilities`); a `schema` the layout does not register or
    an `answers` naming no declared queue (`queues.<queue>.<key>`); and a transport
    its kind refuses. What it answers, a `Bus`, is the one type that opens a queue
@@ -300,8 +268,9 @@ Each refuses an unknown key by name at `Config::load` — `schemas` a malformed
 link, resolving none — and `validators[<index>].on` naming no declared queue is
 refused by `Config::resolve`.
 
-The binary reads the file from `--config <path>` or `ONEMESSAGEBUS_CONFIG`, and
-`--transport-dir <dir>` or `ONEMESSAGEBUS_TRANSPORT_DIR` replaces `transport.dir`
-for one invocation — the flag over the variable, and the variable over the file.
+The binary reads the file from `--config <path>` or `ONEMESSAGEBUS_CONFIG` — a
+queue verb given neither is refused naming `--config` — and `--transport-dir
+<dir>` or `ONEMESSAGEBUS_TRANSPORT_DIR` replaces `transport.dir` for one
+invocation — the flag over the variable, and the variable over the file.
 The file's JSON Schema is the SDK bundle's `config` root, generated from the one
 reader's type.

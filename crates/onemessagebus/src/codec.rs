@@ -12,7 +12,6 @@
 //! counted — the member is still there, and still owed every answer. A stream
 //! that **ends** marks each one still unanswered abandoned: nothing is listening
 //! for those answers now, and a later listener of the same asker takes them back.
-//! That is `onepipeline`'s `Served` distinction, kept.
 //!
 //! What a frame means is the codec's alone; no protocol's word is named here.
 //! The configuration's `codecs` block ([`CodecConfig`]) carries what a host

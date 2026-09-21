@@ -433,6 +433,6 @@ fn a_layout_that_cannot_be_linked_or_named_is_refused_naming_why() {
     assert_eq!(run.code, 2);
     assert_eq!(
         run.stderr.trim_end(),
-        "onemessagebus: profile: `help-desk` is not a layout this build links or a linked bundle declares; the layouts are: planner-channel, desk"
+        "onemessagebus: profile: `help-desk` is not a layout this build links or a linked bundle declares; the layouts are: desk"
     );
 }

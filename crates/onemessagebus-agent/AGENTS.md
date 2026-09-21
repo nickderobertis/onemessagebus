@@ -2,9 +2,10 @@
 
 `tests/recorded/` are real streams each producer wrote, byte-identical. Never
 edit one; a fixture that needs a different shape is a new file with its
-provenance in the README beside it. `tests/golden/` are `onepipeline`'s golden
-documents, copied unchanged.
+provenance in the README beside it. `tests/golden/` are golden documents copied
+unchanged from the release that wrote them.
 
-`schemas/` holds the reply envelope as JSON Schema because the profile owns the
-wire shape while `onepipeline` owns each command's meaning; a new version is a
-new file registered beside the old, never an edit of one.
+The profile is the agent stack's shared vocabulary — the event envelope, the
+note, the registry — and nothing else. A protocol one program owns (its
+records, its queues and their layout) is that program's to publish as a schema
+bundle a configuration links, never a module here.

@@ -358,7 +358,7 @@ export const OnemessagebusTransportRequestV1 = registeredMessage(
       QueueName: {
         type: "string",
         description:
-          "A queue's name: a non-empty run of ASCII letters, digits, `-` and `_`,\nstarting with a letter or digit — `surfaces`, `command-outcomes`.",
+          "A queue's name: a non-empty run of ASCII letters, digits, `-` and `_`,\nstarting with a letter or digit — `questions`, `action-outcomes`.",
       },
       Position: {
         type: "integer",
@@ -376,7 +376,7 @@ export const OnemessagebusTransportRequestV1 = registeredMessage(
         type: "array",
         items: { type: "integer", format: "uint64", minimum: 0 },
         description:
-          "A cheap change token for a queue: two fingerprints of one queue are equal\nwhen nothing observable about it moved.\n\nOpaque, like [`Position`]: a transport builds one from whatever it can\nobserve cheaply ([`LocalTransport`] from each file's length and modification\ntime, as `onepipeline` does), and a consumer only compares them.",
+          "A cheap change token for a queue: two fingerprints of one queue are equal\nwhen nothing observable about it moved.\n\nOpaque, like [`Position`]: a transport builds one from whatever it can\nobserve cheaply ([`LocalTransport`] from each file's length and modification\ntime), and a consumer only compares them.",
       },
       DocumentName: {
         type: "string",

@@ -60,7 +60,7 @@ async def test_a_streamed_verb_with_input_runs_over_either_transport(
 ) -> None:
     config = bus_config(binary, scratch)
     args = {
-        "queue": "surfaces",
+        "queue": "questions",
         "codec": "example",
         "config": str(config.config),
         "registry": str(config.registry),

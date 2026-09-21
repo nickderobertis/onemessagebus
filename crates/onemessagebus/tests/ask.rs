@@ -30,7 +30,7 @@ impl Message for Question {
 
 fn question(message: &str) -> Question {
     Question {
-        kind: "planner-question".to_owned(),
+        kind: "question".to_owned(),
         message: message.to_owned(),
     }
 }
@@ -140,7 +140,7 @@ fn an_ask_is_stamped_with_a_minted_correlation_nothing_else_carries() {
         json!({
             "event": "queued",
             "id": 0,
-            "kind": "planner-question",
+            "kind": "question",
             "message": "is the base right?",
             "blocking": true,
             "asker": "worker-1",
@@ -637,7 +637,7 @@ fn a_question_that_does_not_satisfy_its_own_schema_is_refused_and_nothing_is_app
         .ask::<Titled, Ruling>(
             &queue("questions"),
             Titled {
-                kind: "planner-question".to_owned(),
+                kind: "question".to_owned(),
                 message: String::new(),
             },
             AskOptions::default(),

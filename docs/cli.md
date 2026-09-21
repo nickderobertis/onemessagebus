@@ -54,9 +54,9 @@ cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebu
   queues and narrowed authors, and `--transport-dir <dir>` (or
   `ONEMESSAGEBUS_TRANSPORT_DIR`), which replaces the file's `transport.dir` for
   one invocation: the flag wins over the variable, and the variable over the
-  file. With no configuration at all, `--transport-dir` names the directory the
-  `planner-channel` layout is kept in over a local transport; with neither, the
-  verb is refused. A file with an unknown key, or one widening an author's
+  file. With no configuration the verb is refused with exit 2 naming `--config`
+  — `--transport-dir` alone included: it moves a configuration's transport and
+  names no layout. A file with an unknown key, or one widening an author's
   grants, is refused naming the key. Each takes `--registry <dir>` (or
   `ONEMESSAGEBUS_REGISTRY`) too: the schemas that directory holds are registered
   beside the layout's, so a queue's `schema` may name one `schema register`
@@ -76,7 +76,7 @@ answers only. A usage error of `ask`, `reply` or `validate` is refused the same
 way, on one line naming the verb and its `--help`:
 
 ```bash
-$ onemessagebus ask surfaces --timeout soon --transport-dir runs/r1/channel
+$ onemessagebus ask questions --timeout soon --config onemessagebus.yaml
 onemessagebus: ask: invalid value 'soon' for '--timeout <SECONDS>': invalid digit found in string; see `onemessagebus ask --help`
 ```
 
@@ -252,18 +252,19 @@ without a carry store's header line — is refused with exit 2, naming it.
 A queue is a log a transport keeps, read under the policy its layout or
 configuration declares (`docs/queues.md`). A configuration's `profile` names the
 layout: one the program links as code, or one a bundle its `schemas` key links
-declares as data — the program's own winning a name both declare. Under the `planner-channel` layout the
-queues are `surfaces`, `replies`, `commands` and `command-outcomes`, and their
-files are the ones `onepipeline` keeps in a run's `channel/` directory.
+declares as data — the program's own winning a name both declare. The binary
+links no layout of its own. The examples below run over the bus's fixture layout,
+`desk` (`crates/onemessagebus-e2e/tests/layouts/desk.json`): questions on
+`questions`, answered on `answers`, whose actions go to `actions`.
 
 ### `send <queue> [--file PATH] [--config PATH] [--transport-dir DIR] [--registry DIR]`
 
 Append the record on stdin (or in `--file`) to `<queue>`, and print one line of
 JSON per record appended: `{queue, position, id}`. The record is shaped as the
 layout's writers shape it, checked against its author's grants, validated
-against the queue's schema, and given an id where the queue gives one. A reply
-envelope sent to `replies` under `planner-channel` is routed by its halves, as
-`onepipeline` routes it: its commands to `commands`, its verdict to `replies`,
+against the queue's schema, and given an id where the queue gives one. A layout
+may route one record onto several queues — under `desk`, an answer carrying a
+verdict and actions puts its actions on `actions` and its verdict on `answers` —
 so one send can print two lines. A queue the configuration does not declare is
 refused with exit 2 naming the queues it does, before stdin is read, and a
 record that is not JSON, or not a JSON object on a queue whose records are
@@ -273,8 +274,8 @@ judge (`validate`) exits 1 with nothing appended anywhere, the validator's reaso
 on stderr unaltered.
 
 ```bash
-$ echo '{"kind":"finding","message":"the base moved","source":"proposal","blocking":true}' | onemessagebus send surfaces --transport-dir runs/r1/channel
-{"queue":"surfaces","position":187,"id":0}
+$ echo '{"kind":"finding","message":"the base moved","source":"proposal","blocking":true}' | onemessagebus send questions --config onemessagebus.yaml
+{"queue":"questions","position":187,"id":0}
 ```
 
 ### `next <queue> [--consumer NAME] [--asker WORD] [--format json|text] [--config PATH] [--transport-dir DIR] [--registry DIR]`
@@ -317,7 +318,7 @@ nothing is raised, nothing is printed on stdout, and the problem is named on
 stderr.
 
 ```bash
-$ echo '{"kind":"planner-question","message":"which base?","source":"proposal"}' | onemessagebus ask surfaces --blocking --asker worker-1 --timeout 3000 --transport-dir runs/r1/channel
+$ echo '{"kind":"question","message":"which base?","source":"proposal"}' | onemessagebus ask questions --blocking --asker worker-1 --timeout 3000 --config onemessagebus.yaml
 {"answer":"reply","correlation":"c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b","reply":{"id":0,"reply":{"version":3,"completion":true,"reason":"main"},"at":1789300000000,"correlation":"c-5f0e8a2b9c4d4e1f8a7b6c5d4e3f2a1b"}}
 ```
 
@@ -327,12 +328,13 @@ Answer a pending ask of `<queue>` with the reply on stdin (or in `--file`), boun
 one of three ways (`docs/ask.md`): `--correlation` names the ask whose
 correlation `ask` printed; `<position>` names the record claimed there, as `next`
 printed it; with neither, the reply binds to the queue's one pending ask. The
-reply is appended to the queue `<queue>` answers on (`replies` for `surfaces`),
+reply is appended to the queue `<queue>` answers on (`answers` for `questions`),
 shaped, checked and judged as `send` does and stamped with the ask's
 correlation, and a question held pending is released. It prints `{answered,
 correlation, sent}`: the question answered, its correlation, and every record
-appended. A reply that carries only commands answers nothing — `answered` is
-`null` — and the ask stays pending. A correlation nothing pending holds (unknown,
+appended. A reply the layout routes only to another queue — under `desk`, one
+carrying only actions — answers nothing: `answered` is `null`, and the ask stays
+pending. A correlation nothing pending holds (unknown,
 or already answered) exits 1 naming it, as do a reply naming neither when no ask
 or more than one is pending and a position the pending record was not claimed at,
 each with nothing appended. `--correlation` beside `<position>` is a usage error,
@@ -355,7 +357,7 @@ as long as it runs. A predicate that does not parse is refused with exit 2. Text
 is `<position> <record>` per line.
 
 ```bash
-$ onemessagebus subscribe surfaces --until '{"field":"event","equals":"answered"}' --timeout 600 --transport-dir runs/r1/channel
+$ onemessagebus subscribe questions --until '{"field":"event","equals":"answered"}' --timeout 600 --config onemessagebus.yaml
 ```
 
 ### `status [<queue>] [--format json|text] [--config PATH] [--transport-dir DIR] [--registry DIR]`
@@ -365,12 +367,12 @@ records, waiting, pending, pending_position, abandoned, unread, cursors}`: the
 records waiting to be claimed, the record pending an answer and where it was
 claimed, the records nobody is listening for any more, how many waiting records
 are still owed a reading, and each declared consumer's cursor. It is the read a
-wrapper otherwise takes from `queue.json` by hand. Text is one line per queue,
+wrapper otherwise takes from the queue's projection document by hand. Text is one line per queue,
 `<queue> records=<n> waiting=<n> pending=<id|-> abandoned=<n> unread=<n>`, and one
 `cursor <consumer>=<position|->` line per consumer.
 
 ```bash
-$ onemessagebus status surfaces --format text --config onemessagebus.yaml
+$ onemessagebus status questions --format text --config onemessagebus.yaml
 ```
 
 ### `validate <queue> [--file PATH] [--config PATH] [--transport-dir DIR] [--registry DIR]`
@@ -389,8 +391,8 @@ queue with no validators passes every record. A pass a
 validator's cache records is recorded here as it would be on a send.
 
 ```bash
-$ onemessagebus validate replies --file reply.json --config onemessagebus.yaml
-{"queue":"replies","verdict":"refuse","reason":"an `add` states task prose the bar refuses\n"}
+$ onemessagebus validate answers --file answer.json --config onemessagebus.yaml
+{"queue":"answers","verdict":"refuse","reason":"an `add` states task prose the bar refuses\n"}
 ```
 
 ### `serve <queue> --codec NAME [--session-seconds SECONDS] [--asker WORD] [--file PATH] [--config PATH] [--transport-dir DIR] [--registry DIR]`
@@ -420,8 +422,11 @@ one-shot verb would give and, for `ask` and `validate`, the document it printed.
 first and ends with `"ok": "until"` when its predicate holds, or `"ok":
 "cancelled"` once `{"id": <n>, "cancel": true}` names it or its connection closes.
 
-A request naming no `config`, `transportDir` or `registry` takes the resident's
-own, and runs over the transport the resident holds open. The registry directory
+The resident takes a configuration as the queue verbs do: started with none —
+`--transport-dir` alone included — it is refused with exit 2 naming `--config`
+before it claims the socket. A request naming no `config`, `transportDir` or
+`registry` takes the resident's own, and runs over the transport the resident
+holds open; one naming its own `config` runs over that. The registry directory
 is read again for every request, so a schema registered after the core started is
 one the next `send` validates by. A socket another live resident answers on is
 refused with exit 1, naming that resident's pid, which each resident records in
@@ -432,8 +437,8 @@ the protocol's schema.
 
 ```bash
 $ onemessagebus serve --resident --socket bus.sock --config onemessagebus.yaml &
-$ printf '%s\n' '{"id":1,"verb":"next","args":{"queue":"surfaces"}}' | nc -U bus.sock
-{"id":1,"error":{"exit":1,"message":"nothing on surfaces to claim"}}
+$ printf '%s\n' '{"id":1,"verb":"next","args":{"queue":"questions"}}' | nc -U bus.sock
+{"id":1,"error":{"exit":1,"message":"nothing on questions to claim"}}
 ```
 
 ## `transports`

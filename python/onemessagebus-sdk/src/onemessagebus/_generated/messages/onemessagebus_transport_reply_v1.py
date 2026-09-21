@@ -52,7 +52,7 @@ class PluginAnswer5(BaseModel):
 
     Opaque, like [`Position`]: a transport builds one from whatever it can
     observe cheaply ([`LocalTransport`] from each file's length and modification
-    time, as `onepipeline` does), and a consumer only compares them.
+    time), and a consumer only compares them.
     """
 
 
@@ -71,7 +71,7 @@ class PluginAnswer6(BaseModel):
 
     Opaque, like [`Position`]: a transport builds one from whatever it can
     observe cheaply ([`LocalTransport`] from each file's length and modification
-    time, as `onepipeline` does), and a consumer only compares them.
+    time), and a consumer only compares them.
     """
 
 
@@ -91,7 +91,7 @@ class PluginAnswer7(BaseModel):
 
     Opaque, like [`Position`]: a transport builds one from whatever it can
     observe cheaply ([`LocalTransport`] from each file's length and modification
-    time, as `onepipeline` does), and a consumer only compares them.
+    time), and a consumer only compares them.
     """
 
 

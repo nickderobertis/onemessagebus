@@ -86,7 +86,7 @@ async def test_a_resident_that_goes_away_ends_what_ran_over_it(binary: Path, scr
     async with Client(config, ResidentTransport(socket)) as owner:
         await owner.transports()
         async with Client(config, ResidentTransport(socket, start=False)) as guest:
-            stream = guest.subscribe("commands", until={"field": "x", "present": True})
+            stream = guest.subscribe("actions", until={"field": "x", "present": True})
 
             async def listen() -> None:
                 async for _ in stream:

@@ -24,7 +24,7 @@ bus owns:
 | `correlation` | the minted token only a reply echoing it answers |
 | `blocking` | whether the asker waits on the answer; a blocking question is claimed first and held pending, where the queue's policy says so |
 | `asker` | who asks, when an asker is named: a later listener of the same asker takes the question back |
-| `about` | what the question is about, when named; the `planner-channel` layout carries it as the surface's `workstream`, where `onepipeline` reads it |
+| `about` | what the question is about, when named; a layout may move it to a member of its own (the `desk` fixture's `rename` step carries it as `subject`) |
 
 Then it is shaped by the layout, judged by the queue's validators, validated
 against the queue's schema and appended. A refusal at any step appends nothing.
@@ -92,13 +92,11 @@ that lands there is stamped with the correlation, the offer is judged by the
 validators, and it is appended. A question holding the queue's pending slot is
 released.
 
-**Routing by shape stays where `onepipeline` put it.** Under `planner-channel`
-the answer queue is `replies`, and the layout routes a reply envelope by its
-halves through the `Router` the profile declares for it
-(`onemessagebus_agent::channel::ReplyRouter`): one carrying a verdict and edits
-reaches both `replies` — answering the ask — and `commands`; one carrying only
-commands reaches `commands` alone, and the ask stays pending. The meaning of the
-edits stays the consumer's.
+**Routing by shape is the layout's.** A layout that splits an offer onto several
+queues — a `Router` in code, a `route` step in a layout document — routes a reply the same way: under the `desk` fixture a reply
+carrying a verdict and actions reaches both `answers` — answering the ask — and
+`actions`; one carrying only actions reaches `actions` alone, and the ask stays
+pending. What the routed records mean stays the consumer's.
 
 `Bus::reply_at(queue, position, reply)` answers the record pending at a claim
 position instead, the way `reply <queue> <position>` always has, stamping the
@@ -128,10 +126,10 @@ pending question's correlation on the reply where it carries one.
 
 ## What the wrappers measured
 
-- **A server answered its own timeout with a plausible ruling.** `onepipeline
-  channel serve` printed `{"completion": false, "message": "no planner reply
-  within the timeout; continue", "reason": "the channel timed out waiting for a
-  verdict"}` at exit 0 when its reply window elapsed. A caller checking the exit
+- **A server answered its own timeout with a plausible ruling.** The serving
+  process printed `{"completion": false, "message": "no reply within the timeout;
+  continue", "reason": "timed out waiting for a verdict"}` at exit 0 when its
+  reply window elapsed. A caller checking the exit
   status acted on it as the manager's answer, and a fabricated verdict is worse
   than none because it is actionable. `ask-manager.sh` refused that exact
   `reason` string; here the shape is unrepresentable instead — a timeout is

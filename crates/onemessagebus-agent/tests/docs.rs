@@ -35,27 +35,6 @@ const CRATE_README: (&str, &str) = (
     "crates/onemessagebus-agent/README.md",
     include_str!("../README.md"),
 );
-const CONTRACT: &str = include_str!("../../../docs/contract.md");
-const QUEUES: &str = include_str!("../../../docs/queues.md");
-
-fn planner_config(document: &str) -> Value {
-    document
-        .split("```yaml")
-        .skip(1)
-        .filter_map(|rest| rest.split_once("```").map(|(block, _)| block))
-        .find(|block| block.contains("profile: planner-channel") && block.contains("authors:"))
-        .map(|block| serde_norway::from_str(block).expect("the documented configuration is YAML"))
-        .expect("a planner-channel configuration block")
-}
-
-#[test]
-fn queues_author_configuration_is_the_contracts_shape() {
-    assert_eq!(
-        planner_config(QUEUES)["authors"],
-        planner_config(CONTRACT)["authors"],
-        "docs/queues.md author configuration drifted from Contract A"
-    );
-}
 
 /// `text` with every run of whitespace collapsed to one space, so a statement
 /// wrapped across lines reads as it does rendered.

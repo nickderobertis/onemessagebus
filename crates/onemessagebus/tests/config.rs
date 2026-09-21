@@ -307,9 +307,9 @@ fn the_configuration_schema_accepts_the_documented_file_and_refuses_an_unknown_k
     let documented = json!({
         "version": 1,
         "transport": {"kind": "local", "dir": "runs/r/channel"},
-        "profile": "planner-channel",
+        "profile": "desk",
         "queues": {"findings": {"policy": {"hold_pending": false}}},
-        "authors": {"sentinel": {"capabilities": ["retry", "finding"], "refusals": {"complete": "the planner decides"}}}
+        "authors": {"sentinel": {"capabilities": ["retry", "finding"], "refusals": {"complete": "the lead decides"}}}
     });
     assert!(
         validator.is_valid(&documented),

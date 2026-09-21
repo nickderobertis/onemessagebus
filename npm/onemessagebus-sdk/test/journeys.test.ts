@@ -15,14 +15,14 @@ import {
   schemas,
 } from "../src/index.js";
 import {
-  BINARY,
   baseConfig,
   bindSpool,
   caught,
   caughtAs,
   Greeting,
+  NOTE,
+  QUESTION,
   removeScratch,
-  SURFACE,
   scratch,
   TRANSPORTS,
 } from "./support.js";
@@ -31,10 +31,10 @@ afterAll(removeScratch);
 
 const refusedWith = caughtAs;
 
-/** What the ask journey reads of a surface it claims: whether it is the question, and its correlation. */
-const Question = z.looseObject({ kind: z.string(), correlation: z.string().optional() });
+/** What the ask journey reads of a question it claims: whether it is its own, and its correlation. */
+const Question = z.looseObject({ message: z.string(), correlation: z.string().optional() });
 /** What it reads of the reply record the answer carries. */
-const QueuedReply = z.looseObject({ reply: z.looseObject({ reason: z.string() }) });
+const AnswerRecord = z.looseObject({ reason: z.string(), correlation: z.string() });
 
 for (const transport of TRANSPORTS) {
   describe(`over the ${transport.name} transport`, () => {
@@ -138,7 +138,7 @@ for (const transport of TRANSPORTS) {
         linkedConfig,
         [
           "version: 1",
-          `transport: {kind: local, dir: ${JSON.stringify(join(dir, "linked-channel"))}}`,
+          `transport: {kind: local, dir: ${JSON.stringify(join(dir, "linked-bus"))}}`,
           `schemas: [${JSON.stringify(link)}]`,
           "",
         ].join("\n"),
@@ -208,7 +208,7 @@ for (const transport of TRANSPORTS) {
       );
       expect(early.message).toStartWith("demo.greeting@1: at /text:");
 
-      const undeclared = await refusedWith(BusRefused, () => client.send("nowhere", SURFACE));
+      const undeclared = await refusedWith(BusRefused, () => client.send("nowhere", QUESTION));
       expect(undeclared.message).toContain("`nowhere` is not a queue this configuration declares");
     });
 
@@ -268,14 +268,14 @@ for (const transport of TRANSPORTS) {
 
     test("subscribe with nothing admitted within its timeout throws BusFailed, and a bad predicate BusRefused", async () => {
       const lapsed = await refusedWith(BusFailed, async () => {
-        for await (const _ of client.subscribe("commands", {
+        for await (const _ of client.subscribe("actions", {
           until: { field: "x", present: true },
           timeout: 1,
         })) {
-          // commands is empty
+          // actions is empty
         }
       });
-      expect(lapsed.message).toBe("commands: no record --until admits arrived within 1 seconds");
+      expect(lapsed.message).toBe("actions: no record --until admits arrived within 1 seconds");
       await refusedWith(BusRefused, async () => {
         for await (const _ of client.subscribe("greetings", { until: '{"nonsense":1}' })) {
           // refused before a line
@@ -298,8 +298,8 @@ for (const transport of TRANSPORTS) {
 
     test("ask answers a timeout when nobody replies", async () => {
       const answer = await client.ask(
-        "surfaces",
-        { ...SURFACE, message: "anyone?" },
+        "questions",
+        { ...QUESTION, message: "anyone?" },
         { timeout: 1, asker: "nobody" },
       );
       expect(answer.answer).toBe("timeout");
@@ -308,45 +308,49 @@ for (const transport of TRANSPORTS) {
 
     test("ask resolves the reply a concurrent claim and reply give it", async () => {
       const asked = client.ask(
-        "surfaces",
-        { ...SURFACE, kind: "planner-question", message: "which base?", blocking: true },
+        "questions",
+        { ...QUESTION, message: "which base?", blocking: true },
         { blocking: true, asker: "worker-1", timeout: 30, about: "task-7" },
       );
-      let claimed = await client.next("surfaces", { type: Question });
+      let claimed = await client.next("questions", { type: Question });
       let correlation: string | undefined;
       for (let tries = 0; correlation === undefined; tries += 1) {
         expect(tries).toBeLessThan(200);
-        if (claimed?.record.kind === "planner-question") correlation = claimed.record.correlation;
+        if (claimed?.record.message === "which base?") correlation = claimed.record.correlation;
         else {
           await new Promise((wake) => setTimeout(wake, 50));
-          claimed = await client.next("surfaces", { type: Question });
+          claimed = await client.next("questions", { type: Question });
         }
       }
-      const replied = await client.reply("surfaces", correlation, {
-        version: 3,
+      const replied = await client.reply("questions", correlation, {
         completion: true,
         reason: "main",
       });
       expect(replied.correlation).toBe(correlation);
-      expect(replied.sent.length).toBeGreaterThan(0);
+      expect(replied.sent.map((sent) => sent.queue)).toEqual(["answers"]);
       const answer: Answer = await asked;
       expect(answer.answer).toBe("reply");
       if (answer.answer === "reply") {
         expect(answer.correlation).toBe(correlation);
-        expect(QueuedReply.parse(answer.reply).reply.reason).toBe("main");
+        const record = AnswerRecord.parse(answer.reply);
+        expect([record.reason, record.correlation]).toEqual(["main", correlation]);
       }
     });
 
     test("ask throws BusRefused for a question the bus refuses outright", async () => {
       const refused = await refusedWith(BusRefused, () =>
-        client.ask("surfaces", ["not an object"]),
+        client.ask("questions", ["not an object"]),
       );
-      expect(refused.message.length).toBeGreaterThan(0);
+      expect(refused.message).toContain("a record on this queue is a JSON object");
+      const plain = await refusedWith(BusRefused, () =>
+        client.ask("answers", QUESTION, { timeout: 1 }),
+      );
+      expect(plain.message).toContain("answers is a plain queue, so it has no questions");
     });
 
     test("reply refuses a correlation nothing pending holds, and a queue that answers on none", async () => {
       const unknown = await refusedWith(BusFailed, () =>
-        client.reply("surfaces", "c-nothing", { version: 3, completion: true, reason: "x" }),
+        client.reply("questions", "c-nothing", { completion: true, reason: "x" }),
       );
       expect(unknown.message).toContain("c-nothing");
       const noAnswers = await refusedWith(BusRefused, () =>
@@ -427,44 +431,47 @@ for (const transport of TRANSPORTS) {
     });
 
     test("serve answers each frame of a codec session, and refuses an operation it does not serve", async () => {
-      expect(await client.serve({ queue: "surfaces", codec: "example" }, "")).toEqual([]);
-      const [response] = await client.serve({ queue: "surfaces", codec: "example" }, [
-        { ...SURFACE, id: 1, queued_at: 1 },
+      expect(await client.serve({ queue: "questions", codec: "example" }, "")).toEqual([]);
+      const [response] = await client.serve({ queue: "questions", codec: "example" }, [
+        { kind: "finding", ...NOTE },
       ]);
       expect(response?.completion).toBe(false);
       const refused = await refusedWith(BusRefused, () =>
-        client.serve({ queue: "surfaces", codec: "example" }, [{ kind: "unknown" }]),
+        client.serve({ queue: "questions", codec: "example" }, [{ kind: "unknown" }]),
       );
       expect(refused.message).toContain("unknown");
+      const invalid = await refusedWith(BusRefused, () =>
+        client.serve({ queue: "questions", codec: "example" }, [{ kind: "finding", text: 7 }]),
+      );
+      expect(invalid.message).toContain("the frame does not validate against agent.note@1");
     });
 
     test("a profile's Rust-registered message round-trips through its generated schema", async () => {
-      const channel = scratch(`${transport.name}-profile`);
-      const profile = transport.client({ binary: BINARY, transportDir: channel, cwd: channel });
-      try {
-        // The core stamps the surface's `id`, so what is sent is not yet a whole surface.
-        await profile.send("surfaces", { ...SURFACE, message: "typed" });
-        const claimed = await profile.next("surfaces", { type: schemas.PlannerSurface });
-        expect(claimed?.record.message).toBe("typed");
-        expect(messages.AgentPlannerSurfaceV1Schema.parse(claimed?.record).kind).toBe("finding");
-        expect(messages.MESSAGES["agent.planner-surface@1"].id).toBe("agent.planner-surface@1");
-        expect(schemas.PlannerSurface).toBe(schemas.PlannerSurfaceV1);
-        expect(schemas.EventEnvelope.id).toBe("agent.event-envelope@2");
-        // a bare Zod schema is a type too
-        await profile.send("surfaces", { ...SURFACE, message: "bare" });
-        const bare = await profile.next("surfaces", { type: schemas.PlannerSurface.schema });
-        expect(bare?.record.message).toBe("bare");
-        // A surface its schema refuses, arriving as JSON from outside TypeScript's view.
-        const refused = await refusedWith(BusFailed, () =>
-          profile.send("surfaces", JSON.parse('{"kind":7}'), {
-            type: schemas.PlannerSurface.schema,
-          }),
-        );
-        expect(refused.message).toStartWith("payload: at /");
-        expect(messages.AgentPlannerSurfaceV1.jsonSchema()).toHaveProperty("$defs");
-      } finally {
-        await profile.transport.close();
-      }
+      await client.send("notes", schemas.Note.parse({ ...NOTE, text: "typed" }));
+      const claimed = await client.next("notes", { type: schemas.Note });
+      expect(claimed?.record.text).toBe("typed");
+      expect(messages.AgentNoteV1Schema.parse(claimed?.record).addressee).toBe("worker");
+      expect(messages.MESSAGES["agent.note@1"].id).toBe("agent.note@1");
+      expect(schemas.Note).toBe(schemas.NoteV1);
+      expect(schemas.EventEnvelope.id).toBe("agent.event-envelope@2");
+      // a bare Zod schema is a type too
+      await client.send("notes", { ...NOTE, text: "bare" });
+      const bare = await client.next("notes", { type: schemas.Note.schema });
+      expect(bare?.record.text).toBe("bare");
+      // A note its schema refuses, arriving as JSON from outside TypeScript's view:
+      // stopped in the SDK, and by the bus in Rust when nothing typed it.
+      const refused = await refusedWith(BusFailed, () =>
+        client.send("notes", JSON.parse('{"addressee":"worker","text":7}'), {
+          type: schemas.Note.schema,
+        }),
+      );
+      expect(refused.message).toStartWith("payload: at /");
+      const inRust = await refusedWith(BusFailed, () =>
+        client.send("notes", { addressee: "judge", text: "look again" }),
+      );
+      expect(inRust.message).toContain("agent.note@1");
+      expect(await client.next("notes")).toBeUndefined();
+      expect(messages.AgentNoteV1.jsonSchema()).toHaveProperty("$defs");
     });
   });
 }

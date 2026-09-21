@@ -138,8 +138,10 @@ bus.resident-protocol@1`), and both SDKs generate their protocol types from it.
   lines, then ends with `"ok": "until"` when its predicate holds, or `"ok":
   "cancelled"` once `{"id": <n>, "cancel": true}` names it or the connection
   closes.
-- A request naming no `config`, `transportDir` or `registry` takes the resident's
-  own. A second resident on a socket a live one answers on is refused with exit 1
+- A resident is started with a configuration, as a queue verb is, and is
+  refused naming `--config` without one; a resident transport starts it with its
+  client's `config`. A request naming no `config`, `transportDir` or `registry`
+  takes the resident's own. A second resident on a socket a live one answers on is refused with exit 1
   naming the live one's pid; removing the socket stops a resident cleanly.
 
 ## The version each package drives

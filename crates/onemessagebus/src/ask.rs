@@ -639,9 +639,9 @@ pub struct Bound {
     /// The question: its record, where it was queued (or, bound by a claim
     /// position, where it was claimed), and its id.
     pub question: Claimed<Value>,
-    /// Whether the reply reached the answer queue. A reply routed to another
-    /// queue alone — a planner channel envelope carrying only commands — answers
-    /// nothing, and the question stands.
+    /// Whether the reply reached the answer queue. A reply the layout routes to
+    /// another queue alone — an envelope carrying only actions, where the layout
+    /// splits one — answers nothing, and the question stands.
     pub answered: bool,
     /// Every record appended, in order.
     pub sent: Vec<(QueueName, Pushed<Value>)>,

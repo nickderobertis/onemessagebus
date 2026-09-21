@@ -1,52 +1,64 @@
 //! The queue verbs, through the built binary, over the local transport.
 //!
-//! Every journey spawns `onemessagebus` against a channel directory of its own
-//! under the `planner-channel` layout — `--transport-dir`, or a configuration
-//! file — and reads back both what the binary printed and the files it left,
-//! because those files are what `onepipeline` reads.
+//! Every journey spawns `onemessagebus` against a queue directory of its own,
+//! through a configuration linking the bus's own `desk` layout
+//! (`tests/layouts/desk.json`) or declaring its queues plainly, and reads back
+//! both what the binary printed and the files it left, because those files are
+//! what another reader of the same directory reads.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
 use std::time::Duration;
 
-use onemessagebus::{Asker, LocalTransport, Transport};
-use onemessagebus_agent::channel::Channel;
+use onemessagebus::Asker;
 use serde_json::{json, Value};
 
-use crate::support::{onemessagebus, run_in, Run};
+use crate::support::{desk_bundle, desk_config, onemessagebus, run_in, Run};
 
-/// A scratch directory holding one channel directory.
+/// A scratch directory holding a configuration that links the desk, and the
+/// queue directory it names.
 struct Scratch {
     dir: tempfile::TempDir,
+    config: PathBuf,
 }
 
 impl Scratch {
     fn new() -> Self {
-        Self {
-            dir: tempfile::tempdir().expect("a scratch directory"),
-        }
+        let dir = tempfile::tempdir().expect("a scratch directory");
+        let config = desk_config(dir.path(), "");
+        Self { dir, config }
     }
 
     fn root(&self) -> &Path {
         self.dir.path()
     }
 
-    fn channel(&self) -> PathBuf {
-        self.root().join("channel")
+    /// The queue directory the configuration names.
+    fn queues(&self) -> PathBuf {
+        self.root().join("bus")
     }
 
-    /// The binary, from the scratch root, over the channel directory.
+    fn config(&self) -> &str {
+        self.config.to_str().expect("a UTF-8 path")
+    }
+
+    /// The binary, from the scratch root, over the desk configuration.
     fn bus(&self, args: &[&str], stdin: Option<&str>) -> Run {
-        let channel = self.channel();
         let mut argv: Vec<&str> = args.to_vec();
-        let dir = channel.to_str().expect("a UTF-8 path");
-        argv.extend(["--transport-dir", dir]);
+        argv.extend(["--config", self.config()]);
         run_in(self.root(), &argv, stdin, &[])
     }
 
+    /// A configuration beside the desk one, over the same queue directory and
+    /// linking the same bundle, with `body` appended; answered as its path.
+    fn configuration(&self, name: &str, body: &str) -> String {
+        let path = self.root().join(name);
+        std::fs::write(&path, desk_configuration(&self.queues(), body)).expect("a configuration");
+        path.to_str().expect("a path").to_owned()
+    }
+
     fn file(&self, name: &str) -> String {
-        std::fs::read_to_string(self.channel().join(name)).unwrap_or_default()
+        std::fs::read_to_string(self.queues().join(name)).unwrap_or_default()
     }
 
     fn lines(&self, name: &str) -> Vec<Value> {
@@ -65,7 +77,17 @@ impl Scratch {
     }
 }
 
-fn surface(kind: &str, message: &str, source: &str, blocking: bool) -> String {
+/// A configuration's text: a local transport in `dir`, the desk linked at `@1`
+/// and named by `profile`, and `body`.
+fn desk_configuration(dir: &Path, body: &str) -> String {
+    format!(
+        "version: 1\ntransport: {{kind: local, dir: {}}}\nprofile: desk\nschemas:\n  - {}\n{body}",
+        serde_json::to_string(dir).expect("a UTF-8 path"),
+        serde_json::to_string(&format!("{}@1", desk_bundle().display())).expect("a UTF-8 path"),
+    )
+}
+
+fn question_of(kind: &str, message: &str, source: &str, blocking: bool) -> String {
     json!({"kind": kind, "message": message, "source": source, "blocking": blocking}).to_string()
 }
 
@@ -80,34 +102,38 @@ fn one_line(run: &Run) -> Value {
 fn send_appends_a_record_from_stdin_or_file_and_prints_where_it_landed() {
     let scratch = Scratch::new();
     let first = one_line(&scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface("finding", "the base moved", "proposal", false)),
+        &["send", "questions"],
+        Some(&question_of("finding", "the base moved", "proposal", false)),
     ));
-    assert_eq!(first["queue"], json!("surfaces"));
+    assert_eq!(first["queue"], json!("questions"));
     assert_eq!(first["id"], json!(0));
-    let logged = scratch.lines("surfaces.jsonl");
+    let logged = scratch.lines("questions.jsonl");
     assert_eq!(logged[0]["event"], json!("queued"));
     assert_eq!(logged[0]["message"], json!("the base moved"));
     assert!(
-        logged[0]["queued_at"].as_u64().is_some_and(|at| at > 0),
-        "the surface was not stamped"
+        logged[0]["raised_at"].as_u64().is_some_and(|at| at > 0),
+        "the question was not stamped"
     );
     assert_eq!(
         first["position"],
-        json!(scratch.file("surfaces.jsonl").len()),
+        json!(scratch.file("questions.jsonl").len()),
         "the position is not the byte offset after the record"
     );
-    let projection: Value = serde_json::from_str(&scratch.file("queue.json")).expect("queue.json");
+    let projection: Value =
+        serde_json::from_str(&scratch.file("questions.json")).expect("questions.json");
     assert_eq!(projection["next_id"], json!(1));
     assert!(projection["seal"].is_string(), "{projection}");
 
     let record = scratch.root().join("record.json");
-    std::fs::write(&record, surface("finding", "on file", "proposal", false))
-        .expect("a record file");
+    std::fs::write(
+        &record,
+        question_of("finding", "on file", "proposal", false),
+    )
+    .expect("a record file");
     let on_file = one_line(&scratch.bus(
         &[
             "send",
-            "surfaces",
+            "questions",
             "--file",
             record.to_str().expect("a path"),
         ],
@@ -118,8 +144,8 @@ fn send_appends_a_record_from_stdin_or_file_and_prints_where_it_landed() {
     let as_argument = scratch.bus(
         &[
             "send",
-            "surfaces",
-            &surface("finding", "an argument", "proposal", false),
+            "questions",
+            &question_of("finding", "an argument", "proposal", false),
         ],
         None,
     );
@@ -138,19 +164,19 @@ fn send_appends_a_record_from_stdin_or_file_and_prints_where_it_landed() {
     assert_eq!(unknown.code, 2);
     assert_eq!(
         unknown.stderr.trim(),
-        "onemessagebus: `findings` is not a queue this configuration declares; it declares: command-outcomes, commands, replies, surfaces"
+        "onemessagebus: `findings` is not a queue this configuration declares; it declares: actions, answers, outcomes, questions"
     );
-    let incomplete = scratch.bus(&["send", "surfaces"], Some(r#"{"kind": "finding"}"#));
+    let incomplete = scratch.bus(&["send", "questions"], Some(r#"{"kind": "finding"}"#));
     assert_eq!(incomplete.code, 1, "{}", incomplete.stderr);
     assert!(
-        incomplete.stderr.contains("surfaces") && incomplete.stderr.contains("message"),
+        incomplete.stderr.contains("questions") && incomplete.stderr.contains("message"),
         "{}",
         incomplete.stderr
     );
-    let not_json = scratch.bus(&["send", "surfaces"], Some("not json"));
+    let not_json = scratch.bus(&["send", "questions"], Some("not json"));
     assert_eq!(not_json.code, 2, "{}", not_json.stderr);
     assert_eq!(
-        scratch.lines("surfaces.jsonl").len(),
+        scratch.lines("questions.jsonl").len(),
         2,
         "a refused record was appended"
     );
@@ -160,8 +186,8 @@ fn send_appends_a_record_from_stdin_or_file_and_prints_where_it_landed() {
 fn a_reply_sent_to_the_reply_queue_is_routed_by_its_halves_and_checked_against_its_author() {
     let scratch = Scratch::new();
     let both = scratch.bus(
-        &["send", "replies"],
-        Some(r#"{"version":2,"completion":false,"message":"go on","commands":[{"op":"retry","id":"build","node":{"id":"build-2"}}]}"#),
+        &["send", "answers"],
+        Some(r#"{"version":2,"completion":false,"message":"go on","actions":[{"op":"retry","id":"build","node":{"id":"build-2"}}]}"#),
     );
     assert_eq!(both.code, 0, "{}", both.stderr);
     let landed: Vec<Value> = both
@@ -169,28 +195,48 @@ fn a_reply_sent_to_the_reply_queue_is_routed_by_its_halves_and_checked_against_i
         .iter()
         .map(|line| line["queue"].clone())
         .collect();
-    assert_eq!(landed, vec![json!("commands"), json!("replies")]);
+    assert_eq!(landed, vec![json!("actions"), json!("answers")]);
     assert_eq!(
-        scratch.lines("replies.jsonl")[0]["reply"]["version"],
+        scratch.lines("answers.jsonl")[0]["reply"]["version"],
         json!(3)
     );
     assert_eq!(
-        scratch.lines("commands.jsonl")[0]["author"],
-        json!("planner")
+        scratch.lines("actions.jsonl")[0],
+        json!({"id": 0, "actions": [{"op": "retry", "id": "build", "node": {"id": "build-2"}}]}),
+        "the actions half, granted as the lead's, the author named by default"
     );
+    let named = scratch.bus(
+        &["send", "answers"],
+        Some(r#"{"version":3,"author":"bot","actions":[{"op":"note","message":"seen"}]}"#),
+    );
+    assert_eq!(named.code, 0, "{}", named.stderr);
+    assert_eq!(scratch.lines("actions.jsonl")[1]["author"], json!("bot"));
 
     let undeclared = scratch.bus(
-        &["send", "replies"],
-        Some(r#"{"version":3,"author":"sentinel","commands":[{"op":"finding","message":"the gate is red"}]}"#),
+        &["send", "answers"],
+        Some(r#"{"version":3,"author":"sentinel","actions":[{"op":"finding","message":"the gate is red"}]}"#),
     );
     assert_eq!(undeclared.code, 1);
-    assert!(undeclared
-        .stderr
-        .contains("author `sentinel` is not declared"));
-    assert_eq!(scratch.lines("replies.jsonl").len(), 1);
     assert_eq!(
-        scratch.lines("commands.jsonl").len(),
-        1,
+        undeclared.stderr.trim(),
+        "onemessagebus: answers: the answer's author `sentinel` is not one the desk declares; it declares: bot, lead"
+    );
+    let ungranted = scratch.bus(
+        &["send", "answers"],
+        Some(r#"{"version":3,"author":"bot","actions":[{"op":"retry","id":"build"}]}"#),
+    );
+    assert_eq!(ungranted.code, 1);
+    assert!(
+        ungranted
+            .stderr
+            .contains("'retry' is not an op the bot may raise at the desk"),
+        "{}",
+        ungranted.stderr
+    );
+    assert_eq!(scratch.lines("answers.jsonl").len(), 1);
+    assert_eq!(
+        scratch.lines("actions.jsonl").len(),
+        2,
         "a refused envelope was appended"
     );
 }
@@ -199,31 +245,31 @@ fn a_reply_sent_to_the_reply_queue_is_routed_by_its_halves_and_checked_against_i
 fn next_claims_blocking_first_holds_it_pending_and_exits_one_when_nothing_is_left() {
     let scratch = Scratch::new();
     scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface("finding", "narration", "proposal", false)),
+        &["send", "questions"],
+        Some(&question_of("finding", "narration", "proposal", false)),
     );
     scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface("planner-question", "a question", "proposal", true)),
+        &["send", "questions"],
+        Some(&question_of("question", "a question", "proposal", true)),
     );
 
-    let question = one_line(&scratch.bus(&["next", "surfaces"], None));
+    let question = one_line(&scratch.bus(&["next", "questions"], None));
     assert_eq!(
         question["record"]["message"],
         json!("a question"),
-        "a blocking surface was not claimed first"
+        "a blocking question was not claimed first"
     );
     assert_eq!(question["id"], json!(1));
-    let status = scratch.status("surfaces");
+    let status = scratch.status("questions");
     assert_eq!(status["pending"]["id"], json!(1));
     assert_eq!(status["pending_position"], question["position"]);
     assert_eq!(status["waiting"].as_array().map(Vec::len), Some(1));
     assert_eq!(status["unread"], json!(1));
 
-    let narration = scratch.bus(&["next", "surfaces", "--format", "text"], None);
+    let narration = scratch.bus(&["next", "questions", "--format", "text"], None);
     assert_eq!(narration.code, 0, "{}", narration.stderr);
     assert!(
-        narration.stdout.starts_with("surfaces "),
+        narration.stdout.starts_with("questions "),
         "{}",
         narration.stdout
     );
@@ -233,7 +279,7 @@ fn next_claims_blocking_first_holds_it_pending_and_exits_one_when_nothing_is_lef
         narration.stdout
     );
     assert_eq!(
-        scratch.status("surfaces")["pending"]["id"],
+        scratch.status("questions")["pending"]["id"],
         json!(1),
         "reading narration answered the pending question"
     );
@@ -241,17 +287,17 @@ fn next_claims_blocking_first_holds_it_pending_and_exits_one_when_nothing_is_lef
     // One pending at a time: a second blocking claim takes the slot, and the
     // question it displaces is not held beside it.
     scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface(
-            "planner-question",
+        &["send", "questions"],
+        Some(&question_of(
+            "question",
             "a later question",
             "proposal",
             true,
         )),
     );
-    let later = one_line(&scratch.bus(&["next", "surfaces"], None));
+    let later = one_line(&scratch.bus(&["next", "questions"], None));
     assert_eq!(later["record"]["message"], json!("a later question"));
-    let status = scratch.status("surfaces");
+    let status = scratch.status("questions");
     assert_eq!(status["pending"]["message"], json!("a later question"));
     assert_eq!(status["pending_position"], later["position"]);
     assert_eq!(
@@ -260,14 +306,14 @@ fn next_claims_blocking_first_holds_it_pending_and_exits_one_when_nothing_is_lef
         "a displaced question is held beside the pending one"
     );
 
-    let empty = scratch.bus(&["next", "surfaces"], None);
+    let empty = scratch.bus(&["next", "questions"], None);
     assert_eq!(empty.code, 1);
     assert_eq!(
         empty.stderr.trim(),
-        "onemessagebus: nothing on surfaces to claim"
+        "onemessagebus: nothing on questions to claim"
     );
     assert!(empty.stdout.is_empty());
-    let as_payload = scratch.bus(&["next", "surfaces", "{}"], None);
+    let as_payload = scratch.bus(&["next", "questions", "{}"], None);
     assert_eq!(
         as_payload.code, 2,
         "next took a payload: {}",
@@ -279,26 +325,31 @@ fn next_claims_blocking_first_holds_it_pending_and_exits_one_when_nothing_is_lef
 fn a_check_in_supersedes_a_waiting_check_in_and_never_a_finding() {
     let scratch = Scratch::new();
     scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface("check-in", "first update", "check-in", false)),
+        &["send", "questions"],
+        Some(&question_of("check-in", "first update", "check-in", false)),
     );
     scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface("finding", "a finding", "proposal", false)),
+        &["send", "questions"],
+        Some(&question_of("finding", "a finding", "proposal", false)),
     );
     scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface("check-in", "second update", "check-in", false)),
+        &["send", "questions"],
+        Some(&question_of("check-in", "second update", "check-in", false)),
     );
     scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface("finding", "another finding", "proposal", false)),
+        &["send", "questions"],
+        Some(&question_of(
+            "finding",
+            "another finding",
+            "proposal",
+            false,
+        )),
     );
-    let waiting: Vec<Value> = scratch.status("surfaces")["waiting"]
+    let waiting: Vec<Value> = scratch.status("questions")["waiting"]
         .as_array()
         .expect("waiting")
         .iter()
-        .map(|surface| surface["message"].clone())
+        .map(|question| question["message"].clone())
         .collect();
     assert_eq!(
         waiting,
@@ -318,8 +369,8 @@ fn two_processes_claiming_from_one_queue_at_once_receive_distinct_records() {
     let scratch = Scratch::new();
     for n in 0..RECORDS {
         scratch.bus(
-            &["send", "surfaces"],
-            Some(&surface(
+            &["send", "questions"],
+            Some(&question_of(
                 "finding",
                 &format!("finding {n}"),
                 "proposal",
@@ -329,7 +380,7 @@ fn two_processes_claiming_from_one_queue_at_once_receive_distinct_records() {
     }
     let claimed: Vec<Run> = std::thread::scope(|scope| {
         let claimants: Vec<_> = (0..CLAIMANTS)
-            .map(|_| scope.spawn(|| scratch.bus(&["next", "surfaces"], None)))
+            .map(|_| scope.spawn(|| scratch.bus(&["next", "questions"], None)))
             .collect();
         claimants
             .into_iter()
@@ -349,7 +400,7 @@ fn two_processes_claiming_from_one_queue_at_once_receive_distinct_records() {
         "two processes were handed the same record: {ids:?}"
     );
     assert_eq!(
-        scratch.status("surfaces")["waiting"]
+        scratch.status("questions")["waiting"]
             .as_array()
             .map(Vec::len),
         Some(RECORDS - CLAIMANTS)
@@ -360,43 +411,39 @@ fn two_processes_claiming_from_one_queue_at_once_receive_distinct_records() {
 fn a_claimant_that_exits_without_answering_leaves_its_record_claimed() {
     let scratch = Scratch::new();
     scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface("planner-question", "taken", "proposal", true)),
+        &["send", "questions"],
+        Some(&question_of("question", "taken", "proposal", true)),
     );
     scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface("finding", "still waiting", "proposal", false)),
+        &["send", "questions"],
+        Some(&question_of("finding", "still waiting", "proposal", false)),
     );
     // The first claimant prints what it took and its process ends: nothing
     // answers the question, and nothing hands it out again.
-    let first = one_line(&scratch.bus(&["next", "surfaces"], None));
+    let first = one_line(&scratch.bus(&["next", "questions"], None));
     assert_eq!(first["record"]["message"], json!("taken"));
-    let second = one_line(&scratch.bus(&["next", "surfaces"], None));
+    let second = one_line(&scratch.bus(&["next", "questions"], None));
     assert_eq!(
         second["record"]["message"],
         json!("still waiting"),
         "a claimed record was handed out twice"
     );
-    let status = scratch.status("surfaces");
+    let status = scratch.status("questions");
     assert_eq!(status["pending"]["message"], json!("taken"));
 
     // A plain queue records the claim as the consumer's cursor.
+    scratch.bus(&["send", "outcomes"], Some(r#"{"id":0,"applied":true}"#));
     scratch.bus(
-        &["send", "command-outcomes"],
-        Some(r#"{"id":0,"applied":true}"#),
-    );
-    scratch.bus(
-        &["send", "command-outcomes"],
+        &["send", "outcomes"],
         Some(r#"{"id":1,"applied":false,"reason":"refused"}"#),
     );
-    let outcome =
-        one_line(&scratch.bus(&["next", "command-outcomes", "--consumer", "reader"], None));
+    let outcome = one_line(&scratch.bus(&["next", "outcomes", "--consumer", "reader"], None));
     assert_eq!(outcome["record"]["id"], json!(0));
-    assert_eq!(scratch.file("command-outcomes-cursor.reader.json"), "1");
-    let next = one_line(&scratch.bus(&["next", "command-outcomes", "--consumer", "reader"], None));
+    assert_eq!(scratch.file("outcomes-cursor.reader.json"), "1");
+    let next = one_line(&scratch.bus(&["next", "outcomes", "--consumer", "reader"], None));
     assert_eq!(next["record"]["id"], json!(1));
-    let bad = scratch.bus(&["next", "command-outcomes", "--consumer", "../x"], None);
-    let plain = scratch.bus(&["next", "command-outcomes", "--asker", "dispatch-a"], None);
+    let bad = scratch.bus(&["next", "outcomes", "--consumer", "../x"], None);
+    let plain = scratch.bus(&["next", "outcomes", "--asker", "dispatch-a"], None);
     assert_eq!(plain.code, 2, "{}", plain.stderr);
     assert!(
         plain.stderr.contains("is a plain queue"),
@@ -410,18 +457,18 @@ fn a_claimant_that_exits_without_answering_leaves_its_record_claimed() {
 fn reply_answers_the_record_pending_at_a_position_from_stdin_or_file() {
     let scratch = Scratch::new();
     scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface(
-            "planner-question",
+        &["send", "questions"],
+        Some(&question_of(
+            "question",
             "is the base right?",
             "proposal",
             true,
         )),
     );
-    let claimed = one_line(&scratch.bus(&["next", "surfaces"], None));
+    let claimed = one_line(&scratch.bus(&["next", "questions"], None));
     let position = claimed["position"].to_string();
 
-    let wrong = scratch.bus(&["reply", "surfaces", "3"], Some(r#"{"message":"yes"}"#));
+    let wrong = scratch.bus(&["reply", "questions", "3"], Some(r#"{"message":"yes"}"#));
     assert_eq!(wrong.code, 1);
     assert!(
         wrong.stderr.contains(&format!(
@@ -431,7 +478,7 @@ fn reply_answers_the_record_pending_at_a_position_from_stdin_or_file() {
         wrong.stderr
     );
     let as_argument = scratch.bus(
-        &["reply", "surfaces", &position, r#"{"message":"yes"}"#],
+        &["reply", "questions", &position, r#"{"message":"yes"}"#],
         None,
     );
     assert_eq!(
@@ -439,23 +486,23 @@ fn reply_answers_the_record_pending_at_a_position_from_stdin_or_file() {
         "a reply passed as an argument was accepted"
     );
     assert!(
-        scratch.file("replies.jsonl").is_empty(),
+        scratch.file("answers.jsonl").is_empty(),
         "a refused reply was appended"
     );
 
-    let commands_only = scratch.bus(
-        &["reply", "surfaces", &position],
-        Some(r#"{"version":3,"commands":[{"op":"cancel","id":"build"}]}"#),
+    let actions_only = scratch.bus(
+        &["reply", "questions", &position],
+        Some(r#"{"version":3,"actions":[{"op":"cancel","id":"build"}]}"#),
     );
-    assert_eq!(commands_only.code, 0, "{}", commands_only.stderr);
-    let replied: Value = serde_json::from_str(&commands_only.stdout).expect("JSON");
+    assert_eq!(actions_only.code, 0, "{}", actions_only.stderr);
+    let replied: Value = serde_json::from_str(&actions_only.stdout).expect("JSON");
     assert_eq!(
         replied["answered"],
         Value::Null,
-        "a commands-only reply answered the question"
+        "an actions-only reply answered the question"
     );
-    assert_eq!(replied["sent"][0]["queue"], json!("commands"));
-    assert_eq!(scratch.status("surfaces")["pending"]["id"], json!(0));
+    assert_eq!(replied["sent"][0]["queue"], json!("actions"));
+    assert_eq!(scratch.status("questions")["pending"]["id"], json!(0));
 
     let reply = scratch.root().join("reply.json");
     std::fs::write(&reply, r#"{"completion":false,"message":"yes, carry on"}"#)
@@ -463,7 +510,7 @@ fn reply_answers_the_record_pending_at_a_position_from_stdin_or_file() {
     let answered = scratch.bus(
         &[
             "reply",
-            "surfaces",
+            "questions",
             &position,
             "--file",
             reply.to_str().expect("a path"),
@@ -475,18 +522,18 @@ fn reply_answers_the_record_pending_at_a_position_from_stdin_or_file() {
     assert_eq!(replied["answered"]["id"], json!(0));
     assert_eq!(
         replied["sent"],
-        json!([{"queue": "replies", "position": scratch.file("replies.jsonl").len(), "id": 0}])
+        json!([{"queue": "answers", "position": scratch.file("answers.jsonl").len(), "id": 0}])
     );
     assert_eq!(
-        scratch.status("surfaces")["pending"],
+        scratch.status("questions")["pending"],
         Value::Null,
         "the answer did not release the slot"
     );
-    let logged = scratch.lines("surfaces.jsonl");
+    let logged = scratch.lines("questions.jsonl");
     assert_eq!(logged.last().expect("a line")["event"], json!("answered"));
 
     let again = scratch.bus(
-        &["reply", "surfaces", &position],
+        &["reply", "questions", &position],
         Some(r#"{"message":"twice"}"#),
     );
     assert_eq!(again.code, 1);
@@ -495,7 +542,7 @@ fn reply_answers_the_record_pending_at_a_position_from_stdin_or_file() {
         "{}",
         again.stderr
     );
-    let plain = scratch.bus(&["reply", "replies", "1"], Some(r#"{"message":"x"}"#));
+    let plain = scratch.bus(&["reply", "answers", "1"], Some(r#"{"message":"x"}"#));
     assert_eq!(plain.code, 2);
     assert!(
         plain
@@ -507,17 +554,17 @@ fn reply_answers_the_record_pending_at_a_position_from_stdin_or_file() {
 
     // On stdin, too.
     scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface("planner-question", "another?", "proposal", true)),
+        &["send", "questions"],
+        Some(&question_of("question", "another?", "proposal", true)),
     );
-    let claimed = one_line(&scratch.bus(&["next", "surfaces"], None));
+    let claimed = one_line(&scratch.bus(&["next", "questions"], None));
     let on_stdin = scratch.bus(
-        &["reply", "surfaces", &claimed["position"].to_string()],
+        &["reply", "questions", &claimed["position"].to_string()],
         Some(r#"{"message":"on stdin"}"#),
     );
     assert_eq!(on_stdin.code, 0, "{}", on_stdin.stderr);
     assert_eq!(
-        scratch.lines("replies.jsonl")[1]["reply"]["message"],
+        scratch.lines("answers.jsonl")[1]["reply"]["message"],
         json!("on stdin")
     );
 }
@@ -530,26 +577,25 @@ fn replies_racing_for_one_pending_record_answer_it_once_and_the_rest_exit_1() {
     use std::io::Write as _;
     let scratch = Scratch::new();
     scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface(
-            "planner-question",
+        &["send", "questions"],
+        Some(&question_of(
+            "question",
             "one answer only",
             "proposal",
             true,
         )),
     );
-    let claimed = one_line(&scratch.bus(&["next", "surfaces"], None));
+    let claimed = one_line(&scratch.bus(&["next", "questions"], None));
     let position = claimed["position"].to_string();
-    let channel = scratch.channel();
     let mut replies: Vec<std::process::Child> = (0..4)
         .map(|n| {
             onemessagebus()
                 .args([
                     "reply",
-                    "surfaces",
+                    "questions",
                     &position,
-                    "--transport-dir",
-                    channel.to_str().expect("a path"),
+                    "--config",
+                    scratch.config(),
                 ])
                 .current_dir(scratch.root())
                 .stdin(Stdio::piped())
@@ -595,7 +641,7 @@ fn replies_racing_for_one_pending_record_answer_it_once_and_the_rest_exit_1() {
     );
     assert_eq!(
         scratch
-            .lines("surfaces.jsonl")
+            .lines("questions.jsonl")
             .iter()
             .filter(|line| line["event"] == json!("answered"))
             .count(),
@@ -608,25 +654,19 @@ fn replies_racing_for_one_pending_record_answer_it_once_and_the_rest_exit_1() {
 fn subscribe_streams_until_its_predicate_admits_a_record_and_times_out_otherwise() {
     let scratch = Scratch::new();
     scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface(
-            "planner-question",
-            "waiting on you",
-            "proposal",
-            true,
-        )),
+        &["send", "questions"],
+        Some(&question_of("question", "waiting on you", "proposal", true)),
     );
-    let channel = scratch.channel();
     let subscriber = onemessagebus()
         .args([
             "subscribe",
-            "surfaces",
+            "questions",
             "--until",
             r#"{"field":"event","equals":"answered"}"#,
             "--timeout",
             "60",
-            "--transport-dir",
-            channel.to_str().expect("a path"),
+            "--config",
+            scratch.config(),
         ])
         .current_dir(scratch.root())
         .stdin(Stdio::null())
@@ -635,10 +675,10 @@ fn subscribe_streams_until_its_predicate_admits_a_record_and_times_out_otherwise
         .spawn()
         .expect("the subscriber spawns");
     std::thread::sleep(Duration::from_millis(200));
-    let claimed = one_line(&scratch.bus(&["next", "surfaces"], None));
+    let claimed = one_line(&scratch.bus(&["next", "questions"], None));
     std::thread::sleep(Duration::from_millis(200));
     let answered = scratch.bus(
-        &["reply", "surfaces", &claimed["position"].to_string()],
+        &["reply", "questions", &claimed["position"].to_string()],
         Some(r#"{"message":"answered"}"#),
     );
     assert_eq!(answered.code, 0, "{}", answered.stderr);
@@ -666,11 +706,11 @@ fn subscribe_streams_until_its_predicate_admits_a_record_and_times_out_otherwise
     let late = onemessagebus()
         .args([
             "subscribe",
-            "replies",
+            "answers",
             "--until",
             r#"{"field":"reply.message","equals":"late"}"#,
-            "--transport-dir",
-            channel.to_str().expect("a path"),
+            "--config",
+            scratch.config(),
         ])
         .current_dir(scratch.root())
         .stdin(Stdio::null())
@@ -679,7 +719,7 @@ fn subscribe_streams_until_its_predicate_admits_a_record_and_times_out_otherwise
         .spawn()
         .expect("the subscriber spawns");
     std::thread::sleep(Duration::from_millis(1500));
-    let sent = scratch.bus(&["send", "replies"], Some(r#"{"message":"late"}"#));
+    let sent = scratch.bus(&["send", "answers"], Some(r#"{"message":"late"}"#));
     assert_eq!(sent.code, 0, "{}", sent.stderr);
     let output = late.wait_with_output().expect("the subscriber ends");
     assert_eq!(
@@ -701,7 +741,7 @@ fn subscribe_streams_until_its_predicate_admits_a_record_and_times_out_otherwise
     let timed_out = scratch.bus(
         &[
             "subscribe",
-            "surfaces",
+            "questions",
             "--until",
             r#"{"field":"event","equals":"abandoned"}"#,
             "--timeout",
@@ -721,7 +761,7 @@ fn subscribe_streams_until_its_predicate_admits_a_record_and_times_out_otherwise
     let as_payload = scratch.bus(
         &[
             "subscribe",
-            "surfaces",
+            "questions",
             r#"{"kind":"finding"}"#,
             "--until",
             r#"{"field":"event","equals":"answered"}"#,
@@ -736,7 +776,7 @@ fn subscribe_streams_until_its_predicate_admits_a_record_and_times_out_otherwise
     let unbounded = scratch.bus(
         &[
             "subscribe",
-            "surfaces",
+            "questions",
             "--until",
             r#"{"field":"event","equals":"answered"}"#,
             "--timeout",
@@ -751,7 +791,7 @@ fn subscribe_streams_until_its_predicate_admits_a_record_and_times_out_otherwise
     );
 
     let bad = scratch.bus(
-        &["subscribe", "surfaces", "--until", r#"{"field":"event"}"#],
+        &["subscribe", "questions", "--until", r#"{"field":"event"}"#],
         None,
     );
     assert_eq!(bad.code, 2);
@@ -761,9 +801,9 @@ fn subscribe_streams_until_its_predicate_admits_a_record_and_times_out_otherwise
 #[test]
 fn status_reports_every_declared_queue_and_transports_lists_the_kinds() {
     let scratch = Scratch::new();
-    scratch.bus(&["send", "replies"], Some(r#"{"message":"a verdict"}"#));
-    scratch.bus(&["send", "replies"], Some(r#"{"message":"another"}"#));
-    one_line(&scratch.bus(&["next", "replies"], None));
+    scratch.bus(&["send", "answers"], Some(r#"{"message":"a verdict"}"#));
+    scratch.bus(&["send", "answers"], Some(r#"{"message":"another"}"#));
+    one_line(&scratch.bus(&["next", "answers"], None));
     let run = scratch.bus(&["status"], None);
     assert_eq!(run.code, 0, "{}", run.stderr);
     let statuses: Vec<Value> = serde_json::from_str(&run.stdout).expect("a JSON list");
@@ -774,21 +814,21 @@ fn status_reports_every_declared_queue_and_transports_lists_the_kinds() {
     assert_eq!(
         queues,
         vec![
-            json!("command-outcomes"),
-            json!("commands"),
-            json!("replies"),
-            json!("surfaces")
+            json!("actions"),
+            json!("answers"),
+            json!("outcomes"),
+            json!("questions")
         ]
     );
-    let replies = &statuses[2];
-    assert_eq!(replies["records"], json!(2));
-    assert_eq!(replies["unread"], json!(1));
-    assert_eq!(replies["events"], json!(false));
+    let answers = &statuses[1];
+    assert_eq!(answers["records"], json!(2));
+    assert_eq!(answers["unread"], json!(1));
+    assert_eq!(answers["events"], json!(false));
     assert_eq!(
-        replies["cursors"]["default"],
+        answers["cursors"]["default"],
         json!(
             scratch
-                .file("replies.jsonl")
+                .file("answers.jsonl")
                 .lines()
                 .next()
                 .expect("a line")
@@ -797,17 +837,17 @@ fn status_reports_every_declared_queue_and_transports_lists_the_kinds() {
         )
     );
 
-    let text = scratch.bus(&["status", "replies", "--format", "text"], None);
+    let text = scratch.bus(&["status", "answers", "--format", "text"], None);
     assert_eq!(
         text.stdout,
         format!(
-            "replies records=2 waiting=1 pending=- abandoned=0 unread=1\n  cursor default={}\n",
-            replies["cursors"]["default"]
+            "answers records=2 waiting=1 pending=- abandoned=0 unread=1\n  cursor default={}\n",
+            answers["cursors"]["default"]
         )
     );
     let unknown = scratch.bus(&["status", "findings"], None);
     assert_eq!(unknown.code, 2);
-    let as_payload = scratch.bus(&["status", "surfaces", r#"{"kind":"finding"}"#], None);
+    let as_payload = scratch.bus(&["status", "questions", r#"{"kind":"finding"}"#], None);
     assert_eq!(
         as_payload.code, 2,
         "status took a payload: {}",
@@ -851,12 +891,12 @@ fn a_configuration_reaches_the_binary_by_every_route_and_the_directory_by_preced
     let scratch = Scratch::new();
     let root = scratch.root();
     let from_file = root.join("from-file");
-    let config = root.join("onemessagebus.yaml");
+    let config = root.join("findings.yaml");
     std::fs::write(
         &config,
-        format!(
-            "version: 1\ntransport: {{kind: local, dir: {}}}\nprofile: planner-channel\nqueues:\n  findings: {{policy: {{hold_pending: false}}}}\n",
-            from_file.display()
+        desk_configuration(
+            &from_file,
+            "queues:\n  findings: {policy: {hold_pending: false}}\n",
         ),
     )
     .expect("a configuration");
@@ -985,19 +1025,7 @@ fn a_configuration_reaches_the_binary_by_every_route_and_the_directory_by_preced
 fn a_configuration_declares_an_open_author_and_offer_checks_never_block_replay() {
     let scratch = Scratch::new();
     let root = scratch.root();
-    let channel = scratch.channel();
-    let write = |name: &str, body: &str| -> String {
-        let path = root.join(name);
-        std::fs::write(
-            &path,
-            format!(
-                "version: 1\ntransport: {{kind: local, dir: {}}}\nprofile: planner-channel\n{body}",
-                channel.display()
-            ),
-        )
-        .expect("a configuration");
-        path.to_str().expect("a path").to_owned()
-    };
+    let write = |name: &str, body: &str| scratch.configuration(name, body);
     let unknown = write(
         "unknown.yaml",
         "queues:\n  findings: {polcy: {hold_pending: false}}\n",
@@ -1012,99 +1040,112 @@ fn a_configuration_declares_an_open_author_and_offer_checks_never_block_replay()
 
     let unknown_op = write(
         "unknown-op.yaml",
-        "authors:\n  planner: {capabilities: [retry, unknown]}\n",
+        "authors:\n  lead: {capabilities: [retry, unknown]}\n",
     );
     let run = run_in(root, &["status", "--config", &unknown_op], None, &[]);
     assert_eq!(run.code, 2);
     assert_eq!(
         run.stderr.trim(),
-        "onemessagebus: authors.planner.capabilities: `unknown` is not an op; the ops are: add, drop, reparent, retry, cancel, requeue, complete, attest, finding, amend, note, settle"
+        "onemessagebus: authors.lead.capabilities: `unknown` is not an op; the ops are: add, drop, retry, cancel, finding, note, complete"
     );
 
-    let configured = write("configured.yaml", "authors:\n  sentinel:\n    capabilities: [finding]\n    refusals: {retry: 'retry needs fresh evidence', complete: 'the planner decides completion'}\n");
+    let configured = write("configured.yaml", "authors:\n  sentinel:\n    capabilities: [finding]\n    refusals: {retry: 'retry needs fresh evidence', complete: 'the lead decides completion'}\n");
     let run = run_in(
         root,
-        &["send", "commands", "--config", &configured],
-        Some(r#"{"author":"sentinel","commands":[{"op":"retry","id":"build","node":{}}]}"#),
+        &["send", "actions", "--config", &configured],
+        Some(r#"{"author":"sentinel","actions":[{"op":"retry","id":"build","node":{}}]}"#),
         &[],
     );
     assert_eq!(run.code, 1);
     assert_eq!(
         run.stderr.trim(),
-        "onemessagebus: commands: 'retry' is not an op the sentinel may issue: retry needs fresh evidence. Surface it to the planner instead"
+        "onemessagebus: actions: 'retry' is not an op the sentinel may raise at the desk: retry needs fresh evidence. Ask the lead instead"
     );
     let generic = run_in(
         root,
-        &["send", "commands", "--config", &configured],
-        Some(r#"{"author":"sentinel","commands":[{"op":"cancel","id":"build"}]}"#),
+        &["send", "actions", "--config", &configured],
+        Some(r#"{"author":"sentinel","actions":[{"op":"cancel","id":"build"}]}"#),
         &[],
     );
     assert_eq!(generic.code, 1);
     assert!(generic.stderr.contains("nothing grants it to this author"));
     let allowed = run_in(
         root,
-        &["send", "commands", "--config", &configured],
-        Some(r#"{"author":"sentinel","commands":[{"op":"finding","message":"look"}]}"#),
+        &["send", "actions", "--config", &configured],
+        Some(r#"{"author":"sentinel","actions":[{"op":"finding","message":"look"}]}"#),
         &[],
     );
     assert_eq!(allowed.code, 0, "{}", allowed.stderr);
     let completion = run_in(
         root,
-        &["send", "replies", "--config", &configured],
+        &["send", "answers", "--config", &configured],
         Some(r#"{"author":"sentinel","completion":true}"#),
         &[],
     );
     assert_eq!(completion.code, 1);
-    assert!(completion.stderr.contains("the planner decides completion"));
-    let status = scratch.bus(&["status", "commands"], None);
+    assert!(completion.stderr.contains("the lead decides completion"));
+    let status = scratch.bus(&["status", "actions"], None);
     assert_eq!(status.code, 0, "{}", status.stderr);
-    let next = scratch.bus(&["next", "commands"], None);
+    let next = scratch.bus(&["next", "actions"], None);
     assert_eq!(next.code, 0, "{}", next.stderr);
     assert!(next.stdout.contains("\"author\":\"sentinel\""));
     let rejected = scratch.bus(
-        &["send", "commands"],
-        Some(r#"{"author":"sentinel","commands":[{"op":"finding","message":"again"}]}"#),
+        &["send", "actions"],
+        Some(r#"{"author":"sentinel","actions":[{"op":"finding","message":"again"}]}"#),
     );
     assert_eq!(rejected.code, 1);
-    assert!(rejected
-        .stderr
-        .contains("author `sentinel` is not declared"));
+    assert!(
+        rejected
+            .stderr
+            .contains("the answer's author `sentinel` is not one the desk declares"),
+        "{}",
+        rejected.stderr
+    );
 }
 
-/// A serving session that ended abandoned what it raised; a later `next` of the
-/// same asker takes it back, and one of another asker or none takes nothing.
+/// A listening session that ended abandoned what it raised; a later `next` of
+/// the same asker takes it back, and one of another asker or none takes nothing.
 #[test]
 fn next_with_the_same_asker_takes_back_what_a_listener_abandoned_and_no_other_does() {
     let scratch = Scratch::new();
-    {
-        let transport: Arc<dyn Transport> =
-            Arc::new(LocalTransport::open(scratch.channel()).expect("opens"));
-        let channel = Channel::open(&transport).expect("the channel opens");
-        let raised = channel
-            .surfaces()
-            .raw()
-            .push(json!({
-                "kind": "planner-question", "message": "raised by a session that ended",
-                "source": "proposal", "blocking": true, "queued_at": 1, "asker": "dispatch-a",
-            }))
-            .expect("raised");
-        channel.claim().expect("a claim").expect("claimed");
-        channel
-            .abandon(&[raised.id.expect("an id")])
-            .expect("abandoned");
-    }
-    let status = scratch.status("surfaces");
+    // A session of `dispatch-a` raises a blocking question and stops listening
+    // before it is answered; the lead claims it, and it sits pending, abandoned.
+    let lost = scratch.bus(
+        &[
+            "ask",
+            "questions",
+            "--blocking",
+            "--asker",
+            "dispatch-a",
+            "--timeout",
+            "1",
+        ],
+        Some(&question_of(
+            "question",
+            "raised by a session that ended",
+            "proposal",
+            true,
+        )),
+    );
+    assert_eq!(lost.code, 1, "{}", lost.stderr);
+    assert_eq!(lost.lines()[0]["answer"], json!("timeout"));
+    let claimed = one_line(&scratch.bus(&["next", "questions"], None));
+    assert_eq!(
+        claimed["record"]["message"],
+        json!("raised by a session that ended")
+    );
+    let status = scratch.status("questions");
     assert_eq!(status["abandoned"].as_array().map(Vec::len), Some(1));
     assert_eq!(status["pending"]["abandoned"], json!(true));
 
     for other in [
-        vec!["next", "surfaces", "--asker", "dispatch-b"],
-        vec!["next", "surfaces"],
+        vec!["next", "questions", "--asker", "dispatch-b"],
+        vec!["next", "questions"],
     ] {
         let run = scratch.bus(&other, None);
         assert_eq!(run.code, 1, "{}", run.stdout);
         assert_eq!(
-            scratch.status("surfaces")["abandoned"]
+            scratch.status("questions")["abandoned"]
                 .as_array()
                 .map(Vec::len),
             Some(1),
@@ -1112,12 +1153,12 @@ fn next_with_the_same_asker_takes_back_what_a_listener_abandoned_and_no_other_do
             other.join(" ")
         );
     }
-    let same = scratch.bus(&["next", "surfaces", "--asker", "dispatch-a"], None);
+    let same = scratch.bus(&["next", "questions", "--asker", "dispatch-a"], None);
     assert_eq!(
         same.code, 1,
         "nothing is left to claim once the question is taken back"
     );
-    let status = scratch.status("surfaces");
+    let status = scratch.status("questions");
     assert_eq!(
         status["abandoned"],
         json!([]),
@@ -1133,11 +1174,11 @@ fn next_with_the_same_asker_takes_back_what_a_listener_abandoned_and_no_other_do
         status["pending"]
     );
     assert_eq!(
-        scratch.lines("surfaces.jsonl").last().expect("a line")["event"],
+        scratch.lines("questions.jsonl").last().expect("a line")["event"],
         json!("attended")
     );
 
-    let blank = scratch.bus(&["next", "surfaces", "--asker", "  "], None);
+    let blank = scratch.bus(&["next", "questions", "--asker", "  "], None);
     assert_eq!(blank.code, 2);
     assert_eq!(
         blank.stderr.trim(),
@@ -1154,11 +1195,11 @@ fn an_asker_that_is_not_unicode_is_refused() {
     let scratch = Scratch::new();
     let output = onemessagebus()
         .arg("next")
-        .arg("surfaces")
+        .arg("questions")
         .arg("--asker")
         .arg(std::ffi::OsStr::from_bytes(b"dispatch-\xff"))
-        .arg("--transport-dir")
-        .arg(scratch.channel())
+        .arg("--config")
+        .arg(&scratch.config)
         .output()
         .expect("the binary runs");
     assert_eq!(output.status.code(), Some(2));
@@ -1178,18 +1219,17 @@ fn an_asker_that_is_not_unicode_is_refused() {
 fn a_send_that_fails_partway_leaves_the_file_on_its_last_record_boundary() {
     let scratch = Scratch::new();
     one_line(&scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface("finding", "logged", "proposal", false)),
+        &["send", "questions"],
+        Some(&question_of("finding", "logged", "proposal", false)),
     ));
-    let before = scratch.file("surfaces.jsonl");
+    let before = scratch.file("questions.jsonl");
     assert!(before.len() < 512, "{before}");
     let record = scratch.root().join("large.json");
     std::fs::write(
         &record,
-        surface("finding", &"x".repeat(8192), "proposal", false),
+        question_of("finding", &"x".repeat(8192), "proposal", false),
     )
     .expect("a record file");
-    let channel = scratch.channel();
     // One block of file size — 512 or 1024 bytes, by shell — is room for the
     // logged record and not for the large one, and an ignored SIGXFSZ turns the
     // kernel's refusal into a write that fails partway rather than a kill.
@@ -1198,11 +1238,11 @@ fn a_send_that_fails_partway_leaves_the_file_on_its_last_record_boundary() {
         .arg(r#"trap '' XFSZ; ulimit -f 1; exec "$0" "$@""#)
         .arg(onemessagebus().get_program())
         .arg("send")
-        .arg("surfaces")
+        .arg("questions")
         .arg("--file")
         .arg(&record)
-        .arg("--transport-dir")
-        .arg(&channel)
+        .arg("--config")
+        .arg(&scratch.config)
         .env_remove("ONEMESSAGEBUS_REGISTRY")
         .env_remove("ONEMESSAGEBUS_CONFIG")
         .env_remove("ONEMESSAGEBUS_TRANSPORT_DIR")
@@ -1217,17 +1257,17 @@ fn a_send_that_fails_partway_leaves_the_file_on_its_last_record_boundary() {
     assert_ne!(output.status.code(), Some(0), "{stderr}");
     assert!(stderr.contains("cannot append to"), "{stderr}");
     assert_eq!(
-        scratch.file("surfaces.jsonl"),
+        scratch.file("questions.jsonl"),
         before,
         "the part of the record that reached the file was left on it"
     );
 
     let next = one_line(&scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface("finding", "logged after", "proposal", false)),
+        &["send", "questions"],
+        Some(&question_of("finding", "logged after", "proposal", false)),
     ));
     assert_eq!(next["id"], json!(1));
-    assert_eq!(scratch.lines("surfaces.jsonl").len(), 2);
+    assert_eq!(scratch.lines("questions.jsonl").len(), 2);
 }
 
 /// A projection whose stamp still matches the log but whose claims were moved
@@ -1236,29 +1276,29 @@ fn a_send_that_fails_partway_leaves_the_file_on_its_last_record_boundary() {
 fn status_reads_a_stamped_projection_that_does_not_seal_as_no_document() {
     let scratch = Scratch::new();
     scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface("finding", "logged", "proposal", false)),
+        &["send", "questions"],
+        Some(&question_of("finding", "logged", "proposal", false)),
     );
     scratch.bus(
-        &["send", "surfaces"],
-        Some(&surface("finding", "also logged", "proposal", false)),
+        &["send", "questions"],
+        Some(&question_of("finding", "also logged", "proposal", false)),
     );
-    let written = scratch.file("queue.json");
-    let mut tampered: Value = serde_json::from_str(&written).expect("queue.json");
+    let written = scratch.file("questions.json");
+    let mut tampered: Value = serde_json::from_str(&written).expect("questions.json");
     tampered["waiting"] = json!([]);
     std::fs::write(
-        scratch.channel().join("queue.json"),
+        scratch.queues().join("questions.json"),
         serde_json::to_string_pretty(&tampered).expect("JSON"),
     )
     .expect("the projection is tampered with");
-    let status = scratch.status("surfaces");
+    let status = scratch.status("questions");
     assert_eq!(
         status["waiting"].as_array().map(Vec::len),
         Some(2),
         "the tampered projection was trusted"
     );
     assert_eq!(
-        scratch.file("queue.json"),
+        scratch.file("questions.json"),
         written,
         "the repaired projection was not written back"
     );

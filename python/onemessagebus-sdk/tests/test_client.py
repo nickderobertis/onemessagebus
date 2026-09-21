@@ -41,7 +41,7 @@ GREETING = {
     "required": ["text"],
     "additionalProperties": False,
 }
-SURFACE = {"kind": "finding", "message": "the base moved", "source": "proposal", "blocking": False}
+QUESTION = {"message": "the base moved", "source": "proposal", "blocking": False}
 
 
 async def test_the_schema_verbs(client: Client, scratch: Path) -> None:
@@ -189,46 +189,46 @@ async def test_the_queue_verbs(client: Client, scratch: Path) -> None:
     with pytest.raises(BusRefused, match="invalid value 'bogus'"):
         await client.transports(format=bogus)
 
-    sent = await client.send("surfaces", SURFACE)
-    assert [(record.queue, record.id) for record in sent] == [("surfaces", 0)]
-    record = scratch / "surface.json"
-    record.write_text(json.dumps(SURFACE), encoding="utf-8")
-    assert (await client.send("surfaces", None, file=record))[0].id == 1
+    sent = await client.send("questions", QUESTION)
+    assert [(record.queue, record.id) for record in sent] == [("questions", 0)]
+    record = scratch / "question.json"
+    record.write_text(json.dumps(QUESTION), encoding="utf-8")
+    assert (await client.send("questions", None, file=record))[0].id == 1
     with pytest.raises(BusRefused, match="`nosuch` is not a queue this configuration declares"):
-        await client.send("nosuch", SURFACE)
+        await client.send("nosuch", QUESTION)
 
-    [surfaces] = await client.status("surfaces")
-    assert (surfaces.queue, surfaces.records) == ("surfaces", 2)
+    [questions] = await client.status("questions")
+    assert (questions.queue, questions.records) == ("questions", 2)
     every = {status.queue for status in await client.status()}
-    assert {"surfaces", "replies", "commands", "command-outcomes", "greetings"} <= every
-    assert (await client.status("surfaces", format="text")).startswith("surfaces records=2")
+    assert every == {"questions", "answers", "actions", "notes", "greetings"}
+    assert (await client.status("questions", format="text")).startswith("questions records=2")
     with pytest.raises(BusRefused, match="`nosuch` is not a queue"):
         await client.status("nosuch")
 
-    assert isinstance(await client.validate("surfaces", SURFACE), ValidatedPass)
+    assert isinstance(await client.validate("questions", QUESTION), ValidatedPass)
     with pytest.raises(BusRefused, match="`nosuch` is not a queue"):
-        await client.validate("nosuch", SURFACE)
+        await client.validate("nosuch", QUESTION)
 
-    claimed = await client.next("surfaces")
+    claimed = await client.next("questions")
     assert claimed is not None
-    assert (claimed.queue, claimed.record["message"]) == ("surfaces", "the base moved")
-    text = await client.next("surfaces", format="text")
+    assert (claimed.queue, claimed.record["message"]) == ("questions", "the base moved")
+    text = await client.next("questions", format="text")
     assert text is not None
-    assert text.startswith("surfaces ")
-    assert await client.next("surfaces") is None
-    assert await client.next("surfaces", format="text") is None
+    assert text.startswith("questions ")
+    assert await client.next("questions") is None
+    assert await client.next("questions", format="text") is None
     with pytest.raises(BusRefused, match="--asker is set to a blank value"):
-        await client.next("surfaces", asker=" ")
+        await client.next("questions", asker=" ")
 
-    verdict = {"version": 3, "completion": True, "reason": "main"}
+    verdict = {"completion": True, "reason": "main"}
     with pytest.raises(BusFailed, match="no pending ask carries the correlation c-unknown"):
-        await client.reply("surfaces", "c-unknown", verdict)
+        await client.reply("questions", "c-unknown", verdict)
     with pytest.raises(BusRefused, match="declares no queue its replies"):
         await client.reply("greetings", None, {})
 
-    assert await client.serve("surfaces", "example", []) == []
+    assert await client.serve("questions", "example", []) == []
     with pytest.raises(BusRefused, match="`nope` is not declared by the configuration"):
-        await client.serve("surfaces", "nope", [])
+        await client.serve("questions", "nope", [])
 
 
 async def test_validate_answers_a_refusal_verdict_as_data(
@@ -237,28 +237,30 @@ async def test_validate_answers_a_refusal_verdict_as_data(
     scratch = tmp_path_factory.mktemp("judged")
     (scratch / "onemessagebus.yaml").write_text(
         "version: 1\n"
-        f"transport: {{kind: local, dir: {scratch / 'channel'}}}\n"
-        "profile: planner-channel\n"
+        f"transport: {{kind: local, dir: {scratch / 'bus'}}}\n"
+        "queues:\n"
+        "  questions: {policy: {hold_pending: true}, answers: answers}\n"
+        "  answers: {numbered: true}\n"
         "validators:\n"
-        "  - {on: surfaces, when: {field: message, equals: loud}, kind: command,"
+        "  - {on: questions, when: {field: message, equals: loud}, kind: command,"
         " command: [sh, -c, 'echo too loud >&2; exit 1']}\n"
-        "  - {on: surfaces, when: {field: message, equals: odd}, kind: command,"
+        "  - {on: questions, when: {field: message, equals: odd}, kind: command,"
         " command: [sh, -c, 'echo cannot say >&2; exit 3']}\n",
         encoding="utf-8",
     )
     async with Client(
         bus_config(binary, scratch), make_transport(transport_kind, scratch)
     ) as client:
-        refused = await client.validate("surfaces", {**SURFACE, "message": "loud"})
+        refused = await client.validate("questions", {**QUESTION, "message": "loud"})
         assert isinstance(refused, ValidatedRefuse)
-        assert (refused.queue, refused.reason) == ("surfaces", "too loud\n")
-        unjudged = await client.validate("surfaces", {**SURFACE, "message": "odd"})
+        assert (refused.queue, refused.reason) == ("questions", "too loud\n")
+        unjudged = await client.validate("questions", {**QUESTION, "message": "odd"})
         assert isinstance(unjudged, ValidatedUnjudged)
         assert "cannot say" in unjudged.reason
-        assert isinstance(await client.validate("surfaces", SURFACE), ValidatedPass)
+        assert isinstance(await client.validate("questions", QUESTION), ValidatedPass)
         with pytest.raises(BusFailed, match="too loud"):
-            await client.send("surfaces", {**SURFACE, "message": "loud"})
-        assert (await client.status("surfaces"))[0].records == 0
+            await client.send("questions", {**QUESTION, "message": "loud"})
+        assert (await client.status("questions"))[0].records == 0
 
 
 class _Origin(http.server.SimpleHTTPRequestHandler):
@@ -293,14 +295,21 @@ async def test_the_schema_cache_verbs(
     link = f"{url}@8"
     (scratch / "onemessagebus.yaml").write_text(
         "version: 1\n"
-        f"transport: {{kind: local, dir: {scratch / 'channel'}}}\n"
+        f"transport: {{kind: local, dir: {scratch / 'bus'}}}\n"
         f"schemas: [{json.dumps(link)}]\n",
+        encoding="utf-8",
+    )
+    # The client's own configuration links nothing, so a resident it starts —
+    # which, as a queue verb, takes one — warms no cache before the verbs below.
+    (scratch / "plain.yaml").write_text(
+        f"version: 1\ntransport: {{kind: local, dir: {scratch / 'plain-bus'}}}\n",
         encoding="utf-8",
     )
     cache = scratch / "cache"
     config = ClientConfig(
         binary=binary,
         cwd=scratch,
+        config=scratch / "plain.yaml",
         env={"ONEMESSAGEBUS_SCHEMA_CACHE_DIR": str(cache), "ONEMESSAGEBUS_SCHEMA_TTL": "3600"},
     )
     try:

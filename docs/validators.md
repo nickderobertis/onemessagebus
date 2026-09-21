@@ -28,8 +28,8 @@ one is; with neither, the message passes.
 - `Bus::send`, `Bus::reply` and `Bus::ask` judge an **offer**: the message by the
   validators of the queue it was offered to, and each record the layout routes to
   another queue by that queue's validators. All of it is judged before any of it
-  is appended, so a refusal anywhere leaves every queue as it was — a planner
-  channel reply carrying a verdict and edits is refused whole, not half-sent.
+  is appended, so a refusal anywhere leaves every queue as it was — a reply a
+  layout splits into a verdict and actions is refused whole, not half-sent.
 - `Bus::validate` (the command line's `validate`) judges an offer exactly as a
   send would, and appends nothing.
 
@@ -83,8 +83,8 @@ a different verdict.
 
 ```yaml
 validators:
-  - {on: replies, when: {carries: commands}, kind: command, command: [uv, run, python, -m, orchestrator.plan_review, --envelope],
-     cache: {dir: .validator-passes, bar_fingerprint: [scripts/llmlint-fingerprint.sh]}}
+  - {on: answers, when: {carries: actions}, kind: command, command: [python3, -m, review_actions, --envelope],
+     cache: {dir: .validator-passes, bar_fingerprint: [scripts/bar-fingerprint.sh]}}
 ```
 
 | key | meaning |
@@ -99,8 +99,8 @@ Every block refuses an unknown key by name. `when` takes one of two forms, side
 by side:
 
 - `{carries: <field path>}` — the message holds something at that field: it is
-  there and is not `null`, `""`, `[]` or `{}`. `{carries: commands}` judges a
-  reply envelope that carries edits and passes one that carries only a verdict.
+  there and is not `null`, `""`, `[]` or `{}`. `{carries: actions}` judges an
+  answer that carries actions and passes one that carries only a verdict.
   `carries` stands alone; a `when` naming it beside another key is refused.
 - any queue predicate: `{field, equals}`, `{field, present}`, `{field,
   non_empty}`, `{all}`, `{any}`, `{not}`.
