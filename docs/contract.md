@@ -433,6 +433,45 @@ projection's `accounted` and `seal` account.
 {"planner": ["add", "drop", "reparent", "retry", "cancel", "requeue", "complete", "attest", "finding", "amend", "note", "settle"]}
 ```
 
+- A layout is declared as code (`Layout`) or as data (`LayoutDocument`), which a
+  schema bundle's optional `layouts` member carries and a configuration links
+  (Contract L). `Layouts::with_linked(&resolved)` binds each linked document to
+  the schemas the resolved bundles carry, keeping a compiled-in layout of the
+  same name, and `profile` resolves against a linked layout exactly as against a
+  compiled-in one. The document declares the name, the queues with every policy
+  and declaration key, the ops, the authors — `every_op` for the one granted
+  every op, which a configuration may narrow and never widen — with their grants
+  and refusal reasons, and per queue the steps an offer runs through: `stamp`,
+  `rename`, `check`, `version`, `grant` and `route`, each with an optional `when`,
+  refusing in the layout's own words:
+
+<!-- fixture: layout-document -->
+```json
+{"name": "desk",
+ "queues": [{"name": "questions", "policy": {"hold_pending": true, "blocking_first": true,
+                                             "supersede_on": {"key": "source", "when": {"field": "source", "equals": "check-in"}},
+                                             "projection": "questions.json"},
+             "answers": "answers"},
+            {"name": "answers", "numbered": true},
+            {"name": "actions", "numbered": true, "consumers": ["default", "auditor"]}],
+ "operations": ["retry", "note", "complete"],
+ "authors": {"lead": {"every_op": true},
+             "bot": {"capabilities": ["note"], "refusals": {"complete": "a bot never declares the desk done"}}},
+ "prepare": {
+   "questions": [{"rename": {"from": "about", "to": "subject"}}, {"stamp": {"member": "raised_at"}}],
+   "answers": [
+     {"version": {"at": "version", "value": 3, "reads": [2], "required_when": {"field": "actions", "non_empty": true},
+                  "refusal": "an answer carrying actions requires version {value}; this one declares {found}"}},
+     {"grant": {"author": "author", "default_author": "lead", "word": "complete", "when": {"field": "completion", "equals": true},
+                "refusal": "declaring the desk done is not something the {author} may do: {reason}"}},
+     {"grant": {"author": "author", "default_author": "lead", "each": "actions", "op": "op",
+                "refusal": "'{op}' is not an op the {author} may raise at the desk: {reason}"}},
+     {"route": {"fallback": "answers", "routes": [
+       {"queue": "actions", "on": ["actions"], "take": ["author", "actions"]},
+       {"queue": "answers", "on": ["completion", "message"], "take": ["version", "author", "completion", "message", "actions"],
+        "under": "reply", "stamp": ["at"]}]}}]}}
+```
+
 - The `planner-channel` layout's queues, as declared — the files a directory
   `onepipeline` 0.28.2 wrote are read by this crate, and those this crate writes
   are read by 0.28.2:
@@ -478,7 +517,8 @@ authors:
 ```
 
 - `kind` is `local`, `memory`, or a registered or plugin kind; `profile` names a
-  layout a linked profile declares; `queues` adds queues or overrides a layout's
+  layout the program links as code or a bundle the `schemas` key links declares
+  as data, the program's own winning a name both declare; `queues` adds queues or overrides a layout's
   by name. `authors.planner` may narrow the built-in planner and never widen it;
   every other entry declares an author, with required `capabilities` and optional
   refusal reasons for ungranted operations.
@@ -622,7 +662,8 @@ The binding contract is stated once in [`codecs.md`](codecs.md). The `serve` CLI
 
 <!-- llmlint: ignore-block[no_redundant_instruction_pointers] Contract L's owner node was required to state it once, in docs/schema-links.md, and to have this contract — the source every consumer restates from — point at it rather than restate it; this section is that one pointer, so the contract lists every lettered contract and a copy of L here cannot drift from its source. -->
 Stated once, in [`docs/schema-links.md`](schema-links.md): the bundle document
-(`onemessagebus::SchemaBundle`), the link and its pin (`SchemaLink`), the cache a
+(`onemessagebus::SchemaBundle`) and the layouts it may declare as data
+(`LayoutDocument`), the link and its pin (`SchemaLink`), the cache a
 pinned remote link resolves through (`LinkResolver`), the configuration's
 `schemas` key and the verbs that resolve it, and the `schemas`, `schemas clear`
 and `schemas fetch` verbs. Every consumer restates it from there.

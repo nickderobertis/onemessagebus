@@ -154,7 +154,10 @@ version, so the SDK drives the binary built beside it.
 
 No wire shape is restated by hand in either package. Both generate from the SDK
 bundle `onemessagebus-cli`'s `sdk_bundle` example prints — the capability
-manifest, every contract root, every options root and every registered message:
+manifest, every contract root (among them `config`, the configuration file;
+`schema_bundle`, the document a configuration's `schemas` links serve; and
+`layout`, one layout that document declares as data), every options root and
+every registered message:
 Python as Pydantic v2 models through `datamodel-code-generator`, TypeScript as
 declarations through `json-schema-to-typescript` with Zod schemas emitted from the
 same documents. Each package's generate-check fails when the committed output is

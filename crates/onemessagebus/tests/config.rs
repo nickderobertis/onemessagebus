@@ -259,7 +259,7 @@ fn resolve_refuses_a_widened_grant_an_unknown_profile_and_a_dangling_key_by_name
     let profile = refused(&format!("version: 1\n{local}\nprofile: bank\n"));
     assert_eq!(
         profile,
-        "profile: `bank` is not a layout this build links; the layouts are: ledger"
+        "profile: `bank` is not a layout this build links or a linked bundle declares; the layouts are: ledger"
     );
     let answers = refused(&format!(
         "version: 1\n{local}\nprofile: ledger\nqueues:\n  entries: {{answers: replies}}\n"

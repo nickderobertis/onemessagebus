@@ -83,6 +83,14 @@ impl FieldPath {
             .iter()
             .try_fold(record, |value, step| value.as_object()?.get(step))
     }
+
+    /// The value at this path in `record`, mutably, as [`get`](Self::get)
+    /// finds it.
+    pub(crate) fn get_mut<'a>(&self, record: &'a mut Value) -> Option<&'a mut Value> {
+        self.0
+            .iter()
+            .try_fold(record, |value, step| value.as_object_mut()?.get_mut(step))
+    }
 }
 
 /// Why text is not a [`FieldPath`].

@@ -23,7 +23,8 @@ use crate::config::Config;
 use crate::envelope::Envelope;
 use crate::filter::{Filter, Matcher};
 use crate::kinds::KindEntry;
-use crate::link::{BundleVersion, CachedBundle, SchemaLink};
+use crate::layout::LayoutDocument;
+use crate::link::{BundleVersion, CachedBundle, SchemaBundle, SchemaLink};
 use crate::queue::{Asker, QueueStatus};
 use crate::schema::{Registry, SchemaId};
 use crate::transport::{ConsumerName, Position, QueueName};
@@ -739,6 +740,12 @@ pub struct Bundle {
     pub carried_entry: Schema,
     /// The configuration file every queue verb reads, `onemessagebus.yaml`.
     pub config: Schema,
+    /// The document a configuration's `schemas` links serve: a version, the
+    /// registry documents it publishes, and the layouts it declares as data.
+    pub schema_bundle: Schema,
+    /// One layout declared as data, as a bundle's `layouts` carries it: what a
+    /// configuration's `profile` names when no compiled-in layout has the name.
+    pub layout: Schema,
     /// One line of `send`: a record appended.
     pub sent: Schema,
     /// The output of `next`: the record claimed.
@@ -817,6 +824,8 @@ pub fn bundle<V: Vocabulary>(registry: &Registry) -> Bundle {
         }),
         carried_entry: schema_for!(CarriedEntry),
         config: schema_for!(Config),
+        schema_bundle: schema_for!(SchemaBundle),
+        layout: schema_for!(LayoutDocument),
         sent: schema_for!(Sent),
         claimed: schema_for!(ClaimedRecord),
         replied: schema_for!(Replied),

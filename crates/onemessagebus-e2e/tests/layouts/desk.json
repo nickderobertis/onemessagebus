@@ -1,0 +1,542 @@
+{
+  "version": "1.0",
+  "description": "The desk layout and its record schemas: the fixture the e2e journeys link.",
+  "schemas": [
+    {
+      "id": "desk.question@1",
+      "schema": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "message",
+          "source",
+          "blocking",
+          "raised_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "blocking": {
+            "type": "boolean"
+          },
+          "raised_at": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "subject": {
+            "type": "string"
+          },
+          "abandoned": {
+            "type": "boolean"
+          },
+          "asker": {
+            "type": "string"
+          },
+          "correlation": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "id": "desk.answer@1",
+      "schema": {
+        "type": "object",
+        "required": [
+          "id",
+          "reply",
+          "at"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reply": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "version": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "author": {
+                "type": "string"
+              },
+              "completion": {
+                "type": "boolean"
+              },
+              "message": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "op"
+                  ],
+                  "properties": {
+                    "op": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "at": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "correlation": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "id": "desk.actions@1",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "actions"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "author": {
+            "type": "string"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "op"
+              ],
+              "properties": {
+                "op": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "desk.outcome@1",
+      "schema": {
+        "type": "object",
+        "required": [
+          "id",
+          "applied"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "applied": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "id": "desk.envelope@3",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "author": {
+            "type": "string"
+          },
+          "completion": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "op"
+              ],
+              "properties": {
+                "op": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "layouts": [
+    {
+      "name": "desk",
+      "description": "A help desk: questions raised to a lead, the answers they give, the actions an answer carries, and what became of each. The bus's own fixture layout, exercising every declaration a layout document makes.",
+      "queues": [
+        {
+          "name": "questions",
+          "policy": {
+            "delivery": "at-least-once",
+            "ordering": "per-queue",
+            "supersede_on": {
+              "key": "source",
+              "when": {
+                "field": "source",
+                "equals": "check-in"
+              }
+            },
+            "hold_pending": true,
+            "blocking_first": true,
+            "retention": "keep",
+            "projection": "questions.json"
+          },
+          "schema": "desk.question@1",
+          "answers": "answers"
+        },
+        {
+          "name": "answers",
+          "schema": "desk.answer@1",
+          "claims": {
+            "not": {
+              "all": [
+                {
+                  "field": "reply.actions",
+                  "non_empty": true
+                },
+                {
+                  "not": {
+                    "any": [
+                      {
+                        "field": "reply.completion",
+                        "present": true
+                      },
+                      {
+                        "field": "reply.message",
+                        "present": true
+                      },
+                      {
+                        "field": "reply.reason",
+                        "present": true
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "numbered": true
+        },
+        {
+          "name": "actions",
+          "schema": "desk.actions@1",
+          "consumers": [
+            "default",
+            "auditor"
+          ],
+          "numbered": true
+        },
+        {
+          "name": "outcomes",
+          "schema": "desk.outcome@1"
+        }
+      ],
+      "operations": [
+        "add",
+        "drop",
+        "retry",
+        "cancel",
+        "finding",
+        "note",
+        "complete"
+      ],
+      "authors": {
+        "lead": {
+          "every_op": true
+        },
+        "bot": {
+          "capabilities": [
+            "note",
+            "finding"
+          ],
+          "refusals": {
+            "complete": "a bot never declares the desk done",
+            "drop": "a bot drops nothing it did not add"
+          }
+        }
+      },
+      "prepare": {
+        "questions": [
+          {
+            "rename": {
+              "from": "about",
+              "to": "subject"
+            }
+          },
+          {
+            "stamp": {
+              "member": "raised_at"
+            }
+          }
+        ],
+        "answers": [
+          {
+            "check": {
+              "schema": "desk.envelope@3",
+              "refusal": "the answer is malformed: {why}",
+              "at": "reply",
+              "when": {
+                "field": "reply",
+                "present": true
+              }
+            }
+          },
+          {
+            "grant": {
+              "author": "reply.author",
+              "default_author": "lead",
+              "undeclared": "the answer's author `{author}` is not one the desk declares; it declares: {authors}",
+              "when": {
+                "field": "reply",
+                "present": true
+              }
+            }
+          },
+          {
+            "grant": {
+              "author": "reply.author",
+              "default_author": "lead",
+              "word": "complete",
+              "when": {
+                "all": [
+                  {
+                    "field": "reply",
+                    "present": true
+                  },
+                  {
+                    "field": "reply.completion",
+                    "equals": true
+                  }
+                ]
+              },
+              "refusal": "declaring the desk done is not something the {author} may do: {reason}"
+            }
+          },
+          {
+            "version": {
+              "at": "reply.version",
+              "value": 3,
+              "reads": [
+                2
+              ],
+              "required_when": {
+                "field": "reply.actions",
+                "non_empty": true
+              },
+              "refusal": "an answer carrying actions requires version {value}; this one declares {found}",
+              "when": {
+                "field": "reply",
+                "present": true
+              }
+            }
+          },
+          {
+            "grant": {
+              "author": "reply.author",
+              "default_author": "lead",
+              "each": "reply.actions",
+              "op": "op",
+              "refusal": "'{op}' is not an op the {author} may raise at the desk: {reason}. Ask the lead instead",
+              "unknown": "'{op}' is not an op of the desk; the ops are: {ops}",
+              "undeclared": "the answer's author `{author}` is not one the desk declares; it declares: {authors}",
+              "malformed": "the answer's actions are malformed: {why}",
+              "when": {
+                "field": "reply",
+                "present": true
+              }
+            }
+          },
+          {
+            "check": {
+              "schema": "desk.envelope@3",
+              "refusal": "the answer is malformed: {why}",
+              "when": {
+                "not": {
+                  "field": "reply",
+                  "present": true
+                }
+              }
+            }
+          },
+          {
+            "grant": {
+              "author": "author",
+              "default_author": "lead",
+              "undeclared": "the answer's author `{author}` is not one the desk declares; it declares: {authors}",
+              "when": {
+                "not": {
+                  "field": "reply",
+                  "present": true
+                }
+              }
+            }
+          },
+          {
+            "grant": {
+              "author": "author",
+              "default_author": "lead",
+              "word": "complete",
+              "when": {
+                "all": [
+                  {
+                    "not": {
+                      "field": "reply",
+                      "present": true
+                    }
+                  },
+                  {
+                    "field": "completion",
+                    "equals": true
+                  }
+                ]
+              },
+              "refusal": "declaring the desk done is not something the {author} may do: {reason}"
+            }
+          },
+          {
+            "version": {
+              "at": "version",
+              "value": 3,
+              "reads": [
+                2
+              ],
+              "required_when": {
+                "field": "actions",
+                "non_empty": true
+              },
+              "refusal": "an answer carrying actions requires version {value}; this one declares {found}",
+              "when": {
+                "not": {
+                  "field": "reply",
+                  "present": true
+                }
+              }
+            }
+          },
+          {
+            "grant": {
+              "author": "author",
+              "default_author": "lead",
+              "each": "actions",
+              "op": "op",
+              "refusal": "'{op}' is not an op the {author} may raise at the desk: {reason}. Ask the lead instead",
+              "unknown": "'{op}' is not an op of the desk; the ops are: {ops}",
+              "undeclared": "the answer's author `{author}` is not one the desk declares; it declares: {authors}",
+              "malformed": "the answer's actions are malformed: {why}",
+              "when": {
+                "not": {
+                  "field": "reply",
+                  "present": true
+                }
+              }
+            }
+          },
+          {
+            "route": {
+              "when": {
+                "not": {
+                  "field": "reply",
+                  "present": true
+                }
+              },
+              "routes": [
+                {
+                  "queue": "actions",
+                  "on": [
+                    "actions"
+                  ],
+                  "take": [
+                    "author",
+                    "actions"
+                  ]
+                },
+                {
+                  "queue": "answers",
+                  "on": [
+                    "completion",
+                    "message",
+                    "reason"
+                  ],
+                  "take": [
+                    "version",
+                    "author",
+                    "completion",
+                    "message",
+                    "reason",
+                    "actions"
+                  ],
+                  "under": "reply",
+                  "stamp": [
+                    "at"
+                  ]
+                }
+              ],
+              "fallback": "answers"
+            }
+          }
+        ],
+        "actions": [
+          {
+            "grant": {
+              "author": "author",
+              "default_author": "lead",
+              "each": "actions",
+              "op": "op",
+              "refusal": "'{op}' is not an op the {author} may raise at the desk: {reason}. Ask the lead instead",
+              "unknown": "'{op}' is not an op of the desk; the ops are: {ops}",
+              "undeclared": "the answer's author `{author}` is not one the desk declares; it declares: {authors}",
+              "malformed": "the answer's actions are malformed: {why}"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

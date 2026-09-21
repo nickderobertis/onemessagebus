@@ -6,8 +6,9 @@
 
 use onemessagebus::sdk_schema::{self, Lang};
 use onemessagebus::{
-    glob, Envelope, Filter, Open, Registry, Source, CAPABILITIES, CREDENTIAL_PREFIXES,
-    CREDENTIAL_WORDS, MAX_ACTIVITY_DETAIL_CHARS, MAX_PAYLOAD_TEXT_BYTES, REDACTED,
+    glob, Author, Envelope, Filter, LayoutDocument, Open, Registry, SchemaBundle, Source,
+    CAPABILITIES, CREDENTIAL_PREFIXES, CREDENTIAL_WORDS, MAX_ACTIVITY_DETAIL_CHARS,
+    MAX_PAYLOAD_TEXT_BYTES, REDACTED,
 };
 use serde_json::{json, Value};
 
@@ -31,7 +32,8 @@ fn fixture(name: &str) -> String {
 /// Every fixture a contract test drives: `envelope`, `filter` and `verbs` here
 /// and in the profile's `tests/contract.rs`; the transport's `transport-layout`,
 /// `transport-kinds` and `plugin-protocol`, the queue `policy` and the `config`
-/// file here, where the core's types read them; and `read-sets`, the inbox's
+/// file and the `layout-document` here, where the core's types read them; and
+/// `read-sets`, the inbox's
 /// `spool-documents` and `carry-store`, the note contract's `note`, `accepted`
 /// and `note-undelivered`, and the planner channel's `planner-channel` and
 /// `planner-channel-grants` there alone, since each names the agent profile's
@@ -47,6 +49,7 @@ const DRIVEN_FIXTURES: &[&str] = &[
     "config",
     "envelope",
     "filter",
+    "layout-document",
     "note",
     "note-undelivered",
     "planner-channel",
@@ -288,6 +291,8 @@ fn the_bundle_emits_the_manifest_and_every_documented_root() {
         "schema_id",
         "registry_document",
         "config",
+        "schema_bundle",
+        "layout",
         "capabilities",
     ] {
         assert!(document.get(root).is_some(), "the bundle has no {root}");
@@ -695,5 +700,45 @@ fn the_documented_validators_block_loads_into_the_config_and_an_unknown_key_in_i
     assert!(
         document["config"]["properties"]["validators"].is_object(),
         "the SDK bundle's config root has no validators block"
+    );
+}
+
+#[test]
+fn the_documented_layout_document_reads_as_the_one_type_and_names_every_step() {
+    let text = fixture("layout-document");
+    let document: LayoutDocument =
+        serde_json::from_str(&text).expect("the documented layout reads as a LayoutDocument");
+    assert_eq!(*document.name(), "desk");
+    let bundle = SchemaBundle::with_layouts(
+        "1".parse().expect("a version"),
+        None,
+        Vec::new(),
+        vec![document.clone()],
+    )
+    .expect("a bundle carries it");
+    assert_eq!(bundle.layouts(), std::slice::from_ref(&document));
+    let allowlist = document.allowlist();
+    let words = |author: &str| -> Vec<String> {
+        allowlist
+            .granted(&Author::from(author))
+            .into_iter()
+            .map(|op| op.0)
+            .collect()
+    };
+    assert_eq!(words("lead"), ["retry", "note", "complete"], "every_op");
+    assert_eq!(words("bot"), ["note"]);
+    let written = serde_json::to_string(&document).expect("it serializes");
+    for step in ["rename", "stamp", "version", "grant", "route"] {
+        assert!(
+            written.contains(&format!("{{\"{step}\":")),
+            "the {step} step is documented"
+        );
+    }
+    let mut unknown: Value = serde_json::from_str(&text).expect("JSON");
+    unknown["prepare"]["questions"][0] = json!({"shout": {"member": "x"}});
+    let refused = serde_json::from_value::<LayoutDocument>(unknown).expect_err("an unknown step");
+    assert!(
+        refused.to_string().contains("unknown variant `shout`"),
+        "{refused}"
     );
 }

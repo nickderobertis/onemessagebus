@@ -156,6 +156,76 @@ skip an unchanged queue without opening the log.
 - A read that folded anything writes the repaired projection back. The repair is
   a cache write: one that fails costs the next reader a fold, never an answer.
 
+## Layouts declared as data
+
+A **layout** is a set of queues, an operation vocabulary, authors and their
+grants, and how an offer to each queue is prepared, under one name a
+configuration's `profile` gives. A program can link one as code (the
+`onemessagebus::Layout` trait) — or the program that owns a protocol publishes
+its layout as a **document**, and a configuration links that document the way it
+links schemas: a schema bundle carries it in its
+optional `layouts` member, pinned, cached and refused under Contract L, and the
+schemas its queues and steps name ride in the same bundle's `schemas` or in
+another bundle linked beside it.
+
+```yaml
+schemas:
+  - "https://example.org/desk.json@1"   # a bundle whose `layouts` declares `desk`
+profile: desk
+```
+
+`profile` resolves against a linked layout exactly as it resolves against one a
+program compiled in: the same queue overrides, the same narrowing of authors and
+the same refusals by key. A program that links a layout of the same name as a
+linked one keeps its own (`Layouts::with_linked`), so the engine that publishes
+a document keeps the code it compiled; two links declaring one name are refused,
+naming both. The document's type is `onemessagebus::LayoutDocument`, one
+declaration in the core crate: a publisher builds its document through it, and
+`SchemaBundle::with_layouts` refuses what a reader would. Both SDKs carry it as
+the bundle's `layout` root, and the bundle itself as `schema_bundle`.
+
+| key | what it declares |
+| --- | --- |
+| `name` | the name a `profile` gives: `^[a-z][a-z0-9-]{0,63}$` |
+| `description` | what the layout is, for a person; optional |
+| `queues` | each queue as a configuration declares one: `name`, `policy` (`delivery`, `ordering`, `supersede_on {key, when}`, `hold_pending`, `blocking_first`, `retention`, `projection`), `schema`, `answers`, `claims`, `consumers`, `numbered` |
+| `operations` | the op words an author may be granted |
+| `authors` | each author: `every_op: true` — granted every op, the author a layout trusts with everything — or `capabilities`, and `refusals`: the reason each ungranted op is refused with |
+| `prepare` | by queue, the steps an offer to it runs through, in order |
+
+A configuration may **narrow** any author the layout declares — the fully
+granted one included — and an op it narrows away is refused with `the
+configuration does not grant it`; one naming an op the author is not granted is
+refused naming `authors.<author>.capabilities`. Every other author is the
+configuration's to declare.
+
+**The steps.** Each is an object with one key, its kind, and may carry `when` —
+a predicate (Contract Q's grammar) over the record as the steps before it left
+it; a step whose `when` does not hold is passed over. Every refusal is in the
+layout's own words: a step that refuses carries its text, with placeholders it
+fills in.
+
+| step | keys | what it does |
+| --- | --- | --- |
+| `stamp` | `member` | sets `member` to the current time in epoch milliseconds, when the record has none |
+| `rename` | `from`, `to` | moves `from` to `to`; where `to` is already there, `from` is dropped and `to` kept |
+| `check` | `schema`, `at`, `refusal` | refuses the record — or the value at `at` — that the registered `schema` refuses; `{why}` is what it refused. The schema is one a linked bundle carries |
+| `version` | `at`, `value`, `reads`, `required_when`, `refusal` | a version at `at` that `reads` lists is read — and written — as `value`; where `required_when` holds, any other version, or none, is refused (`{value}`, `{found}`) |
+| `grant` | `author`, `default_author`, `each` + `op`, or `word`; `refusal`, `unknown`, `undeclared`, `malformed` | the author at `author` (`default_author` where there is none) must be declared (`undeclared`: `{author}`, `{authors}`); each op word — at `op` in every item of the list at `each`, or `word` outright — must be an op (`unknown`: `{op}`, `{ops}`) the author is granted (`refusal`: `{op}`, `{author}`, `{reason}`); a list or op word that is not there as text is `malformed` (`{why}`) |
+| `route` | `routes`, `fallback` | the last step of its queue: splits the offer onto several queues. Each route (`queue`, `on`, `take`, `under`, `stamp`) is taken when any member `on` names is there — present, not `null`, not an empty list — and carries the `take` members the record has, in that order, under `under` when named, with its `stamp` members stamped; routes are pushed in the order declared. Where no route is taken, the `fallback` route is; with no fallback, the record stays on the queue it was offered to |
+
+A layout that is not well formed is refused when the bundle is read, as
+`layouts[<index>]: is not a layout: …` naming what is wrong and, where it is a
+step, its key (`prepare.<queue>[<step>].<kind>…`) — a `grant` naming both `word`
+and `each`, a `route` that is not last, a route to a queue the layout
+does not declare, a fallback naming no route. A `check` naming a schema no
+linked bundle carries is refused when the layout is linked, naming the link.
+
+This repository's own journeys run over such a document:
+`crates/onemessagebus-e2e/tests/layouts/desk.json`, a help desk whose four queues,
+two authors and every step are what `tests/e2e/layouts.rs` drives through the
+binary.
+
 ## The `planner-channel` layout
 
 `onemessagebus_agent::channel` declares `onepipeline`'s channel directory as the

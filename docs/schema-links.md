@@ -1,7 +1,8 @@
 # Schema links
 
-A program that owns a protocol publishes its grammar as a **schema bundle**, and a
-bus configuration names that bundle by a **link** — a URL or a path, pinned to a
+A program that owns a protocol publishes its grammar as a **schema bundle** — and,
+where its protocol is a set of queues, the **layout** of those queues as data — and
+a bus configuration names that bundle by a **link** — a URL or a path, pinned to a
 version — rather than transcribing the grammar or linking the program. A pinned
 remote link resolves through an on-disk **cache**, so a serving session never
 waits on the network when the cache holds what it needs.
@@ -20,19 +21,32 @@ A link serves one JSON object:
 - `version` (required): a string of one to three dot-separated non-negative
   integers (`^\d+(\.\d+){0,2}$`) — the version the document **declares**, which a
   pin is asserted against and a cache entry is keyed by.
-- `schemas` (required, non-empty): each entry is exactly a registry document,
+- `schemas` (required): each entry is exactly a registry document,
   `{"id": <schema id>, "schema": <JSON Schema object>}` — the shape one file of a
-  `--registry` directory has. Ids within one bundle are unique.
+  `--registry` directory has. Ids within one bundle are unique. Empty only in a
+  bundle that declares a layout.
+- `layouts` (optional): layouts declared as data, each an
+  `onemessagebus::LayoutDocument` — a name, queues, operations, authors and the
+  steps each queue's offers are prepared by — each name
+  once per bundle.
 - `description` (optional): text. Any other top-level key is refused, naming it.
 
-Each refusal names what is wrong: an unknown key, a malformed `version`, an empty
-`schemas`, an id declared twice (`schemas[1].id: … is already declared by
-schemas[0]`), or an entry that is not a registry document (`schemas[<index>]`).
+Each refusal names what is wrong: an unknown key, a malformed `version`, a bundle
+publishing neither a schema nor a layout (`schemas: is empty`), an id declared
+twice (`schemas[1].id: … is already declared by schemas[0]`), an entry that is not
+a registry document (`schemas[<index>]`), a layout name declared twice
+(`layouts[1].name: … is already declared by layouts[0]`), and a layout that is not
+one, naming what is wrong and, where the document's keys disagree, the key
+(``layouts[0]: is not a layout: `every_op` grants every op, so it takes no
+`capabilities` ``, `layouts[0]: is not a layout: prepare.answers[4].route: a
+route is the last step of its queue`).
 
 The type is `onemessagebus::SchemaBundle` in the core crate (serde and
 `JsonSchema`): a publisher in another repository generates its bundle through
-that one declaration — `SchemaBundle::new` refuses what a reader would — rather
-than restating the shape.
+that one declaration — `SchemaBundle::new`, or `SchemaBundle::with_layouts` for
+one carrying layouts, refuses what a reader would — rather than restating the
+shape. Both SDKs carry it as the generated bundle's `schema_bundle` root, and a
+layout as its `layout` root.
 
 ## The link
 
@@ -144,7 +158,18 @@ Every command-line verb that loads a configuration makes that call, resolving
 each link before it does anything else, and registers every entry of every
 resolved bundle into the registry it uses — beside the profile's schemas and any
 `--registry` directory. An entry whose id is already registered with a different
-document is refused, naming the link and the id, as the registry refuses it. The
+document is refused, naming the link and the id, as the registry refuses it.
+
+Every layout a resolved bundle declares is linked beside the layouts the program
+compiled in, bound to the schemas every resolved bundle carries, and the
+configuration's `profile` resolves against both: a layout the program compiled
+in keeps its own over a linked one of the same name. A layout name two links
+declare, or a `check` step naming a schema no linked bundle carries, is refused
+naming the link:
+
+```text
+onemessagebus: schemas: /srv/b.json: layouts: `desk` is already declared by /srv/a.json; a layout is linked once
+``` The
 queue verbs (`send`, `next`, `ask`, `reply`, `subscribe`, `status`, `validate`,
 `serve`) load one from `--config` or `ONEMESSAGEBUS_CONFIG`; the `schema` verbs
 from `--config` alone, never from the variable.
@@ -158,7 +183,8 @@ way when it starts; each request it answers resolves as its one-shot verb would.
 
 A link that cannot be fetched or read, or a cache that cannot be written, exits
 1; a malformed link, a bundle that is not one, a pin the bundle does not admit,
-an unusable variable or a conflicting id exits 2. `--registry <dir>` keeps
+an unusable variable, a conflicting id or a layout that cannot be linked exits
+2. `--registry <dir>` keeps
 working unchanged for local documents.
 
 ## The verbs

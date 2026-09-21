@@ -25,6 +25,7 @@ use time::format_description::BorrowedFormatItem;
 use time::macros::format_description;
 use time::OffsetDateTime;
 
+use crate::layout::LayoutDocument;
 use crate::schema::{Registry, RegistryError, SchemaId};
 use crate::sdk_schema::RegistryDocument;
 
@@ -168,8 +169,8 @@ impl JsonSchema for BundleVersion {
     }
 }
 
-/// The document a schema link serves: a declared version and the registry
-/// documents it publishes.
+/// The document a schema link serves: a declared version, the registry
+/// documents it publishes, and the layouts it declares as data.
 ///
 /// Its fields are held to Contract L wherever one is made — read from JSON or
 /// built with [`new`](Self::new) — so a publisher generating its bundle through
@@ -179,6 +180,7 @@ pub struct SchemaBundle {
     version: BundleVersion,
     description: Option<String>,
     schemas: Vec<RegistryDocument>,
+    layouts: Vec<LayoutDocument>,
 }
 
 /// Why a document is not a [`SchemaBundle`], naming what is wrong.
@@ -203,14 +205,18 @@ struct BundleShape<'a> {
     /// What the bundle is, for a person.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     description: Option<&'a str>,
-    /// The registry documents it publishes, each id once.
-    #[schemars(length(min = 1))]
+    /// The registry documents it publishes, each id once: at least one, unless
+    /// it declares a layout.
     schemas: &'a [RegistryDocument],
+    /// The layouts it declares as data, each name once
+    /// (`onemessagebus::LayoutDocument`).
+    #[serde(default, skip_serializing_if = "<[LayoutDocument]>::is_empty")]
+    layouts: &'a [LayoutDocument],
 }
 
 impl SchemaBundle {
     /// The top-level keys a bundle has.
-    const KEYS: [&'static str; 3] = ["version", "description", "schemas"];
+    const KEYS: [&'static str; 4] = ["version", "description", "schemas", "layouts"];
 
     /// A bundle of `schemas` at `version`.
     ///
@@ -223,9 +229,25 @@ impl SchemaBundle {
         description: Option<String>,
         schemas: Vec<RegistryDocument>,
     ) -> Result<Self, BundleError> {
-        if schemas.is_empty() {
+        Self::with_layouts(version, description, schemas, Vec::new())
+    }
+
+    /// A bundle of `schemas` and `layouts` at `version`.
+    ///
+    /// # Errors
+    ///
+    /// A [`BundleError`] for a bundle publishing neither a schema nor a layout,
+    /// an id declared twice, a document that is not a JSON Schema object, or a
+    /// layout name declared twice — each entry by its index.
+    pub fn with_layouts(
+        version: BundleVersion,
+        description: Option<String>,
+        schemas: Vec<RegistryDocument>,
+        layouts: Vec<LayoutDocument>,
+    ) -> Result<Self, BundleError> {
+        if schemas.is_empty() && layouts.is_empty() {
             return Err(bundle_error(
-                "schemas: is empty; a bundle publishes at least one registry document",
+                "schemas: is empty; a bundle publishes at least one registry document or layout",
             ));
         }
         let mut seen: BTreeMap<&SchemaId, usize> = BTreeMap::new();
@@ -243,10 +265,21 @@ impl SchemaBundle {
                 )));
             }
         }
+        let mut names: BTreeMap<&str, usize> = BTreeMap::new();
+        for (index, layout) in layouts.iter().enumerate() {
+            if let Some(first) = names.insert(layout.name().as_str(), index) {
+                return Err(bundle_error(format!(
+                    "layouts[{index}].name: `{}` is already declared by layouts[{first}]; each \
+                     layout appears once in a bundle",
+                    layout.name()
+                )));
+            }
+        }
         Ok(Self {
             version,
             description,
             schemas,
+            layouts,
         })
     }
 
@@ -256,8 +289,9 @@ impl SchemaBundle {
     ///
     /// A [`BundleError`] naming what is wrong: text that is not a JSON object,
     /// an unknown top-level key, a missing or malformed `version`, a
-    /// `description` that is not text, and whatever [`new`](Self::new) refuses —
-    /// each entry of `schemas` by its index.
+    /// `description` that is not text, and whatever
+    /// [`with_layouts`](Self::with_layouts) refuses — each entry of `schemas`
+    /// and `layouts` by its index.
     pub fn from_json(text: &str) -> Result<Self, BundleError> {
         let value: Value = serde_json::from_str(text)
             .map_err(|failure| bundle_error(format!("the document is not JSON: {failure}")))?;
@@ -279,7 +313,7 @@ impl SchemaBundle {
         {
             return Err(bundle_error(format!(
                 "`{unknown}` is not a key of a bundle; it has `version`, `schemas` and, \
-                 optionally, `description`"
+                 optionally, `description` and `layouts`"
             )));
         }
         let version = match object.remove("version") {
@@ -311,7 +345,20 @@ impl SchemaBundle {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Self::new(version, description, schemas)
+        let layouts = match object.remove("layouts") {
+            None => Vec::new(),
+            Some(Value::Array(entries)) => entries
+                .into_iter()
+                .enumerate()
+                .map(|(index, entry)| {
+                    serde_json::from_value::<LayoutDocument>(entry).map_err(|failure| {
+                        bundle_error(format!("layouts[{index}]: is not a layout: {failure}"))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            Some(_) => return Err(bundle_error("layouts: is not an array")),
+        };
+        Self::with_layouts(version, description, schemas, layouts)
     }
 
     /// The version the bundle declares.
@@ -330,6 +377,12 @@ impl SchemaBundle {
     #[must_use]
     pub fn schemas(&self) -> &[RegistryDocument] {
         &self.schemas
+    }
+
+    /// The layouts it declares as data.
+    #[must_use]
+    pub fn layouts(&self) -> &[LayoutDocument] {
+        &self.layouts
     }
 
     /// Register every document into `registry`, as
@@ -351,6 +404,7 @@ impl SchemaBundle {
             version: &self.version,
             description: self.description.as_deref(),
             schemas: &self.schemas,
+            layouts: &self.layouts,
         }
     }
 }
@@ -378,7 +432,7 @@ impl JsonSchema for SchemaBundle {
         schema.insert(
             "description".to_owned(),
             Value::String(
-                "The document a schema link serves: a declared version and the registry documents it publishes."
+                "The document a schema link serves: a declared version, the registry documents it publishes, and the layouts it declares as data."
                     .to_owned(),
             ),
         );
@@ -577,6 +631,16 @@ pub enum LinkError {
         link: String,
         /// The registry's refusal.
         source: RegistryError,
+    },
+    /// A layout a linked bundle declares cannot be linked: another link
+    /// declares the same name, or a step names a schema no linked bundle
+    /// carries.
+    #[error("{link}: layouts: {why}")]
+    Layout {
+        /// The link.
+        link: String,
+        /// What is wrong, at which key of the layout.
+        why: String,
     },
 }
 

@@ -28,7 +28,7 @@ use onemessagebus::resident::{
     RequestId, ResidentAnswer, ResidentCancel, ResidentEvent, ResidentExit, ResidentFailure,
     ResidentLine, ResidentRefusal, ResidentRequest,
 };
-use onemessagebus::{Capability, FlagKind, Freshness, StdoutShape, TransportKinds};
+use onemessagebus::{Capability, FlagKind, Freshness, Layouts, StdoutShape, TransportKinds};
 use serde_json::{Map, Value};
 
 use super::{
@@ -44,7 +44,7 @@ type Running = Arc<Mutex<BTreeMap<RequestId, Arc<AtomicBool>>>>;
 type Writer = Arc<Mutex<UnixStream>>;
 
 /// Run the resident core on `socket` until the process is stopped.
-pub(super) fn serve(socket: &Path, args: &ServeArgs) -> Result<(), Refusal> {
+pub(super) fn serve(socket: &Path, args: &ServeArgs, layouts: &Layouts) -> Result<(), Refusal> {
     // The configuration and the registry directory are refused here, before the
     // socket is claimed, exactly as a one-shot verb would refuse them.
     let bound = if args.bus.config.is_some() || args.bus.transport_dir.is_some() {
@@ -59,6 +59,7 @@ pub(super) fn serve(socket: &Path, args: &ServeArgs) -> Result<(), Refusal> {
     };
     load_registry_dir(args.bus.registry.as_deref())?;
     let held = Arc::new(Held {
+        layouts: layouts.clone(),
         config: args.bus.config.clone(),
         transport_dir: args.bus.transport_dir.clone(),
         registry: args.bus.registry.clone(),
@@ -370,6 +371,7 @@ fn answer(
     let text = request.args.get("format").and_then(Value::as_str) == Some("text");
     let io = Io {
         input: Input::Given(request.input),
+        layouts: held.layouts.clone(),
         held: Some(held),
         cancel: Some(Arc::clone(cancel)),
     };

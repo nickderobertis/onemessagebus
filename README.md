@@ -26,7 +26,9 @@ Three artifacts:
   default) or `--profile open`, `deliver` and `inbox carried` over the inbox —
   a typed channel into a running process whose sender learns what the receiver
   did with each message — and `send`, `next`, `reply`, `subscribe` and `status`
-  over durable queues kept on a transport a configuration names, with
+  over durable queues kept on a transport a configuration names — under a
+  layout a linked schema bundle declares as data, or one a program links —
+  with
   `transports` listing the kinds a transport can be, `ask` raising a question and
   waiting for the one reply that echoes its correlation, `validate` judging a
   record by a queue's validators before anything is sent, and `serve` answering a

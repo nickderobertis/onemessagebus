@@ -250,7 +250,9 @@ without a carry store's header line — is refused with exit 2, naming it.
 ## Queues
 
 A queue is a log a transport keeps, read under the policy its layout or
-configuration declares (`docs/queues.md`). Under the `planner-channel` layout the
+configuration declares (`docs/queues.md`). A configuration's `profile` names the
+layout: one the program links as code, or one a bundle its `schemas` key links
+declares as data — the program's own winning a name both declare. Under the `planner-channel` layout the
 queues are `surfaces`, `replies`, `commands` and `command-outcomes`, and their
 files are the ones `onepipeline` keeps in a run's `channel/` directory.
 

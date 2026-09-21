@@ -41,6 +41,7 @@ mod envelope;
 mod filter;
 mod inbox;
 mod kinds;
+mod layout;
 mod link;
 mod plugin;
 mod queue;
@@ -78,7 +79,7 @@ pub use codec::{
 };
 pub use config::{
     AuthorConfig, Bus, BusError, CacheConfig, Config, ConfigError, Layout, Layouts, PolicyConfig,
-    QueueConfig, Router, ValidatorConfig, ValidatorKind, CONFIG_VERSION, NARROWED,
+    QueueConfig, RefusalReason, Router, ValidatorConfig, ValidatorKind, CONFIG_VERSION, NARROWED,
 };
 pub use emit::{Emitter, EmitterError, Unrecorded};
 pub use envelope::{ArtifactRef, Envelope, Kind, Labels, NoDimensions, Source};
@@ -90,6 +91,10 @@ pub use inbox::{
 pub use kinds::{
     KindEntry, KindOrigin, TransportConfig, TransportFactory, TransportKind, TransportKinds, LOCAL,
     MEMORY,
+};
+pub use layout::{
+    CheckStep, GrantOps, GrantStep, Grants, LayoutAuthor, LayoutDocument, LayoutName, LinkedLayout,
+    MemberName, NonEmpty, PrepareStep, RenameStep, Route, RouteStep, StampStep, VersionStep,
 };
 pub use link::{
     Access, BundleError, BundleVersion, CachedBundle, ConfirmedAt, Freshness, LinkError,
