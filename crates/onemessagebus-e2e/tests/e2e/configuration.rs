@@ -71,12 +71,15 @@ fn entries(dir: &Path) -> Vec<String> {
     fn walk(root: &Path, dir: &Path, into: &mut Vec<String>) {
         for entry in std::fs::read_dir(dir).expect("the directory is read") {
             let path = entry.expect("an entry").path();
-            into.push(
-                path.strip_prefix(root)
-                    .expect("under the root")
-                    .display()
-                    .to_string(),
-            );
+            // Joined with `/` whatever the platform's separator, so the names
+            // the journeys hold read the same on Windows.
+            let name: Vec<String> = path
+                .strip_prefix(root)
+                .expect("under the root")
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy().into_owned())
+                .collect();
+            into.push(name.join("/"));
             if path.is_dir() {
                 walk(root, &path, into);
             }
