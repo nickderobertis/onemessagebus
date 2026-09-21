@@ -126,7 +126,7 @@ def read_bundle() -> dict[str, Any]:
 
 
 def pascal(word: str) -> str:
-    """`Array_of_QueueStatus` → `ArrayOfQueueStatus`, `planner-surface` → `PlannerSurface`."""
+    """`Array_of_QueueStatus` → `ArrayOfQueueStatus`, `event-envelope` → `EventEnvelope`."""
     return "".join(part[:1].upper() + part[1:] for part in re.split(r"[^A-Za-z0-9]+", word) if part)
 
 
@@ -347,7 +347,7 @@ def domain_typed(source: str, *, message: bool) -> str:
 def models_module(entries: list[Rendered]) -> str:
     """`onemessagebus.models`: every message's model under its family's name.
 
-    `agent.planner-surface@1` is `PlannerSurfaceV1`, and `PlannerSurface` is the
+    `agent.event-envelope@1` is `EventEnvelopeV1`, and `EventEnvelope` is the
     latest version of that family the registry holds. Two families that would
     share a name fail here rather than shadow one another. Every name is an
     explicit import or assignment listed in `__all__`.
@@ -381,9 +381,9 @@ def models_module(entries: list[Rendered]) -> str:
     names = "".join(f'    "{name}",\n' for name in exported)
     return (
         f'{HEADER}\n"""The generated model of every message the registry holds, by its family\'s '
-        "name.\n\n`PlannerSurface` is `agent.planner-surface@1`'s model at the latest version "
-        "the registry\nholds, and `PlannerSurfaceV1` names that version; `messages.MESSAGES` "
-        'maps each id\nto its model.\n"""\n\n'
+        "name.\n\n`EventEnvelope` is the `agent.event-envelope` family's model at the latest "
+        "version the\nregistry holds, and `EventEnvelopeV1` names version 1; `messages.MESSAGES` "
+        'maps each\nid to its model.\n"""\n\n'
         + "\n".join(imports)
         + "\n\n"
         + "\n".join(latest)

@@ -183,13 +183,10 @@ fn exercised() -> Vec<Exercise> {
             "onemessagebus::Bus::serve",
             Box::new(|| {
                 let bus = Config::parse(
-                    "version: 1\ntransport: {kind: memory}\nprofile: planner-channel\n",
+                    "version: 1\ntransport: {kind: memory}\nqueues:\n  questions: {policy: {hold_pending: true}, answers: answers}\n  answers: {}\n",
                 )
                 .expect("loads")
-                .resolve(
-                    &Layouts::new().with(Arc::new(onemessagebus_agent::channel::PlannerChannel)),
-                    &TransportKinds::builtin(),
-                )
+                .resolve(&Layouts::new(), &TransportKinds::builtin())
                 .expect("resolves");
                 let codec_config = onemessagebus::Config::parse(
                     "version: 1\ntransport: {kind: memory}\ncodecs:\n  example:\n    select: op\n    frames:\n      hello:\n        schema: example.hello@1\n        bindings:\n          - do: answer\n            response: {ok: true}\n",
@@ -204,7 +201,7 @@ fn exercised() -> Vec<Exercise> {
                 let mut output = Vec::new();
                 let refused = bus
                     .serve(
-                        &queue("surfaces"),
+                        &queue("questions"),
                         &mut codec,
                         &onemessagebus::ServeOptions::default(),
                         Box::new(std::io::Cursor::new("[]\n")),

@@ -37,10 +37,6 @@ const AMBIENT: &[&str] = &[
     "no_proxy",
     "SSL_CERT_FILE",
     "SSL_CERT_DIR",
-    // The host running the journeys may be inside a run; `serve` must not read it.
-    "ONEPIPELINE_RUN_ID",
-    "ONEPIPELINE_CHANNEL_ASKER",
-    "ONEPIPELINE_SERVE_SESSION_SECONDS",
 ];
 
 /// The id every bundle here publishes, and a document for it at `version`:
@@ -98,7 +94,7 @@ impl Scratch {
             self.path("onemessagebus.yaml"),
             format!(
                 "version: 1\ntransport: {{kind: local, dir: {}}}\nqueues:\n  frames: {{schema: {FRAME}}}\nschemas:\n{}",
-                serde_json::to_string(&self.path("channel")).expect("a path"),
+                serde_json::to_string(&self.path("bus")).expect("a path"),
                 links.concat()
             ),
         )

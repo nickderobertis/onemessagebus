@@ -1,28 +1,24 @@
-//! Contract R over the registry the profile constructs: the read sets, the
-//! forward-carry rule, and the four golden documents copied from `onepipeline`.
+//! Contract R over the registry the profile constructs: the read set, the
+//! forward-carry rule, and the two golden envelopes copied from `onepipeline`.
 
 use onemessagebus::sdk_schema;
 use onemessagebus::{CheckError, Read, SchemaId, Vocabulary as _, CAPABILITIES};
-use onemessagebus_agent::channel::ReplyEnvelope;
-use onemessagebus_agent::{registry, Agent, EVENT_ENVELOPE_FAMILY, REPLY_ENVELOPE_FAMILY};
+use onemessagebus_agent::{registry, Agent, EVENT_ENVELOPE_FAMILY};
 use serde_json::{json, Value};
 
 const ENVELOPE_V1: &str = include_str!("golden/envelope-v1.json");
 const ENVELOPE_V2: &str = include_str!("golden/envelope-v2.json");
-const REPLY_V2: &str = include_str!("golden/reply-envelope-v2.json");
-const REPLY_V3: &str = include_str!("golden/reply-envelope-v3.json");
 
 fn id(text: &str) -> SchemaId {
     text.parse().expect("an id")
 }
 
 #[test]
-fn the_profile_reads_two_versions_of_each_family_and_writes_the_newest() {
+fn the_profile_reads_two_versions_of_the_event_envelope_and_writes_the_newest() {
     let registry = registry();
     assert_eq!(registry.read_set(EVENT_ENVELOPE_FAMILY), vec![2, 1]);
-    assert_eq!(registry.read_set(REPLY_ENVELOPE_FAMILY), vec![3, 2]);
     assert_eq!(registry.writes(EVENT_ENVELOPE_FAMILY), Some(2));
-    assert_eq!(registry.writes(REPLY_ENVELOPE_FAMILY), Some(3));
+    assert_eq!(registry.read_set("agent.reply-envelope"), Vec::<u32>::new());
     assert_eq!(registry.read_set("agent.nothing"), Vec::<u32>::new());
     assert_eq!(registry.writes("agent.nothing"), None);
 }
@@ -35,8 +31,6 @@ fn a_declared_version_in_the_read_set_reads_at_the_version_this_build_writes() {
     let registry = registry();
     assert_eq!(registry.read_at(EVENT_ENVELOPE_FAMILY, 1), Read::At(2));
     assert_eq!(registry.read_at(EVENT_ENVELOPE_FAMILY, 2), Read::At(2));
-    assert_eq!(registry.read_at(REPLY_ENVELOPE_FAMILY, 2), Read::At(3));
-    assert_eq!(registry.read_at(REPLY_ENVELOPE_FAMILY, 3), Read::At(3));
 }
 
 /// A version outside the set is unknown, naming the declared version and the
@@ -47,7 +41,6 @@ fn a_declared_version_outside_the_read_set_is_unknown_naming_the_version_and_the
     for (family, declared, set) in [
         (EVENT_ENVELOPE_FAMILY, 0, "[2, 1]"),
         (EVENT_ENVELOPE_FAMILY, 3, "[2, 1]"),
-        (REPLY_ENVELOPE_FAMILY, 4, "[3, 2]"),
     ] {
         match registry.read_at(family, declared) {
             Read::Unknown(unknown) => {
@@ -86,73 +79,6 @@ fn the_golden_event_envelopes_validate_against_their_versions_and_read_at_two() 
     match registry.check(&id("agent.event-envelope@2"), &v1) {
         Err(CheckError::Violation(violation)) => assert_eq!(violation.pointer, "/v"),
         other => panic!("a v1 envelope validated against @2: {other:?}"),
-    }
-}
-
-#[test]
-fn the_golden_reply_envelopes_validate_against_their_versions_and_read_at_three() {
-    let registry = registry();
-    for (document, version) in [(REPLY_V2, 2), (REPLY_V3, 3)] {
-        let reply: Value = serde_json::from_str(document).expect("the golden is JSON");
-        assert_eq!(reply["version"], json!(version));
-        let schema = id(&format!("{REPLY_ENVELOPE_FAMILY}@{version}"));
-        registry
-            .check(&schema, &reply)
-            .unwrap_or_else(|e| panic!("reply-envelope-v{version}.json does not validate: {e}"));
-        assert_eq!(
-            registry.read_at(REPLY_ENVELOPE_FAMILY, version),
-            Read::At(3)
-        );
-    }
-    // A reply naming a field the shape does not have is refused at that field.
-    let mut stray: Value = serde_json::from_str(REPLY_V3).expect("JSON");
-    stray["context"] = json!("gone");
-    match registry.check(&id("agent.reply-envelope@3"), &stray) {
-        Err(CheckError::Violation(violation)) => {
-            assert!(violation.to_string().contains("context"), "{violation}");
-        }
-        other => panic!("a stray field validated: {other:?}"),
-    }
-    // A command without its op is refused at the command.
-    let mut headless: Value = serde_json::from_str(REPLY_V2).expect("JSON");
-    headless["commands"][0]
-        .as_object_mut()
-        .expect("a command")
-        .remove("op");
-    match registry.check(&id("agent.reply-envelope@2"), &headless) {
-        Err(CheckError::Violation(violation)) => assert_eq!(violation.pointer, "/commands/0"),
-        other => panic!("a headless command validated: {other:?}"),
-    }
-}
-
-/// The hand-authored version schemas may specialize commands, but their open
-/// author field stays exactly the shape generated from the Rust wire type.
-#[test]
-fn reply_version_schemas_share_the_wire_types_author_shape() {
-    let generated = schemars::schema_for!(ReplyEnvelope).to_value();
-    let author = &generated["properties"]["author"];
-    let mut expected = author
-        .get("$ref")
-        .and_then(Value::as_str)
-        .and_then(|reference| generated.pointer(reference.trim_start_matches('#')))
-        .unwrap_or(author)
-        .clone();
-    expected
-        .as_object_mut()
-        .expect("the generated author schema is an object")
-        .remove("description");
-
-    let registry = registry();
-    for version in [2, 3] {
-        let mut actual = registry
-            .schema(&id(&format!("{REPLY_ENVELOPE_FAMILY}@{version}")))
-            .expect("the reply version is registered")["properties"]["author"]
-            .clone();
-        actual
-            .as_object_mut()
-            .expect("the registered author schema is an object")
-            .remove("description");
-        assert_eq!(actual, expected, "reply-envelope@{version} author drifted");
     }
 }
 
@@ -222,17 +148,11 @@ fn every_registered_id_is_listed_in_order() {
         ids,
         [
             "agent.artifact-ref@1",
-            "agent.command-outcome@1",
             "agent.event-envelope@1",
             "agent.event-envelope@2",
             "agent.event-filter@1",
             "agent.labels@1",
             "agent.note@1",
-            "agent.planner-surface@1",
-            "agent.queued-commands@1",
-            "agent.queued-reply@1",
-            "agent.reply-envelope@2",
-            "agent.reply-envelope@3",
             "onemessagebus.transport-hello@1",
             "onemessagebus.transport-reply@1",
             "onemessagebus.transport-request@1",

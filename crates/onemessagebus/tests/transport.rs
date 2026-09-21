@@ -3,7 +3,7 @@
 //!
 //! The local transport is held to the files Contract T lays out — by reading
 //! the directory, not by asking the transport — because those files are what
-//! `onepipeline` reads.
+//! any other process reading the directory reads.
 
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::path::Path;
@@ -179,7 +179,7 @@ fn the_local_transport_lays_its_files_out_as_contract_t_states() {
 
     let projection: DocumentName = "queue.json".parse().expect("a document");
     local
-        .replace_document(&queue("surfaces"), &projection, b"{\n  \"waiting\": []\n}")
+        .replace_document(&queue("questions"), &projection, b"{\n  \"waiting\": []\n}")
         .expect("replaces");
     assert_eq!(
         std::fs::read(channel.join("queue.json")).expect("the document"),
@@ -201,7 +201,8 @@ fn the_local_transport_lays_its_files_out_as_contract_t_states() {
     );
     assert_eq!(files(&channel.join(".lock")), vec!["replies.lock"]);
 
-    // A cursor file 0.28.2 wrote is read as the position after that many records.
+    // A cursor file another writer left is read as the position after that many
+    // records.
     std::fs::write(channel.join("replies-cursor.json"), "2").expect("a recorded cursor");
     assert_eq!(
         local.cursor(&replies, &consumer("default")).expect("reads"),
@@ -221,9 +222,9 @@ fn the_local_transport_lays_its_files_out_as_contract_t_states() {
 fn a_torn_tail_is_reported_on_read_and_healed_by_the_next_append() {
     let dir = tempfile::tempdir().expect("a scratch directory");
     let local = LocalTransport::open(dir.path()).expect("opens");
-    let q = queue("surfaces");
+    let q = queue("questions");
     local.append(&q, br#"{"id":0}"#).expect("appends");
-    let path = dir.path().join("surfaces.jsonl");
+    let path = dir.path().join("questions.jsonl");
     std::fs::OpenOptions::new()
         .append(true)
         .open(&path)
@@ -250,7 +251,7 @@ fn a_torn_tail_is_reported_on_read_and_healed_by_the_next_append() {
     );
     assert_eq!(healed, Position::from_token(19));
     let loss: Value = serde_json::from_str(
-        std::fs::read_to_string(dir.path().join("surfaces.jsonl.torn"))
+        std::fs::read_to_string(dir.path().join("questions.jsonl.torn"))
             .expect("the loss is recorded")
             .trim(),
     )
@@ -286,7 +287,7 @@ fn a_name_that_would_escape_or_clobber_a_queue_is_refused() {
         "with space",
         "-leading",
         "a/b",
-        "surfaces.jsonl",
+        "questions.jsonl",
     ] {
         let refusal = bad.parse::<QueueName>().expect_err(bad);
         assert!(
@@ -295,7 +296,7 @@ fn a_name_that_would_escape_or_clobber_a_queue_is_refused() {
         );
     }
     for bad in [
-        "surfaces.jsonl",
+        "questions.jsonl",
         "replies-cursor.json",
         "x.torn",
         ".hidden",
@@ -315,11 +316,11 @@ fn a_name_that_would_escape_or_clobber_a_queue_is_refused() {
         "queue.json"
     );
     assert_eq!(
-        "command-outcomes"
+        "action-outcomes"
             .parse::<QueueName>()
             .expect("a queue")
             .to_string(),
-        "command-outcomes"
+        "action-outcomes"
     );
     assert!(consumer("default").is_default());
     let refusal = serde_json::from_value::<QueueName>(json!("a/b")).expect_err("refused on read");

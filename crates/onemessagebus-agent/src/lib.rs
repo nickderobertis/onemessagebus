@@ -4,7 +4,7 @@
 //! The core knows the shape of an envelope and nothing about agents. This
 //! crate supplies the words: the three [`Source`]s, the four [`Phase`]s, the
 //! six reserved [`Labels`], and the schema families the stack registers — the
-//! event envelope at its two versions and the reply envelope at its two.
+//! event envelope at its two versions among them.
 //! [`Agent`] is the [`Vocabulary`] those types make up, and [`Envelope`] is
 //! the core's envelope over it, serializing to the same bytes the stack's
 //! producers write today.
@@ -19,7 +19,6 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
-pub mod channel;
 pub mod event;
 pub mod note;
 pub mod registry;
@@ -33,7 +32,7 @@ pub use event::{
 /// The note contract's own refusal, named apart from the core's
 /// [`onemessagebus::Undelivered`] where both are in scope.
 pub use note::Undelivered as NoteUndelivered;
-pub use registry::{registry, EVENT_ENVELOPE_FAMILY, REPLY_ENVELOPE_FAMILY};
+pub use registry::{registry, EVENT_ENVELOPE_FAMILY};
 
 /// The agent stack's vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

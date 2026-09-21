@@ -5,11 +5,11 @@
 // through the `onemessagebus-cli` launcher it depends on, holds it to the version
 // it pins, and answers once over each transport.
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { Client, ResidentTransport, SDK_VERSION } from "@onemessagebus/sdk";
+import { Client, ResidentTransport, SDK_VERSION, schemas } from "@onemessagebus/sdk";
 
 const expected = process.argv[2];
 if (SDK_VERSION !== expected) {
@@ -18,25 +18,31 @@ if (SDK_VERSION !== expected) {
 
 const scratch = mkdtempSync(join(tmpdir(), "sdk-install-"));
 try {
-  const config = { transportDir: join(scratch, "channel") };
+  const declared = join(scratch, "onemessagebus.yaml");
+  writeFileSync(
+    declared,
+    [
+      "version: 1",
+      `transport: {kind: local, dir: ${JSON.stringify(join(scratch, "bus"))}}`,
+      "queues:",
+      "  notes: {schema: agent.note@1}",
+      "",
+    ].join("\n"),
+  );
+  const config = { config: declared };
   const oneShot = new Client({ config });
   const kinds = await oneShot.transports();
   if (!kinds.some((kind) => kind.kind === "local")) {
     throw new Error("the installed binary lists no local transport");
   }
-  await oneShot.send("surfaces", {
-    kind: "finding",
-    message: "installed",
-    source: "proposal",
-    blocking: false,
-  });
+  await oneShot.send("notes", { addressee: "worker", text: "installed" }, { type: schemas.Note });
   await oneShot[Symbol.asyncDispose]();
 
   const resident = new Client({
     config,
     transport: new ResidentTransport({ socket: join(scratch, "bus.sock") }),
   });
-  const statuses = await resident.status("surfaces");
+  const statuses = await resident.status("notes");
   await resident[Symbol.asyncDispose]();
   if (statuses[0]?.records !== 1) {
     throw new Error(`the resident core reads ${JSON.stringify(statuses[0])} for what was sent`);

@@ -5,8 +5,7 @@
 //! read up to, the small documents kept beside a queue, the exclusive section a
 //! claim needs, and change detection — goes through [`Transport`], and nothing
 //! above it names a file. [`LocalTransport`] keeps a queue as files in one
-//! directory, byte-compatible with the channel directory `onepipeline` writes;
-//! [`MemoryTransport`] keeps it in memory for tests; a transport of your own is a
+//! directory; [`MemoryTransport`] keeps it in memory for tests; a transport of your own is a
 //! crate implementing the trait, registered under its kind
 //! ([`TransportKinds`](crate::TransportKinds)), or an executable serving it over
 //! the plugin protocol ([`serve`]).
@@ -326,7 +325,7 @@ macro_rules! name_type {
 
 name_type!(
     /// A queue's name: a non-empty run of ASCII letters, digits, `-` and `_`,
-    /// starting with a letter or digit — `surfaces`, `command-outcomes`.
+    /// starting with a letter or digit — `questions`, `action-outcomes`.
     QueueName,
     "queue",
     |text| check_name("queue", text, false)
@@ -423,7 +422,7 @@ impl fmt::Display for Position {
 ///
 /// Opaque, like [`Position`]: a transport builds one from whatever it can
 /// observe cheaply ([`LocalTransport`] from each file's length and modification
-/// time, as `onepipeline` does), and a consumer only compares them.
+/// time), and a consumer only compares them.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct Fingerprint(Vec<u64>);
@@ -495,8 +494,7 @@ fn unpoisoned<'a, T>(
     guard.unwrap_or_else(PoisonError::into_inner)
 }
 
-/// A transport over one directory, laid out as `onepipeline` lays out a run's
-/// channel directory.
+/// A transport over one directory: each queue's files side by side.
 ///
 /// | what | file |
 /// | --- | --- |
@@ -509,9 +507,8 @@ fn unpoisoned<'a, T>(
 ///
 /// A [`Position`] is the byte offset at a record boundary. A cursor file holds
 /// the **number of records** before the position rather than the offset,
-/// pretty-printed as one JSON number, because that is what `onepipeline` writes
-/// in `replies-cursor.json` and `commands-cursor.json`; the transport converts
-/// between the two. A [`Fingerprint`] is each file's length and modification
+/// pretty-printed as one JSON number, so a reader that counts records reads it
+/// without the log; the transport converts between the two. A [`Fingerprint`] is each file's length and modification
 /// time.
 ///
 /// An append takes the queue's lock, heals a torn tail a dead writer left —
@@ -805,9 +802,8 @@ impl Transport for LocalTransport {
             Err(failure) if failure.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(failure) => return Err(TransportError::io("read", &path, failure)),
         };
-        // A cursor this build cannot read is a consumer that has read nothing —
-        // the reading `onepipeline` gives it — rather than a queue nobody can
-        // claim from again.
+        // A cursor this build cannot read is a consumer that has read nothing,
+        // rather than a queue nobody can claim from again.
         let Ok(count) = serde_json::from_str::<u64>(text.trim()) else {
             return Ok(None);
         };

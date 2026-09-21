@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, StringConstraints
 
-from .domain import Operation
+from .domain import Author, Operation
 
 
 class Contract(RootModel[Any]):
@@ -181,6 +181,13 @@ class Labels(BaseModel):
     """
 
 
+class MemberName(RootModel[str]):
+    root: str = Field(..., pattern=".*\\S.*")
+    """
+    A top-level member of a record, by name.
+    """
+
+
 class Position(RootModel[int]):
     root: int = Field(..., ge=0)
     """
@@ -325,6 +332,39 @@ class ReplyOptions(BaseModel):
     transport_dir: str | None = Field(None, alias="transportDir")
     """
     The transport directory.
+    """
+
+
+class Route(BaseModel):
+    """
+    One route of a [`RouteStep`]: the queue a projection of the offer goes to.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    on: list[MemberName] = Field(..., min_length=1)
+    """
+    The members whose presence takes this route: at least one.
+    """
+    queue: str
+    """
+    The queue the projection is pushed onto.
+    """
+    stamp: list[MemberName] | None = None
+    """
+    Members of the routed record stamped with the current time in epoch
+    milliseconds, beside `under`.
+    """
+    take: list[MemberName] = Field(..., min_length=1)
+    """
+    The members the projection carries, in this order, each one the record
+    has: at least one.
+    """
+    under: MemberName | None = None
+    """
+    The member the projection is carried under; at the top level when
+    absent.
     """
 
 
@@ -718,6 +758,10 @@ class ValidatedUnjudged(BaseModel):
     Why no judgement could be made.
     """
     verdict: Literal["unjudged"]
+
+
+class Read(RootModel[int]):
+    root: int = Field(..., ge=0)
 
 
 class When1(BaseModel):
@@ -1208,6 +1252,29 @@ class KindEntry(BaseModel):
     """
 
 
+class LayoutAuthor(BaseModel):
+    """
+    The wire shape of a [`LayoutAuthor`], before its grant form is checked.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    capabilities: list[Operation] | None = None
+    """
+    The operations it may issue.
+    """
+    every_op: bool | None = None
+    """
+    Granted every operation of the vocabulary — the one a layout trusts
+    with everything. Exclusive of `capabilities`.
+    """
+    refusals: dict[Operation, RefusalReason] | None = None
+    """
+    Why each operation it is not granted is refused, by op word.
+    """
+
+
 class LogRecord(BaseModel):
     """
     One line of a queue's log, as `subscribe` streams it.
@@ -1365,6 +1432,29 @@ class RegistryDocument(BaseModel):
     """
 
 
+class RenameStep(BaseModel):
+    """
+    `rename`: move the member `from` to `to`, where it keeps its value. When the
+    record already has `to`, `from` is dropped and `to` kept.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    from_: str = Field(..., alias="from", pattern=".*\\S.*")
+    """
+    The top-level member moved.
+    """
+    to: str = Field(..., pattern=".*\\S.*")
+    """
+    The name it moves to.
+    """
+    when: Predicate | None = None
+    """
+    When to rename; always when absent.
+    """
+
+
 class Replied(BaseModel):
     """
     What `reply` did: the pending record it answered, and the records it
@@ -1387,6 +1477,32 @@ class Replied(BaseModel):
     sent: list[Sent]
     """
     Every record appended, in order.
+    """
+
+
+class RouteStep(BaseModel):
+    """
+    `route`: the records the offer becomes — the last step of its queue. Each route whose `on` members the
+    record carries — any one of them there, not `null`, and not an empty list —
+    is taken, in the order declared; where none is, the `fallback` route is.
+    A record no route takes, and with no fallback, stays on the queue it was
+    offered to as it is.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    fallback: str | None = None
+    """
+    The queue of the route taken when no route's members are there.
+    """
+    routes: list[Route] = Field(..., min_length=1)
+    """
+    The routes, in the order their records are pushed: at least one.
+    """
+    when: Predicate | None = None
+    """
+    When to route; always when absent.
     """
 
 
@@ -1501,6 +1617,25 @@ class SchemaGenOptions(BaseModel):
     """
 
 
+class StampStep(BaseModel):
+    """
+    `stamp`: set `member` to the current time, in milliseconds since the Unix
+    epoch, when the record has no such member.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    member: str = Field(..., pattern=".*\\S.*")
+    """
+    The top-level member stamped.
+    """
+    when: Predicate | None = None
+    """
+    When to stamp; always when absent.
+    """
+
+
 class Supersede(BaseModel):
     """
     A newer record replacing a waiting older one.
@@ -1549,6 +1684,43 @@ class Validated(RootModel[ValidatedPass | ValidatedRefuse | ValidatedUnjudged]):
     root: ValidatedPass | ValidatedRefuse | ValidatedUnjudged = Field(..., title="Validated")
     """
     What `validate` judged: the queue, and the verdict its validators reached.
+    """
+
+
+class VersionStep(BaseModel):
+    """
+    `version`: a version at `at` that `reads` names is read — and written — as
+    `value`; and where `required_when` holds, a version other than `value` is
+    refused.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    at: str = Field(..., pattern="^[^.]+(\\.[^.]+)*$")
+    """
+    The path of the version.
+    """
+    reads: list[Read] | None = None
+    """
+    Older versions read as `value`.
+    """
+    refusal: str = Field(..., pattern=".*\\S.*")
+    """
+    The refusal: `{value}` is the version required, `{found}` the one
+    there (`none` when absent).
+    """
+    required_when: Predicate | None = None
+    """
+    Where `value` is required; nowhere when absent.
+    """
+    value: int = Field(..., ge=0)
+    """
+    The version required, and the one a version in `reads` is read as.
+    """
+    when: Predicate | None = None
+    """
+    When the step runs at all; always when absent.
     """
 
 
@@ -1653,6 +1825,38 @@ class BindingRefuse(BaseModel):
     """
 
 
+class CheckStep(BaseModel):
+    """
+    `check`: refuse the record — or the value at `at` — when it does not conform
+    to the registered schema `schema`.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    at: FieldPath | None = None
+    """
+    The path of the value checked; the whole record when absent.
+    """
+    refusal: str = Field(..., pattern=".*\\S.*")
+    """
+    The refusal: `{why}` is what the schema refused.
+    """
+    schema_: str = Field(
+        ...,
+        alias="schema",
+        pattern="^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@[1-9][0-9]*$",
+        title="SchemaId",
+    )
+    """
+    The schema, registered by a bundle a configuration links.
+    """
+    when: Predicate | None = None
+    """
+    When to check; always when absent.
+    """
+
+
 class Filter(BaseModel):
     """
     Which envelopes pass.
@@ -1671,6 +1875,100 @@ class Filter(BaseModel):
     """
     Matchers an envelope satisfies one of to pass. Absent or empty admits
     every envelope, so a filter that only rejects need name nothing here.
+    """
+
+
+class GrantStep(BaseModel):
+    """
+    The wire shape of a [`GrantStep`], before its op form is checked.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    author: str = Field(..., pattern="^[^.]+(\\.[^.]+)*$")
+    """
+    The path of the author.
+    """
+    default_author: Author | None = None
+    """
+    The author where the path holds none.
+    """
+    each: FieldPath | None = None
+    """
+    The path of a list whose every item names an op word; absent or `null`,
+    no op words. Named with `op`.
+    """
+    malformed: RefusalReason | None = None
+    """
+    The refusal of a record whose author, list or op word is not text where
+    the step looks: `{why}`.
+    """
+    op: FieldPath | None = None
+    """
+    The path of the op word within each item of `each`.
+    """
+    refusal: RefusalReason | None = None
+    """
+    The refusal of an op the author is not granted: `{op}`, `{author}`, and
+    `{reason}` — the reason the allowlist records.
+    """
+    undeclared: RefusalReason | None = None
+    """
+    The refusal of an author the allowlist does not declare: `{author}`,
+    `{authors}`.
+    """
+    unknown: RefusalReason | None = None
+    """
+    The refusal of a word that is no op of the vocabulary: `{op}`, `{ops}`.
+    """
+    when: Predicate | None = None
+    """
+    When to check; always when absent.
+    """
+    word: str | None = None
+    """
+    One op word checked outright. Exclusive of `each` and `op`.
+    """
+
+
+class Policy(BaseModel):
+    """
+    What reading a queue means.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    blocking_first: bool | None = False
+    """
+    A claim hands out a blocking record before any non-blocking one.
+    """
+    delivery: Literal["at-least-once"] | None = "at-least-once"
+    """
+    Nothing accepted is lost; a claim is a record.
+    """
+    hold_pending: bool | None = False
+    """
+    A claimed blocking record is pending until answered; one pending at a
+    time.
+    """
+    ordering: Literal["per-queue"] | None = "per-queue"
+    """
+    Records are ordered within the queue.
+    """
+    projection: str | None = None
+    """
+    Keep a folded projection document under this name, stamped with the log
+    bytes it accounts for and sealed.
+    """
+    retention: Literal["keep"] | None = "keep"
+    """
+    Append-only; nothing deleted.
+    """
+    supersede_on: Supersede | None = None
+    """
+    A newer record with the same key replaces a waiting older one.
     """
 
 
@@ -1712,6 +2010,72 @@ class PolicyConfig(BaseModel):
     """
 
 
+class PrepareStep1(BaseModel):
+    """
+    Set a member to the current time in epoch milliseconds, when absent.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    stamp: StampStep
+
+
+class PrepareStep2(BaseModel):
+    """
+    Move a member to another name.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    rename: RenameStep
+
+
+class PrepareStep3(BaseModel):
+    """
+    Refuse what a registered schema refuses.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    check: CheckStep
+
+
+class PrepareStep4(BaseModel):
+    """
+    Read a version in a read-set as one version, and require it.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    version: VersionStep
+
+
+class PrepareStep5(BaseModel):
+    """
+    Refuse an undeclared author, and each op word it is not granted.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    grant: GrantStep
+
+
+class PrepareStep6(BaseModel):
+    """
+    Split the record onto several queues by the members it carries.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    route: RouteStep
+
+
 class QueueConfig(BaseModel):
     """
     One queue of a configuration: an addition, or an override of a layout's
@@ -1745,6 +2109,56 @@ class QueueConfig(BaseModel):
     schema_: SchemaId | None = Field(None, alias="schema")
     """
     The schema records are validated against.
+    """
+
+
+class QueueSpec(BaseModel):
+    """
+    One queue as a layout or a configuration declares it: its name, its policy,
+    and the keys that sit beside the policy.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    answers: str | None = None
+    """
+    The queue a reply to one of its pending records is appended to.
+    """
+    claims: Predicate | None = None
+    """
+    Which records a claim hands out: a claim passes over a record this does
+    not admit.
+    """
+    consumers: list[str] | None = ["default"]
+    """
+    The consumers whose cursors `status` reports.
+    """
+    name: str
+    """
+    The queue.
+    """
+    numbered: bool | None = False
+    """
+    Whether a push stamps each record's `id` with the number of records before
+    it. An event queue always allocates `id`, so this is a plain queue's.
+    """
+    policy: Policy | None = Field(
+        {
+            "blocking_first": False,
+            "delivery": "at-least-once",
+            "hold_pending": False,
+            "ordering": "per-queue",
+            "retention": "keep",
+        },
+        validate_default=True,
+    )
+    """
+    What reading it means.
+    """
+    schema_: SchemaId | None = Field(None, alias="schema")
+    """
+    The schema every record pushed onto it is validated against.
     """
 
 
@@ -1820,6 +2234,86 @@ class FrameConfig(BaseModel):
     """
 
 
+class LayoutDocument(BaseModel):
+    """
+    The wire shape of a [`LayoutDocument`], before what its keys say of one
+    another is checked.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    authors: dict[str, LayoutAuthor] | None = None
+    """
+    Its authors, and what each may issue. A configuration may narrow what a
+    layout grants one of these and never widen it.
+    """
+    description: str | None = None
+    """
+    What the layout is, for a person.
+    """
+    name: str = Field(..., pattern="^[a-z][a-z0-9-]{0,63}$")
+    """
+    The name a configuration's `profile` gives.
+    """
+    operations: list[str] | None = None
+    """
+    Its operation vocabulary: every op word an author may be granted.
+    """
+    prepare: (
+        dict[
+            str,
+            list[
+                PrepareStep1
+                | PrepareStep2
+                | PrepareStep3
+                | PrepareStep4
+                | PrepareStep5
+                | PrepareStep6
+            ],
+        ]
+        | None
+    ) = None
+    """
+    How an offer to each queue is prepared, by the queue it is offered to:
+    steps run in order. A queue named nowhere here keeps what is offered.
+    """
+    queues: list[QueueSpec] = Field(..., min_length=1)
+    """
+    The queues it declares, each with its policy and the keys beside it,
+    as a configuration's queue keys name them: at least one.
+    """
+
+
+class SchemaBundle(BaseModel):
+    """
+    The document a schema link serves: a declared version, the registry documents it publishes, and the layouts it declares as data.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    description: str | None = None
+    """
+    What the bundle is, for a person.
+    """
+    layouts: list[LayoutDocument] | None = None
+    """
+    The layouts it declares as data, each name once
+    (`onemessagebus::LayoutDocument`).
+    """
+    schemas: list[RegistryDocument]
+    """
+    The registry documents it publishes, each id once: at least one, unless
+    it declares a layout.
+    """
+    version: str = Field(..., pattern="^[0-9]+(\\.[0-9]+){0,2}$")
+    """
+    The version this document declares: what a link's pin is asserted
+    against, and what a cache entry is keyed by.
+    """
+
+
 class CodecConfig(BaseModel):
     """
     What a host configures for one codec, under its name in the configuration's
@@ -1879,7 +2373,8 @@ class Config(BaseModel):
         | None
     ) = None
     """
-    Authors declared by the configuration. The built-in planner may only be narrowed.
+    Authors declared by the configuration. An author the layout declares may
+    only be narrowed.
     """
     codecs: (
         dict[Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,63}$")], CodecConfig]
@@ -1892,8 +2387,10 @@ class Config(BaseModel):
     """
     profile: str | None = None
     """
-    A layout a linked profile declares, by name: its queues, policies,
-    authors, operations and schemas.
+    A layout by name — one the program links as code, or one a bundle the
+    `schemas` key links declares as data (`onemessagebus::LayoutDocument`),
+    the program's own winning where both declare the name: its queues,
+    policies, authors, operations and schemas.
     """
     queues: dict[str, QueueConfig] | None = None
     """

@@ -15,8 +15,8 @@ Three artifacts:
 - **`onemessagebus-agent`** — the agent profile: the sources `agentgraph`,
   `vcs`, `pipeline`; the `phase` dimension; the reserved labels `run_id`,
   `round`, `node`, `step`, `member`, `persona`; and the schema families the
-  stack registers (`agent.event-envelope` at `[2, 1]`, `agent.reply-envelope`
-  at `[3, 2]`). Its types serialize to the bytes `oneagentgraph`, `onevcs` and
+  stack registers (`agent.event-envelope` at `[2, 1]`, and the note, the labels,
+  the filter and the artifact reference at 1). Its types serialize to the bytes `oneagentgraph`, `onevcs` and
   `onepipeline` write today, which the recorded streams under
   `crates/onemessagebus-agent/tests/recorded/` prove byte for byte.
 - **`onemessagebus`**, the binary — `schema list|check|gen|register` over the
@@ -26,13 +26,15 @@ Three artifacts:
   default) or `--profile open`, `deliver` and `inbox carried` over the inbox —
   a typed channel into a running process whose sender learns what the receiver
   did with each message — and `send`, `next`, `reply`, `subscribe` and `status`
-  over durable queues kept on a transport a configuration names, with
+  over durable queues kept on a transport a configuration names — under a
+  layout a linked schema bundle declares as data, or one a program links —
+  with
   `transports` listing the kinds a transport can be, `ask` raising a question and
   waiting for the one reply that echoes its correlation, `validate` judging a
   record by a queue's validators before anything is sent, and `serve` answering a
   a configured member protocol's frames. The local transport keeps
-  the planner channel's files byte-compatible with `onepipeline`, and a
-  distributed one is a plugin rather than a consumer change.
+  each queue as plain files in one directory, and a distributed one is a plugin
+  rather than a consumer change.
 
 ## Install the command line
 

@@ -12,7 +12,7 @@ mod cli;
 mod profile;
 mod registry_dir;
 
-pub use cli::{run, Cli};
+pub use cli::{run, run_with, Cli};
 
 /// The schemas this binary registers before any `--registry` directory adds to
 /// them: the agent profile's, and the resident protocol's

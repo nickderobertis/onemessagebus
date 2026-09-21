@@ -65,8 +65,11 @@ fn a_bundle_reads_the_documented_shape_and_round_trips() {
             .contains(r#""pattern":"^[0-9]+(\\.[0-9]+){0,2}$""#),
         "the version's grammar is in the schema: {schema}"
     );
-    assert_eq!(schema["properties"]["schemas"]["minItems"], json!(1));
     assert_eq!(schema["required"], json!(["version", "schemas"]));
+    assert!(
+        schema["properties"]["layouts"].is_object(),
+        "the optional layouts member is in the schema: {schema}"
+    );
 }
 
 #[test]

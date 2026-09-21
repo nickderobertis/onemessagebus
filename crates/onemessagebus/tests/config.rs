@@ -259,7 +259,7 @@ fn resolve_refuses_a_widened_grant_an_unknown_profile_and_a_dangling_key_by_name
     let profile = refused(&format!("version: 1\n{local}\nprofile: bank\n"));
     assert_eq!(
         profile,
-        "profile: `bank` is not a layout this build links; the layouts are: ledger"
+        "profile: `bank` is not a layout this build links or a linked bundle declares; the layouts are: ledger"
     );
     let answers = refused(&format!(
         "version: 1\n{local}\nprofile: ledger\nqueues:\n  entries: {{answers: replies}}\n"
@@ -307,9 +307,9 @@ fn the_configuration_schema_accepts_the_documented_file_and_refuses_an_unknown_k
     let documented = json!({
         "version": 1,
         "transport": {"kind": "local", "dir": "runs/r/channel"},
-        "profile": "planner-channel",
+        "profile": "desk",
         "queues": {"findings": {"policy": {"hold_pending": false}}},
-        "authors": {"sentinel": {"capabilities": ["retry", "finding"], "refusals": {"complete": "the planner decides"}}}
+        "authors": {"sentinel": {"capabilities": ["retry", "finding"], "refusals": {"complete": "the lead decides"}}}
     });
     assert!(
         validator.is_valid(&documented),

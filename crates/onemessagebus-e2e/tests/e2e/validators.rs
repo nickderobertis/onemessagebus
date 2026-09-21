@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use onemessagebus::VALIDATE_QUEUE_ENV;
 use serde_json::{json, Value};
 
-use crate::support::{assert_usage_refused, run_in, Run};
+use crate::support::{assert_usage_refused, desk_bundle, run_in, Run};
 
 /// The test path a validator command names this subprocess fixture by.
 const DOUBLE: &str = "validators::scripted_validator";
@@ -84,8 +84,8 @@ fn scripted_validator() {
 }
 // llmlint: ignore-end[e2e_not_mocked] The external validator subprocess fixture ends here.
 
-/// A scratch directory holding a channel, the subprocess fixture's script and a
-/// configuration.
+/// A scratch directory holding a queue directory, the subprocess fixture's
+/// script and a configuration.
 struct Scratch {
     dir: tempfile::TempDir,
 }
@@ -131,13 +131,22 @@ impl Scratch {
         serde_json::to_string(path).expect("a path")
     }
 
+    /// The configuration lines naming the bus's own `desk` layout and linking
+    /// the bundle that declares it.
+    fn desk(&self) -> String {
+        format!(
+            "profile: desk\nschemas:\n  - {}\n",
+            serde_json::to_string(&format!("{}@1", desk_bundle().display())).expect("a UTF-8 path")
+        )
+    }
+
     /// Write `onemessagebus.yaml` with `rest` after the transport.
     fn configure(&self, rest: &str) {
         std::fs::write(
             self.path("onemessagebus.yaml"),
             format!(
                 "version: 1\ntransport: {{kind: local, dir: {}}}\n{rest}",
-                self.quoted(&self.path("channel"))
+                self.quoted(&self.path("bus"))
             ),
         )
         .expect("the configuration is written");
@@ -160,7 +169,7 @@ impl Scratch {
     }
 
     fn lines(&self, queue: &str) -> Vec<Value> {
-        std::fs::read_to_string(self.path("channel").join(format!("{queue}.jsonl")))
+        std::fs::read_to_string(self.path("bus").join(format!("{queue}.jsonl")))
             .unwrap_or_default()
             .lines()
             .map(|line| serde_json::from_str(line).expect("a JSON line"))
@@ -188,7 +197,8 @@ fn verdict(run: &Run) -> Value {
 fn validate_refuses_a_record_that_is_not_json_or_not_an_object_with_exit_two_judging_nothing() {
     let scratch = Scratch::new();
     scratch.configure(&format!(
-        "profile: planner-channel\nvalidators:\n  - {{on: replies, kind: command, command: {command}}}\n  - {{on: surfaces, kind: command, command: {command}}}\n",
+        "{desk}validators:\n  - {{on: answers, kind: command, command: {command}}}\n  - {{on: questions, kind: command, command: {command}}}\n",
+        desk = scratch.desk(),
         command = scratch.command()
     ));
     // Were the command reached, it would refuse, and the verb would exit 1.
@@ -198,17 +208,17 @@ fn validate_refuses_a_record_that_is_not_json_or_not_an_object_with_exit_two_jud
     );
     for (queue, stdin, problem) in [
         (
-            "replies",
+            "answers",
             "[3]",
-            "onemessagebus: replies: a record on this queue is a JSON object, and this is an array",
+            "onemessagebus: answers: a record on this queue is a JSON object, and this is an array",
         ),
         (
-            "surfaces",
+            "questions",
             r#""the base moved""#,
-            "onemessagebus: surfaces: a record on this queue is a JSON object, and this is a string",
+            "onemessagebus: questions: a record on this queue is a JSON object, and this is a string",
         ),
         (
-            "replies",
+            "answers",
             r#"{"version": 3,"#,
             "onemessagebus: the payload is not JSON",
         ),
@@ -222,16 +232,15 @@ fn validate_refuses_a_record_that_is_not_json_or_not_an_object_with_exit_two_jud
         scratch.ran("validate").is_empty(),
         "a validator judged refused input"
     );
-    assert!(
-        scratch.lines("replies.jsonl").is_empty() && scratch.lines("surfaces.jsonl").is_empty()
-    );
+    assert!(scratch.lines("answers").is_empty() && scratch.lines("questions").is_empty());
 }
 
 #[test]
 fn validate_refuses_a_usage_error_on_one_line_with_exit_two_judging_nothing() {
     let scratch = Scratch::new();
     scratch.configure(&format!(
-        "profile: planner-channel\nvalidators:\n  - {{on: replies, kind: command, command: {}}}\n",
+        "{}validators:\n  - {{on: answers, kind: command, command: {}}}\n",
+        scratch.desk(),
         scratch.command()
     ));
     // Were the command reached, it would refuse, and the verb would exit 1.
@@ -242,7 +251,7 @@ fn validate_refuses_a_usage_error_on_one_line_with_exit_two_judging_nothing() {
     let record = json!({"version": 3, "completion": true, "reason": "main"}).to_string();
     for (args, what) in [
         (
-            vec!["validate", "replies", "--verdict", "pass"],
+            vec!["validate", "answers", "--verdict", "pass"],
             "unexpected argument '--verdict' found",
         ),
         (
@@ -332,7 +341,7 @@ fn validate_prints_each_verdict_the_scripted_command_reaches_and_appends_nothing
         "a refused queue ran the validator"
     );
     assert!(
-        !scratch.path("channel").join("findings.jsonl").exists(),
+        !scratch.path("bus").join("findings.jsonl").exists(),
         "validate appended"
     );
 }
@@ -364,13 +373,13 @@ fn a_validator_ended_by_a_signal_leaves_the_record_unjudged_and_appended_nowhere
     let sent = scratch.bus(&["send", "findings"], Some(record));
     assert_eq!(sent.code, 1, "an unjudged record was sent: {}", sent.stdout);
     assert!(
-        !scratch.path("channel").join("findings.jsonl").exists(),
+        !scratch.path("bus").join("findings.jsonl").exists(),
         "an unjudged record was appended"
     );
 }
 
 #[test]
-fn a_reply_carrying_commands_that_its_validator_refuses_is_appended_nowhere() {
+fn a_reply_carrying_actions_that_its_validator_refuses_is_appended_nowhere() {
     let scratch = Scratch::new();
     let reason = "an `add` states task prose the bar refuses\n";
     scratch.script(
@@ -378,37 +387,38 @@ fn a_reply_carrying_commands_that_its_validator_refuses_is_appended_nowhere() {
         json!({"exit": 0, "stdout": "bar-1"}),
     );
     scratch.configure(&format!(
-        "profile: planner-channel\nvalidators:\n  - {{on: replies, when: {{carries: commands}}, kind: command, command: {}}}\n",
+        "{}validators:\n  - {{on: answers, when: {{carries: actions}}, kind: command, command: {}}}\n",
+        scratch.desk(),
         scratch.command()
     ));
-    let edit = r#"{"version":3,"completion":false,"message":"go on","commands":[{"op":"add","id":"n","task":"make it better"}]}"#;
-    let refused = scratch.bus(&["send", "replies"], Some(edit));
+    let edit = r#"{"version":3,"completion":false,"message":"go on","actions":[{"op":"add","id":"n","task":"make it better"}]}"#;
+    let refused = scratch.bus(&["send", "answers"], Some(edit));
     assert_eq!(refused.code, 1, "{}", refused.stdout);
     assert_eq!(refused.stdout, "", "a refused send printed a landing");
     assert!(refused.stderr.contains(reason), "{}", refused.stderr);
     assert!(
-        scratch.lines("replies").is_empty(),
+        scratch.lines("answers").is_empty(),
         "the verdict half was appended"
     );
     assert!(
-        scratch.lines("commands").is_empty(),
-        "the commands half was appended"
+        scratch.lines("actions").is_empty(),
+        "the actions half was appended"
     );
     let ran = scratch.ran("validate");
     assert_eq!(ran.len(), 1);
-    assert_eq!(ran[0]["queue"], json!("replies"));
+    assert_eq!(ran[0]["queue"], json!("answers"));
 
     let verdict_only = scratch.bus(
-        &["send", "replies"],
+        &["send", "answers"],
         Some(r#"{"version":3,"completion":false,"message":"go on"}"#),
     );
     assert_eq!(verdict_only.code, 0, "{}", verdict_only.stderr);
     assert_eq!(
         scratch.ran("validate").len(),
         1,
-        "a reply carrying no commands was judged"
+        "a reply carrying no actions was judged"
     );
-    assert_eq!(scratch.lines("replies").len(), 1);
+    assert_eq!(scratch.lines("answers").len(), 1);
 }
 
 #[test]

@@ -64,10 +64,10 @@ if set(CAPABILITIES) != checkout:
         f"{sorted(set(CAPABILITIES) ^ checkout)}",
         REGENERATE,
     )
-if models.PlannerSurface.__name__ != "Surface":
+if models.EventEnvelope.__name__ != "Envelope":
     refuse(
-        f"the wheel's models.PlannerSurface is {models.PlannerSurface.__name__}, "
-        "not the generated Surface model",
+        f"the wheel's models.EventEnvelope is {models.EventEnvelope.__name__}, "
+        "not the generated Envelope model",
         REGENERATE,
     )
 print(f"build: onemessagebus {stamped} wheel is typed, installs and imports")

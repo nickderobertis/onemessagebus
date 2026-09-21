@@ -16,8 +16,8 @@ import {
   baseConfig,
   caught,
   Greeting,
+  QUESTION,
   removeScratch,
-  SURFACE,
   scratch,
   socketPath,
 } from "./support.js";
@@ -35,7 +35,7 @@ describe("the resident transport", () => {
     await owner.schema.register(Greeting);
     const subscription = (async () => {
       const seen = [];
-      for await (const line of owner.subscribe("surfaces", {
+      for await (const line of owner.subscribe("questions", {
         until: { field: "message", equals: "5" },
         timeout: 20,
       })) {
@@ -44,7 +44,7 @@ describe("the resident transport", () => {
       return seen;
     })();
     const sent = await Promise.all(
-      [1, 2, 3, 4, 5].map((n) => owner.send("surfaces", { ...SURFACE, message: String(n) })),
+      [1, 2, 3, 4, 5].map((n) => owner.send("questions", { ...QUESTION, message: String(n) })),
     );
     expect(sent.flat()).toHaveLength(5);
     // the subscription ends when the fifth arrives, whichever order the sends landed in
@@ -55,10 +55,10 @@ describe("the resident transport", () => {
       config,
       transport: new ResidentTransport({ socket, start: false }),
     });
-    expect((await guest.status("surfaces"))[0]?.records).toBeGreaterThanOrEqual(5);
+    expect((await guest.status("questions"))[0]?.records).toBeGreaterThanOrEqual(5);
     await guest.transport.close();
     expect(existsSync(socket)).toBe(true);
-    expect((await owner.status("surfaces"))[0]?.queue).toBe("surfaces");
+    expect((await owner.status("questions"))[0]?.queue).toBe("questions");
 
     await owner[Symbol.asyncDispose]();
     expect(existsSync(socket)).toBe(false);
@@ -105,7 +105,7 @@ describe("the resident transport", () => {
     });
     try {
       await client.schema.register(Greeting);
-      const error = await caught(() => client.send("nowhere", SURFACE));
+      const error = await caught(() => client.send("nowhere", QUESTION));
       expect(error).toBeInstanceOf(BusRefused);
       expect(error.message).toContain("`nowhere` is not a queue this configuration declares");
     } finally {
@@ -192,11 +192,11 @@ describe("a bus that cannot be reached, or stops answering", () => {
       }
       await client.schema.register(Greeting, "demo.greeting@1");
       const subscription = caught(async () => {
-        for await (const _ of client.subscribe("commands", {
+        for await (const _ of client.subscribe("actions", {
           until: { field: "x", present: true },
           timeout: 20,
         })) {
-          // nothing arrives on commands
+          // nothing arrives on actions
         }
       });
       await sleep(300);

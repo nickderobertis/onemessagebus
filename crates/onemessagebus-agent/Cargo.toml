@@ -11,7 +11,7 @@ description = "The agent profile over the onemessagebus core: the envelope, labe
 readme = "README.md"
 keywords = ["ndjson", "events", "message-bus", "agent"]
 categories = ["development-tools", "encoding"]
-include = ["src/**/*.rs", "schemas/*.json", "Cargo.toml", "README.md"]
+include = ["src/**/*.rs", "Cargo.toml", "README.md"]
 
 [lib]
 name = "onemessagebus_agent"

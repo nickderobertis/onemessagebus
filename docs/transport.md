@@ -56,8 +56,7 @@ up. It serializes as its transport's token, so a cursor survives a process. A
 
 ## The local transport
 
-`LocalTransport::open(dir)` keeps every queue in one directory, laid out as
-`onepipeline` lays out a run's `channel/` directory:
+`LocalTransport::open(dir)` keeps every queue in one directory:
 
 | what | file |
 | --- | --- |
@@ -70,15 +69,13 @@ up. It serializes as its transport's token, so a cursor survives a process. A
 
 - A **position** is the byte offset at a record boundary.
 - A **cursor file** holds the **number of records** before the position,
-  pretty-printed as one JSON number, rather than the offset: that is what
-  `onepipeline` writes in `replies-cursor.json` and `commands-cursor.json` (the
-  id of the last record claimed, plus one), and the transport converts between
-  the two, so the files stay byte-identical while a position keeps its meaning.
-  A cursor file that is not a number reads as a consumer that has read nothing,
-  as `onepipeline` reads it.
+  pretty-printed as one JSON number, rather than the offset — on a numbered
+  queue, the id of the last record claimed, plus one — and the transport
+  converts between the two, so a reader counting records needs no log while a
+  position keeps its meaning. A cursor file that is not a number reads as a
+  consumer that has read nothing.
 - A **fingerprint** is each file's length and modification time — the queue's
-  records file and its cursor files — as `onepipeline` marks its channel files;
-  `wait_for_change` polls it.
+  records file and its cursor files; `wait_for_change` polls it.
 - An **append** takes the queue's lock, heals a torn tail a dead writer left —
   truncating the file back to its last record boundary and recording the
   discarded bytes in `<queue>.jsonl.torn` — and writes the record and its newline
@@ -87,10 +84,10 @@ up. It serializes as its transport's token, so a cursor survives a process. A
 - **Reads take no lock**, and a document is replaced by writing beside it and
   renaming it on.
 - The lock is `<dir>/.lock/<queue>.lock`, so every writer to a directory must be
-  a writer through this transport: `onepipeline` 0.28.2 locks the records file
-  itself instead, and the two are not meant to append to one directory at the
-  same moment. One reading the other's directory, and appending after the other
-  has finished, is what is proven.
+  a writer through this transport: a program that locks the records file itself
+  instead is not meant to append to the same directory at the same moment. One
+  reading the other's directory, and appending after the other has finished, is
+  safe.
 
 ## The memory transport
 

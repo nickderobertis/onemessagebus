@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use onemessagebus::CAPABILITIES;
 use serde_json::{json, Value};
 
-use crate::support::{onemessagebus, run_in, Run};
+use crate::support::{desk_config, onemessagebus, run_in, Run};
 
 /// The schema the journeys register at run time, after the resident started.
 fn greeting_schema() -> Value {
@@ -33,7 +33,8 @@ fn greeting_schema() -> Value {
 }
 
 /// A scratch directory: a configuration declaring a `greetings` queue whose
-/// schema nothing registers yet, beside the planner channel's queues.
+/// schema nothing registers yet, beside the queues of the bus's own `desk`
+/// layout it links.
 struct Scratch {
     dir: tempfile::TempDir,
 }
@@ -41,11 +42,10 @@ struct Scratch {
 impl Scratch {
     fn new() -> Self {
         let dir = tempfile::tempdir().expect("a scratch directory");
-        let config = format!(
-            "version: 1\ntransport: {{kind: local, dir: {}}}\nprofile: planner-channel\nqueues:\n  greetings: {{schema: demo.greeting@1}}\ncodecs:\n  example:\n    queue: surfaces\n    select: kind\n    frames:\n      note:\n        schema: agent.note@1\n        bindings:\n          - do: answer\n            response: {{accepted: true}}\n",
-            dir.path().join("channel").display()
+        desk_config(
+            dir.path(),
+            "queues:\n  greetings: {schema: demo.greeting@1}\ncodecs:\n  example:\n    queue: questions\n    select: kind\n    frames:\n      note:\n        schema: agent.note@1\n        bindings:\n          - do: answer\n            response: {accepted: true}\n",
         );
-        std::fs::write(dir.path().join("onemessagebus.yaml"), config).expect("a config");
         std::fs::write(
             dir.path().join("greeting.json"),
             greeting_schema().to_string(),
@@ -88,7 +88,7 @@ impl Scratch {
     }
 
     fn log(&self, queue: &str) -> Vec<Value> {
-        std::fs::read_to_string(self.path("channel").join(format!("{queue}.jsonl")))
+        std::fs::read_to_string(self.path("bus").join(format!("{queue}.jsonl")))
             .unwrap_or_default()
             .lines()
             .map(|line| serde_json::from_str(line).expect("a JSON line"))
@@ -416,7 +416,7 @@ fn the_resident_answers_every_capability_as_the_one_shot_verb_does() {
     let asked = client.call(
         15,
         "ask",
-        json!({"queue": "surfaces", "timeout": 1}),
+        json!({"queue": "questions", "timeout": 1}),
         Some(&question.to_string()),
     );
     refused(&asked, 1);
@@ -474,7 +474,7 @@ fn the_resident_answers_every_capability_as_the_one_shot_verb_does() {
     let served = client.call(
         20,
         "serve",
-        json!({"queue": "surfaces", "codec": "example"}),
+        json!({"queue": "questions", "codec": "example"}),
         Some(""),
     );
     assert_eq!(ok(&served), &json!([]), "{served}");
@@ -607,12 +607,12 @@ fn a_subscription_streams_what_another_connection_sends_until_its_predicate_or_a
     let lapsed = listener.call(
         9,
         "subscribe",
-        json!({"queue": "commands", "until": r#"{"field":"x","present":true}"#, "timeout": 1}),
+        json!({"queue": "actions", "until": r#"{"field":"x","present":true}"#, "timeout": 1}),
         None,
     );
     assert_eq!(
         refused(&lapsed, 1),
-        "commands: no record --until admits arrived within 1 seconds"
+        "actions: no record --until admits arrived within 1 seconds"
     );
     drop((writer, listener));
     resident.stop();
@@ -655,7 +655,7 @@ fn a_line_the_protocol_does_not_admit_is_refused_by_name_and_the_connection_goes
     let switch = client.call(
         7,
         "ask",
-        json!({"queue": "surfaces", "blocking": "yes"}),
+        json!({"queue": "questions", "blocking": "yes"}),
         None,
     );
     assert_eq!(
@@ -677,7 +677,7 @@ fn a_line_the_protocol_does_not_admit_is_refused_by_name_and_the_connection_goes
     let usage = client.call(
         9,
         "ask",
-        json!({"queue": "surfaces", "timeout": "soon"}),
+        json!({"queue": "questions", "timeout": "soon"}),
         None,
     );
     assert!(
@@ -806,12 +806,44 @@ fn a_resident_refuses_a_configuration_or_registry_it_cannot_use_before_it_listen
 }
 
 #[test]
-fn a_resident_with_no_configuration_answers_the_schema_verbs_and_refuses_the_queue_verbs() {
+fn a_resident_is_refused_without_a_configuration_and_a_configured_one_serves_every_request() {
     let dir = tempfile::tempdir().expect("a scratch directory");
     let socket = dir.path().join("bus.sock");
+    // Given nothing, or a transport directory alone, it is refused before it
+    // claims the socket.
+    let moved = dir.path().join("moved");
+    let moved = moved.to_str().expect("UTF-8");
+    for extra in [vec![], vec!["--transport-dir", moved]] {
+        let mut argv = vec![
+            "serve",
+            "--resident",
+            "--socket",
+            socket.to_str().expect("UTF-8"),
+        ];
+        argv.extend(extra.iter().copied());
+        let refused = run_in(dir.path(), &argv, None, &[]);
+        assert_eq!(refused.code, 2, "{argv:?}: {}", refused.stderr);
+        assert_eq!(refused.stdout, "");
+        assert!(
+            refused
+                .stderr
+                .starts_with("onemessagebus: no configuration to open a queue with: pass --config"),
+            "{argv:?}: {}",
+            refused.stderr
+        );
+        assert!(!socket.exists(), "a refused resident claimed its socket");
+        assert!(
+            !Path::new(moved).exists(),
+            "a refused resident created its directory"
+        );
+    }
+
+    let started = desk_config(dir.path(), "");
     let mut child = onemessagebus()
         .args(["serve", "--resident", "--socket"])
         .arg(&socket)
+        .arg("--config")
+        .arg(&started)
         .current_dir(dir.path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -828,16 +860,36 @@ fn a_resident_with_no_configuration_answers_the_schema_verbs_and_refuses_the_que
     assert!(ok(&list)
         .as_str()
         .is_some_and(|text| text.contains("bus.resident-protocol@1")));
-    let queue = client.call(2, "status", json!({}), None);
-    assert!(refused(&queue, 2).starts_with("no configuration to open a queue with"));
-    // A request naming a transport directory of its own opens that one.
-    let own = client.call(
+    // A request naming nothing runs over the resident's own configuration.
+    let queue = client.call(2, "status", json!({"queue": "questions"}), None);
+    assert_eq!(ok(&queue)[0]["queue"], json!("questions"), "{queue}");
+    // One naming a configuration of its own opens that one's queues, and one
+    // naming a transport directory beside it moves them there.
+    let other = dir.path().join("other");
+    std::fs::create_dir_all(&other).expect("a directory");
+    let own = desk_config(&other, "queues:\n  findings: {}\n");
+    let own = own.to_str().expect("UTF-8");
+    let named = client.call(
         3,
         "status",
-        json!({"queue": "surfaces", "transportDir": dir.path().join("channel").to_str().expect("UTF-8")}),
+        json!({"queue": "findings", "config": own}),
         None,
     );
-    assert_eq!(ok(&own)[0]["queue"], json!("surfaces"), "{own}");
+    assert_eq!(ok(&named)[0]["queue"], json!("findings"), "{named}");
+    let unknown = client.call(4, "status", json!({"queue": "findings"}), None);
+    assert!(
+        refused(&unknown, 2).starts_with("`findings` is not a queue this configuration declares"),
+        "{unknown}"
+    );
+    let sent = client.call(
+        5,
+        "send",
+        json!({"queue": "outcomes", "config": own, "transportDir": moved}),
+        Some(r#"{"id": 0, "applied": true}"#),
+    );
+    assert_eq!(ok(&sent)[0]["queue"], json!("outcomes"), "{sent}");
+    assert!(Path::new(moved).join("outcomes.jsonl").is_file(), "{sent}");
+    assert!(!other.join("bus/outcomes.jsonl").exists());
     drop(client);
     std::fs::remove_file(&socket).expect("the socket is removed");
     assert_eq!(wait(&mut child, Duration::from_secs(20)), Some(0));
@@ -1041,7 +1093,7 @@ fn a_connection_refuses_a_running_id_and_ends_on_a_line_that_is_not_text() {
         None,
     ));
     client.write(
-        &json!({"id": 5, "verb": "subscribe", "args": {"queue": "commands", "until": r#"{"field":"never","present":true}"#}})
+        &json!({"id": 5, "verb": "subscribe", "args": {"queue": "actions", "until": r#"{"field":"never","present":true}"#}})
             .to_string(),
     );
     let duplicate = client.call(5, "transports", json!({}), None);
@@ -1056,7 +1108,7 @@ fn a_connection_refuses_a_running_id_and_ends_on_a_line_that_is_not_text() {
         let asked = client.call(
             id,
             "ask",
-            json!({"queue": "surfaces", "blocking": blocking, "timeout": 1}),
+            json!({"queue": "questions", "blocking": blocking, "timeout": 1}),
             Some(&question.to_string()),
         );
         refused(&asked, 1);

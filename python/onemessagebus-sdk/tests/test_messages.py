@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from onemessagebus import BusFailed, Client, ClientConfig, Message, messages
+from onemessagebus import BusFailed, Client, Message, messages
 from onemessagebus._generated.contract import Config
 from onemessagebus._message import DRAFT_2020_12
-from onemessagebus.models import PlannerSurface as Surface
-from onemessagebus.models import PlannerSurfaceV1
-from tests.conftest import Greeting, make_transport
+from onemessagebus.models import Note, NoteV1
+from tests.conftest import Greeting
 
 
 class Farewell(BaseModel):
@@ -93,31 +90,22 @@ async def test_a_plain_model_or_document_registers_under_the_id_it_is_given(
         await client.schema.register(document)
 
 
-async def test_a_profile_schema_round_trips_through_its_generated_model(
-    binary: Path, tmp_path_factory: pytest.TempPathFactory, transport_kind: str
-) -> None:
-    scratch = tmp_path_factory.mktemp("channel")
-    config = ClientConfig(binary=binary, transport_dir=scratch / "channel")
-    async with Client(config, make_transport(transport_kind, scratch)) as client:
-        assert messages.MESSAGES["agent.planner-surface@1"] is Surface is PlannerSurfaceV1
-        registered = {entry.id for entry in await client.schema_list()}
-        assert set(messages.MESSAGES) <= registered
-        surface = Surface(
-            id=0,
-            kind="finding",
-            message="the base moved",
-            source="proposal",
-            blocking=True,
-            queued_at=0,
-        )
-        await client.send("surfaces", surface)
-        claimed = await client.next("surfaces", type=Surface)
-        assert claimed is not None
-        assert isinstance(claimed.record, Surface)
-        assert (claimed.record.kind, claimed.record.message, claimed.record.blocking) == (
-            "finding",
-            "the base moved",
-            True,
-        )
-        with pytest.raises(BusFailed, match=r"agent\.planner-surface@1"):
-            await client.send("surfaces", {"kind": "finding", "message": 7, "source": "proposal"})
+async def test_a_profile_schema_round_trips_through_its_generated_model(client: Client) -> None:
+    assert messages.MESSAGES["agent.note@1"] is Note is NoteV1
+    registered = {entry.id for entry in await client.schema_list()}
+    assert set(messages.MESSAGES) <= registered
+    note = Note(addressee="worker", text="the base moved", criterion="rebased onto main")
+    await client.send("notes", note)
+    claimed = await client.next("notes", type=Note)
+    assert claimed is not None
+    assert isinstance(claimed.record, Note)
+    assert (claimed.record.addressee, claimed.record.text, claimed.record.criterion) == (
+        "worker",
+        "the base moved",
+        "rebased onto main",
+    )
+    with pytest.raises(BusFailed, match=r"agent\.note@1"):
+        await client.send("notes", {"addressee": "worker", "text": 7})
+    with pytest.raises(BusFailed, match=r"agent\.note@1"):
+        await client.send("notes", {"addressee": "judge", "text": "look again"})
+    assert await client.next("notes") is None, "nothing refused was appended"

@@ -75,8 +75,8 @@ the log hands it back in that order.
   once the reply is at `reply_position` on the `answers` queue; a position no
   record there ends at, or a queue that declares no `answers`, is refused with
   nothing recorded (`QueueError::NoReply`). The reply is
-  appended first and the slot released after, where `onepipeline` 0.28.2 releases
-  first; the planner channel's typed `Channel::answer` keeps 0.28.2's order.
+  appended first and the slot released after, so a reader that finds the slot
+  released finds the reply.
 - `pending(consumer)` is the record waiting for an answer, abandoned ones passed
   over; `held()` is whatever the slot holds.
 - `waiting()` and `unread_count()`: every waiting record, and how many of them
@@ -123,11 +123,10 @@ refused naming the key.
 ## The projection: `accounted` and `seal`
 
 An event queue's projection is **a projection of its log, and never the truth
-about it**. It used to be the truth in `onepipeline`: read, modified and written
-back whole by every writer and every reader. That lost data — a push landing
-between a reader's read and its write-back was overwritten by the reader's stale
-copy, and a worker's blocking question was destroyed by the manager's own act of
-reading the channel. As a projection, a lost write costs the next reader a fold
+about it**. A document that is the truth — read, modified and written back
+whole by every writer and every reader — loses data: a push landing between a
+reader's read and its write-back is overwritten by the reader's stale copy, and a
+blocking question is destroyed by the act of reading the queue. As a projection, a lost write costs the next reader a fold
 and never a record. It earns its place by being cheap where the log is not: the
 unread count is one read of it, and its modification stamp is what lets a reader
 skip an unchanged queue without opening the log.
@@ -156,54 +155,92 @@ skip an unchanged queue without opening the log.
 - A read that folded anything writes the repaired projection back. The repair is
   a cache write: one that fails costs the next reader a fold, never an answer.
 
-## The `planner-channel` layout
+## Layouts declared as data
 
-`onemessagebus_agent::channel` declares `onepipeline`'s channel directory as the
-layout `planner-channel`, so a directory `onepipeline` 0.28.2 wrote is read by this
-crate, and one this crate writes is read by 0.28.2 — proven on the recorded
-channel directories under `crates/onemessagebus-agent/tests/recorded/channel/` and
-by the 0.28.2 binary itself in `crates/onemessagebus-e2e/tests/e2e/onepipeline.rs`.
+A **layout** is a set of queues, an operation vocabulary, authors and their
+grants, and how an offer to each queue is prepared, under one name a
+configuration's `profile` gives. A program can link one as code (the
+`onemessagebus::Layout` trait) — or the program that owns a protocol publishes
+its layout as a **document**, and a configuration links that document the way it
+links schemas: a schema bundle carries it in its
+optional `layouts` member, pinned, cached and refused under Contract L, and the
+schemas its queues and steps name ride in the same bundle's `schemas` or in
+another bundle linked beside it.
 
-| queue | policy and keys | files |
+```yaml
+schemas:
+  - "https://example.org/desk.json@1"   # a bundle whose `layouts` declares `desk`
+profile: desk
+```
+
+`profile` resolves against a linked layout exactly as it resolves against one a
+program compiled in: the same queue overrides, the same narrowing of authors and
+the same refusals by key. A program that links a layout of the same name as a
+linked one keeps its own (`Layouts::with_linked`), so the engine that publishes
+a document keeps the code it compiled; two links declaring one name are refused,
+naming both. The document's type is `onemessagebus::LayoutDocument`, one
+declaration in the core crate: a publisher builds its document through it, and
+`SchemaBundle::with_layouts` refuses what a reader would. Both SDKs carry it as
+the bundle's `layout` root, and the bundle itself as `schema_bundle`.
+
+| key | what it declares |
+| --- | --- |
+| `name` | the name a `profile` gives: `^[a-z][a-z0-9-]{0,63}$` |
+| `description` | what the layout is, for a person; optional |
+| `queues` | each queue as a configuration declares one: `name`, `policy` (`delivery`, `ordering`, `supersede_on {key, when}`, `hold_pending`, `blocking_first`, `retention`, `projection`), `schema`, `answers`, `claims`, `consumers`, `numbered` |
+| `operations` | the op words an author may be granted |
+| `authors` | each author: `every_op: true` — granted every op, the author a layout trusts with everything — or `capabilities`, and `refusals`: the reason each ungranted op is refused with |
+| `prepare` | by queue, the steps an offer to it runs through, in order |
+
+A configuration may **narrow** any author the layout declares — the fully
+granted one included — and an op it narrows away is refused with `the
+configuration does not grant it`; one naming an op the author is not granted is
+refused naming `authors.<author>.capabilities`. Every other author is the
+configuration's to declare.
+
+**The steps.** Each is an object with one key, its kind, and may carry `when` —
+a predicate (Contract Q's grammar) over the record as the steps before it left
+it; a step whose `when` does not hold is passed over. Every refusal is in the
+layout's own words: a step that refuses carries its text, with placeholders it
+fills in.
+
+| step | keys | what it does |
 | --- | --- | --- |
-| `surfaces` | `hold_pending`, `blocking_first`, `supersede_on: {key: source, when: source == check-in}`, projection `queue.json`; schema `agent.planner-surface@1`; answers on `replies` | `surfaces.jsonl`, `queue.json` |
-| `replies` | plain, numbered; claims pass over a commands-only envelope; schema `agent.queued-reply@1` | `replies.jsonl`, `replies-cursor.json` |
-| `commands` | plain, numbered; schema `agent.queued-commands@1` | `commands.jsonl`, `commands-cursor.json` |
-| `command-outcomes` | plain; schema `agent.command-outcome@1` | `command-outcomes.jsonl` |
+| `stamp` | `member` | sets `member` to the current time in epoch milliseconds, when the record has none |
+| `rename` | `from`, `to` | moves `from` to `to`; where `to` is already there, `from` is dropped and `to` kept |
+| `check` | `schema`, `at`, `refusal` | refuses the record — or the value at `at` — that the registered `schema` refuses; `{why}` is what it refused. The schema is one a linked bundle carries |
+| `version` | `at`, `value`, `reads`, `required_when`, `refusal` | a version at `at` that `reads` lists is read — and written — as `value`; where `required_when` holds, any other version, or none, is refused (`{value}`, `{found}`) |
+| `grant` | `author`, `default_author`, `each` + `op`, or `word`; `refusal`, `unknown`, `undeclared`, `malformed` | the author at `author` (`default_author` where there is none) must be declared (`undeclared`: `{author}`, `{authors}`); each op word — at `op` in every item of the list at `each`, or `word` outright — must be an op (`unknown`: `{op}`, `{ops}`) the author is granted (`refusal`: `{op}`, `{author}`, `{reason}`); a list or op word that is not there as text is `malformed` (`{why}`) |
+| `route` | `routes`, `fallback` | the last step of its queue: splits the offer onto several queues. Each route (`queue`, `on`, `take`, `under`, `stamp`) is taken when any member `on` names is there — present, not `null`, not an empty list — and carries the `take` members the record has, in that order, under `under` when named, with its `stamp` members stamped; routes are pushed in the order declared. Where no route is taken, the `fallback` route is; with no fallback, the record stays on the queue it was offered to |
 
-- **Supersede on `source`, not `kind`** (a manager's ruling): Contract Q's wording
-  is `kind == check-in`, and 0.28.2 supersedes on `source == "check-in"` — an
-  observer's frame of kind `check-in` carries source `proposal` and is not
-  superseded there. Byte compatibility wins over the wording, and the
-  `Supersede { key, when }` shape is unchanged.
-- A reply offered as a bare envelope is **routed by its halves**, as 0.28.2 routes
-  it: its commands to `commands` as `{id, author, commands}`, its verdict to
-  `replies` as `{id, reply, at}` — and an envelope with commands and no verdict to
-  `commands` alone. A version this build reads (`[3, 2]`) is read at 3, and an
-  edit envelope at any other is refused: `an edit envelope requires version 3`.
-- The ops are `add`, `drop`, `reparent`, `retry`, `cancel`, `requeue`, `complete`,
-  `attest`, `finding`, `amend`, `note` and `settle`. The planner is the only
-  built-in author and is granted every op. A configuration declares every other
-  author, its grants, and optional refusal reasons. An omitted grant is refused
-  as `'<op>' is not an op the <author> may issue: <reason>. Surface it to the
-  planner instead`; a verdict carrying `completion: true` is governed by `complete`.
+A layout that is not well formed is refused when the bundle is read, as
+`layouts[<index>]: is not a layout: …` naming what is wrong and, where it is a
+step, its key (`prepare.<queue>[<step>].<kind>…`) — a `grant` naming both `word`
+and `each`, a `route` that is not last, a route to a queue the layout
+does not declare, a fallback naming no route. A `check` naming a schema no
+linked bundle carries is refused when the layout is linked, naming the link.
+
+This repository's own journeys run over such a document:
+`crates/onemessagebus-e2e/tests/layouts/desk.json`, a help desk whose four queues,
+two authors and every step are what `tests/e2e/layouts.rs` drives through the
+binary.
 
 ## The configuration file
 
 <!-- llmlint: ignore-block[no_redundant_instruction_pointers] the node that added the `schemas` key was required to have this configuration's key listing point at docs/schema-links.md, where Contract L is stated once, rather than restate the link, pin and cache rules beside each key; the comment on that one key is the pointer. -->
 ```yaml
 version: 1
-transport: {kind: local, dir: runs/r1/channel}  # kind: local | memory | a registered or plugin kind
-profile: planner-channel                         # a layout a linked profile declares; optional
-queues:                                          # additions, or overrides of a layout's queue by name
+transport: {kind: local, dir: runs/r1/desk}    # kind: local | memory | a registered or plugin kind
+profile: desk                                  # a layout the program links, or a linked bundle declares; optional
+queues:                                        # additions, or overrides of a layout's queue by name
   findings: {policy: {hold_pending: false}}
-authors:                                         # planner may narrow; other names declare authors
-  planner: {capabilities: [add, retry, finding]}
+authors:                                       # a layout's author may be narrowed; other names declare authors
+  lead: {capabilities: [retry, note]}
   sentinel:
-    capabilities: [retry, requeue, cancel, finding, add]
-    refusals: {complete: "whether the run is finished is the planner's verdict, not an observation"}
-schemas:                                         # schema bundles linked by URL or path, pinned; docs/schema-links.md
-  - "https://example.org/frames.json@8"
+    capabilities: [retry, note]
+    refusals: {complete: "whether the desk is done is the lead's verdict, not an observation"}
+schemas:                                       # schema bundles linked by URL or path, pinned; docs/schema-links.md
+  - "https://example.org/desk.json@1"
 ```
 <!-- llmlint: ignore-end[no_redundant_instruction_pointers] -->
 
@@ -213,9 +250,10 @@ Reading it is two steps, and the types keep them apart:
    alone decides, each by the key it is at: YAML that is not one document, an
    unknown key, a `version` other than 1, and a queue name, consumer name, schema
    id, document name or predicate that does not parse. A `Config` opens nothing.
-2. `Config::resolve(&layouts, &kinds)` binds it to the layouts a process links and
-   the transport kinds it can open, and refuses what only those decide, each by
-   the key it is at: a `profile` no layout declares; a widened planner grant or
+2. `Config::resolve(&layouts, &kinds)` binds it to the layouts a process links —
+   compiled in, and linked as data (`Layouts::with_linked`) — and the transport
+   kinds it can open, and refuses what only those decide, each by the key it is
+   at: a `profile` no layout declares; a widened grant or
    an op that does not exist (`authors.<author>.capabilities`); a `schema` the layout does not register or
    an `answers` naming no declared queue (`queues.<queue>.<key>`); and a transport
    its kind refuses. What it answers, a `Bus`, is the one type that opens a queue
@@ -230,8 +268,9 @@ Each refuses an unknown key by name at `Config::load` — `schemas` a malformed
 link, resolving none — and `validators[<index>].on` naming no declared queue is
 refused by `Config::resolve`.
 
-The binary reads the file from `--config <path>` or `ONEMESSAGEBUS_CONFIG`, and
-`--transport-dir <dir>` or `ONEMESSAGEBUS_TRANSPORT_DIR` replaces `transport.dir`
-for one invocation — the flag over the variable, and the variable over the file.
+The binary reads the file from `--config <path>` or `ONEMESSAGEBUS_CONFIG` — a
+queue verb given neither is refused naming `--config` — and `--transport-dir
+<dir>` or `ONEMESSAGEBUS_TRANSPORT_DIR` replaces `transport.dir` for one
+invocation — the flag over the variable, and the variable over the file.
 The file's JSON Schema is the SDK bundle's `config` root, generated from the one
 reader's type.

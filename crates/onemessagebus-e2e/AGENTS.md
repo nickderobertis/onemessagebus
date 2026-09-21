@@ -24,9 +24,9 @@ and `src/bin/onemessagebus-transport-dirfiles.rs` compiles that same file into
 the plugin executable the binary finds on `PATH`: the queue table and the binary
 run over one implementation, so change the transport there and nowhere else.
 
-`tests/e2e/onepipeline.rs` is the one journey that is not offline: the 0.28.2
-release's own reader is the only authority on the channel layout, so it needs
-`uv` and, once, the network. Its failure is a layout disagreement, not a flake.
+The journeys' layout is the bus's own `tests/layouts/desk.json`, linked by a
+configuration; `src/bin/onemessagebus-with-desk.rs` is the program that links a
+compiled-in `desk`.
 
 ## The resident core
 

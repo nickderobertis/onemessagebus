@@ -1,10 +1,11 @@
 //! Contract A through the built binary: `ask` and `reply` as separate
-//! processes over one channel directory, under the `planner-channel` layout.
+//! processes over one queue directory, under the bus's own `desk` layout
+//! (`tests/layouts/desk.json`), linked by a configuration.
 //!
 //! An `ask` is spawned and left waiting the way a dispatched agent waits; the
 //! journey reads the correlation it prints on stderr, answers — or does not —
 //! with `reply` from another process, and holds what `ask` printed, how it
-//! exited, and what the channel's files say afterwards.
+//! exited, and what the queue files say afterwards.
 
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -14,14 +15,17 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::support::{assert_usage_refused, onemessagebus, run_in, Run};
+use crate::support::{assert_usage_refused, desk_config, onemessagebus, run_in, Run};
 
 /// How long a journey gives a waiting `ask` to finish before it is killed —
 /// by the handle that started it — and the journey fails.
 const GUARD: Duration = Duration::from_secs(60);
 
+/// A scratch directory holding a configuration that links the desk, and the
+/// queue directory it names.
 struct Scratch {
     dir: tempfile::TempDir,
+    config: PathBuf,
 }
 
 /// An `ask` left running: its child, the correlation it printed, and the rest
@@ -62,36 +66,33 @@ impl Asking {
 
 impl Scratch {
     fn new() -> Self {
-        Self {
-            dir: tempfile::tempdir().expect("a scratch directory"),
-        }
+        let dir = tempfile::tempdir().expect("a scratch directory");
+        let config = desk_config(dir.path(), "");
+        Self { dir, config }
     }
 
-    fn channel(&self) -> PathBuf {
-        self.dir.path().join("channel")
+    /// The queue directory the configuration names.
+    fn queues(&self) -> PathBuf {
+        self.dir.path().join("bus")
     }
 
-    fn argv<'a>(&'a self, args: &[&'a str], channel: &'a str) -> Vec<&'a str> {
+    fn argv<'a>(&'a self, args: &[&'a str]) -> Vec<&'a str> {
         let mut argv = args.to_vec();
-        argv.extend(["--transport-dir", channel]);
+        argv.extend(["--config", self.config.to_str().expect("a UTF-8 path")]);
         argv
     }
 
     fn bus(&self, args: &[&str], stdin: Option<&str>) -> Run {
-        let channel = self.channel();
-        let channel = channel.to_str().expect("a UTF-8 path");
-        run_in(self.dir.path(), &self.argv(args, channel), stdin, &[])
+        run_in(self.dir.path(), &self.argv(args), stdin, &[])
     }
 
-    /// Spawn `ask` on the `surfaces` queue with `question` on stdin, and hold it
-    /// once it has printed its correlation.
+    /// Spawn `ask` on the `questions` queue with `question` on stdin, and hold
+    /// it once it has printed its correlation.
     fn ask(&self, args: &[&str], question: Option<&str>) -> Asking {
-        let channel = self.channel();
-        let channel = channel.to_str().expect("a UTF-8 path");
-        let mut argv = vec!["ask", "surfaces"];
+        let mut argv = vec!["ask", "questions"];
         argv.extend_from_slice(args);
         let mut child = onemessagebus()
-            .args(self.argv(&argv, channel))
+            .args(self.argv(&argv))
             .current_dir(self.dir.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -147,11 +148,11 @@ impl Scratch {
     }
 
     fn lines(&self, name: &str) -> Vec<Value> {
-        read_lines(&self.channel().join(name))
+        read_lines(&self.queues().join(name))
     }
 
     fn status(&self) -> Value {
-        let run = self.bus(&["status", "surfaces"], None);
+        let run = self.bus(&["status", "questions"], None);
         assert_eq!(run.code, 0, "{}", run.stderr);
         serde_json::from_str::<Vec<Value>>(&run.stdout).expect("a status list")[0].clone()
     }
@@ -175,7 +176,7 @@ fn read_lines(path: &Path) -> Vec<Value> {
 }
 
 fn question(message: &str) -> String {
-    json!({"kind": "planner-question", "message": message, "source": "proposal"}).to_string()
+    json!({"kind": "question", "message": message, "source": "proposal"}).to_string()
 }
 
 fn one(run: &Run) -> Value {
@@ -227,7 +228,7 @@ fn an_ask_carries_a_minted_correlation_and_a_reply_echoing_it_answers_that_ask_a
         );
     }
     let queued: Vec<Value> = scratch
-        .lines("surfaces.jsonl")
+        .lines("questions.jsonl")
         .into_iter()
         .filter(|line| line["event"] == json!("queued"))
         .collect();
@@ -235,13 +236,13 @@ fn an_ask_carries_a_minted_correlation_and_a_reply_echoing_it_answers_that_ask_a
     assert_eq!(queued[0]["correlation"], json!(first.correlation));
     assert_eq!(queued[0]["blocking"], json!(true));
     assert_eq!(queued[0]["asker"], json!("worker-1"));
-    assert_eq!(queued[0]["workstream"], json!("build"));
+    assert_eq!(queued[0]["subject"], json!("build"));
     assert!(queued[0].get("about").is_none(), "{}", queued[0]);
     assert_eq!(queued[1]["correlation"], json!(second.correlation));
     assert_eq!(queued[1]["blocking"], json!(false));
 
     let replied = scratch.bus(
-        &["reply", "surfaces", "--correlation", &second.correlation],
+        &["reply", "questions", "--correlation", &second.correlation],
         Some(&verdict("the second one")),
     );
     assert_eq!(replied.code, 0, "{}", replied.stderr);
@@ -263,7 +264,7 @@ fn an_ask_carries_a_minted_correlation_and_a_reply_echoing_it_answers_that_ask_a
     std::thread::sleep(Duration::from_millis(500));
     assert!(first.waiting(), "a reply to another ask answered this one");
     let replied = scratch.bus(
-        &["reply", "surfaces", "--correlation", &first.correlation],
+        &["reply", "questions", "--correlation", &first.correlation],
         Some(&verdict("the first one")),
     );
     assert_eq!(replied.code, 0, "{}", replied.stderr);
@@ -273,7 +274,7 @@ fn an_ask_carries_a_minted_correlation_and_a_reply_echoing_it_answers_that_ask_a
         one(&answered)["reply"]["reply"]["reason"],
         json!("the first one")
     );
-    assert_eq!(scratch.lines("replies.jsonl").len(), 2);
+    assert_eq!(scratch.lines("answers.jsonl").len(), 2);
 }
 
 #[test]
@@ -282,16 +283,16 @@ fn a_reply_echoing_a_correlation_nothing_pending_holds_is_refused_naming_it_with
     let scratch = Scratch::new();
     let unknown = "c-00000000000000000000000000000000";
     let refused = scratch.bus(
-        &["reply", "surfaces", "--correlation", unknown],
+        &["reply", "questions", "--correlation", unknown],
         Some(&verdict("to nobody")),
     );
     assert_eq!(refused.code, 1, "{}", refused.stdout);
     assert!(refused.stderr.contains(unknown), "{}", refused.stderr);
     assert_eq!(refused.stdout, "");
-    assert!(scratch.lines("replies.jsonl").is_empty());
+    assert!(scratch.lines("answers.jsonl").is_empty());
 
     let malformed = scratch.bus(
-        &["reply", "surfaces", "--correlation", "not a correlation"],
+        &["reply", "questions", "--correlation", "not a correlation"],
         Some(&verdict("x")),
     );
     assert_eq!(malformed.code, 2, "{}", malformed.stderr);
@@ -303,14 +304,14 @@ fn a_reply_echoing_a_correlation_nothing_pending_holds_is_refused_naming_it_with
 
     let asked = scratch.ask(&["--timeout", "30"], Some(&question("once")));
     let bound = scratch.bus(
-        &["reply", "surfaces", "--correlation", &asked.correlation],
+        &["reply", "questions", "--correlation", &asked.correlation],
         Some(&verdict("answered")),
     );
     assert_eq!(bound.code, 0, "{}", bound.stderr);
     let answered_correlation = asked.correlation.clone();
     assert_eq!(asked.finish().code, 0);
     let again = scratch.bus(
-        &["reply", "surfaces", "--correlation", &answered_correlation],
+        &["reply", "questions", "--correlation", &answered_correlation],
         Some(&verdict("answered twice")),
     );
     assert_eq!(
@@ -324,18 +325,18 @@ fn a_reply_echoing_a_correlation_nothing_pending_holds_is_refused_naming_it_with
         again.stderr
     );
     assert_eq!(
-        scratch.lines("replies.jsonl").len(),
+        scratch.lines("answers.jsonl").len(),
         1,
         "a refused reply was appended"
     );
 
-    let none = scratch.bus(&["reply", "surfaces"], Some(&verdict("to whichever")));
+    let none = scratch.bus(&["reply", "questions"], Some(&verdict("to whichever")));
     assert_eq!(none.code, 1, "{}", none.stdout);
     assert!(none.stderr.contains("no ask is pending"), "{}", none.stderr);
 
     let one_pending = scratch.ask(&["--timeout", "30"], Some(&question("only me")));
     let two_pending = scratch.ask(&["--timeout", "30"], Some(&question("and me")));
-    let ambiguous = scratch.bus(&["reply", "surfaces"], Some(&verdict("to both?")));
+    let ambiguous = scratch.bus(&["reply", "questions"], Some(&verdict("to both?")));
     assert_eq!(ambiguous.code, 1, "{}", ambiguous.stdout);
     assert!(
         ambiguous.stderr.contains(&one_pending.correlation)
@@ -343,18 +344,18 @@ fn a_reply_echoing_a_correlation_nothing_pending_holds_is_refused_naming_it_with
         "{}",
         ambiguous.stderr
     );
-    assert_eq!(scratch.lines("replies.jsonl").len(), 1);
+    assert_eq!(scratch.lines("answers.jsonl").len(), 1);
     let first = scratch.bus(
         &[
             "reply",
-            "surfaces",
+            "questions",
             "--correlation",
             &two_pending.correlation,
         ],
         Some(&verdict("you")),
     );
     assert_eq!(first.code, 0, "{}", first.stderr);
-    let only = scratch.bus(&["reply", "surfaces"], Some(&verdict("the one left")));
+    let only = scratch.bus(&["reply", "questions"], Some(&verdict("the one left")));
     assert_eq!(only.code, 0, "{}", only.stderr);
     assert_eq!(one(&only)["correlation"], json!(one_pending.correlation));
     assert_eq!(
@@ -372,12 +373,12 @@ fn a_wait_that_elapses_answers_timeout_names_no_reply_and_leaves_the_question_st
     let scratch = Scratch::new();
     let other = scratch.ask(&["--timeout", "30"], Some(&question("answered elsewhere")));
     let replied = scratch.bus(
-        &["reply", "surfaces", "--correlation", &other.correlation],
+        &["reply", "questions", "--correlation", &other.correlation],
         Some(&verdict("not yours")),
     );
     assert_eq!(replied.code, 0, "{}", replied.stderr);
     assert_eq!(other.finish().code, 0);
-    let replies_before = std::fs::read(scratch.channel().join("replies.jsonl")).expect("replies");
+    let replies_before = std::fs::read(scratch.queues().join("answers.jsonl")).expect("answers");
 
     let elapsed = scratch
         .ask(
@@ -402,7 +403,7 @@ fn a_wait_that_elapses_answers_timeout_names_no_reply_and_leaves_the_question_st
         elapsed.stderr
     );
     assert_eq!(
-        std::fs::read(scratch.channel().join("replies.jsonl")).expect("replies"),
+        std::fs::read(scratch.queues().join("answers.jsonl")).expect("answers"),
         replies_before,
         "the wait appended to the reply queue, or took the other ask's reply"
     );
@@ -421,7 +422,7 @@ fn a_wait_that_elapses_answers_timeout_names_no_reply_and_leaves_the_question_st
     );
 
     let answered_late = scratch.bus(
-        &["reply", "surfaces", "--correlation", &correlation],
+        &["reply", "questions", "--correlation", &correlation],
         Some(&verdict("late, but yours")),
     );
     assert_eq!(
@@ -445,7 +446,7 @@ fn a_listener_abandoned_and_never_reattended_answers_abandoned_and_no_reply() {
         .as_str()
         .expect("a correlation")
         .to_owned();
-    let id = scratch.lines("surfaces.jsonl")[0]["id"].clone();
+    let id = scratch.lines("questions.jsonl")[0]["id"].clone();
     assert_eq!(abandoned_ids(&scratch.status()), vec![id.clone()]);
 
     for listener in [vec![], vec!["--asker", "someone-else"]] {
@@ -465,7 +466,7 @@ fn a_listener_abandoned_and_never_reattended_answers_abandoned_and_no_reply() {
         );
         assert!(answered.stderr.contains("abandoned"), "{}", answered.stderr);
     }
-    assert!(scratch.lines("replies.jsonl").is_empty());
+    assert!(scratch.lines("answers.jsonl").is_empty());
     assert_eq!(
         abandoned_ids(&scratch.status()),
         vec![id],
@@ -476,7 +477,7 @@ fn a_listener_abandoned_and_never_reattended_answers_abandoned_and_no_reply() {
     let unknown = scratch.bus(
         &[
             "ask",
-            "surfaces",
+            "questions",
             "--correlation",
             stranger,
             "--timeout",
@@ -528,12 +529,12 @@ fn rearm_after_a_lost_wait_receives_the_eventual_reply() {
         abandoned_ids(status).is_empty()
     });
     assert!(rearmed.waiting(), "the re-armed listener did not wait");
-    let claimed = scratch.bus(&["next", "surfaces"], None);
+    let claimed = scratch.bus(&["next", "questions"], None);
     assert_eq!(claimed.code, 0, "{}", claimed.stderr);
     assert_eq!(one(&claimed)["record"]["correlation"], json!(correlation));
 
     let replied = scratch.bus(
-        &["reply", "surfaces", "--correlation", &correlation],
+        &["reply", "questions", "--correlation", &correlation],
         Some(&verdict("main")),
     );
     assert_eq!(replied.code, 0, "{}", replied.stderr);
@@ -552,9 +553,9 @@ fn rearm_after_a_lost_wait_receives_the_eventual_reply() {
 #[test]
 fn a_question_the_bus_refuses_answers_refused_with_no_reply_and_appends_nothing() {
     let scratch = Scratch::new();
-    // Well-formed, and a no: a surface its schema refuses for naming no kind.
+    // Well-formed, and a no: a question its schema refuses for naming no kind.
     let refused = scratch.bus(
-        &["ask", "surfaces"],
+        &["ask", "questions"],
         Some(&json!({"message": "is the base right?", "source": "proposal"}).to_string()),
     );
     assert_eq!(refused.code, 1, "{}", refused.stderr);
@@ -566,7 +567,7 @@ fn a_question_the_bus_refuses_answers_refused_with_no_reply_and_appends_nothing(
     );
     let reason = answer["reason"].as_str().expect("a reason");
     assert!(
-        reason.contains("agent.planner-surface@1") && reason.contains("\"kind\""),
+        reason.contains("desk.question@1") && reason.contains("\"kind\""),
         "{reason}"
     );
     assert!(
@@ -575,7 +576,7 @@ fn a_question_the_bus_refuses_answers_refused_with_no_reply_and_appends_nothing(
         refused.stderr
     );
     assert!(
-        scratch.lines("surfaces.jsonl").is_empty(),
+        scratch.lines("questions.jsonl").is_empty(),
         "a refused question was appended"
     );
 }
@@ -610,37 +611,37 @@ fn ask_refuses_input_it_cannot_take_with_exit_two_and_raises_nothing() {
     let too_long = format!("c-{}", "0".repeat(200));
     for (args, stdin, problem) in [
         (
-            vec!["ask", "surfaces", "--timeout", "1"],
+            vec!["ask", "questions", "--timeout", "1"],
             r#"["is", "the", "base", "right?"]"#,
-            "onemessagebus: surfaces: a record on this queue is a JSON object, and this is an array",
+            "onemessagebus: questions: a record on this queue is a JSON object, and this is an array",
         ),
         (
-            vec!["ask", "surfaces", "--timeout", "1"],
+            vec!["ask", "questions", "--timeout", "1"],
             r#""is the base right?""#,
-            "onemessagebus: surfaces: a record on this queue is a JSON object, and this is a string",
+            "onemessagebus: questions: a record on this queue is a JSON object, and this is a string",
         ),
         (
-            vec!["ask", "surfaces", "--timeout", "1"],
+            vec!["ask", "questions", "--timeout", "1"],
             "is the base right?",
             "onemessagebus: the payload is not JSON",
         ),
         (
-            vec!["ask", "surfaces", "--correlation", "not a correlation"],
+            vec!["ask", "questions", "--correlation", "not a correlation"],
             "",
             "onemessagebus: --correlation: \"not a correlation\" is not a correlation",
         ),
         (
-            vec!["ask", "surfaces", "--correlation", too_long.as_str()],
+            vec!["ask", "questions", "--correlation", too_long.as_str()],
             "",
             "onemessagebus: --correlation:",
         ),
         (
-            vec!["ask", "surfaces", "--about", " ", "--timeout", "1"],
+            vec!["ask", "questions", "--about", " ", "--timeout", "1"],
             asked.as_str(),
             "onemessagebus: --about:",
         ),
         (
-            vec!["ask", "surfaces", "--timeout", "soon"],
+            vec!["ask", "questions", "--timeout", "soon"],
             asked.as_str(),
             "onemessagebus: ask: invalid value 'soon' for '--timeout <SECONDS>'",
         ),
@@ -649,7 +650,7 @@ fn ask_refuses_input_it_cannot_take_with_exit_two_and_raises_nothing() {
         assert_refused_input(&refused, problem);
     }
     assert!(
-        scratch.lines("surfaces.jsonl").is_empty(),
+        scratch.lines("questions.jsonl").is_empty(),
         "refused input raised a question"
     );
 }
@@ -665,29 +666,29 @@ fn reply_refuses_input_it_cannot_take_with_exit_two_appending_nothing_and_the_as
         // An array once read as an envelope field by field — `[3]` as version 3 —
         // and answered the ask with it.
         (
-            vec!["reply", "surfaces", "--correlation", correlation.as_str()],
+            vec!["reply", "questions", "--correlation", correlation.as_str()],
             "[3]",
-            "onemessagebus: replies: a record on this queue is a JSON object, and this is an array",
+            "onemessagebus: answers: a record on this queue is a JSON object, and this is an array",
         ),
         (
-            vec!["reply", "surfaces"],
+            vec!["reply", "questions"],
             r#""main""#,
-            "onemessagebus: replies: a record on this queue is a JSON object, and this is a string",
+            "onemessagebus: answers: a record on this queue is a JSON object, and this is a string",
         ),
         (
-            vec!["reply", "surfaces", "--correlation", correlation.as_str()],
+            vec!["reply", "questions", "--correlation", correlation.as_str()],
             r#"{"version": 3,"#,
             "onemessagebus: the payload is not JSON",
         ),
         (
-            vec!["reply", "surfaces", "--correlation", too_long.as_str()],
+            vec!["reply", "questions", "--correlation", too_long.as_str()],
             answer.as_str(),
             "onemessagebus: --correlation:",
         ),
         (
             vec![
                 "reply",
-                "surfaces",
+                "questions",
                 "0",
                 "--correlation",
                 correlation.as_str(),
@@ -700,18 +701,18 @@ fn reply_refuses_input_it_cannot_take_with_exit_two_appending_nothing_and_the_as
         assert_refused_input(&refused, problem);
     }
     assert!(
-        scratch.lines("replies.jsonl").is_empty(),
+        scratch.lines("answers.jsonl").is_empty(),
         "a refused reply was appended"
     );
     assert!(
-        scratch.lines("commands.jsonl").is_empty(),
+        scratch.lines("actions.jsonl").is_empty(),
         "a refused reply was routed"
     );
     std::thread::sleep(Duration::from_millis(500));
     assert!(asking.waiting(), "refused input answered the ask");
 
     let replied = scratch.bus(
-        &["reply", "surfaces", "--correlation", &correlation],
+        &["reply", "questions", "--correlation", &correlation],
         Some(&answer),
     );
     assert_eq!(replied.code, 0, "{}", replied.stderr);
@@ -726,7 +727,7 @@ fn ask_refuses_a_usage_error_on_one_line_with_exit_two_and_nothing_on_stdout() {
     let asked = question("which base?");
     for (args, what) in [
         (
-            vec!["ask", "surfaces", "--timeout", "soon"],
+            vec!["ask", "questions", "--timeout", "soon"],
             "invalid value 'soon' for '--timeout <SECONDS>': invalid digit found in string",
         ),
         (
@@ -734,14 +735,14 @@ fn ask_refuses_a_usage_error_on_one_line_with_exit_two_and_nothing_on_stdout() {
             "the following required arguments were not provided: <QUEUE>",
         ),
         (
-            vec!["ask", "surfaces", "--bogus"],
+            vec!["ask", "questions", "--bogus"],
             "unexpected argument '--bogus' found; tip: a similar argument exists: '--about'",
         ),
     ] {
         assert_usage_refused(&scratch.bus(&args, Some(&asked)), "ask", what);
     }
     assert!(
-        scratch.lines("surfaces.jsonl").is_empty(),
+        scratch.lines("questions.jsonl").is_empty(),
         "a usage error raised a question"
     );
     // Asking for help is no usage error: it is answered on stdout at exit 0.
@@ -764,7 +765,7 @@ fn reply_refuses_a_usage_error_on_one_line_with_exit_two_appending_nothing() {
     let answer = verdict("main");
     for (args, what) in [
         (
-            vec!["reply", "surfaces", "0", "--correlation", "c-1"],
+            vec!["reply", "questions", "0", "--correlation", "c-1"],
             "the argument '[POSITION]' cannot be used with '--correlation <CORRELATION>'",
         ),
         (
@@ -772,14 +773,14 @@ fn reply_refuses_a_usage_error_on_one_line_with_exit_two_appending_nothing() {
             "the following required arguments were not provided: <QUEUE>",
         ),
         (
-            vec!["reply", "surfaces", "--position", "0"],
+            vec!["reply", "questions", "--position", "0"],
             "unexpected argument '--position' found",
         ),
     ] {
         assert_usage_refused(&scratch.bus(&args, Some(&answer)), "reply", what);
     }
     assert!(
-        scratch.lines("replies.jsonl").is_empty(),
+        scratch.lines("answers.jsonl").is_empty(),
         "a usage error appended a reply"
     );
 }
@@ -799,7 +800,7 @@ fn a_reply_record_its_schema_refuses_answers_refused_naming_the_id_and_pointer()
     let forged =
         json!({"id": 0, "reply": {"completion": "yes"}, "at": 1, "correlation": correlation});
     std::fs::write(
-        scratch.channel().join("replies.jsonl"),
+        scratch.queues().join("answers.jsonl"),
         format!("{forged}\n"),
     )
     .expect("the forged reply is written");
@@ -815,33 +816,33 @@ fn a_reply_record_its_schema_refuses_answers_refused_naming_the_id_and_pointer()
     );
     let reason = answer["reason"].as_str().expect("a reason");
     assert!(
-        reason.contains("agent.queued-reply@1") && reason.contains("/reply/completion"),
+        reason.contains("desk.answer@1") && reason.contains("/reply/completion"),
         "the refusal does not name the id and the pointer: {reason}"
     );
 }
 
 #[test]
-fn a_reply_carrying_only_commands_leaves_the_ask_standing_and_one_with_a_verdict_answers_it() {
+fn a_reply_carrying_only_actions_leaves_the_ask_standing_and_one_with_a_verdict_answers_it() {
     let scratch = Scratch::new();
     let mut asking = scratch.ask(&["--timeout", "30"], Some(&question("go on?")));
     let edits = scratch.bus(
-        &["reply", "surfaces", "--correlation", &asking.correlation],
-        Some(r#"{"version":3,"commands":[{"op":"cancel","id":"build"}]}"#),
+        &["reply", "questions", "--correlation", &asking.correlation],
+        Some(r#"{"version":3,"actions":[{"op":"cancel","id":"build"}]}"#),
     );
     assert_eq!(edits.code, 0, "{}", edits.stderr);
     let receipt = one(&edits);
     assert_eq!(receipt["answered"], Value::Null);
-    assert_eq!(scratch.lines("commands.jsonl").len(), 1);
-    assert!(scratch.lines("replies.jsonl").is_empty());
+    assert_eq!(scratch.lines("actions.jsonl").len(), 1);
+    assert!(scratch.lines("answers.jsonl").is_empty());
     std::thread::sleep(Duration::from_millis(500));
     assert!(asking.waiting(), "an edit with no verdict answered the ask");
 
     let both = scratch.bus(
-        &["reply", "surfaces", "--correlation", &asking.correlation],
-        Some(r#"{"version":3,"completion":false,"message":"keep going","commands":[{"op":"retry","id":"build","node":{"id":"build-2"}}]}"#),
+        &["reply", "questions", "--correlation", &asking.correlation],
+        Some(r#"{"version":3,"completion":false,"message":"keep going","actions":[{"op":"retry","id":"build","node":{"id":"build-2"}}]}"#),
     );
     assert_eq!(both.code, 0, "{}", both.stderr);
-    assert_eq!(scratch.lines("commands.jsonl").len(), 2);
+    assert_eq!(scratch.lines("actions.jsonl").len(), 2);
     let answered = asking.finish();
     assert_eq!(answered.code, 0, "{}", answered.stderr);
     assert_eq!(

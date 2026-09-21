@@ -138,3 +138,27 @@ pub fn fixture(relative: &str) -> PathBuf {
 pub fn ascii(n: usize) -> String {
     "abcdefghij".chars().cycle().take(n).collect()
 }
+
+/// The bus's own fixture bundle: the `desk` layout, declared as data, and the
+/// schemas its queues and its `check` steps name.
+pub fn desk_bundle() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/layouts/desk.json")
+}
+
+/// Write `onemessagebus.yaml` into `dir` — a local transport keeping its queues
+/// in `dir/bus`, the desk bundle linked at `@1`, `profile: desk` — with `extra`
+/// appended, and answer its path.
+pub fn desk_config(dir: &Path, extra: &str) -> PathBuf {
+    let path = dir.join("onemessagebus.yaml");
+    std::fs::write(
+        &path,
+        format!(
+            "version: 1\ntransport: {{kind: local, dir: {}}}\nprofile: desk\nschemas:\n  - {}\n{extra}",
+            serde_json::to_string(&dir.join("bus")).expect("a UTF-8 path"),
+            serde_json::to_string(&format!("{}@1", desk_bundle().display()))
+                .expect("a UTF-8 path"),
+        ),
+    )
+    .expect("the configuration is written");
+    path
+}

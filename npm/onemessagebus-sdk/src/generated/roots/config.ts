@@ -31,7 +31,7 @@ export type DocumentName = string;
 export type SchemaId = string;
 /**
  * A queue's name: a non-empty run of ASCII letters, digits, `-` and `_`,
- * starting with a letter or digit — `surfaces`, `command-outcomes`.
+ * starting with a letter or digit — `questions`, `action-outcomes`.
  */
 export type QueueName = string;
 /**
@@ -143,8 +143,10 @@ export interface Config {
   version: number;
   transport: TransportConfig;
   /**
-   * A layout a linked profile declares, by name: its queues, policies,
-   * authors, operations and schemas.
+   * A layout by name — one the program links as code, or one a bundle the
+   * `schemas` key links declares as data (`onemessagebus::LayoutDocument`),
+   * the program's own winning where both declare the name: its queues,
+   * policies, authors, operations and schemas.
    */
   profile?: string | null | undefined;
   /**
@@ -156,7 +158,8 @@ export interface Config {
       }
     | undefined;
   /**
-   * Authors declared by the configuration. The built-in planner may only be narrowed.
+   * Authors declared by the configuration. An author the layout declares may
+   * only be narrowed.
    */
   authors?:
     | {
@@ -372,7 +375,7 @@ export interface AuthorConfig {
 export interface ValidatorConfig {
   /**
    * A queue's name: a non-empty run of ASCII letters, digits, `-` and `_`,
-   * starting with a letter or digit — `surfaces`, `command-outcomes`.
+   * starting with a letter or digit — `questions`, `action-outcomes`.
    */
   on: string;
   /**

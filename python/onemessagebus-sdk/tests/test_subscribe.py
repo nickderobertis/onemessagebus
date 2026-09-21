@@ -43,20 +43,18 @@ async def test_a_subscription_that_times_out_or_cannot_parse_its_predicate_raise
 ) -> None:
     with pytest.raises(BusFailed) as lapsed:
         async for _ in client.subscribe(
-            "commands", until={"field": "x", "present": True}, timeout=1
+            "actions", until={"field": "x", "present": True}, timeout=1
         ):
             pass
-    assert lapsed.value.message == "commands: no record --until admits arrived within 1 seconds"
+    assert lapsed.value.message == "actions: no record --until admits arrived within 1 seconds"
     with pytest.raises(BusRefused, match='--until: "not json" is neither inline JSON'):
-        async for _ in client.subscribe("commands", until="not json", timeout=1):
+        async for _ in client.subscribe("actions", until="not json", timeout=1):
             pass
 
 
 async def test_closing_a_subscription_early_stops_it(client: Client) -> None:
-    await client.send(
-        "surfaces", {"kind": "finding", "message": "m", "source": "proposal", "blocking": False}
-    )
-    stream = client.subscribe("surfaces", until={"field": "message", "equals": "never"})
+    await client.send("questions", {"message": "m", "blocking": False})
+    stream = client.subscribe("questions", until={"field": "message", "equals": "never"})
     async with contextlib.aclosing(stream) as records:
         async for record in records:
             assert record.record["message"] == "m"
@@ -68,4 +66,4 @@ async def test_closing_a_subscription_early_stops_it(client: Client) -> None:
         assert isinstance(transport, ResidentTransport)
         assert not transport._pending, "the resident answered the cancel"
     # The transport goes on: a cancelled stream leaves the connection usable.
-    assert (await client.status("surfaces"))[0].records == 1
+    assert (await client.status("questions"))[0].records == 1

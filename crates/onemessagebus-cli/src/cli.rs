@@ -2,9 +2,10 @@
 //!
 //! The queue verbs — `send`, `next`, `reply`, `subscribe`, `status` — open the
 //! bus a configuration describes: `--config` (or `ONEMESSAGEBUS_CONFIG`) names the
-//! file, loaded and resolved against the layouts this binary links, and
+//! file, loaded and resolved against the layouts its linked bundles declare and
+//! any a program embedding this command line links ([`run_with`]), and
 //! `--transport-dir` (or `ONEMESSAGEBUS_TRANSPORT_DIR`) overrides its transport's
-//! directory — or, with no file, keeps the `planner-channel` layout there.
+//! directory. With no file, a queue verb is refused naming `--config`.
 //!
 //! Payloads arrive on stdin or `--file` — and `deliver`'s message also through
 //! the named `--message` option, from exactly one of the three — never as a
@@ -34,7 +35,6 @@ use onemessagebus::{
     ServeOptions, Served, Spool, Subscription, TransportKinds, Undelivered, Vocabulary,
     DEFAULT_REPLY_WINDOW, SPOOL_WAIT,
 };
-use onemessagebus_agent::channel::{PlannerChannel, PLANNER_CHANNEL};
 use onemessagebus_agent::Agent;
 use serde_json::{Map, Value};
 
@@ -200,7 +200,7 @@ struct BusArgs {
     #[arg(long, value_name = "PATH", env = "ONEMESSAGEBUS_CONFIG")]
     config: Option<PathBuf>,
     /// The directory the transport keeps its queues in, overriding the
-    /// configuration's; with no configuration, the planner-channel layout's.
+    /// configuration's.
     #[arg(long, value_name = "DIR", env = "ONEMESSAGEBUS_TRANSPORT_DIR")]
     transport_dir: Option<PathBuf>,
     /// A directory of registered documents, one `<id>.json` per schema, added
@@ -580,6 +580,13 @@ fn failed(message: impl Into<String>) -> Refusal {
 /// Run the command line over `args` (the program name first), writing to this
 /// process's stdout and stderr, and answer the exit code.
 pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
+    run_with(args, &Layouts::new())
+}
+
+/// [`run`], for a program that links `layouts` as code: a configuration's
+/// `profile` resolves against them before any layout a linked bundle declares,
+/// so a program keeps its own layout over a linked one of the same name.
+pub fn run_with(args: impl IntoIterator<Item = OsString>, layouts: &Layouts) -> ExitCode {
     let args: Vec<OsString> = args.into_iter().collect();
     let cli = match Cli::try_parse_from(&args) {
         Ok(cli) => cli,
@@ -595,7 +602,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
         }
     };
     let mut stdout = std::io::stdout().lock();
-    match dispatch(cli, &mut stdout, &Io::process()) {
+    match dispatch(cli, &mut stdout, &Io::process(layouts)) {
         Ok(()) => ExitCode::from(EXIT_OK),
         Err(refusal) => {
             eprintln!("onemessagebus: {}", refusal.message);
@@ -669,10 +676,11 @@ fn dispatch(cli: Cli, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refu
 }
 
 /// What one invocation of a verb reads beyond its arguments: where its stdin
-/// comes from, the transport a resident core holds open for it, and whether a
-/// streaming verb has been asked to stop.
+/// comes from, the layouts the program links, the transport a resident core
+/// holds open for it, and whether a streaming verb has been asked to stop.
 struct Io {
     input: Input,
+    layouts: Layouts,
     #[cfg(unix)]
     held: Option<Arc<Held>>,
     cancel: Option<Arc<AtomicBool>>,
@@ -693,17 +701,20 @@ enum Input {
 /// opened from them.
 #[cfg(unix)]
 struct Held {
+    layouts: Layouts,
     config: Option<PathBuf>,
     transport_dir: Option<PathBuf>,
     registry: Option<PathBuf>,
-    bound: Option<(Config, Arc<dyn onemessagebus::Transport>)>,
+    bound: (Config, Arc<dyn onemessagebus::Transport>),
 }
 
 impl Io {
-    /// A verb run by this process's own command line.
-    const fn process() -> Self {
+    /// A verb run by this process's own command line, in a program linking
+    /// `layouts`.
+    fn process(layouts: &Layouts) -> Self {
         Self {
             input: Input::Process,
+            layouts: layouts.clone(),
             #[cfg(unix)]
             held: None,
             cancel: None,
@@ -735,7 +746,7 @@ impl Io {
         args: &BusArgs,
     ) -> Option<(Config, Arc<dyn onemessagebus::Transport>)> {
         let held = self.held.as_ref()?;
-        let (config, transport) = held.bound.as_ref()?;
+        let (config, transport) = &held.bound;
         (held.config == args.config && held.transport_dir == args.transport_dir)
             .then(|| (config.clone(), Arc::clone(transport)))
     }
@@ -1441,19 +1452,13 @@ fn shape(value: &Value) -> &'static str {
     }
 }
 
-/// The layouts this binary links, by name: the agent profile's planner channel.
-fn layouts() -> Layouts {
-    Layouts::new().with(Arc::new(PlannerChannel))
-}
-
 /// The bus a queue verb opens: the configuration file loaded and resolved, its
-/// transport directory overridden when one is named — or, with no file, the
-/// planner-channel layout over a local transport in that directory — with the
-/// registry directory's schemas beside the layout's.
+/// transport directory overridden when one is named, with the registry
+/// directory's schemas beside the layout's.
 fn open_bus(args: &BusArgs, io: &Io) -> Result<Bus, Refusal> {
     let (config, held) = configured(args, io)?;
     let linked = linked(&config, Freshness::Window)?;
-    bind(&config, held, &linked, args)
+    bind(&config, held, &linked, args, io)
 }
 
 /// The configuration a queue verb opens its bus with, and the transport a
@@ -1469,24 +1474,29 @@ fn configured(
     Ok((configuration(args)?, None))
 }
 
-/// `config` bound to the layouts this binary links, with the schemas this binary,
-/// the registry directory and the `linked` bundles register, over the transport
-/// held open or one opened from `config`.
+/// `config` bound to the layouts the program links and the ones the `linked`
+/// bundles declare — the program's own winning a name both declare — with the
+/// schemas this binary, the registry directory and the `linked` bundles
+/// register, over the transport held open or one opened from `config`.
 fn bind(
     config: &Config,
     held: Option<Arc<dyn onemessagebus::Transport>>,
     linked: &[Resolved],
     args: &BusArgs,
+    io: &Io,
 ) -> Result<Bus, Refusal> {
     let mut registry = load_registry_dir(args.registry.as_deref())?;
     registry.add_linked(linked).map_err(link_refusal)?;
+    let layouts = io
+        .layouts
+        .clone()
+        .with_linked(linked)
+        .map_err(link_refusal)?;
     match held {
-        Some(transport) => config.resolve_over(&layouts(), transport, registry.registry()),
-        None => config.resolve_with_registry(
-            &layouts(),
-            &TransportKinds::builtin(),
-            registry.registry(),
-        ),
+        Some(transport) => config.resolve_over(&layouts, transport, registry.registry()),
+        None => {
+            config.resolve_with_registry(&layouts, &TransportKinds::builtin(), registry.registry())
+        }
     }
     .map_err(|failure| invalid(failure.to_string()))
 }
@@ -1494,18 +1504,14 @@ fn bind(
 /// The configuration a queue verb opens its bus with, loaded and checked but
 /// not yet bound to the layouts and transports this binary has.
 fn configuration(args: &BusArgs) -> Result<Config, Refusal> {
-    let config = match (&args.config, &args.transport_dir) {
-        (Some(path), _) => Config::load(path).map_err(|failure| invalid(failure.to_string()))?,
-        (None, Some(dir)) => Config::local(dir, Some(PLANNER_CHANNEL)),
-        (None, None) => {
-            return Err(invalid(
-                "no configuration to open a queue with: pass --config <path> (or set \
-                 ONEMESSAGEBUS_CONFIG), or --transport-dir <dir> (or set \
-                 ONEMESSAGEBUS_TRANSPORT_DIR) for the planner-channel layout over a local \
-                 transport there",
-            ))
-        }
+    let Some(path) = &args.config else {
+        return Err(invalid(
+            "no configuration to open a queue with: pass --config <path> (or set \
+             ONEMESSAGEBUS_CONFIG) naming the transport and the layout its queues keep; \
+             --transport-dir only moves a configuration's transport",
+        ));
     };
+    let config = Config::load(path).map_err(|failure| invalid(failure.to_string()))?;
     Ok(match &args.transport_dir {
         Some(dir) => config.with_transport_dir(dir),
         None => config,
@@ -1910,7 +1916,7 @@ fn transports(format: OutputFormat, out: &mut impl std::io::Write) -> Result<(),
 
 fn serve(args: ServeArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refusal> {
     let (queue, codec) = match args.mode() {
-        Some(ServeMode::Resident(socket)) => return resident_core(socket, &args),
+        Some(ServeMode::Resident(socket)) => return resident_core(socket, &args, io),
         Some(ServeMode::Codec { queue, codec }) => (queue, codec),
         None => {
             return Err(invalid(
@@ -2022,7 +2028,7 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), 
             )),
         },
     };
-    let bus = bind(&config, held, &linked, &args.bus)?;
+    let bus = bind(&config, held, &linked, &args.bus, io)?;
     bus.queue(&queue).map_err(bus_refusal)?;
     for frame in settings.frames.values() {
         if bus.registry().schema(&frame.schema).is_none() {
@@ -2061,13 +2067,13 @@ fn serve(args: ServeArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), 
 
 /// `serve --resident`, where there is a unix socket to listen on.
 #[cfg(unix)]
-fn resident_core(socket: &Path, args: &ServeArgs) -> Result<(), Refusal> {
-    resident::serve(socket, args)
+fn resident_core(socket: &Path, args: &ServeArgs, io: &Io) -> Result<(), Refusal> {
+    resident::serve(socket, args, &io.layouts)
 }
 
 /// `serve --resident`, refused where there is no unix socket to listen on.
 #[cfg(not(unix))]
-fn resident_core(_: &Path, _: &ServeArgs) -> Result<(), Refusal> {
+fn resident_core(_: &Path, _: &ServeArgs, _: &Io) -> Result<(), Refusal> {
     Err(invalid(
         "serve --resident listens on a unix socket, which this platform does not have; run \
          each verb as its own invocation instead",

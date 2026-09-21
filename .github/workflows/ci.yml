@@ -76,8 +76,7 @@ jobs:
           tool: nextest,cargo-llvm-cov
       - uses: ./.github/actions/setup-just
       # onemessagebus-pypi's targets build the wheel with maturin through uvx and
-      # install it into a uv virtualenv, and the journey crate runs the
-      # onepipeline-cli 0.28.2 wheel's reader through `uv tool run`.
+      # install it into a uv virtualenv, and the Python SDK's tiers run under uv.
       - uses: astral-sh/setup-uv@v6
       # The TypeScript SDK's tiers run under bun, and the cross-language journey
       # spawns bun and uv beside the binary. Its version is .bun-version's.
@@ -88,7 +87,6 @@ jobs:
         run: just bootstrap
       - name: Quality gate (affected projects)
         if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-plz-')
-        # llmlint: ignore[external_service_suite_stays_out_of_the_affected_tier, live_tier_compiles_and_requires_credential] the onepipeline 0.28.2 byte-compatibility journey fetches one exact pinned wheel (onepipeline-cli==0.28.2, the anchored engine release the compatibility promise is made against) anonymously from PyPI, so no credential exists to require, and uv caches it after the first run; the task placed this journey in the gate deliberately, because byte compatibility with that release is this node's central acceptance criterion and must gate every pull request.
         run: just check-affected
       - name: Quality gate (every project)
         if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-plz-')
@@ -150,12 +148,10 @@ jobs:
           tool: nextest
       - uses: ./.github/actions/setup-just
         if: needs.changes.outputs.crate == 'true'
-      # The journey crate runs the onepipeline-cli 0.28.2 wheel's reader through
-      # `uv tool run` to read a channel directory this build wrote.
-      - uses: astral-sh/setup-uv@v6
-        if: needs.changes.outputs.crate == 'true'
       # The SDK projects bootstrap with bun and uv, and on macOS the
       # cross-language journey spawns both.
+      - uses: astral-sh/setup-uv@v6
+        if: needs.changes.outputs.crate == 'true'
       - uses: oven-sh/setup-bun@v2
         if: needs.changes.outputs.crate == 'true'
         with:
@@ -163,12 +159,10 @@ jobs:
       - name: Bootstrap
         if: needs.changes.outputs.crate == 'true'
         run: just bootstrap
-      # llmlint: ignore-block[external_service_suite_stays_out_of_the_affected_tier, live_tier_compiles_and_requires_credential] the onepipeline 0.28.2 byte-compatibility journey fetches one exact pinned wheel (onepipeline-cli==0.28.2, the anchored engine release the compatibility promise is made against) anonymously from PyPI, so no credential exists to require, and uv caches it after the first run; the task placed this journey in the gate deliberately, because byte compatibility with that release is this node's central acceptance criterion and must gate every pull request.
       - name: Tests (every crate and the npm packaging)
         if: needs.changes.outputs.crate == 'true'
         # llmlint: ignore[no_second_broader_sweep_over_an_already_gated_commit] not the same sweep twice: `gate` runs on ubuntu alone, and this is the only run of the suites on macOS and Windows, which the create-repo CI guidance requires for a cross-platform binary; formatting, lints and coverage are platform-independent and are not repeated here.
         run: just test-uninstrumented
-      # llmlint: ignore-end[external_service_suite_stays_out_of_the_affected_tier, live_tier_compiles_and_requires_credential]
 
   # The declared MSRV is a promise to consumers, so prove it rather than document
   # it: a floor that only lives in Cargo.toml drifts the first time a dependency

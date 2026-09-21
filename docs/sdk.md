@@ -138,8 +138,10 @@ bus.resident-protocol@1`), and both SDKs generate their protocol types from it.
   lines, then ends with `"ok": "until"` when its predicate holds, or `"ok":
   "cancelled"` once `{"id": <n>, "cancel": true}` names it or the connection
   closes.
-- A request naming no `config`, `transportDir` or `registry` takes the resident's
-  own. A second resident on a socket a live one answers on is refused with exit 1
+- A resident is started with a configuration, as a queue verb is, and is
+  refused naming `--config` without one; a resident transport starts it with its
+  client's `config`. A request naming no `config`, `transportDir` or `registry`
+  takes the resident's own. A second resident on a socket a live one answers on is refused with exit 1
   naming the live one's pid; removing the socket stops a resident cleanly.
 
 ## The version each package drives
@@ -154,7 +156,10 @@ version, so the SDK drives the binary built beside it.
 
 No wire shape is restated by hand in either package. Both generate from the SDK
 bundle `onemessagebus-cli`'s `sdk_bundle` example prints — the capability
-manifest, every contract root, every options root and every registered message:
+manifest, every contract root (among them `config`, the configuration file;
+`schema_bundle`, the document a configuration's `schemas` links serve; and
+`layout`, one layout that document declares as data), every options root and
+every registered message:
 Python as Pydantic v2 models through `datamodel-code-generator`, TypeScript as
 declarations through `json-schema-to-typescript` with Zod schemas emitted from the
 same documents. Each package's generate-check fails when the committed output is

@@ -39,9 +39,7 @@ if (!existsSync(BINARY)) {
   fail(`${BINARY} is not built`, "build it with `just nx run onemessagebus-cli:build`, then rerun");
 }
 
-const base = process.env.ONEPIPELINE_NODE_SCRATCH_DIR ?? tmpdir();
-mkdirSync(base, { recursive: true });
-const work = mkdtempSync(join(base, "sdk-package-"));
+const work = mkdtempSync(join(tmpdir(), "sdk-package-"));
 const socketDir = mkdtempSync(join(tmpdir(), "omb-pkg-"));
 process.on("exit", () => {
   rmSync(work, { recursive: true, force: true });
@@ -153,6 +151,18 @@ if (installed.dependencies?.["onemessagebus-cli"] !== stamped.version) {
   );
 }
 
+// A queue verb opens the queues a configuration declares; `notes` is typed by the
+// profile's Rust-registered `agent.note@1`.
+writeFileSync(
+  join(consumer, "onemessagebus.yaml"),
+  [
+    "version: 1",
+    "transport: {kind: local, dir: bus}",
+    "queues:",
+    "  notes: {schema: agent.note@1}",
+    "",
+  ].join("\n"),
+);
 writeFileSync(
   join(consumer, "consume.mjs"),
   `import assert from "node:assert/strict";
@@ -163,22 +173,22 @@ const version = ${JSON.stringify(stamped.version)};
 assert.equal(SDK_VERSION, version);
 assert.equal(CLI_VERSION, version);
 
-const config = { transportDir: "channel" };
+const config = { config: "onemessagebus.yaml" };
 const client = new Client({ config });
 const kinds = await client.transports();
 assert.ok(kinds.some((kind) => kind.kind === "local"), JSON.stringify(kinds));
-const surface = { kind: "finding", message: "installed", source: "proposal", blocking: false };
-const [sent] = await client.send("surfaces", surface);
-assert.equal(sent.queue, "surfaces");
-const claimed = await client.next("surfaces", { type: messages.AgentPlannerSurfaceV1 });
-assert.equal(claimed.record.message, "installed");
-assert.equal(await client.next("surfaces"), undefined);
-await assert.rejects(client.send("nowhere", surface), BusRefused);
+const note = { addressee: "worker", text: "installed" };
+const [sent] = await client.send("notes", note);
+assert.equal(sent.queue, "notes");
+const claimed = await client.next("notes", { type: messages.AgentNoteV1 });
+assert.equal(claimed.record.text, "installed");
+assert.equal(await client.next("notes"), undefined);
+await assert.rejects(client.send("nowhere", note), BusRefused);
 
 const socket = ${JSON.stringify(join(socketDir, "bus.sock"))};
 const resident = new Client({ config, transport: new ResidentTransport({ socket }) });
-const statuses = await resident.status("surfaces");
-assert.equal(statuses[0].queue, "surfaces");
+const statuses = await resident.status("notes");
+assert.equal(statuses[0].queue, "notes");
 await resident.transport.close();
 assert.equal(existsSync(socket), false, "closing stopped the resident it started");
 console.log("ok");

@@ -537,7 +537,7 @@ mod journeys {
                 .unwrap_or_else(|failure| panic!("the {kind} transport opens: {failure}"))
         };
         let dirfiles = || open(KIND, Some(scratch_dir().join("queues")));
-        let local = || open("local", Some(scratch_dir().join("channel")));
+        let local = || open("local", Some(scratch_dir().join("local")));
         let memory = || open("memory", None);
 
         let mut outcomes = BTreeMap::new();
@@ -567,7 +567,7 @@ mod journeys {
     fn the_transport_keeps_its_own_layout_and_refuses_a_key_it_does_not_take() {
         let root = scratch_dir();
         let files = DirFiles::open(&root).expect("opens");
-        let queue = "surfaces".parse().expect("a queue");
+        let queue = "questions".parse().expect("a queue");
         files.append(&queue, br#"{"n":0}"#).expect("appends");
         files
             .commit(
@@ -577,13 +577,13 @@ mod journeys {
             )
             .expect("commits");
         assert!(root
-            .join("surfaces/records/00000000000000000000.json")
+            .join("questions/records/00000000000000000000.json")
             .is_file());
         assert_eq!(
-            std::fs::read_to_string(root.join("surfaces/cursors/default")).expect("the cursor"),
+            std::fs::read_to_string(root.join("questions/cursors/default")).expect("the cursor"),
             "1"
         );
-        assert!(!root.join("surfaces.jsonl").exists());
+        assert!(!root.join("questions.jsonl").exists());
         let refused = DirFiles::from_config(&TransportConfig {
             kind: KIND.parse().expect("a transport kind"),
             dir: Some(root),
@@ -776,41 +776,51 @@ mod journeys {
             text.stdout
         );
 
+        // The bus's own `desk` layout, linked from the fixture bundle beside
+        // these journeys, and one plainly declared queue.
+        let desk = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/layouts/desk.json");
+        let desk = serde_json::to_string(&format!("{}@1", desk.display())).expect("a path");
         let config = |name: &str, kind: &str, dir: &Path| -> String {
             let file = scratch.join(name);
             std::fs::write(
                 &file,
                 format!(
-                    "version: 1\ntransport: {{kind: {kind}, dir: {}}}\nprofile: planner-channel\nqueues:\n  findings: {{}}\n",
-                    dir.display()
+                    "version: 1\ntransport: {{kind: {kind}, dir: {}}}\nprofile: desk\nschemas:\n  - {desk}\nqueues:\n  findings: {{}}\n",
+                    serde_json::to_string(dir).expect("a path")
                 ),
             )
             .expect("a configuration");
             file.to_str().expect("a path").to_owned()
         };
         let plugin_dir_queues = scratch.join("plugin-queues");
-        let local_dir = scratch.join("local-channel");
+        let local_dir = scratch.join("local-queues");
         let over_plugin = config("plugin.yaml", KIND, &plugin_dir_queues);
         let over_local = config("local.yaml", "local", &local_dir);
 
-        let surface = |message: &str, blocking: bool| {
-            json!({"kind": "planner-question", "message": message, "source": "proposal",
-                   "blocking": blocking, "queued_at": 1_789_000_000_000_u64})
+        let question = |message: &str, blocking: bool| {
+            json!({"kind": "question", "message": message, "source": "proposal",
+                   "blocking": blocking, "raised_at": 1_789_000_000_000_u64})
             .to_string()
         };
         let script: Vec<(Vec<&str>, Option<String>)> = vec![
-            (vec!["send", "surfaces"], Some(surface("narration", false))),
-            (vec!["send", "surfaces"], Some(surface("a question", true))),
+            (
+                vec!["send", "questions"],
+                Some(question("narration", false)),
+            ),
+            (
+                vec!["send", "questions"],
+                Some(question("a question", true)),
+            ),
             (
                 vec!["send", "findings"],
                 Some(r#"{"what":"a finding"}"#.to_owned()),
             ),
             (vec!["send", "nowhere"], Some("{}".to_owned())),
             (vec!["status"], None),
-            (vec!["next", "surfaces"], None),
-            (vec!["status", "surfaces"], None),
-            (vec!["next", "surfaces"], None),
-            (vec!["next", "surfaces"], None),
+            (vec!["next", "questions"], None),
+            (vec!["status", "questions"], None),
+            (vec!["next", "questions"], None),
+            (vec!["next", "questions"], None),
             (vec!["next", "findings", "--consumer", "reader"], None),
             (vec!["status", "findings", "--format", "text"], None),
         ];
@@ -836,10 +846,10 @@ mod journeys {
             }
         }
         assert!(
-            plugin_dir_queues.join("surfaces/records").is_dir(),
+            plugin_dir_queues.join("questions/records").is_dir(),
             "the binary did not keep its queues through the plugin"
         );
-        assert!(!plugin_dir_queues.join("surfaces.jsonl").exists());
-        assert!(local_dir.join("surfaces.jsonl").is_file());
+        assert!(!plugin_dir_queues.join("questions.jsonl").exists());
+        assert!(local_dir.join("questions.jsonl").is_file());
     }
 }

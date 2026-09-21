@@ -78,16 +78,16 @@ def test_the_generator_fails_with_a_cause_and_a_next_action_rather_than_a_traceb
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     colliding = [
-        generate.Rendered("agent.planner-surface@1", "agent_planner_surface_v1", "Surface"),
-        generate.Rendered("other.planner-surface@1", "other_planner_surface_v1", "Surface"),
+        generate.Rendered("agent.event-note@1", "agent_event_note_v1", "Note"),
+        generate.Rendered("other.event-note@1", "other_event_note_v1", "Note"),
     ]
     with pytest.raises(SystemExit) as collided:
         generate.models_module(colliding)
     assert collided.value.code == 1
     said = capsys.readouterr().err
     assert said.startswith(
-        "generate.py: the families agent.planner-surface and other.planner-surface would both be "
-        "exported from onemessagebus.models as PlannerSurface"
+        "generate.py: the families agent.event-note and other.event-note would both be "
+        "exported from onemessagebus.models as EventNote"
     )
     assert "then rerun `just python-sdk-generate`" in said
 

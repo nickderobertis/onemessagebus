@@ -13,8 +13,9 @@ from pathlib import Path
 
 import onemessagebus
 from onemessagebus import Client, ClientConfig, ResidentTransport
+from onemessagebus.models import Note
 
-SURFACE = {"kind": "finding", "message": "installed", "source": "proposal", "blocking": False}
+NOTE = Note(addressee="worker", text="installed")
 
 
 async def main(expected: str) -> None:
@@ -23,14 +24,22 @@ async def main(expected: str) -> None:
             f"the installed SDK is {onemessagebus.__version__}, and this revision packs {expected}"
         )
     with tempfile.TemporaryDirectory() as scratch:
-        config = ClientConfig(transport_dir=Path(scratch, "channel"))
+        declared = Path(scratch, "onemessagebus.yaml")
+        declared.write_text(
+            "version: 1\n"
+            f"transport: {{kind: local, dir: {Path(scratch, 'bus')}}}\n"
+            "queues:\n"
+            "  notes: {schema: agent.note@1}\n",
+            encoding="utf-8",
+        )
+        config = ClientConfig(config=declared)
         async with Client(config) as client:
             if not any(kind.kind == "local" for kind in await client.transports()):
                 raise SystemExit("the installed binary lists no local transport")
-            await client.send("surfaces", SURFACE)
+            await client.send("notes", NOTE)
         resident = ResidentTransport(Path(scratch, "bus.sock"))
         async with Client(config, transport=resident) as client:
-            statuses = await client.status("surfaces")
+            statuses = await client.status("notes")
             if statuses[0].records != 1:
                 raise SystemExit(f"the resident core reads {statuses[0]} for what was sent")
     print(

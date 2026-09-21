@@ -1,7 +1,8 @@
 //! The configuration file, and the bus it resolves to.
 //!
-//! `onemessagebus.yaml` names a transport, optionally a layout a profile crate
-//! declares, queues added to it or overriding its own, and configured authors.
+//! `onemessagebus.yaml` names a transport, optionally a layout — one a program
+//! links as code, or one a linked bundle declares as data — queues added to it
+//! or overriding its own, and configured authors.
 //! Reading it is two steps, and the types keep them apart:
 //!
 //! 1. [`Config::load`] reads the file and refuses what the file alone decides —
@@ -28,6 +29,7 @@ use crate::ask::Correlation;
 use crate::author::{Allowlist, Author, NarrowingRefused, OpWord};
 use crate::codec::{CodecConfig, CodecName};
 use crate::kinds::{TransportConfig, TransportKinds};
+use crate::layout::LinkedLayout;
 use crate::link::{Freshness, LinkError, LinkResolver, Resolved, SchemaLink};
 use crate::queue::{
     shape_word, Delivery, Ordering, Policy, Predicate, Pushed, QueueError, QueueSpec, RawQueue,
@@ -58,14 +60,17 @@ pub struct Config {
     pub version: u32,
     /// The transport the queues are kept on.
     pub transport: TransportConfig,
-    /// A layout a linked profile declares, by name: its queues, policies,
-    /// authors, operations and schemas.
+    /// A layout by name — one the program links as code, or one a bundle the
+    /// `schemas` key links declares as data (`onemessagebus::LayoutDocument`),
+    /// the program's own winning where both declare the name: its queues,
+    /// policies, authors, operations and schemas.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
     /// Queues added to the layout's, or overriding one of the layout's by name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub queues: BTreeMap<QueueName, QueueConfig>,
-    /// Authors declared by the configuration. The built-in planner may only be narrowed.
+    /// Authors declared by the configuration. An author the layout declares may
+    /// only be narrowed.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(with = "BTreeMap<ConfiguredAuthor, AuthorConfig>")]
     pub authors: BTreeMap<Author, AuthorConfig>,
@@ -319,7 +324,7 @@ pub enum ConfigError {
         found: u32,
     },
     /// A profile no linked layout declares.
-    #[error("profile: `{name}` is not a layout this build links; the layouts are: {known}")]
+    #[error("profile: `{name}` is not a layout this build links or a linked bundle declares; the layouts are: {known}")]
     Profile {
         /// The name the file gives.
         name: String,
@@ -524,7 +529,10 @@ impl Config {
         let layout = match &self.profile {
             Some(name) => Some(layouts.get(name).ok_or_else(|| ConfigError::Profile {
                 name: name.clone(),
-                known: layouts.names().join(", "),
+                known: match layouts.names() {
+                    names if names.is_empty() => "(none)".to_owned(),
+                    names => names.join(", "),
+                },
             })?),
             None => None,
         };
@@ -850,6 +858,51 @@ impl Layouts {
     pub fn with(mut self, layout: Arc<dyn Layout>) -> Self {
         self.0.push(layout);
         self
+    }
+
+    /// The same set, with every layout the `linked` bundles declare added —
+    /// each bound to the schemas every one of them carries — except where the
+    /// set already holds a layout of that name: a layout a program compiled in
+    /// keeps its own over a linked one.
+    ///
+    /// # Errors
+    ///
+    /// [`LinkError::Register`] for two linked bundles holding one id under
+    /// different documents, and [`LinkError::Layout`] naming the link for a
+    /// layout name two links declare, or a `check` step naming a schema no
+    /// linked bundle carries.
+    pub fn with_linked(mut self, linked: &[Resolved]) -> Result<Self, LinkError> {
+        let mut registry = Registry::new();
+        for resolved in linked {
+            resolved.register_into(&mut registry)?;
+        }
+        let compiled = self.names();
+        let mut declared_by: BTreeMap<&str, &Resolved> = BTreeMap::new();
+        for resolved in linked {
+            for document in resolved.bundle().layouts() {
+                if let Some(first) = declared_by.insert(document.name().as_str(), resolved) {
+                    return Err(LinkError::Layout {
+                        link: resolved.link().to_string(),
+                        why: format!(
+                            "`{}` is already declared by {}; a layout is linked once",
+                            document.name(),
+                            first.link()
+                        ),
+                    });
+                }
+                if compiled.iter().any(|name| name == document.name().as_str()) {
+                    continue;
+                }
+                let layout = LinkedLayout::new(document.clone(), &registry).map_err(|why| {
+                    LinkError::Layout {
+                        link: resolved.link().to_string(),
+                        why: format!("`{}`: {why}", document.name()),
+                    }
+                })?;
+                self.0.push(Arc::new(layout));
+            }
+        }
+        Ok(self)
     }
 
     /// The layout named `name`.
