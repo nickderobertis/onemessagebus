@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/nickderobertis/onemessagebus/compare/v0.7.0...v0.8.0) - 2026-09-21
+
+### Added
+
+- *(layout)* [**breaking**] declare a layout as linked data, and remove onepipeline's planner channel from the bus ([#131](https://github.com/nickderobertis/onemessagebus/pull/131))
+
 ## [0.7.0](https://github.com/nickderobertis/onemessagebus/compare/v0.6.0...v0.7.0) - 2026-09-17
 
 ### Added
