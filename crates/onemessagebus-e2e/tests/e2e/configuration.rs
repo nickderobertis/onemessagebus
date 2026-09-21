@@ -125,13 +125,27 @@ fn a_queue_verb_given_no_configuration_is_refused_naming_config_and_creates_noth
     let scratch = tempfile::tempdir().expect("a scratch directory");
     let moved = scratch.path().join("moved");
     let moved = moved.to_str().expect("a UTF-8 path");
-    let socket = scratch.path().join("bus.sock");
-    let socket = socket.to_str().expect("a UTF-8 path");
 
-    let mut verbs = queue_verbs();
+    let verbs = queue_verbs();
     // The resident is refused before it listens, given nothing at all as given a
-    // transport directory alone.
-    verbs.push((vec!["serve", "--resident", "--socket", socket], None));
+    // transport directory alone. Where there is no unix socket it is refused for
+    // that first, which `resident_unavailable` holds.
+    #[cfg(unix)]
+    let socket = scratch.path().join("bus.sock");
+    #[cfg(unix)]
+    let verbs = [
+        verbs,
+        vec![(
+            vec![
+                "serve",
+                "--resident",
+                "--socket",
+                socket.to_str().expect("a UTF-8 path"),
+            ],
+            None,
+        )],
+    ]
+    .concat();
     for (given, flags, env) in [
         ("nothing", vec![], vec![]),
         (
