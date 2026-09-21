@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use onemessagebus::{
     Allowlist, Author, BusError, Config, ConfigError, Freshness, Layout, LayoutDocument, Layouts,
-    LinkError, LinkResolver, OpWord, QueueName, QueueSpec, Registry, Resolved, SchemaBundle,
-    SchemaLink, TransportKinds,
+    LinkError, LinkResolver, LinkedLayout, OpWord, QueueName, QueueSpec, Registry, Resolved,
+    SchemaBundle, SchemaLink, TransportKinds,
 };
 use serde_json::{json, Value};
 
@@ -133,6 +133,21 @@ fn a_layout_document_rides_in_a_bundle_and_round_trips_through_its_type() {
 
     // A publisher builds the document through the type, not by restating it.
     let document: LayoutDocument = serde_json::from_value(intake()).expect("it reads");
+    assert_eq!(document.description(), None);
+    let mut described = intake();
+    described["description"] = json!("tickets and their answers");
+    let described: LayoutDocument = serde_json::from_value(described).expect("it reads");
+    assert_eq!(described.description(), Some("tickets and their answers"));
+    let schemas_only = SchemaBundle::new(
+        "2.1".parse().expect("a version"),
+        None,
+        bundle(&intake_bundle())
+            .expect("it reads")
+            .schemas()
+            .to_vec(),
+    )
+    .expect("schemas alone are a bundle");
+    assert!(schemas_only.layouts().is_empty());
     let built = SchemaBundle::with_layouts(
         "2.1".parse().expect("a version"),
         None,
@@ -203,6 +218,10 @@ fn a_layout_document_refuses_each_malformation_naming_its_key() {
             "layouts[0]: is not a layout: operations[1]: `file` is declared twice",
         ),
         (
+            with(&|layout| layout["operations"] = json!(["file", " "])),
+            "layouts[0]: is not a layout: operations[1]: is empty",
+        ),
+        (
             with(&|layout| layout["authors"]["owner"]["capabilities"] = json!(["file"])),
             "layouts[0]: is not a layout: `every_op` grants every op, so it takes no `capabilities`",
         ),
@@ -213,6 +232,10 @@ fn a_layout_document_refuses_each_malformation_naming_its_key() {
         (
             with(&|layout| layout["authors"]["helper"]["refusals"] = json!({"file": "no"})),
             "layouts[0]: is not a layout: authors.helper.refusals.file: a granted op may not have a refusal",
+        ),
+        (
+            with(&|layout| layout["authors"]["owner"]["refusals"] = json!({"close": "no"})),
+            "layouts[0]: is not a layout: authors.owner.refusals.close: a granted op may not have a refusal",
         ),
         (
             with(&|layout| layout["prepare"]["inbox"] = json!([])),
@@ -555,4 +578,79 @@ fn a_configuration_narrows_a_linked_layouts_authors_and_never_widens_them() {
         widened.to_string(),
         "authors.helper.capabilities: `close` is not granted to helper by the profile, and a configuration may narrow an author's grants but never widen them"
     );
+}
+
+#[test]
+fn a_grant_with_no_default_author_and_a_route_with_no_fallback_keep_to_the_layouts_words() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let mut document = intake_bundle();
+    document["layouts"][0]["prepare"]["tickets"] = json!([
+        {"rename": {"from": "about", "to": "topic"}},
+        {"grant": {"author": "by", "word": "file"}},
+        {"route": {"routes": [{"queue": "tasks", "on": ["tasks"], "take": ["tasks"]}]}}
+    ]);
+    document["schemas"][0]["schema"] = json!({"type": "object"});
+    let layouts = Layouts::new()
+        .with_linked(&[resolved(dir.path(), "intake.json", &document)])
+        .expect("it links");
+    let bus = bus(dir.path(), &layouts, "").expect("it resolves");
+    let send = |record: Value| {
+        bus.send(&queue("tickets"), record).map(|pushed| {
+            pushed
+                .into_iter()
+                .map(|(queue, _)| queue.to_string())
+                .collect::<Vec<_>>()
+        })
+    };
+    let refusal = |record: Value| match send(record) {
+        Err(BusError::Refused { why, .. }) => why,
+        other => panic!("not refused by the layout: {other:?}"),
+    };
+
+    // With no default author, a record naming none is refused, and so is an
+    // author that is not text; a record that is no object never reaches a step.
+    assert_eq!(refusal(json!({"message": "m"})), "`by` names no author");
+    assert_eq!(
+        refusal(json!({"message": "m", "by": null})),
+        "`by` names no author"
+    );
+    assert!(matches!(
+        send(json!("m")),
+        Err(BusError::Queue(
+            onemessagebus::QueueError::NotAnObject { .. }
+        ))
+    ));
+    assert_eq!(
+        refusal(json!({"message": "m", "by": 5})),
+        "`by` is not text"
+    );
+
+    // A route whose members are absent, with no fallback, leaves the record
+    // on the queue it was offered to.
+    assert_eq!(
+        send(json!({"message": "m", "by": "helper", "about": "billing"})).expect("kept"),
+        ["tickets"]
+    );
+    assert_eq!(
+        send(json!({"by": "owner", "tasks": [1]})).expect("routed"),
+        ["tasks"]
+    );
+    assert_eq!(
+        log(dir.path(), "tickets"),
+        [json!({"event": "queued", "id": 0, "message": "m", "by": "helper", "topic": "billing"})]
+    );
+    assert_eq!(log(dir.path(), "tasks"), [json!({"id": 0, "tasks": [1]})]);
+}
+
+#[test]
+fn a_linked_layout_is_bound_to_its_document() {
+    let mut document = intake();
+    document
+        .as_object_mut()
+        .expect("an object")
+        .remove("prepare");
+    let document: LayoutDocument = serde_json::from_value(document).expect("it reads");
+    let linked = LinkedLayout::new(document.clone(), &Registry::new()).expect("it binds");
+    assert_eq!(linked.document(), &document);
+    assert_eq!(Layout::name(&linked), "intake");
 }

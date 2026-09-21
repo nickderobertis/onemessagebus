@@ -12,7 +12,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use serde_json::{json, Value};
+use serde_json::json;
 
 use crate::support::{desk_config, onemessagebus, Run};
 
@@ -173,6 +173,7 @@ fn a_queue_verb_given_no_configuration_is_refused_naming_config_and_creates_noth
 /// over it, and answers one naming a configuration of its own over that one.
 #[cfg(unix)]
 fn a_configured_resident_answers_requests_and_one_naming_its_own_configuration() {
+    use serde_json::Value;
     use std::io::{BufRead as _, BufReader};
     use std::os::unix::net::UnixStream;
     use std::time::{Duration, Instant};
