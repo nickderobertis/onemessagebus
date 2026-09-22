@@ -15,7 +15,7 @@ from this page.
 A link serves one JSON object:
 
 ```json
-{"version": "8", "description": "optional text", "schemas": [{"id": "agent.example-frame.hello@8", "schema": {"type": "object"}}]}
+{"version": "8", "description": "optional text", "schemas": [{"id": "example.frame.hello@8", "schema": {"type": "object"}}]}
 ```
 
 - `version` (required): a string of one to three dot-separated non-negative
@@ -156,8 +156,8 @@ does not use.
 
 Every command-line verb that loads a configuration makes that call, resolving
 each link before it does anything else, and registers every entry of every
-resolved bundle into the registry it uses — beside the profile's schemas and any
-`--registry` directory. An entry whose id is already registered with a different
+resolved bundle into the registry it uses — beside the binary's own schemas and
+any `--registry` directory. An entry whose id is already registered with a different
 document is refused, naming the link and the id, as the registry refuses it.
 
 Every layout a resolved bundle declares is linked beside the layouts the program

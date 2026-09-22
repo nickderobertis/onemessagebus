@@ -44,7 +44,7 @@ impl Scratch {
         let dir = tempfile::tempdir().expect("a scratch directory");
         desk_config(
             dir.path(),
-            "queues:\n  greetings: {schema: demo.greeting@1}\ncodecs:\n  example:\n    queue: questions\n    select: kind\n    frames:\n      note:\n        schema: agent.note@1\n        bindings:\n          - do: answer\n            response: {accepted: true}\n",
+            "queues:\n  greetings: {schema: demo.greeting@1}\ncodecs:\n  example:\n    queue: questions\n    select: kind\n    frames:\n      hello:\n        schema: onemessagebus.transport-hello@1\n        bindings:\n          - do: answer\n            response: {accepted: true}\n",
         );
         std::fs::write(
             dir.path().join("greeting.json"),
@@ -431,7 +431,7 @@ fn the_resident_answers_every_capability_as_the_one_shot_verb_does() {
     let emitted = client.call(
         16,
         "eventsEmit",
-        json!({"path": stream, "kind": "change-merged", "stream": "s1", "labels": {"run_id": "R"}}),
+        json!({"path": stream, "kind": "invoice-issued", "stream": "s1", "labels": {"tenant": "acme"}}),
         Some(r#"{"branch":"main"}"#),
     );
     assert_eq!(ok(&emitted)["seq"], json!(1), "{emitted}");
@@ -665,7 +665,7 @@ fn a_line_the_protocol_does_not_admit_is_refused_by_name_and_the_connection_goes
     let labels = client.call(
         8,
         "eventsEmit",
-        json!({"path": "x", "kind": "k", "stream": "s", "labels": "run_id=R"}),
+        json!({"path": "x", "kind": "k", "stream": "s", "labels": "tenant=acme"}),
         None,
     );
     assert_eq!(

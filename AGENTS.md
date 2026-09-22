@@ -11,12 +11,10 @@ and the `justfile`; this file holds the judgment.
 `onemessagebus` is a typed NDJSON message bus: one envelope, one filter grammar,
 payload bounds and redaction, a schema registry with version read-sets, and an
 emitter and reader over streams — generic over the **vocabulary** a consumer
-declares. It ships as three things: the `onemessagebus` crate (the core, which
-knows nothing about agents), the `onemessagebus-agent` crate (the agent stack's
-vocabulary declared over the core's public API, which `oneagentgraph`, `onevcs`
-and `onepipeline` adopt in place of the envelope each copied), and the
-`onemessagebus` binary (crates.io-free: the `onemessagebus-cli` wheel on PyPI,
-the `onemessagebus-cli` launcher on npm, or `cargo install --git`). Beside them
+declares. It ships as two things: the `onemessagebus` crate (the core, which
+compiles in no product's vocabulary or schema) and the `onemessagebus` binary
+(crates.io-free: the `onemessagebus-cli` wheel on PyPI, the `onemessagebus-cli`
+launcher on npm, or `cargo install --git`). Beside them
 sit the two language SDKs — `onemessagebus` on PyPI and `@onemessagebus/sdk` on
 npm — typed clients over that binary, one-shot or through its resident core
 (`docs/sdk.md`).
@@ -27,19 +25,18 @@ every consumer restates from; [`docs/wire.md`](docs/wire.md) and
 
 ## The contract comes first, and it is not negotiable in passing
 
-Every fenced block in `docs/contract.md` is driven by a contract test in both
-library crates, and the recorded streams under
-`crates/onemessagebus-agent/tests/recorded/` hold the profile's types to the
-bytes each producer writes today. Two rules follow:
+Every fenced block in `docs/contract.md` is driven by the core's contract test
+(`crates/onemessagebus/tests/contract.rs`). Two rules follow:
 
 - **A shared interface is never changed unilaterally.** A field that turns out
   to be needed or a shape that turns out to be wrong is a proposal to the
   contract's owner, while the work continues against the agreed surface.
-- **The core has no agent word in it.** Every reserved dimension, label key and
-  source word of the agent vocabulary is declared in `onemessagebus-agent`; the
-  core's own test drives a vocabulary with no agent key through the same
-  conformance table. The profile depends on the core and never the reverse, and
-  `deny.toml` refuses an edge from either published crate to a sibling of the
+- **The bus compiles in no product's vocabulary or schema.** A program declares
+  its vocabulary — source words, reserved labels, dimensions — in its own crate
+  over the core's public API, and publishes its schemas as a bundle a
+  configuration links (`docs/schema-links.md`); the core's own test drives a
+  vocabulary of its own through the conformance table every vocabulary runs.
+  `deny.toml` refuses an edge from the published crate to a sibling of the
   stack.
 
 ## Two standing goals on every task
@@ -92,9 +89,8 @@ rationale; the mechanics live in the files named. -->
   from the start. `intersections/python-cli.md` stays unapplied: the Python
   package is a library over the Rust binary, not a Python command line.
 - **Projects in the graph:** `onemessagebus` (the core; `type:contract`),
-  `onemessagebus-agent` (the profile), `onemessagebus-cli` (the binary,
-  unpublished), `onemessagebus-e2e` (its compiled-binary journeys),
-  `onemessagebus-npm-launcher` (the npm launcher, an npm workspace member whose
+  `onemessagebus-cli` (the binary, unpublished), `onemessagebus-e2e` (its
+  compiled-binary journeys), `onemessagebus-npm-launcher` (the npm launcher, an npm workspace member whose
   `build` assembles it with generated platform pins), `onemessagebus-npm` (the
   npm packaging tests and release-configuration drift gates),
   `onemessagebus-pypi` (the wheel, built by maturin), `onemessagebus-npm-e2e` and
@@ -110,10 +106,9 @@ rationale; the mechanics live in the files named. -->
   `onemessagebus-cross-language-e2e` (the journey across Rust, Python and
   TypeScript, apart from the Rust journeys with edges to both SDKs),
   and the root `workspace` project (the
-  coverage floor and the supply-chain check). The binary is its own `publish = false` crate because
-  it links the agent profile so `--profile` defaults to it, and the profile
-  depends on the core — so it can live in neither library; the manager ruled
-  this over the ask seam.
+  coverage floor and the supply-chain check). The binary is its own
+  `publish = false` crate so the core stays a library with no command-line
+  dependency in it.
 - **Excluded, and why:** **asdf / direnv** — `rust-toolchain.toml` and the
   committed lockfiles already pin everything. **A curl-pipe installer and a
   composite action** — every documented install surface is a registry or
@@ -214,14 +209,14 @@ you:
   At 1.0 the usual semver regime takes over (`!` → major). `semver_check` is on,
   so a surface break bumps whatever the type said.
 - **One version source.** `Cargo.toml`'s `[workspace.package]` is it, inherited
-  by every crate: both published crates move on one release, the wheel takes it
+  by every crate and carried to every artifact of a release: the wheel takes it
   via maturin's `dynamic = ["version"]`, the npm packages via
   `scripts/npm-build.mjs`, and each SDK through its packer, which stamps its own
   version and the exact `onemessagebus-cli` it pins over committed placeholders.
   Never write a version into `pyproject.toml`, `npm/onemessagebus-cli/package.json`
   or either SDK's manifest.
 - **What this repository publishes is declared in `release-targets.toml`, and
-  answered by `scripts/release-probe.sh`.** Six targets — the two crates, the
+  answered by `scripts/release-probe.sh`.** Five targets — the core crate, the
   wheel, the npm launcher (covering its five platform packages), and the two
   SDKs (`pypi:onemessagebus`, and `npm:@onemessagebus/sdk`, the one scoped name,
   which needs the `@onemessagebus` npm organization to exist before it can
@@ -241,8 +236,8 @@ values live in the secret store, never in the tree.
   suppressed at its site with a written reason.
 - **Coverage is enforced at 95% line coverage** over the union of every
   crate's run. Lower it only with a documented reason here. The one exclusion
-  is `conformance.rs`: test support published for profile crates, exercised by
-  its callers rather than a subject of coverage.
+  is `conformance.rs`: test support published for a program's vocabulary
+  crate, exercised by its callers rather than a subject of coverage.
 - **Tests are realistic, not mocked**, and complete rather than minimal: drive
   the real binary the way a user does, over every verb, happy path *and*
   failure. Coverage is the floor, never the target.

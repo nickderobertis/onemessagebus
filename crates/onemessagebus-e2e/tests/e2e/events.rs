@@ -3,15 +3,21 @@
 use std::path::Path;
 use std::process::Stdio;
 
-use onemessagebus::{CREDENTIAL_PREFIXES, CREDENTIAL_WORDS, MAX_PAYLOAD_TEXT_BYTES, REDACTED};
+use onemessagebus::{
+    Open, Source, CREDENTIAL_PREFIXES, CREDENTIAL_WORDS, MAX_PAYLOAD_TEXT_BYTES, REDACTED,
+};
 use serde_json::{json, Value};
 
 use crate::support::{ascii, fixture, onemessagebus, run, run_in, Run};
 
+/// The streams the journeys merge: three producers of one commerce run under
+/// the open profile, their timestamps interleaved and two of them tied across
+/// streams. One producer stamps an integer label and an artifact, which
+/// `events emit` does not write but `events merge` carries.
 const RECORDED: &[&str] = &[
-    "recorded/oneagentgraph-run.ndjson",
-    "recorded/onevcs-session.ndjson",
-    "recorded/onepipeline-events.jsonl",
+    "billing-run.ndjson",
+    "shipping-run.ndjson",
+    "ledger-events.ndjson",
 ];
 
 fn recorded_args() -> Vec<String> {
@@ -81,30 +87,45 @@ fn events_merge_prints_every_envelope_of_every_file_in_ts_stream_seq_order() {
 fn events_merge_applies_a_filter_and_a_profile() {
     let filtered = merge(&[
         "--filter",
-        r#"{"include":[{"source":"vcs","kind":"change-*"}]}"#,
+        r#"{"include":[{"source":"billing","kind":"invoice-*"}]}"#,
     ]);
     assert_eq!(filtered.code, 0, "{}", filtered.stderr);
     let printed = filtered.lines();
-    assert!(!printed.is_empty());
+    assert_eq!(printed.len(), 3, "{}", filtered.stdout);
     assert!(printed.iter().all(|envelope| {
-        envelope["source"] == json!("vcs")
+        envelope["source"] == json!("billing")
             && envelope["kind"]
                 .as_str()
-                .is_some_and(|kind| kind.starts_with("change-"))
+                .is_some_and(|kind| kind.starts_with("invoice-"))
     }));
 
-    let by_phase = merge(&["--filter", r#"{"include":[{"phase":"review"}]}"#]);
-    assert_eq!(by_phase.code, 0, "{}", by_phase.stderr);
-    assert!(by_phase
+    // A label the open profile reserves nothing about is matched as text, and a
+    // matcher naming a label an envelope did not stamp does not match it.
+    let by_label = merge(&[
+        "--filter",
+        r#"{"include":[{"tenant":"globex"}],"exclude":[{"kind":"heartbeat"}]}"#,
+    ]);
+    assert_eq!(by_label.code, 0, "{}", by_label.stderr);
+    let globex: Vec<(String, u64)> = by_label
         .lines()
         .iter()
-        .all(|envelope| envelope["phase"] == json!("review")));
+        .map(|envelope| {
+            (
+                envelope["stream"].as_str().expect("stream").to_owned(),
+                envelope["seq"].as_u64().expect("seq"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        globex,
+        [("ledger-7".to_owned(), 2), ("billing-1".to_owned(), 4)]
+    );
 
     // A YAML file spelling of the same filter.
     let dir = tempfile::tempdir().expect("a temp dir");
     std::fs::write(
         dir.path().join("filter.yaml"),
-        "include:\n  - source: vcs\n    kind: \"change-*\"\n",
+        "include:\n  - source: billing\n    kind: \"invoice-*\"\n",
     )
     .expect("written");
     let files = recorded_args();
@@ -115,31 +136,29 @@ fn events_merge_applies_a_filter_and_a_profile() {
     assert_eq!(from_file.code, 0, "{}", from_file.stderr);
     assert_eq!(from_file.stdout, filtered.stdout);
 
-    // Through the open profile, the agent keys are plain labels, and a source
-    // word the agent profile has not is admitted rather than refused.
-    let open = merge(&[
-        "--profile",
-        "open",
-        "--filter",
-        r#"{"include":[{"member":"corpus"}]}"#,
-    ]);
-    assert_eq!(open.code, 0, "{}", open.stderr);
-    assert!(!open.lines().is_empty());
-    assert!(open
-        .lines()
-        .iter()
-        .all(|envelope| envelope["labels"]["member"] == json!("corpus")));
-    let explicit = merge(&["--profile", "agent"]);
+    // `open` is the default: naming it reads the same stream the same way.
+    let explicit = merge(&["--profile", "open"]);
+    assert_eq!(explicit.code, 0, "{}", explicit.stderr);
     assert_eq!(
         explicit.stdout,
         merge(&[]).stdout,
-        "the default profile is the agent one"
+        "the default profile is the open one"
     );
 
-    let unknown = merge(&["--profile", "billing"]);
-    assert_eq!(unknown.code, 2);
-    assert!(unknown.stderr.contains("billing"), "{}", unknown.stderr);
-    assert!(unknown.stderr.contains("agent, open"), "{}", unknown.stderr);
+    // A profile this build does not link — the retired agent one among them —
+    // is refused by the one generic refusal, which names `open` alone.
+    for name in ["agent", "billing"] {
+        let unknown = merge(&["--profile", name]);
+        assert_eq!(unknown.code, 2, "{name}: {}", unknown.stderr);
+        assert!(unknown.stdout.is_empty(), "{name}: {}", unknown.stdout);
+        assert_eq!(
+            unknown.stderr,
+            format!(
+                "onemessagebus: `{name}` is not a profile this build links; choose one of: open\n"
+            ),
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -149,22 +168,19 @@ fn events_merge_refuses_a_malformed_filter_naming_list_index_and_matcher() {
     assert!(empty.stdout.is_empty());
     assert!(empty.stderr.contains("include[1] {}"), "{}", empty.stderr);
 
-    let blank = merge(&["--filter", r#"{"exclude":[{"member":""}]}"#]);
+    let blank = merge(&["--filter", r#"{"exclude":[{"tenant":""}]}"#]);
     assert_eq!(blank.code, 2);
     assert!(
-        blank.stderr.contains(r#"exclude[0] {"member":""}"#),
+        blank.stderr.contains(r#"exclude[0] {"tenant":""}"#),
         "{}",
         blank.stderr
     );
 
-    let unknown = merge(&["--filter", r#"{"include":[{"stream":"s"}]}"#]);
+    let unknown = merge(&["--filter", r#"{"only":[{"kind":"x"}]}"#]);
     assert_eq!(unknown.code, 2);
     assert!(unknown.stdout.is_empty());
-    // Named by the list and the field, with the keys a matcher does take.
-    for said in [
-        "include: unknown field `stream`",
-        "expected one of `phase`, `run_id`, `node`, `step`, `member`, `persona`",
-    ] {
+    // Named by the field, with the lists a filter does take.
+    for said in ["unknown field `only`", "expected `include` or `exclude`"] {
         assert!(unknown.stderr.contains(said), "{}", unknown.stderr);
     }
 
@@ -208,17 +224,23 @@ fn events_merge_renders_text_deterministically() {
             envelope["v"]
         );
         assert!(text.starts_with(&expected_head), "{text}\n{expected_head}");
-        if let Some(phase) = envelope["phase"].as_str() {
-            assert!(text.contains(&format!(" phase={phase}")), "{text}");
-        }
+        let labels: String = envelope["labels"]
+            .as_object()
+            .expect("labels")
+            .iter()
+            .map(|(key, value)| match value {
+                Value::String(text) => format!(" {key}={text}"),
+                other => format!(" {key}={other}"),
+            })
+            .collect();
+        assert!(text.contains(&labels), "{text}\n{labels}");
     }
 }
 
 #[test]
 fn events_merge_over_a_torn_file_prints_the_whole_records_and_reports_the_tail() {
     let dir = tempfile::tempdir().expect("a temp dir");
-    let whole =
-        std::fs::read_to_string(fixture("recorded/onevcs-session.ndjson")).expect("recorded");
+    let whole = std::fs::read_to_string(fixture("billing-run.ndjson")).expect("recorded");
     let last = whole.lines().last().expect("a last line");
     let torn = dir.path().join("torn.ndjson");
     std::fs::write(&torn, format!("{whole}{}", &last[..last.len() / 2])).expect("written");
@@ -256,11 +278,11 @@ fn events_emit_appends_one_envelope_stamped_from_stdin_and_from_file_alike() {
         "--stream",
         "s-1",
         "--source",
-        "vcs",
+        "billing",
         "--label",
-        "run_id=R",
+        "tenant=acme",
         "--label",
-        "round=2",
+        "attempt=2",
         "--label",
         "workstream=w",
     ];
@@ -277,12 +299,13 @@ fn events_emit_appends_one_envelope_stamped_from_stdin_and_from_file_alike() {
     let envelope = &written[0];
     assert_eq!(envelope["kind"], json!("thing-done"));
     assert_eq!(envelope["stream"], json!("s-1"));
-    assert_eq!(envelope["source"], json!("vcs"));
+    assert_eq!(envelope["source"], json!("billing"));
     assert_eq!(envelope["seq"], json!(1));
     assert_eq!(envelope["v"], json!(1));
+    // `open` reserves no key, so every label is the text it was given.
     assert_eq!(
         envelope["labels"],
-        json!({ "run_id": "R", "round": 2, "workstream": "w" })
+        json!({ "tenant": "acme", "attempt": "2", "workstream": "w" })
     );
     assert_eq!(envelope["payload"], json!({ "note": "hi", "n": 1 }));
     assert_eq!(envelope["artifacts"], json!([]));
@@ -306,11 +329,11 @@ fn events_emit_appends_one_envelope_stamped_from_stdin_and_from_file_alike() {
     for envelope in [&printed[0], &written[1]] {
         assert_eq!(envelope["kind"], json!("thing-done"));
         assert_eq!(envelope["stream"], json!("s-1"));
-        assert_eq!(envelope["source"], json!("vcs"));
+        assert_eq!(envelope["source"], json!("billing"));
         assert_eq!(envelope["seq"], json!(2));
         assert_eq!(
             envelope["labels"],
-            json!({ "run_id": "R", "round": 2, "workstream": "w" })
+            json!({ "tenant": "acme", "attempt": "2", "workstream": "w" })
         );
         assert_eq!(envelope["payload"], json!({ "n": 2 }));
     }
@@ -318,14 +341,14 @@ fn events_emit_appends_one_envelope_stamped_from_stdin_and_from_file_alike() {
     let text = emit_in(
         dir.path(),
         &[
-            "--kind", "k", "--stream", "s-1", "--source", "vcs", "--format", "text",
+            "--kind", "k", "--stream", "s-1", "--source", "billing", "--format", "text",
         ],
         Some("{}"),
         &[],
     );
     assert_eq!(text.code, 0, "{}", text.stderr);
     assert!(
-        text.stdout.contains(" vcs k stream=s-1 seq=3 v=1"),
+        text.stdout.contains(" billing k stream=s-1 seq=3 v=1"),
         "{}",
         text.stdout
     );
@@ -334,34 +357,6 @@ fn events_emit_appends_one_envelope_stamped_from_stdin_and_from_file_alike() {
 #[test]
 fn events_emit_refuses_bad_input_by_name() {
     let dir = tempfile::tempdir().expect("a temp dir");
-    let bad_source = emit_in(
-        dir.path(),
-        &["--kind", "k", "--stream", "s", "--source", "billing"],
-        Some("{}"),
-        &[],
-    );
-    assert_eq!(bad_source.code, 2);
-    assert!(
-        bad_source.stderr.contains("billing"),
-        "{}",
-        bad_source.stderr
-    );
-    assert!(
-        bad_source.stderr.contains("agent profile"),
-        "{}",
-        bad_source.stderr
-    );
-
-    let bad_label = emit_in(
-        dir.path(),
-        &["--kind", "k", "--stream", "s", "--label", "round=two"],
-        Some("{}"),
-        &[],
-    );
-    assert_eq!(bad_label.code, 2);
-    assert!(bad_label.stderr.contains("round"), "{}", bad_label.stderr);
-    assert!(bad_label.stderr.contains("integer"), "{}", bad_label.stderr);
-
     let no_pair = emit_in(
         dir.path(),
         &["--kind", "k", "--stream", "s", "--label", "novalue"],
@@ -409,13 +404,15 @@ fn events_emit_refuses_bad_input_by_name() {
     assert!(!dir.path().join("stream.ndjson").exists() || lines_of(dir.path()).is_empty());
 }
 
-/// The per-source write version is a profile fact the emitter stamps: through
-/// the binary, for each of the three words, with `--profile agent` and with
-/// the option omitted.
+/// `open` is the one profile this build links, and the default: with the
+/// option omitted and with it named, any source word is written at version 1,
+/// and with no word the profile's own default is stamped. Naming any other
+/// profile — the retired agent one among them — is refused by the generic
+/// refusal, which names `open` alone and no crate, and appends nothing.
 #[test]
-fn events_emit_stamps_each_sources_write_version_under_the_agent_profile_and_its_default() {
-    for (source, version) in [("pipeline", 2), ("agentgraph", 1), ("vcs", 1)] {
-        for profile in [Some("agent"), None] {
+fn events_emit_writes_under_the_open_profile_by_default_and_refuses_any_other() {
+    for source in ["billing", "shipping", "anything-at-all"] {
+        for profile in [Some("open"), None] {
             let dir = tempfile::tempdir().expect("a temp dir");
             let mut args = vec!["--kind", "k", "--stream", "s", "--source", source];
             if let Some(name) = profile {
@@ -426,12 +423,12 @@ fn events_emit_stamps_each_sources_write_version_under_the_agent_profile_and_its
             let written = lines_of(dir.path());
             assert_eq!(
                 written[0]["v"],
-                json!(version),
+                json!(1),
                 "{source} {profile:?} on the file"
             );
             assert_eq!(
-                emitted.lines()[0]["v"],
-                json!(version),
+                emitted.lines()[0],
+                written[0],
                 "{source} {profile:?} printed"
             );
             assert_eq!(written[0]["source"], json!(source));
@@ -446,28 +443,36 @@ fn events_emit_stamps_each_sources_write_version_under_the_agent_profile_and_its
         &[],
     );
     assert_eq!(defaulted.code, 0, "{}", defaulted.stderr);
-    assert_eq!(lines_of(dir.path())[0]["source"], json!("pipeline"));
-    assert_eq!(lines_of(dir.path())[0]["v"], json!(2));
-    // And the open profile takes any word at version 1.
-    let dir = tempfile::tempdir().expect("a temp dir");
-    let open = emit_in(
-        dir.path(),
-        &[
-            "--kind",
-            "k",
-            "--stream",
-            "s",
-            "--profile",
-            "open",
-            "--source",
-            "billing",
-        ],
-        Some("{}"),
-        &[],
-    );
-    assert_eq!(open.code, 0, "{}", open.stderr);
-    assert_eq!(lines_of(dir.path())[0]["source"], json!("billing"));
+    assert_eq!(lines_of(dir.path())[0]["source"], json!("onemessagebus"));
     assert_eq!(lines_of(dir.path())[0]["v"], json!(1));
+
+    for name in ["agent", "billing"] {
+        let refused = emit_in(
+            dir.path(),
+            &["--kind", "k", "--stream", "s", "--profile", name],
+            Some("{}"),
+            &[],
+        );
+        assert_eq!(refused.code, 2, "{name}: {}", refused.stderr);
+        assert!(refused.stdout.is_empty(), "{name}: {}", refused.stdout);
+        assert_eq!(
+            refused.stderr,
+            format!(
+                "onemessagebus: `{name}` is not a profile this build links; choose one of: open\n"
+            ),
+            "{name}"
+        );
+        assert!(
+            !refused.stderr.contains("onemessagebus-"),
+            "the refusal names a crate: {}",
+            refused.stderr
+        );
+    }
+    assert_eq!(
+        lines_of(dir.path()).len(),
+        1,
+        "a refused emit appended nothing"
+    );
 }
 
 /// The emitter's rule through the binary: the first 4096 bytes of an over-long
@@ -557,6 +562,11 @@ fn events_emit_redacts_credential_shaped_values_before_writing() {
         payload.insert((*word).to_owned(), json!(format!("printed {value} here")));
     }
     payload.insert("tokens".to_owned(), json!(prefixed.join(" ")));
+    // However deeply nested: a list of tokens, and an object inside it.
+    payload.insert(
+        "nested".to_owned(),
+        json!([prefixed[0], { "deeper": [prefixed[0], 7] }]),
+    );
     payload.insert("plain".to_owned(), json!("nothing to see"));
     let emitted = emit_in(
         dir.path(),
@@ -591,6 +601,10 @@ fn events_emit_redacts_credential_shaped_values_before_writing() {
         envelope["payload"]["tokens"],
         json!(vec![REDACTED; prefixed.len()].join(" "))
     );
+    assert_eq!(
+        envelope["payload"]["nested"],
+        json!([REDACTED, { "deeper": [REDACTED, 7] }])
+    );
     assert_eq!(envelope["payload"]["plain"], json!("nothing to see"));
 }
 
@@ -614,7 +628,7 @@ fn concurrent_emitters_leave_one_gapless_series() {
                         .arg(&stream)
                         .args(["--kind", "tick", "--stream"])
                         .arg(format!("writer-{which}"))
-                        .args(["--source", "vcs"])
+                        .args(["--source", "billing"])
                         .stdin(Stdio::piped())
                         .stdout(Stdio::null())
                         .stderr(Stdio::piped())
@@ -643,10 +657,10 @@ fn concurrent_emitters_leave_one_gapless_series() {
     let mut seqs = Vec::new();
     for line in std::fs::read_to_string(&stream).expect("the file").lines() {
         let envelope: Value = serde_json::from_str(line).expect("every line is an envelope");
-        // And the profile's own type reads every line whole, as a consumer does.
-        let typed: onemessagebus_agent::Envelope = serde_json::from_str(line)
-            .unwrap_or_else(|e| panic!("a line is not an agent envelope: {e}: {line}"));
-        assert_eq!(typed.source, onemessagebus_agent::Source::Vcs, "{line}");
+        // And the core's own type reads every line whole, as a consumer does.
+        let typed: onemessagebus::Envelope<Open> = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("a line is not an open envelope: {e}: {line}"));
+        assert_eq!(typed.source, Source::from("billing"), "{line}");
         assert_eq!(typed.kind.as_str(), "tick", "{line}");
         assert!(typed.stream.starts_with("writer-"), "{line}");
         assert_eq!(Some(typed.seq), envelope["seq"].as_u64(), "{line}");
@@ -662,7 +676,7 @@ fn concurrent_emitters_leave_one_gapless_series() {
 #[test]
 fn events_emit_onto_a_torn_file_heals_the_tail_and_says_so() {
     let dir = tempfile::tempdir().expect("a temp dir");
-    let args = ["--kind", "tick", "--stream", "s-1", "--source", "vcs"];
+    let args = ["--kind", "tick", "--stream", "s-1", "--source", "billing"];
     for n in 1..=2 {
         let emitted = emit_in(dir.path(), &args, Some(&json!({ "n": n }).to_string()), &[]);
         assert_eq!(emitted.code, 0, "{}", emitted.stderr);
@@ -744,15 +758,24 @@ fn events_emit_refuses_an_empty_kind_stream_or_label_key_and_renders_typed_label
     let text = emit_in(
         dir.path(),
         &[
-            "--kind", "k", "--stream", "s", "--label", "round=2", "--label", "node=svc",
-            "--format", "text",
+            "--kind",
+            "k",
+            "--stream",
+            "s",
+            "--label",
+            "attempt=2",
+            "--label",
+            "node=svc",
+            "--format",
+            "text",
         ],
         Some(r#"{"n":1}"#),
         &[],
     );
     assert_eq!(text.code, 0, "{}", text.stderr);
     assert!(
-        text.stdout.contains(" round=2 node=svc payload={\"n\":1}"),
+        text.stdout
+            .contains(" attempt=2 node=svc payload={\"n\":1}"),
         "{}",
         text.stdout
     );
@@ -808,7 +831,7 @@ fn events_emit_refuses_a_kind_that_is_not_kebab_case_and_merge_still_carries_one
     let relayed = dir.path().join("relayed.ndjson");
     std::fs::write(
         &relayed,
-        "{\"v\":1,\"ts\":\"2026-09-13T00:00:00.000Z\",\"stream\":\"x\",\"seq\":1,\"source\":\"vcs\",\"kind\":\"Sibling_Kind\"}\n",
+        "{\"v\":1,\"ts\":\"2026-09-13T00:00:00.000Z\",\"stream\":\"x\",\"seq\":1,\"source\":\"shipping\",\"kind\":\"Sibling_Kind\"}\n",
     )
     .expect("written");
     let merged = run(&["events", "merge", relayed.to_str().expect("UTF-8")], None);
@@ -817,17 +840,20 @@ fn events_emit_refuses_a_kind_that_is_not_kebab_case_and_merge_still_carries_one
     assert_eq!(merged.lines()[0]["kind"], json!("Sibling_Kind"));
 }
 
+/// A line carrying a top-level key the profile does not declare is not an
+/// envelope of it: `open` declares no dimension, so a stream a vocabulary with
+/// one wrote is reported line by line and left out, never read as something
+/// else.
 #[test]
 fn events_merge_renders_artifacts_and_reports_a_line_of_another_profile() {
     let dir = tempfile::tempdir().expect("a temp dir");
-    let golden = std::fs::read_to_string(fixture("golden/envelope-v2.json")).expect("golden");
-    let envelope: Value = serde_json::from_str(&golden).expect("JSON");
+    let recorded = std::fs::read_to_string(fixture("shipping-run.ndjson")).expect("recorded");
+    let packed = recorded.lines().next().expect("the first line");
     let stream = dir.path().join("with-artifacts.ndjson");
     std::fs::write(
         &stream,
         format!(
-            "{}\n{{\"v\":1,\"ts\":\"2026-09-13T00:00:00.000Z\",\"stream\":\"x\",\"seq\":1,\"source\":\"billing\",\"kind\":\"k\"}}\n",
-            envelope
+            "{packed}\n{{\"v\":1,\"ts\":\"2026-09-13T00:00:00.000Z\",\"stream\":\"x\",\"seq\":1,\"source\":\"billing\",\"kind\":\"k\",\"region\":\"eu\"}}\n"
         ),
     )
     .expect("written");
@@ -846,7 +872,7 @@ fn events_merge_renders_artifacts_and_reports_a_line_of_another_profile() {
     assert!(
         merged
             .stdout
-            .contains(" artifacts=[{\"id\":\"gate-log\",\"kind\":\"log\",\"bytes\":8192}]"),
+            .contains(" artifacts=[{\"id\":\"label-pdf\",\"kind\":\"document\",\"bytes\":2048}]"),
         "{}",
         merged.stdout
     );
@@ -856,5 +882,9 @@ fn events_merge_renders_artifacts_and_reports_a_line_of_another_profile() {
         "{}",
         merged.stderr
     );
-    assert!(merged.stderr.contains("billing"), "{}", merged.stderr);
+    assert!(
+        merged.stderr.contains("unknown field `region`"),
+        "{}",
+        merged.stderr
+    );
 }

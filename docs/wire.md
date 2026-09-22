@@ -17,14 +17,13 @@ producer wrote them. Every line is an envelope:
 | `seq` | `u64` | Monotonic per `stream`, from 1. A gap is a lost event. |
 | `source` | string | What produced the event, in the vocabulary's words. |
 | `kind` | string | What happened, kebab-case. Open on the wire: a relay carries a sibling's kinds without interpreting them. |
-| *dimensions* | | The vocabulary's reserved top-level dimensions, carried as named fields here and omitted when absent. The agent profile has one, `phase`. |
+| *dimensions* | | The vocabulary's reserved top-level dimensions, carried as named fields here and omitted when absent. `Open` declares none. |
 | `labels` | object | The vocabulary's reserved keys plus free-form extras, carried untouched. Absent rather than empty when unknown. |
 | `payload` | object | Kind-specific detail, bounded as below. |
 | `artifacts` | array | `{id, kind, bytes}` references to evidence too large for a payload, stored by the producing library and read back through it. |
 
-Keys are written in that order, and the recorded streams under
-`crates/onemessagebus-agent/tests/recorded/` prove the bytes: a stream each
-producer wrote round-trips through the reader and the serializer unchanged.
+Keys are written in that order, so an envelope round-trips through the reader
+and the serializer with no byte changed.
 
 Reading refuses, by name: an unknown top-level key, a `seq` that is not an
 unsigned integer, a source word the vocabulary does not admit, a missing
@@ -37,12 +36,12 @@ types — the source word (closed enum or open string), the dimensions, the labe
 set, and what a matcher may ask — plus the data the command line and the SDK
 manifest read: which label keys are reserved and what each admits.
 
-`onemessagebus_agent::Agent` is the agent stack's: sources `agentgraph`, `vcs`,
-`pipeline`; the dimension `phase` over `development`, `integrate`, `review`,
-`release`; the reserved labels `run_id`, `round` (integer), `node`, `step`,
-`member`, `persona`. `onemessagebus::Open` reserves nothing and admits any
-source word. A vocabulary of your own is proven the way those two are: through
-`onemessagebus::conformance::drive`, the one table every vocabulary runs.
+`onemessagebus::Open` reserves nothing: any source word, any labels, no
+dimensions. The bus compiles in no product's vocabulary; a program declares its
+own in its own crate — a billing service's sources `billing` and `ledger`, say,
+with a reserved `tenant` label and an integer `attempt` — and proves it the way
+`Open` is proven: through `onemessagebus::conformance::drive`, the one table
+every vocabulary runs.
 
 ## Order and merge
 
@@ -70,9 +69,9 @@ under an exclusive lock on the file, and written inside that same turn, so the
 file carries one gapless series however many processes write it.
 
 An emitter stamps the version its vocabulary says its source writes against
-(`pipeline` writes 2; `agentgraph` and `vcs` write 1), its default labels
-(`with_labels`, where the derived emitter's own stamp wins and the base fills
-in), its default dimensions (`with_dimensions`), and admits only what its filter
+(`Vocabulary::write_version`; `Open` writes 1 for every source), its default
+labels (`with_labels`, where the derived emitter's own stamp wins and the base
+fills in), its default dimensions (`with_dimensions`), and admits only what its filter
 does (`with_filter`). `emit` returns the envelope whether or not the filter let it
 reach the sink — a producer acts on what it did not emit — and a suppressed
 envelope carries the number the next admitted one takes, because `seq` numbers
@@ -111,7 +110,7 @@ another; the redaction walks every string in the payload, however nested.
 
 ## The registry
 
-A schema id is `<namespace>.<name>@<version>`: `agent.event-envelope@2`. The
+A schema id is `<namespace>.<name>@<version>`: `shop.order@2`. The
 namespace ends at the first dot, and the name may itself be dot-joined parts —
 `example.frame.notice@3` is the name `frame.notice` in `example`. A
 *family* is the id without its version. The registry records a JSON Schema
@@ -128,13 +127,11 @@ writes, since every bump within a set is additive — and `Read::Unknown`
 otherwise, naming the declared version and the set for the caller to refuse
 with.
 
-The agent profile registers `agent.event-envelope` at `[2, 1]`,
-`agent.artifact-ref@1`, `agent.event-filter@1`, `agent.labels@1`, and
-`agent.note@1` — the agent note contract's message, the first family carried
-over the inbox. The transport plugin protocol's three shapes —
-`onemessagebus.transport-hello@1`, `onemessagebus.transport-request@1` and
-`onemessagebus.transport-reply@1`, stated in docs/transport.md — are registered
-beside them, so a client in another language validates against the documents
-this build reads and writes. A protocol another program owns is not registered
-here: its records ride in the schema bundle that program publishes and a
-configuration links (docs/schema-links.md).
+The binary registers the bus's own shapes and no product's: the transport
+plugin protocol's three — `onemessagebus.transport-hello@1`,
+`onemessagebus.transport-request@1` and `onemessagebus.transport-reply@1`,
+stated in docs/transport.md — and the resident protocol's
+`bus.resident-protocol@1` (docs/sdk.md), so a client in another language
+validates against the documents this build reads and writes. A program's own
+messages are not registered here: they ride in the schema bundle that program
+publishes and a configuration links (docs/schema-links.md).

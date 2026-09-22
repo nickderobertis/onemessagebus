@@ -259,7 +259,7 @@ _cross-language-test:
       || { echo "onemessagebus-cross-language-e2e: the journey failed — fix the failures named above (it needs uv and bun on PATH, and both SDKs bootstrapped)" >&2; exit 1; }
 
 # The aggregate report over every project's profiles, enforced once. The
-# conformance table is test support published for profile crates, exercised by
+# conformance table is test support published for vocabulary crates, exercised by
 # its callers rather than a subject of coverage.
 _coverage:
     @cargo llvm-cov report --fail-under-lines 95 --ignore-filename-regex 'conformance\.rs' \

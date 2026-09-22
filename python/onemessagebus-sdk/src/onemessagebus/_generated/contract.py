@@ -145,40 +145,16 @@ class InboxCarriedOptions(BaseModel):
 
 class Labels(BaseModel):
     """
-    The reserved label keys, plus whatever else a producer stamped.
+    An open label set: an ordered map of whatever the producer stamped.
 
-    Reserved keys are absent rather than empty when unknown, so an enricher can
-    tell "not stamped" from "stamped empty". The extras are flattened beside
-    them, in the order they were stamped.
+    The [`Open`](crate::Open) vocabulary's labels. A vocabulary that reserves
+    keys declares a struct with a field per key and a flattened map for the
+    rest, which serializes to the same bytes when the same keys are stamped.
     """
 
     model_config = ConfigDict(
         extra="allow",
     )
-    member: str | None = None
-    """
-    Which member of a conversation produced the event.
-    """
-    node: str | None = None
-    """
-    The graph node being executed.
-    """
-    persona: str | None = None
-    """
-    The persona that member is running under.
-    """
-    round: int | None = Field(None, ge=0)
-    """
-    The round within the run.
-    """
-    run_id: str | None = None
-    """
-    The run this event belongs to.
-    """
-    step: str | None = None
-    """
-    The step within a node that runs several in sequence.
-    """
 
 
 class MemberName(RootModel[str]):
@@ -1017,16 +993,11 @@ class Envelope(BaseModel):
     [`MAX_PAYLOAD_TEXT_BYTES`](crate::MAX_PAYLOAD_TEXT_BYTES); larger
     evidence is an [`ArtifactRef`].
     """
-    phase: Literal["development", "integrate", "review", "release"] | None = None
-    """
-    Which part of a change's life the event belongs to, as its producer
-    classified it.
-    """
     seq: int = Field(..., ge=0)
     """
     Monotonic per [`stream`](Self::stream).
     """
-    source: Literal["agentgraph", "vcs", "pipeline"]
+    source: str
     """
     What produced the event, in the vocabulary's words.
     """
@@ -1299,38 +1270,17 @@ class Matcher(BaseModel):
     does not name is not consulted.
     """
 
+    model_config = ConfigDict(
+        extra="allow",
+    )
     kind: str | None = None
     """
     A glob over the kind's kebab-case wire string, where `*` stands for any
     run of characters including none and every other character is itself.
     """
-    member: str | None = None
-    """
-    The `member` label.
-    """
-    node: str | None = None
-    """
-    The `node` label.
-    """
-    persona: str | None = None
-    """
-    The `persona` label.
-    """
-    phase: Literal["development", "integrate", "review", "release"] | None = None
-    """
-    The phase the envelope was stamped at.
-    """
-    run_id: str | None = None
-    """
-    The `run_id` label.
-    """
-    source: Literal["agentgraph", "vcs", "pipeline"] | None = None
+    source: str | None = None
     """
     The producer, by exact equality.
-    """
-    step: str | None = None
-    """
-    The `step` label.
     """
 
 

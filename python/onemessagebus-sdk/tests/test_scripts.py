@@ -78,7 +78,7 @@ def test_the_generator_fails_with_a_cause_and_a_next_action_rather_than_a_traceb
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     colliding = [
-        generate.Rendered("agent.event-note@1", "agent_event_note_v1", "Note"),
+        generate.Rendered("shop.event-note@1", "shop_event_note_v1", "Note"),
         generate.Rendered("other.event-note@1", "other_event_note_v1", "Note"),
     ]
     with pytest.raises(SystemExit) as collided:
@@ -86,7 +86,7 @@ def test_the_generator_fails_with_a_cause_and_a_next_action_rather_than_a_traceb
     assert collided.value.code == 1
     said = capsys.readouterr().err
     assert said.startswith(
-        "generate.py: the families agent.event-note and other.event-note would both be "
+        "generate.py: the families other.event-note and shop.event-note would both be "
         "exported from onemessagebus.models as EventNote"
     )
     assert "then rerun `just python-sdk-generate`" in said
@@ -104,7 +104,7 @@ def test_the_generator_fails_with_a_cause_and_a_next_action_rather_than_a_traceb
 
     bundle: dict[str, object] = {
         "capabilities": [{"method": "status", "output": "queue_statuses"}],
-        "vocabulary": {"name": "agent"},
+        "vocabulary": {"name": "open"},
         "options": {},
         "messages": {},
         "sent": {"title": "Sent"},

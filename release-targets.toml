@@ -25,13 +25,6 @@ published_by = "release.yml's `publish-crate` job, on the GitHub Release release
 manifest = "crates/onemessagebus/Cargo.toml"
 
 [[target]]
-id = "crate:onemessagebus-agent"
-name = "agent-crate"
-what = "The agent profile over the core — the agent stack's sources, phases, labels, filter and registered schema families — as a Rust dependent takes it with `cargo add onemessagebus-agent`. Shares the workspace version with the core, so one release moves both."
-published_by = "release.yml's `publish-crate` job, after the core, under crates/onemessagebus-agent/Cargo.toml's [package] name."
-manifest = "crates/onemessagebus-agent/Cargo.toml"
-
-[[target]]
 id = "pypi:onemessagebus-cli"
 name = "pypi"
 what = "The standalone `onemessagebus` binary as per-platform wheels, installed with `pip install onemessagebus-cli`."

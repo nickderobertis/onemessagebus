@@ -12,10 +12,6 @@
 #      Release with the changelog notes. That Release (created with a PAT, not the
 #      default GITHUB_TOKEN) triggers release.yml, which builds and publishes the
 #      binaries, the wheels, and the npm packages.
-#
-# Both published crates inherit the one workspace version, so one release moves
-# both: the agent profile names the core at the version it was built against,
-# and a consumer pins the pair at one number.
 
 [workspace]
 # release-plz only versions, changelogs, tags, and cuts the GitHub Release — it
@@ -59,16 +55,8 @@ commit_parsers = [
 
 # The changelog lives at the repository root, where the release archive's
 # `include` in release.yml resolves it from, and where a reader arriving at the
-# repository looks. The core crate is the one whose Release fires release.yml;
-# the profile crate shares its version and tags beside it without a Release of
-# its own, since a Release is what builds the binaries, wheels and npm packages
-# — none of which it has.
+# repository looks. The core crate is the one published crate, and its Release
+# is what fires release.yml.
 [[package]]
 name = "onemessagebus"
-changelog_path = "CHANGELOG.md"
-
-[[package]]
-name = "onemessagebus-agent"
-git_tag_name = "onemessagebus-agent-v{{ version }}"
-git_release_enable = false
 changelog_path = "CHANGELOG.md"

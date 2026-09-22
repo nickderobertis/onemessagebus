@@ -1,8 +1,8 @@
 //! The committed contract drives the core's types: what `docs/contract.md`
-//! says of the wire shape, the bounds, the redaction tables, the glob dialect
-//! and the verbs, checked here against the crate that has no agent word in it.
-//! The profile's `tests/contract.rs` drives the same document through the
-//! agent types.
+//! says of the wire shape, the bounds, the redaction tables, the glob dialect,
+//! the registry, the inbox's documents and the verbs, checked here against the
+//! crate every consumer links. Every fenced block in the document is driven
+//! here, so the document and the types cannot drift.
 
 use onemessagebus::sdk_schema::{self, Lang};
 use onemessagebus::{
@@ -29,28 +29,22 @@ fn fixture(name: &str) -> String {
         .collect()
 }
 
-/// Every fixture a contract test drives: `envelope`, `filter` and `verbs` here
-/// and in the profile's `tests/contract.rs`; the transport's `transport-layout`,
-/// `transport-kinds` and `plugin-protocol`, the queue `policy` and the `config`
-/// file and the `layout-document` here, where the core's types read them; and
-/// `read-sets`, the inbox's
-/// `spool-documents` and `carry-store`, the note contract's `note`, `accepted`
-/// and `note-undelivered` there alone, since each names the agent profile's
-/// message. The validators' `verdicts` and `validators-config` and
-/// the ask's `asked` are driven here. The configured codec fixture lives in
-/// `docs/codecs.md` and is driven by `tests/serve.rs`.
+/// Every fixture this test drives: the wire's `envelope` and `filter`, the
+/// registry's `read-sets`, the inbox's `spool-documents` and `carry-store`, the
+/// transport's `transport-layout`, `transport-kinds` and `plugin-protocol`, the
+/// queue `policy`, the `config` file, the `layout-document`, the validators'
+/// `verdicts` and `validators-config`, the ask's `asked` and the command line's
+/// `verbs`. The configured codec fixture lives in `docs/codecs.md` and is driven
+/// by `tests/serve.rs`.
 /// A fixture added to the document is added here beside the test that drives
 /// it.
 const DRIVEN_FIXTURES: &[&str] = &[
-    "accepted",
     "asked",
     "carry-store",
     "config",
     "envelope",
     "filter",
     "layout-document",
-    "note",
-    "note-undelivered",
     "plugin-protocol",
     "policy",
     "read-sets",
@@ -175,16 +169,32 @@ fn backticked() -> Vec<String> {
     out
 }
 
-/// The documented envelope, with its placeholders made concrete and its
-/// profile-declared `phase` removed — the core has no phase, and over the open
-/// vocabulary a top-level key nobody declared is refused rather than carried.
+/// The documented envelope, with its placeholders made concrete: each is
+/// asserted still there before it is replaced, so a doc edit that renames one
+/// fails here rather than silently skipping the substitution.
 fn open_envelope_example() -> Value {
     let mut example: Value = serde_json::from_str(&fixture("envelope")).expect("JSON");
-    example["ts"] = json!("2026-08-07T12:34:56.789Z");
-    example["stream"] = json!("billing-4f2a");
-    example["source"] = json!("billing");
-    example["kind"] = json!("invoice-issued");
-    example.as_object_mut().expect("an object").remove("phase");
+    for (key, placeholder, concrete) in [
+        (
+            "ts",
+            "<RFC 3339, millisecond precision, UTC>",
+            "2026-08-07T12:34:56.789Z",
+        ),
+        (
+            "stream",
+            "<unique id per producing process>",
+            "billing-4f2a",
+        ),
+        ("source", "<a source word the vocabulary admits>", "billing"),
+        ("kind", "<kebab-case event kind>", "invoice-issued"),
+    ] {
+        assert_eq!(
+            example[key],
+            json!(placeholder),
+            "the envelope's {key} placeholder moved; update this substitution"
+        );
+        example[key] = json!(concrete);
+    }
     example
 }
 
@@ -196,19 +206,25 @@ fn the_documented_envelope_reads_over_the_open_vocabulary_with_labels_as_an_open
     assert_eq!(envelope.seq, 42);
     assert_eq!(envelope.source, Source::from("billing"));
     assert_eq!(envelope.kind.as_str(), "invoice-issued");
-    assert_eq!(envelope.labels.get_str("run_id"), Some("R"));
-    assert_eq!(envelope.labels.0["round"], json!(2));
+    assert_eq!(envelope.labels.get_str("tenant"), Some("acme"));
+    assert_eq!(envelope.labels.0["attempt"], json!(2));
     assert_eq!(envelope.labels.get_str("extra"), Some("carried"));
+    assert_eq!(envelope.artifacts.len(), 1);
     assert_eq!(
         serde_json::to_value(&envelope).expect("serializes"),
         example
     );
+    assert_eq!(
+        serde_json::to_string(&envelope).expect("serializes"),
+        serde_json::to_string(&example).expect("serializes"),
+        "the wire order is the documented order"
+    );
 
-    let mut with_phase: Value = serde_json::from_str(&fixture("envelope")).expect("JSON");
-    with_phase["source"] = json!("billing");
-    let refusal = serde_json::from_value::<Envelope<Open>>(with_phase)
-        .expect_err("the core has no phase: an undeclared top-level key is refused");
-    assert!(refusal.to_string().contains("phase"), "{refusal}");
+    let mut with_dimension = example;
+    with_dimension["region"] = json!("eu");
+    let refusal = serde_json::from_value::<Envelope<Open>>(with_dimension)
+        .expect_err("the core declares no dimension: an undeclared top-level key is refused");
+    assert!(refusal.to_string().contains("region"), "{refusal}");
 }
 
 #[test]
@@ -217,14 +233,259 @@ fn the_documented_filter_reads_over_the_open_vocabulary_as_label_asks() {
         serde_json::from_str(&fixture("filter")).expect("the documented filter parses");
     filter.validate().expect("valid");
     assert_eq!(filter.include.len(), 2);
-    assert_eq!(filter.include[0].kind.as_deref(), Some("member-*"));
-    assert_eq!(filter.include[1].fields.0["member"], json!("worker"));
-    assert_eq!(filter.exclude[1].source, Some(Source::from("vcs")));
-    assert_eq!(filter.exclude[1].fields.0["phase"], json!("release"));
+    assert_eq!(filter.include[0].kind.as_deref(), Some("invoice-*"));
+    assert_eq!(filter.include[1].fields.0["tenant"], json!("acme"));
+    assert_eq!(filter.include[1].fields.0["region"], json!("eu"));
+    assert_eq!(filter.exclude[1].source, Some(Source::from("ledger")));
+    assert_eq!(filter.exclude[1].fields.0["tenant"], json!("internal"));
     assert_eq!(
         serde_json::to_value(&filter).expect("serializes"),
         serde_json::from_str::<Value>(&fixture("filter")).expect("JSON")
     );
+}
+
+#[test]
+fn the_documented_read_sets_are_what_the_registry_answers() {
+    let documented: std::collections::BTreeMap<String, Vec<u32>> =
+        serde_json::from_str(&fixture("read-sets")).expect("the read sets are JSON");
+    let mut registry = Registry::new();
+    for version in [1, 2] {
+        registry
+            .register_schema(
+                format!("shop.order@{version}").parse().expect("an id"),
+                json!({"type": "object"}),
+            )
+            .expect("registers");
+    }
+    assert_eq!(
+        documented.keys().cloned().collect::<Vec<_>>(),
+        vec!["shop.order".to_owned()]
+    );
+    for (family, read_set) in documented {
+        assert_eq!(registry.read_set(&family), read_set, "{family}");
+    }
+}
+
+/// The message and disposition the inbox fixtures show: an order a shop's till
+/// sends its stock room, answered with a receipt.
+mod shop {
+    use onemessagebus::{Carried, Disposition, Message, SchemaId};
+    use schemars::JsonSchema;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Order {
+        pub sku: String,
+        pub quantity: u32,
+    }
+
+    impl Message for Order {
+        const SCHEMA: SchemaId = SchemaId::literal("shop", "order", 1);
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum Receipt {
+        Filled { by: String },
+        Deferred,
+    }
+
+    impl Disposition for Receipt {}
+
+    impl Carried for Receipt {
+        fn carried() -> Self {
+            Receipt::Deferred
+        }
+    }
+
+    pub fn order(sku: &str, quantity: u32) -> Order {
+        Order {
+            sku: sku.to_owned(),
+            quantity,
+        }
+    }
+}
+
+/// A document a spool holds, once something has written it.
+fn document_at(path: &std::path::Path) -> Value {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            if let Ok(document) = serde_json::from_str(&text) {
+                return document;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < until,
+            "{} was never written",
+            path.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+fn offer_id(n: u32) -> String {
+    format!("{:039}-1-{n:020}", 1)
+}
+
+#[test]
+fn the_documented_spool_documents_are_what_a_bound_spool_reads_and_writes() {
+    use onemessagebus::{Closed, Inbox, Spool};
+    use shop::{order, Order, Receipt};
+    use std::time::Duration;
+
+    let documents: Value =
+        serde_json::from_str(&fixture("spool-documents")).expect("the documents are JSON");
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let spool_dir = dir.path().join("orders");
+    let inbox: Inbox<Order, Receipt> = Inbox::new();
+    let _spool = Spool::bind(&spool_dir, &inbox).expect("binds");
+    assert_eq!(
+        document_at(&spool_dir.join("spool.json")),
+        documents["spool.json"]
+    );
+
+    // An offer in the documented shape is taken, and its answer is written in the
+    // documented shape.
+    let offered = |n: u32, offer: &Value| {
+        let id = offer_id(n);
+        std::fs::write(
+            spool_dir.join(format!("{id}.offer.json")),
+            offer.to_string(),
+        )
+        .expect("offered");
+        spool_dir.join(format!("{id}.answer.json"))
+    };
+    let answer = offered(1, &documents["offer"]);
+    let taken = inbox
+        .take_within(Duration::from_secs(30))
+        .expect("the documented offer is taken");
+    assert_eq!(taken.message(), &order("A-1", 2));
+    taken.answer(Receipt::Filled {
+        by: "stock-room".to_owned(),
+    });
+    assert_eq!(document_at(&answer), documents["answer"]);
+
+    // An offer the receiver cannot read as its message is answered refused.
+    let mut unreadable = documents["offer"].clone();
+    unreadable["message"]["quantity"] = json!("two");
+    let refused = document_at(&offered(2, &unreadable));
+    let mut expected = documents["answer-refused"].clone();
+    assert_eq!(
+        expected["answer"]["refused"]["reason"],
+        json!("<why the receiver could not read the offer>"),
+        "the refused answer's placeholder moved; update this substitution"
+    );
+    assert!(refused["answer"]["refused"]["reason"].is_string());
+    expected["answer"]["refused"]["reason"] = refused["answer"]["refused"]["reason"].clone();
+    assert_eq!(refused, expected);
+
+    let closing = offered(3, &documents["offer"]);
+    let held = inbox
+        .take_within(Duration::from_secs(30))
+        .expect("the third offer is taken");
+    inbox.close(Closed::new("the till closed"));
+    assert_eq!(document_at(&closing), documents["answer-closed"]);
+    assert_eq!(
+        document_at(&spool_dir.join("closed.json")),
+        documents["closed.json"]
+    );
+    drop(held);
+
+    // A sender writes the documented offer, and nothing else, while it waits.
+    let unserviced = dir.path().join("unserviced");
+    std::fs::create_dir(&unserviced).expect("made");
+    let sending = {
+        let unserviced = unserviced.clone();
+        std::thread::spawn(move || {
+            Spool::connect_within::<Order, Receipt>(&unserviced, Duration::from_secs(5))
+                .send(order("A-1", 2))
+        })
+    };
+    let offer = loop {
+        let found = std::fs::read_dir(&unserviced)
+            .expect("a directory")
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| path.to_string_lossy().ends_with(".offer.json"));
+        if let Some(path) = found {
+            break path;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    assert_eq!(document_at(&offer), documents["offer"]);
+    std::fs::remove_file(&offer).expect("taken away from the sender");
+    assert!(
+        sending.join().expect("the sender finishes").is_err(),
+        "a sender whose offer vanished was answered"
+    );
+}
+
+#[test]
+fn inbox_md_names_every_file_a_spool_holds() {
+    let inbox_md = include_str!("../../../docs/inbox.md");
+    let start = inbox_md
+        .find("#### On disk")
+        .expect("docs/inbox.md has an `On disk` section");
+    let table: Vec<String> = inbox_md[start..]
+        .lines()
+        .skip_while(|line| !line.starts_with("| file"))
+        .skip(2)
+        .take_while(|line| line.starts_with("| `"))
+        .map(|row| {
+            row.split('`')
+                .nth(1)
+                .expect("a backticked file name")
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(
+        table,
+        [
+            "spool.json",
+            "receiver.lock",
+            "closed.json",
+            "<id>.offer.json",
+            "<id>.taken.json",
+            "<id>.answer.json",
+            "<id>.withdrawn",
+        ],
+        "docs/inbox.md's file table no longer names the files a spool holds"
+    );
+}
+
+#[test]
+fn the_documented_carry_store_is_what_the_carry_backend_writes() {
+    use onemessagebus::{Carry, Sender};
+    use shop::{order, Order, Receipt};
+
+    let documented: Value =
+        serde_json::from_str(&fixture("carry-store")).expect("the store is JSON");
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let store = dir.path().join("carried.ndjson");
+    let carrier: Sender<Order, Receipt> = Carry::sender(&store);
+    assert_eq!(carrier.send(order("B-2", 1)), Ok(Receipt::Deferred));
+    let written = std::fs::read_to_string(&store).expect("the store");
+    let lines: Vec<Value> = written
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("a JSON line"))
+        .collect();
+    assert_eq!(lines.len(), 2, "{written}");
+    assert_eq!(lines[0], documented["header"]);
+    assert_eq!(
+        written.lines().next(),
+        Some(documented["header"].to_string().as_str()),
+        "the header is not written in the documented key order"
+    );
+    let mut record = documented["record"].clone();
+    assert_eq!(
+        record["ts"],
+        json!("<RFC 3339, millisecond precision, UTC>"),
+        "the record's placeholder moved; update this substitution"
+    );
+    record["ts"] = lines[1]["ts"].clone();
+    assert_eq!(lines[1], record);
 }
 
 #[test]

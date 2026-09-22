@@ -151,15 +151,15 @@ if (installed.dependencies?.["onemessagebus-cli"] !== stamped.version) {
   );
 }
 
-// A queue verb opens the queues a configuration declares; `notes` is typed by the
-// profile's Rust-registered `agent.note@1`.
+// A queue verb opens the queues a configuration declares; `hellos` is typed by the
+// core's Rust-registered `onemessagebus.transport-hello@1`.
 writeFileSync(
   join(consumer, "onemessagebus.yaml"),
   [
     "version: 1",
     "transport: {kind: local, dir: bus}",
     "queues:",
-    "  notes: {schema: agent.note@1}",
+    "  hellos: {schema: onemessagebus.transport-hello@1}",
     "",
   ].join("\n"),
 );
@@ -177,18 +177,18 @@ const config = { config: "onemessagebus.yaml" };
 const client = new Client({ config });
 const kinds = await client.transports();
 assert.ok(kinds.some((kind) => kind.kind === "local"), JSON.stringify(kinds));
-const note = { addressee: "worker", text: "installed" };
-const [sent] = await client.send("notes", note);
-assert.equal(sent.queue, "notes");
-const claimed = await client.next("notes", { type: messages.AgentNoteV1 });
-assert.equal(claimed.record.text, "installed");
-assert.equal(await client.next("notes"), undefined);
-await assert.rejects(client.send("nowhere", note), BusRefused);
+const hello = { protocol: "onemessagebus-transport", version: 1, config: { kind: "installed" } };
+const [sent] = await client.send("hellos", hello);
+assert.equal(sent.queue, "hellos");
+const claimed = await client.next("hellos", { type: messages.OnemessagebusTransportHelloV1 });
+assert.equal(claimed.record.config.kind, "installed");
+assert.equal(await client.next("hellos"), undefined);
+await assert.rejects(client.send("nowhere", hello), BusRefused);
 
 const socket = ${JSON.stringify(join(socketDir, "bus.sock"))};
 const resident = new Client({ config, transport: new ResidentTransport({ socket }) });
-const statuses = await resident.status("notes");
-assert.equal(statuses[0].queue, "notes");
+const statuses = await resident.status("hellos");
+assert.equal(statuses[0].queue, "hellos");
 await resident.transport.close();
 assert.equal(existsSync(socket), false, "closing stopped the resident it started");
 console.log("ok");

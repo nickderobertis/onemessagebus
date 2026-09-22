@@ -93,9 +93,9 @@ validates every payload in Rust against the registered schema; one that violates
 it is refused as `BusFailed`, naming the id and the JSON pointer.
 
 Every message the binary registers has a generated model in
-`onemessagebus.models`, by its family's name: `Note` is `agent.note@1` at its
-latest version, `NoteV1` that version, and `EventEnvelope` is the latest of
-`agent.event-envelope@1` and `@2`.
+`onemessagebus.models`, by its family's name: `TransportHello` is
+`onemessagebus.transport-hello@1` at its latest version, `TransportHelloV1` that
+version, and `ResidentProtocol` is `bus.resident-protocol@1`.
 `onemessagebus.messages.MESSAGES` maps each id to its model.
 
 ## Transports

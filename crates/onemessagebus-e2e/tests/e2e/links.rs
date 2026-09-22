@@ -970,16 +970,16 @@ fn a_configuration_registers_every_linked_entry_for_the_verbs_that_load_it() {
         "a refused register wrote the registry"
     );
 
-    // A linked entry contradicting an id the profile registers.
-    let profile_document = scratch.run(
-        &["schema", "gen", "--lang", "json", "agent.labels@1"],
+    // A linked entry contradicting an id the binary registers.
+    let builtin_document = scratch.run(
+        &["schema", "gen", "--lang", "json", "bus.resident-protocol@1"],
         None,
         &[],
     );
-    assert_eq!(profile_document.code, 0, "{}", profile_document.stderr);
+    assert_eq!(builtin_document.code, 0, "{}", builtin_document.stderr);
     std::fs::write(
         scratch.path("contradicts.json"),
-        json!({"version": "1", "schemas": [{"id": "agent.labels@1", "schema": {"type": "string"}}]}).to_string(),
+        json!({"version": "1", "schemas": [{"id": "bus.resident-protocol@1", "schema": {"type": "string"}}]}).to_string(),
     )
     .expect("a bundle");
     let config = scratch.config(&[&link, "contradicts.json@1"]);
@@ -993,8 +993,9 @@ fn a_configuration_registers_every_linked_entry_for_the_verbs_that_load_it() {
     ] {
         assert_eq!(run.code, 2, "{}", run.stderr);
         assert!(
-            run.stderr
-                .contains("agent.labels@1 is already registered with a different document"),
+            run.stderr.contains(
+                "bus.resident-protocol@1 is already registered with a different document"
+            ),
             "{}",
             run.stderr
         );
@@ -1258,6 +1259,18 @@ fn schemas_lists_clears_and_fetch_warms_revalidating_whatever_the_window() {
         reused.stderr.contains("could not revalidate"),
         "{}",
         reused.stderr
+    );
+    // The text rendering says the same: the link, `reused`, the version, and why.
+    let reused_text = scratch.run(&["schemas", "fetch", &one, "--format", "text"], None, &[]);
+    assert_eq!(reused_text.code, 0, "{}", reused_text.stderr);
+    assert!(
+        reused_text
+            .stdout
+            .starts_with(&format!("{one} reused 8.1 ("))
+            && reused_text.stdout.ends_with(")\n")
+            && reused_text.stdout.lines().count() == 1,
+        "{}",
+        reused_text.stdout
     );
 
     // A link it cannot resolve: the report, then exit 1 naming it.

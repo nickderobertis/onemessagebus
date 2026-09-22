@@ -3,18 +3,12 @@ import { z } from "zod";
 import { anyOf, contract, oneOf } from "../runtime.js";
 
 /**
- * The library that produced an event.
- */
-export type Source = "agentgraph" | "vcs" | "pipeline";
-/**
- * Which part of a change's life an event belongs to.
+ * An open source word: whatever produced the event, by name.
  *
- * Four phases over one change: the work is made, it is brought together with
- * the base it is going onto, it is proposed and ruled on, and what carries it
- * is released. Stamped by the producer, never derived by a reader: one kind's
- * phase is not always a fact about the kind.
+ * The [`Open`](crate::Open) vocabulary's source. A vocabulary that closes the
+ * set declares an enum instead, and serde is what refuses a word outside it.
  */
-export type Phase = "development" | "integrate" | "review" | "release";
+export type Source = string;
 
 /**
  * One matcher: every field it names must hold of an envelope, and a field it
@@ -30,55 +24,14 @@ export interface Matcher {
    * run of characters including none and every other character is itself.
    */
   kind?: string | null | undefined;
-  /**
-   * The phase the envelope was stamped at.
-   */
-  phase?: Phase | null | undefined;
-  /**
-   * The `run_id` label.
-   */
-  run_id?: string | null | undefined;
-  /**
-   * The `node` label.
-   */
-  node?: string | null | undefined;
-  /**
-   * The `step` label.
-   */
-  step?: string | null | undefined;
-  /**
-   * The `member` label.
-   */
-  member?: string | null | undefined;
-  /**
-   * The `persona` label.
-   */
-  persona?: string | null | undefined;
   [k: string]: unknown;
 }
 
-const $Source: z.ZodType = oneOf([
-  z.literal("agentgraph"),
-  z.literal("vcs"),
-  z.literal("pipeline"),
-]);
-
-const $Phase: z.ZodType = oneOf([
-  z.literal("development"),
-  z.literal("integrate"),
-  z.literal("review"),
-  z.literal("release"),
-]);
+const $Source: z.ZodType = z.string();
 
 export const MatcherSchema = contract<Matcher>(
   z.looseObject({
     source: anyOf([z.lazy(() => $Source), z.null()]).optional(),
     kind: anyOf([z.string(), z.null()]).optional(),
-    phase: anyOf([z.lazy(() => $Phase), z.null()]).optional(),
-    run_id: anyOf([z.string(), z.null()]).optional(),
-    node: anyOf([z.string(), z.null()]).optional(),
-    step: anyOf([z.string(), z.null()]).optional(),
-    member: anyOf([z.string(), z.null()]).optional(),
-    persona: anyOf([z.string(), z.null()]).optional(),
   }),
 );

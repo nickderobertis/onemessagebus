@@ -195,7 +195,7 @@ class Client:
         config: StrPath | None = None,
         format: Literal["json", "text"] | None = None,
     ) -> list[SchemaEntry] | str:
-        """Every registered id: the profile's, the registry directory's, and the linked ones."""
+        """Every registered id: the binary's own, the registry directory's, and the linked ones."""
         values = {"registry": registry, "config": config, "format": format}
         return await self._reading("schemaList", values, list[SchemaEntry])
 
@@ -293,7 +293,7 @@ class Client:
         files: Sequence[StrPath],
         *,
         filter: str | Mapping[str, Any] | None = None,
-        profile: None = None,
+        profile: Literal["open"] | None = None,
         format: Literal["json"] | None = None,
     ) -> list[Envelope]: ...
     @overload
@@ -324,8 +324,10 @@ class Client:
     ) -> list[Envelope] | list[dict[str, Any]] | str:
         """Merge stream files into one stream in `(ts, stream, seq)` order.
 
-        Envelopes of the agent profile are read into `Envelope`; another profile's
-        are handed back as documents, since the models are the agent vocabulary's.
+        The binary reads through `open`, the one profile it links, whether or not
+        `profile` names it, and each envelope is read into `Envelope`, that
+        vocabulary's model. Naming a profile the binary does not link raises
+        `BusRefused`.
         """
         values = {"files": files, "filter": _spec(filter), "profile": profile, "format": format}
         shape = list[Envelope] if profile in (None, VOCABULARY_NAME) else list[dict[str, Any]]
@@ -340,7 +342,7 @@ class Client:
         payload: Payload | None = None,
         *,
         source: str | None = None,
-        profile: None = None,
+        profile: Literal["open"] | None = None,
         labels: Mapping[str, Any] | None = None,
         file: StrPath | None = None,
         format: Literal["json"] | None = None,

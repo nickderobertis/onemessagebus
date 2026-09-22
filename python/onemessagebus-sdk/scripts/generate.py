@@ -347,8 +347,8 @@ def domain_typed(source: str, *, message: bool) -> str:
 def models_module(entries: list[Rendered]) -> str:
     """`onemessagebus.models`: every message's model under its family's name.
 
-    `agent.event-envelope@1` is `EventEnvelopeV1`, and `EventEnvelope` is the
-    latest version of that family the registry holds. Two families that would
+    `onemessagebus.transport-hello@1` is `TransportHelloV1`, and `TransportHello`
+    is the latest version of that family the registry holds. Two families that would
     share a name fail here rather than shadow one another. Every name is an
     explicit import or assignment listed in `__all__`.
     """
@@ -381,9 +381,9 @@ def models_module(entries: list[Rendered]) -> str:
     names = "".join(f'    "{name}",\n' for name in exported)
     return (
         f'{HEADER}\n"""The generated model of every message the registry holds, by its family\'s '
-        "name.\n\n`EventEnvelope` is the `agent.event-envelope` family's model at the latest "
-        "version the\nregistry holds, and `EventEnvelopeV1` names version 1; `messages.MESSAGES` "
-        'maps each\nid to its model.\n"""\n\n'
+        "name.\n\n`TransportHello` is the `onemessagebus.transport-hello` family's model at the "
+        "latest\nversion the registry holds, and `TransportHelloV1` names version 1;\n"
+        '`messages.MESSAGES` maps each id to its model.\n"""\n\n'
         + "\n".join(imports)
         + "\n\n"
         + "\n".join(latest)

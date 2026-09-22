@@ -42,7 +42,7 @@ const pascal = (text) =>
     .map((word) => word[0].toUpperCase() + word.slice(1))
     .join("");
 
-/** `agent.event-envelope@2` → `AgentEventEnvelopeV2`. */
+/** `onemessagebus.transport-hello@1` → `OnemessagebusTransportHelloV1`. */
 const messageType = (id) => {
   const [family, version] = id.split("@");
   return `${pascal(family)}V${version}`;
@@ -180,7 +180,7 @@ export const METHODS = ${JSON.stringify(methods)} as const;
   );
 
   // Each document's `$defs` are its own, and two documents may name different
-  // shapes alike (`Phase`, `Labels`), so a barrel exports each module's root and
+  // shapes alike (`Source`, `Labels`), so a barrel exports each module's root and
   // nothing it happens to declare on the way.
   const rootExport = (path, name) =>
     `export type { ${name} } from "${path}";\nexport { ${name}Schema } from "${path}";`;
@@ -191,7 +191,11 @@ ${messageIds.map((id) => `import { ${messageType(id)} } from "./${kebab(id)}.js"
 
 ${messageIds.map((id) => `export { ${messageType(id)}, ${messageType(id)}Schema } from "./${kebab(id)}.js";`).join("\n")}
 
-/** Every message the Rust registry holds, by id. */
+/**
+ * Every message the Rust registry holds, by id. \`as const\` keeps each id a
+ * literal key, so \`MESSAGES[id]\` is typed as that id's own message rather than
+ * as a union of every message.
+ */
 export const MESSAGES = {
 ${messageIds.map((id) => `  ${JSON.stringify(id)}: ${messageType(id)},`).join("\n")}
 } as const;
@@ -206,13 +210,17 @@ ${optionRoots.map((key) => rootExport(`./options/${kebab(key)}.js`, pascal(key))
 export * from "./capabilities.js";
 export * as messages from "./messages/index.js";
 
-/** The vocabulary the roots above are generated over. */
+/**
+ * The vocabulary the roots above are generated over. \`as const\` keeps its name
+ * and words literal types, so a caller comparing a profile name against it is
+ * checked against the words themselves rather than any string.
+ */
 export const VOCABULARY = ${JSON.stringify(bundle.vocabulary)} as const;
 `,
   );
 
   // The registry's messages by the name a caller reaches for: the family without
-  // its namespace — `agent.event-envelope@2` is `EventEnvelope` — at its latest
+  // its namespace — `onemessagebus.transport-hello@1` is `TransportHello` — at its latest
   // version, and `<Name>V<n>` at every version.
   const shortName = (id) => pascal(id.slice(id.indexOf(".") + 1, id.indexOf("@")));
   const latest = new Map();
@@ -233,7 +241,7 @@ export const VOCABULARY = ${JSON.stringify(bundle.vocabulary)} as const;
     "schemas.ts",
     `${BANNER}
 // Each export is a message definition (id, Zod schema, JSON Schema, parse) and the
-// type it describes, so \`client.next(queue, { type: schemas.Note })\` is typed.
+// type it describes, so \`client.next(queue, { type: schemas.TransportHello })\` is typed.
 ${messageIds
   .map(
     (id) =>

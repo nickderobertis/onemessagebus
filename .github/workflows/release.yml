@@ -176,10 +176,9 @@ jobs:
           # `cargo publish` verifies the packaged crate by building it, which is
           # one more compile the gate never sees the output of.
           RUSTFLAGS: "-D warnings"
-        # Both published crates, in dependency order: the profile names a
-        # version of the core, so the core has to be on the registry first. The
-        # sparse index shards a name by its length; both of these are longer
-        # than three characters, so each lives under its first four letters.
+        # Every published crate, in dependency order — today the core alone. The
+        # sparse index shards a name by its length; a name longer than three
+        # characters lives under its first four letters.
         #
         # Three answers, kept apart: a 404 is the index saying the crate has no
         # release (publish), a parsed entry naming this version is "already live"
@@ -194,7 +193,7 @@ jobs:
             exit 1
           fi
           index="$(mktemp)"
-          for crate in onemessagebus onemessagebus-agent; do
+          for crate in onemessagebus; do
             url="https://index.crates.io/on/em/$crate"
             if ! status="$(curl --disable --silent --show-error --location --retry 3 \
                  --connect-timeout 10 --max-time 60 \

@@ -5,12 +5,6 @@
 from pydantic import BaseModel
 
 from . import (
-    agent_artifact_ref_v1,
-    agent_event_envelope_v1,
-    agent_event_envelope_v2,
-    agent_event_filter_v1,
-    agent_labels_v1,
-    agent_note_v1,
     bus_resident_protocol_v1,
     onemessagebus_transport_hello_v1,
     onemessagebus_transport_reply_v1,
@@ -18,12 +12,6 @@ from . import (
 )
 
 MESSAGES: dict[str, type[BaseModel]] = {
-    "agent.artifact-ref@1": agent_artifact_ref_v1.ArtifactRef,
-    "agent.event-envelope@1": agent_event_envelope_v1.Envelope,
-    "agent.event-envelope@2": agent_event_envelope_v2.Envelope,
-    "agent.event-filter@1": agent_event_filter_v1.Filter,
-    "agent.labels@1": agent_labels_v1.Labels,
-    "agent.note@1": agent_note_v1.Note,
     "bus.resident-protocol@1": bus_resident_protocol_v1.ResidentLine,
     "onemessagebus.transport-hello@1": onemessagebus_transport_hello_v1.PluginHello,
     "onemessagebus.transport-reply@1": onemessagebus_transport_reply_v1.PluginReply,

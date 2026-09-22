@@ -3,16 +3,6 @@ import { z } from "zod";
 import { anyOf, contract, oneOf } from "../runtime.js";
 
 /**
- * Which part of a change's life an event belongs to.
- *
- * Four phases over one change: the work is made, it is brought together with
- * the base it is going onto, it is proposed and ruled on, and what carries it
- * is released. Stamped by the producer, never derived by a reader: one kind's
- * phase is not always a fact about the kind.
- */
-export type Phase = "development" | "integrate" | "review" | "release";
-
-/**
  * One event, as a producing process writes it and as a consumer reads it.
  *
  * Merge order across streams is `(ts, stream, seq)`. A consumer detects loss
@@ -45,16 +35,11 @@ export interface Envelope {
   /**
    * What produced the event, in the vocabulary's words.
    */
-  source: "agentgraph" | "vcs" | "pipeline";
+  source: string;
   /**
    * What happened, as its producer named it.
    */
   kind: string;
-  /**
-   * Which part of a change's life the event belongs to, as its producer
-   * classified it.
-   */
-  phase?: Phase | null | undefined;
   labels?: Labels | undefined;
   /**
    * Kind-specific detail. Text fields are bounded by
@@ -77,30 +62,6 @@ export interface Envelope {
  * Producers stamp what they know; enrichers never rewrite.
  */
 export interface Labels {
-  /**
-   * The run this event belongs to.
-   */
-  run_id?: string | null | undefined;
-  /**
-   * The round within the run.
-   */
-  round?: number | null | undefined;
-  /**
-   * The graph node being executed.
-   */
-  node?: string | null | undefined;
-  /**
-   * The step within a node that runs several in sequence.
-   */
-  step?: string | null | undefined;
-  /**
-   * Which member of a conversation produced the event.
-   */
-  member?: string | null | undefined;
-  /**
-   * The persona that member is running under.
-   */
-  persona?: string | null | undefined;
   [k: string]: unknown;
 }
 /**
@@ -122,29 +83,11 @@ export interface ArtifactRef {
   bytes: number;
 }
 
-const $Source: z.ZodType = oneOf([
-  z.literal("agentgraph"),
-  z.literal("vcs"),
-  z.literal("pipeline"),
-]);
+const $Source: z.ZodType = z.string();
 
 const $Kind: z.ZodType = z.string();
 
-const $Phase: z.ZodType = oneOf([
-  z.literal("development"),
-  z.literal("integrate"),
-  z.literal("review"),
-  z.literal("release"),
-]);
-
-const $Labels: z.ZodType = z.looseObject({
-  run_id: anyOf([z.string(), z.null()]).optional(),
-  round: anyOf([z.int().gte(0), z.null()]).optional(),
-  node: anyOf([z.string(), z.null()]).optional(),
-  step: anyOf([z.string(), z.null()]).optional(),
-  member: anyOf([z.string(), z.null()]).optional(),
-  persona: anyOf([z.string(), z.null()]).optional(),
-});
+const $Labels: z.ZodType = z.looseObject({});
 
 const $ArtifactRef: z.ZodType = z.strictObject({
   id: z.string(),
@@ -160,7 +103,6 @@ export const EnvelopeSchema = contract<Envelope>(
     seq: z.int().gte(0),
     source: z.lazy(() => $Source),
     kind: z.lazy(() => $Kind),
-    phase: anyOf([z.lazy(() => $Phase), z.null()]).optional(),
     labels: z.lazy(() => $Labels).optional(),
     payload: z.looseObject({}).optional(),
     artifacts: z.array(z.lazy(() => $ArtifactRef)).optional(),

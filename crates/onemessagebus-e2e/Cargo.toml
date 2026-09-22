@@ -44,7 +44,6 @@ test = false
 
 [dev-dependencies]
 onemessagebus = { workspace = true }
-onemessagebus-agent = { workspace = true }
 assert_cmd = { workspace = true }
 predicates = { workspace = true }
 rcgen = { workspace = true }

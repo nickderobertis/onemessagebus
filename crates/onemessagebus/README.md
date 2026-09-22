@@ -6,9 +6,9 @@ with version read-sets, and an emitter and reader over streams.
 
 Nothing here names an agent. Which source words exist, which label keys are
 reserved and what each admits, and which top-level dimensions an envelope
-carries are a `Vocabulary`'s to declare — `Open` reserves nothing, and the
-`onemessagebus-agent` crate declares the agent stack's. A vocabulary of your own
-is proven the way those are: `onemessagebus::conformance::drive` runs the one
+carries are a `Vocabulary`'s to declare — `Open` reserves nothing, and a
+program declares its own vocabulary in its own crate, never in the bus. A
+vocabulary of your own is proven the way `Open` is: `onemessagebus::conformance::drive` runs the one
 table every vocabulary is held to.
 
 ```rust

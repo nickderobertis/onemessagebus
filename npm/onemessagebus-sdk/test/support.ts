@@ -65,7 +65,7 @@ const LOCK_EX = 2;
  * abandoned once it is not. Node has no flock binding, so libc's is called
  * directly; the SDK's journeys run on unix.
  */
-export function bindSpool(dir: string, schema = "agent.note@1"): { release(): void } {
+export function bindSpool(dir: string, schema = "demo.memo@1"): { release(): void } {
   mkdirSync(dir);
   writeFileSync(join(dir, "spool.json"), JSON.stringify({ schema_version: 1, schema }));
   const libc = dlopen(process.platform === "darwin" ? "libc.dylib" : "libc.so.6", {
@@ -88,6 +88,12 @@ export function bindSpool(dir: string, schema = "agent.note@1"): { release(): vo
 /** The message type the journeys declare in TypeScript and register at run time. */
 export const Greeting = defineMessage("demo.greeting@1", z.object({ text: z.string() }));
 
+/** The frame the configured example codec selects by `kind`, registered beside `Greeting`. */
+export const Finding = defineMessage(
+  "demo.finding@1",
+  z.object({ kind: z.literal("finding"), text: z.string() }),
+);
+
 /** A question, as the `questions` event queue takes one. */
 export const QUESTION = {
   message: "the base moved",
@@ -96,18 +102,23 @@ export const QUESTION = {
 };
 
 /**
- * A note, as the profile's Rust-registered `agent.note@1` takes one. `as const`
- * keeps `addressee` the literal `"worker"` rather than widening it to `string`,
- * which the generated `Note` type's `"worker" | "supervisor" | "both"` refuses.
+ * A transport hello, as the core's own Rust-registered
+ * `onemessagebus.transport-hello@1` takes one: the one family of the binary's
+ * registry a journey sends as a queue record.
  */
-export const NOTE = { addressee: "worker", text: "the base moved" } as const;
+export const HELLO = {
+  protocol: "onemessagebus-transport",
+  version: 1,
+  config: { kind: "nats" },
+};
 
 /**
  * A configuration over a local transport in `dir/bus`: `questions`, an event
  * queue whose asks are answered on `answers`; `actions`, numbered and empty;
- * `greetings`, typed `demo.greeting@1`; `notes`, typed by the profile's
- * `agent.note@1`; `judged`, whose validator refuses a record that does not say
- * `quiet`; and one configured example codec whose frames are notes.
+ * `greetings`, typed `demo.greeting@1`; `hellos`, typed by the core's own
+ * `onemessagebus.transport-hello@1`; `judged`, whose validator refuses a record
+ * that does not say `quiet`; and one configured example codec whose frames are
+ * findings.
  */
 export function writeConfig(dir: string): string {
   const path = join(dir, "onemessagebus.yaml");
@@ -122,7 +133,7 @@ export function writeConfig(dir: string): string {
       "  answers: {numbered: true}",
       "  actions: {numbered: true}",
       "  greetings: {schema: demo.greeting@1}",
-      "  notes: {schema: agent.note@1}",
+      "  hellos: {schema: onemessagebus.transport-hello@1}",
       "  judged: {}",
       "validators:",
       `  - {on: judged, kind: command, command: [sh, -c, ${JSON.stringify(judge)}]}`,
@@ -134,7 +145,7 @@ export function writeConfig(dir: string): string {
       "    select: kind",
       "    frames:",
       "      finding:",
-      "        schema: agent.note@1",
+      "        schema: demo.finding@1",
       "        bindings:",
       "          - do: answer",
       "            response: {completion: false}",

@@ -2,29 +2,28 @@
 
 use serde_json::{json, Value};
 
-use crate::support::{fixture, run, run_in};
+use crate::support::{run, run_in};
 
-/// The ids the binary registers — the profile's, and the resident protocol's —
-/// which `schema list` prints with nothing else.
+/// The ids the binary registers — the core's own: the resident protocol's and
+/// the transport plugin protocol's, and no product's — which `schema list`
+/// prints with nothing else.
 const REGISTERED_IDS: &[&str] = &[
-    "agent.artifact-ref@1",
-    "agent.event-envelope@1",
-    "agent.event-envelope@2",
-    "agent.event-filter@1",
-    "agent.labels@1",
-    "agent.note@1",
     "bus.resident-protocol@1",
     "onemessagebus.transport-hello@1",
     "onemessagebus.transport-reply@1",
     "onemessagebus.transport-request@1",
 ];
 
-/// The committed Rust declaration `schema gen --lang rust agent.artifact-ref@1`
-/// printed, compiled here: `generated_regenerates_the_document` holds it to the
-/// binary's current output and to the registered document.
+/// The committed Rust declaration `schema gen --lang rust
+/// onemessagebus.transport-hello@1` printed, compiled here:
+/// `schema_gen_rust_prints_a_declaration_that_compiles_and_regenerates_the_document`
+/// holds it to the binary's current output and to the registered document.
 mod generated {
-    include!("../generated/artifact_ref.rs");
+    include!("../generated/transport_hello.rs");
 }
+
+/// A transport hello the registered `onemessagebus.transport-hello@1` accepts.
+const HELLO: &str = r#"{"protocol":"onemessagebus-transport","version":1,"config":{"kind":"local","dir":"/tmp/bus"}}"#;
 
 #[test]
 fn schema_list_prints_every_registered_id_and_nothing_else() {
@@ -36,8 +35,12 @@ fn schema_list_prints_every_registered_id_and_nothing_else() {
         .map(|entry| entry["id"].as_str().expect("an id"))
         .collect();
     assert_eq!(ids, REGISTERED_IDS);
-    assert_eq!(entries[1]["family"], json!("agent.event-envelope"));
+    assert_eq!(entries[1]["family"], json!("onemessagebus.transport-hello"));
     assert_eq!(entries[1]["version"], json!(1));
+    assert!(
+        ids.iter().all(|id| !id.starts_with("agent.")),
+        "the binary registers a product's schema: {ids:?}"
+    );
     assert!(listed.stderr.is_empty(), "{}", listed.stderr);
 
     let text = run(&["schema", "list", "--format", "text"], None);
@@ -48,14 +51,14 @@ fn schema_list_prints_every_registered_id_and_nothing_else() {
 #[test]
 fn schema_check_accepts_a_payload_on_stdin_and_on_file_alike() {
     let dir = tempfile::tempdir().expect("a temp dir");
-    let payload = std::fs::read_to_string(fixture("golden/envelope-v2.json")).expect("golden");
+    let payload = HELLO;
     let file = dir.path().join("payload.json");
-    std::fs::write(&file, &payload).expect("written");
+    std::fs::write(&file, payload).expect("written");
 
     let on_stdin = run_in(
         dir.path(),
-        &["schema", "check", "agent.event-envelope@2"],
-        Some(&payload),
+        &["schema", "check", "onemessagebus.transport-hello@1"],
+        Some(payload),
         &[],
     );
     assert_eq!(on_stdin.code, 0, "{}", on_stdin.stderr);
@@ -66,7 +69,7 @@ fn schema_check_accepts_a_payload_on_stdin_and_on_file_alike() {
         &[
             "schema",
             "check",
-            "agent.event-envelope@2",
+            "onemessagebus.transport-hello@1",
             "--file",
             "payload.json",
         ],
@@ -78,43 +81,41 @@ fn schema_check_accepts_a_payload_on_stdin_and_on_file_alike() {
 
 #[test]
 fn schema_check_refuses_a_violating_payload_naming_the_id_and_the_pointer() {
-    let violating = json!({ "run_id": "R", "round": "two" }).to_string();
-    let refused = run(&["schema", "check", "agent.labels@1"], Some(&violating));
+    let violating =
+        json!({ "protocol": "onemessagebus-transport", "version": "two", "config": {"kind": "local"} })
+            .to_string();
+    let id = "onemessagebus.transport-hello@1";
+    let refused = run(&["schema", "check", id], Some(&violating));
     assert_eq!(refused.code, 1);
     assert!(refused.stdout.is_empty());
-    assert!(
-        refused.stderr.contains("agent.labels@1"),
-        "{}",
-        refused.stderr
-    );
-    assert!(refused.stderr.contains("/round"), "{}", refused.stderr);
+    assert!(refused.stderr.contains(id), "{}", refused.stderr);
+    assert!(refused.stderr.contains("/version"), "{}", refused.stderr);
 
     let dir = tempfile::tempdir().expect("a temp dir");
-    std::fs::write(dir.path().join("labels.json"), &violating).expect("written");
+    std::fs::write(dir.path().join("hello.json"), &violating).expect("written");
     let on_file = run_in(
         dir.path(),
-        &["schema", "check", "agent.labels@1", "--file", "labels.json"],
+        &["schema", "check", id, "--file", "hello.json"],
         None,
         &[],
     );
     assert_eq!(on_file.code, 1, "{}", on_file.stderr);
     assert!(on_file.stdout.is_empty());
-    assert!(
-        on_file.stderr.contains("agent.labels@1"),
-        "{}",
-        on_file.stderr
-    );
-    assert!(on_file.stderr.contains("/round"), "{}", on_file.stderr);
+    assert!(on_file.stderr.contains(id), "{}", on_file.stderr);
+    assert!(on_file.stderr.contains("/version"), "{}", on_file.stderr);
 
-    let unknown = run(&["schema", "check", "agent.nothing@1"], Some("{}"));
+    let unknown = run(&["schema", "check", "shop.nothing@1"], Some("{}"));
     assert_eq!(unknown.code, 2);
     assert!(
-        unknown.stderr.contains("agent.nothing@1"),
+        unknown.stderr.contains("shop.nothing@1"),
         "{}",
         unknown.stderr
     );
 
-    let malformed = run(&["schema", "check", "agent.labels"], Some("{}"));
+    let malformed = run(
+        &["schema", "check", "onemessagebus.transport-hello"],
+        Some("{}"),
+    );
     assert_eq!(malformed.code, 2);
     assert!(
         malformed.stderr.contains("names no version"),
@@ -122,7 +123,10 @@ fn schema_check_refuses_a_violating_payload_naming_the_id_and_the_pointer() {
         malformed.stderr
     );
 
-    let not_json = run(&["schema", "check", "agent.labels@1"], Some("not json"));
+    let not_json = run(
+        &["schema", "check", "onemessagebus.transport-hello@1"],
+        Some("not json"),
+    );
     assert_eq!(not_json.code, 2);
     assert!(not_json.stderr.contains("not JSON"), "{}", not_json.stderr);
 }
@@ -131,7 +135,7 @@ fn schema_check_refuses_a_violating_payload_naming_the_id_and_the_pointer() {
 #[test]
 fn schema_check_refuses_a_payload_passed_as_an_argument() {
     let refused = run(
-        &["schema", "check", "agent.labels@1", r#"{"run_id":"R"}"#],
+        &["schema", "check", "onemessagebus.transport-hello@1", HELLO],
         None,
     );
     assert_eq!(refused.code, 2);
@@ -145,12 +149,18 @@ fn schema_check_refuses_a_payload_passed_as_an_argument() {
 #[test]
 fn schema_gen_json_prints_the_registered_document_byte_for_byte() {
     let printed = run(
-        &["schema", "gen", "--lang", "json", "agent.artifact-ref@1"],
+        &[
+            "schema",
+            "gen",
+            "--lang",
+            "json",
+            "onemessagebus.transport-hello@1",
+        ],
         None,
     );
     assert_eq!(printed.code, 0, "{}", printed.stderr);
-    let registry = onemessagebus_agent::registry();
-    let id = "agent.artifact-ref@1".parse().expect("id");
+    let registry = onemessagebus_cli::registry();
+    let id = "onemessagebus.transport-hello@1".parse().expect("id");
     let document = registry.schema(&id).expect("registered");
     let expected = format!(
         "{}\n",
@@ -162,43 +172,52 @@ fn schema_gen_json_prints_the_registered_document_byte_for_byte() {
 #[test]
 fn schema_gen_rust_prints_a_declaration_that_compiles_and_regenerates_the_document() {
     let printed = run(
-        &["schema", "gen", "--lang", "rust", "agent.artifact-ref@1"],
+        &[
+            "schema",
+            "gen",
+            "--lang",
+            "rust",
+            "onemessagebus.transport-hello@1",
+        ],
         None,
     );
     assert_eq!(printed.code, 0, "{}", printed.stderr);
-    let committed = include_str!("../generated/artifact_ref.rs");
+    let committed = include_str!("../generated/transport_hello.rs");
     assert_eq!(
         printed.stdout, committed,
-        "tests/generated/artifact_ref.rs is not what the binary prints; regenerate it with \
-         `onemessagebus schema gen --lang rust agent.artifact-ref@1`"
+        "tests/generated/transport_hello.rs is not what the binary prints; regenerate it with \
+         `onemessagebus schema gen --lang rust onemessagebus.transport-hello@1`"
     );
     // The committed declaration compiled into this test binary regenerates the
     // registered document.
-    let regenerated = schemars::schema_for!(generated::ArtifactRef).to_value();
-    let registry = onemessagebus_agent::registry();
-    let id = "agent.artifact-ref@1".parse().expect("id");
+    let regenerated = schemars::schema_for!(generated::PluginHello).to_value();
+    let registry = onemessagebus_cli::registry();
+    let id = "onemessagebus.transport-hello@1".parse().expect("id");
     assert_eq!(&regenerated, registry.schema(&id).expect("registered"));
-    let value: generated::ArtifactRef =
-        serde_json::from_value(json!({ "id": "a-91", "kind": "log", "bytes": 21400 }))
-            .expect("the declaration reads the documented artifact");
-    assert_eq!(value.bytes, 21400);
+    let value: generated::PluginHello =
+        serde_json::from_str(HELLO).expect("the declaration reads a hello the schema accepts");
+    assert_eq!(value.version, 1);
+    assert_eq!(value.config.kind.0, "local");
 }
 
 #[test]
 fn schema_gen_refuses_an_unknown_id_and_an_unsupported_language_by_name() {
-    let unknown = run(
-        &["schema", "gen", "--lang", "json", "agent.nothing@1"],
-        None,
-    );
+    let unknown = run(&["schema", "gen", "--lang", "json", "shop.nothing@1"], None);
     assert_eq!(unknown.code, 2);
     assert!(
-        unknown.stderr.contains("agent.nothing@1"),
+        unknown.stderr.contains("shop.nothing@1"),
         "{}",
         unknown.stderr
     );
     for lang in ["python", "typescript"] {
         let unsupported = run(
-            &["schema", "gen", "--lang", lang, "agent.artifact-ref@1"],
+            &[
+                "schema",
+                "gen",
+                "--lang",
+                lang,
+                "onemessagebus.transport-hello@1",
+            ],
             None,
         );
         assert_eq!(unsupported.code, 2, "{lang}");
@@ -206,7 +225,13 @@ fn schema_gen_refuses_an_unknown_id_and_an_unsupported_language_by_name() {
         assert!(unsupported.stdout.is_empty());
     }
     let nonsense = run(
-        &["schema", "gen", "--lang", "cobol", "agent.artifact-ref@1"],
+        &[
+            "schema",
+            "gen",
+            "--lang",
+            "cobol",
+            "onemessagebus.transport-hello@1",
+        ],
         None,
     );
     assert_eq!(nonsense.code, 2);
@@ -233,7 +258,7 @@ fn schema_register_makes_an_id_answer_in_list_and_govern_check_in_a_later_invoca
         &[
             "schema",
             "register",
-            "agent.finding@1",
+            "shop.finding@1",
             "--file",
             "finding.json",
             "--registry",
@@ -244,10 +269,10 @@ fn schema_register_makes_an_id_answer_in_list_and_govern_check_in_a_later_invoca
     );
     assert_eq!(registered.code, 0, "{}", registered.stderr);
     let stored: Value = serde_json::from_str(
-        &std::fs::read_to_string(registry.join("agent.finding@1.json")).expect("the file"),
+        &std::fs::read_to_string(registry.join("shop.finding@1.json")).expect("the file"),
     )
     .expect("a registry document");
-    assert_eq!(stored["id"], json!("agent.finding@1"));
+    assert_eq!(stored["id"], json!("shop.finding@1"));
     assert_eq!(stored["schema"], schema);
 
     // A later invocation over the same directory, named by the flag.
@@ -266,7 +291,7 @@ fn schema_register_makes_an_id_answer_in_list_and_govern_check_in_a_later_invoca
     );
     assert_eq!(listed.code, 0, "{}", listed.stderr);
     let mut expected: Vec<&str> = REGISTERED_IDS.to_vec();
-    expected.push("agent.finding@1");
+    expected.push("shop.finding@1");
     expected.sort_unstable();
     let mut printed: Vec<&str> = listed.stdout.lines().collect();
     printed.sort_unstable();
@@ -280,7 +305,7 @@ fn schema_register_makes_an_id_answer_in_list_and_govern_check_in_a_later_invoca
         &[
             "schema",
             "check",
-            "agent.finding@1",
+            "shop.finding@1",
             "--registry",
             registry_arg,
         ],
@@ -289,7 +314,7 @@ fn schema_register_makes_an_id_answer_in_list_and_govern_check_in_a_later_invoca
     );
     assert_eq!(governed.code, 1, "{}", governed.stderr);
     assert!(
-        governed.stderr.contains("agent.finding@1: at /line"),
+        governed.stderr.contains("shop.finding@1: at /line"),
         "{}",
         governed.stderr
     );
@@ -298,7 +323,7 @@ fn schema_register_makes_an_id_answer_in_list_and_govern_check_in_a_later_invoca
         &[
             "schema",
             "check",
-            "agent.finding@1",
+            "shop.finding@1",
             "--registry",
             registry_arg,
         ],
@@ -318,20 +343,20 @@ fn schema_register_makes_an_id_answer_in_list_and_govern_check_in_a_later_invoca
     assert_eq!(listed_by_env.stdout, listed.stdout);
     let conforming = run_in(
         dir.path(),
-        &["schema", "check", "agent.finding@1"],
+        &["schema", "check", "shop.finding@1"],
         Some(r#"{"severity":"high","line":3}"#),
         &env,
     );
     assert_eq!(conforming.code, 0, "{}", conforming.stderr);
     let violating = run_in(
         dir.path(),
-        &["schema", "check", "agent.finding@1"],
+        &["schema", "check", "shop.finding@1"],
         Some(r#"{"severity":"high","line":"three"}"#),
         &env,
     );
     assert_eq!(violating.code, 1);
     assert!(
-        violating.stderr.contains("agent.finding@1: at /line"),
+        violating.stderr.contains("shop.finding@1: at /line"),
         "{}",
         violating.stderr
     );
@@ -343,7 +368,7 @@ fn schema_register_makes_an_id_answer_in_list_and_govern_check_in_a_later_invoca
         &[
             "schema",
             "register",
-            "agent.finding@1",
+            "shop.finding@1",
             "--file",
             "finding.json",
         ],
@@ -361,7 +386,7 @@ fn schema_register_makes_an_id_answer_in_list_and_govern_check_in_a_later_invoca
         &[
             "schema",
             "register",
-            "agent.finding@1",
+            "shop.finding@1",
             "--file",
             "other.json",
         ],
@@ -370,7 +395,7 @@ fn schema_register_makes_an_id_answer_in_list_and_govern_check_in_a_later_invoca
     );
     assert_eq!(conflict.code, 2);
     assert!(
-        conflict.stderr.contains("agent.finding@1"),
+        conflict.stderr.contains("shop.finding@1"),
         "{}",
         conflict.stderr
     );
@@ -380,41 +405,35 @@ fn schema_register_makes_an_id_answer_in_list_and_govern_check_in_a_later_invoca
         conflict.stderr
     );
     let untouched: Value = serde_json::from_str(
-        &std::fs::read_to_string(registry.join("agent.finding@1.json")).expect("the file"),
+        &std::fs::read_to_string(registry.join("shop.finding@1.json")).expect("the file"),
     )
     .expect("JSON");
     assert_eq!(untouched["schema"], schema);
 
-    // Nor may a directory contradict the profile.
-    let profile_conflict = run_in(
+    // Nor may a directory contradict the binary's own schemas.
+    let builtin_conflict = run_in(
         dir.path(),
         &[
             "schema",
             "register",
-            "agent.labels@1",
+            "bus.resident-protocol@1",
             "--file",
             "other.json",
         ],
         None,
         &env,
     );
-    assert_eq!(profile_conflict.code, 2);
+    assert_eq!(builtin_conflict.code, 2);
     assert!(
-        profile_conflict.stderr.contains("agent.labels@1"),
+        builtin_conflict.stderr.contains("bus.resident-protocol@1"),
         "{}",
-        profile_conflict.stderr
+        builtin_conflict.stderr
     );
 
     // With no registry directory at all, there is nowhere to write.
     let nowhere = run_in(
         dir.path(),
-        &[
-            "schema",
-            "register",
-            "agent.other@1",
-            "--file",
-            "other.json",
-        ],
+        &["schema", "register", "shop.other@1", "--file", "other.json"],
         None,
         &[],
     );
@@ -648,14 +667,14 @@ fn a_registry_directory_that_is_not_one_is_refused_naming_the_file() {
 
     // A document filed under a name that is not its id.
     std::fs::write(
-        registry.join("agent.other@1.json"),
-        json!({ "id": "agent.finding@1", "schema": { "type": "object" } }).to_string(),
+        registry.join("shop.other@1.json"),
+        json!({ "id": "shop.finding@1", "schema": { "type": "object" } }).to_string(),
     )
     .expect("written");
     let misnamed = run_in(dir.path(), &["schema", "list"], None, &env);
     assert_eq!(misnamed.code, 2);
     assert!(
-        misnamed.stderr.contains("agent.other@1.json"),
+        misnamed.stderr.contains("shop.other@1.json"),
         "{}",
         misnamed.stderr
     );
@@ -664,14 +683,28 @@ fn a_registry_directory_that_is_not_one_is_refused_naming_the_file() {
         "{}",
         misnamed.stderr
     );
-    std::fs::remove_file(registry.join("agent.other@1.json")).expect("removed");
+    std::fs::remove_file(registry.join("shop.other@1.json")).expect("removed");
+
+    // An entry named like a document that cannot be read as one: refused naming
+    // it, rather than skipped as though that schema had never been registered.
+    std::fs::create_dir(registry.join("shop.folder@1.json")).expect("created");
+    let unreadable = run_in(dir.path(), &["schema", "list"], None, &env);
+    assert_eq!(unreadable.code, 2, "{}", unreadable.stderr);
+    assert!(
+        unreadable
+            .stderr
+            .contains("shop.folder@1.json is not a registry document"),
+        "{}",
+        unreadable.stderr
+    );
+    std::fs::remove_dir(registry.join("shop.folder@1.json")).expect("removed");
 
     // A file that is not a registry document at all.
-    std::fs::write(registry.join("agent.broken@1.json"), "not json").expect("written");
+    std::fs::write(registry.join("shop.broken@1.json"), "not json").expect("written");
     let corrupt = run_in(dir.path(), &["schema", "list"], None, &env);
     assert_eq!(corrupt.code, 2);
     assert!(
-        corrupt.stderr.contains("agent.broken@1.json"),
+        corrupt.stderr.contains("shop.broken@1.json"),
         "{}",
         corrupt.stderr
     );
@@ -680,7 +713,7 @@ fn a_registry_directory_that_is_not_one_is_refused_naming_the_file() {
         "{}",
         corrupt.stderr
     );
-    std::fs::remove_file(registry.join("agent.broken@1.json")).expect("removed");
+    std::fs::remove_file(registry.join("shop.broken@1.json")).expect("removed");
 
     // A schema file that is not JSON.
     std::fs::write(dir.path().join("schema.txt"), "not json").expect("written");
@@ -689,7 +722,7 @@ fn a_registry_directory_that_is_not_one_is_refused_naming_the_file() {
         &[
             "schema",
             "register",
-            "agent.finding@1",
+            "shop.finding@1",
             "--file",
             "schema.txt",
         ],
@@ -712,7 +745,7 @@ fn a_registry_directory_that_is_not_one_is_refused_naming_the_file() {
         &[
             "schema",
             "register",
-            "agent.finding@1",
+            "shop.finding@1",
             "--file",
             "absent.json",
         ],
@@ -739,9 +772,9 @@ fn every_schema_verb_refuses_a_registry_path_that_is_not_a_directory() {
     let file_arg = file.to_str().expect("UTF-8");
     let verbs: [&[&str]; 4] = [
         &["schema", "list"],
-        &["schema", "check", "agent.labels@1"],
-        &["schema", "gen", "--lang", "json", "agent.labels@1"],
-        &["schema", "register", "agent.finding@1", "--file", "ok.json"],
+        &["schema", "check", "bus.resident-protocol@1"],
+        &["schema", "gen", "--lang", "json", "bus.resident-protocol@1"],
+        &["schema", "register", "shop.finding@1", "--file", "ok.json"],
     ];
     for verb in verbs {
         let mut by_flag = verb.to_vec();

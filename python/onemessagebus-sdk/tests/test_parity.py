@@ -144,7 +144,7 @@ def sample(name: str, annotation: Any) -> Any:
     if list in kinds:
         return ["first.jsonl", "-dash-led.jsonl"]
     if dict in kinds:
-        return {"run_id": "R", "round": 2}
+        return {"tenant": "acme", "attempt": 2}
     return f"{name}-value"
 
 
@@ -216,7 +216,7 @@ def test_render_argv_refuses_what_no_binding_renders() -> None:
     with pytest.raises(BusRefused, match="ask: `blocking` is true or false, not str"):
         render_argv("ask", {"queue": "q", "blocking": "yes"})
     with pytest.raises(BusRefused, match="eventsEmit: `labels` is a mapping"):
-        render_argv("eventsEmit", {"path": "p", "labels": "run_id=R"})
+        render_argv("eventsEmit", {"path": "p", "labels": "tenant=acme"})
     with pytest.raises(BusRefused, match="status: `queue` takes a string, a number or a boolean"):
         render_argv("status", {"queue": {"name": "a"}})
     assert render_argv("ask", {"queue": "q", "blocking": False}) == ["ask", "--", "q"]

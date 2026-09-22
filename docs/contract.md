@@ -2,18 +2,17 @@
 
 The approved contract for this repository, committed verbatim below. It is the
 one source of the wire envelope, the filter grammar, the schema registry rules,
-the emitter and reader rules, the inbox, the agent note contract, the transport
-seam, queues with their policies, subscriptions and authors, the configuration
-file, and the command line: the public types are written
-to match this text, and the contract tests — `crates/onemessagebus/tests/contract.rs`
-for the core and `crates/onemessagebus-agent/tests/contract.rs` for the profile —
-drive every fenced block below through those types so the two cannot drift. A
+the emitter and reader rules, the inbox, the transport seam, queues with their
+policies, subscriptions and authors, the configuration file, and the command
+line: the public types are written to match this text, and the contract test,
+`crates/onemessagebus/tests/contract.rs`, drives every fenced block below
+through those types so the two cannot drift. A
 consumer's `docs/contract.md` that carries a copy of a section says it is a copy
 and names this file. Changing the interface is a proposal to the owner of this
 contract, never a unilateral edit here.
 
 <!-- llmlint: ignore-file[contracts_have_one_source_or_a_drift_gate] this file IS the
-one source: the consumers' copies name it, and the contract tests in both crates drive
+one source: the consumers' copies name it, and the core's contract test drives
 the fenced blocks below through the public types, so a restatement that drifted from
 this text fails a gate rather than surviving quietly. -->
 
@@ -21,60 +20,57 @@ this text fails a gate rather than surviving quietly. -->
 
 ### Contract W — the wire envelope
 
-One NDJSON line per event, byte-identical to what `oneagentgraph`, `onevcs` and
-`onepipeline` write today:
+One NDJSON line per event. The core knows the shape and none of the words: which
+source words exist, which label keys are reserved and what each admits, and
+which top-level dimensions an envelope carries are a `Vocabulary`'s to declare,
+and a program declares its own in its own crate. `onemessagebus::Open` reserves
+nothing — any source word, any labels, no dimensions — and the example below
+reads over it:
 
 <!-- fixture: envelope -->
 ```json
 {"v": 1, "ts": "<RFC 3339, millisecond precision, UTC>", "stream": "<unique id per producing process>",
- "seq": 42, "source": "agentgraph|vcs|pipeline", "kind": "<kebab-case event kind>",
- "phase": "development|integrate|review|release",
- "labels": {"run_id": "R", "round": 2, "node": "service", "step": "implement", "member": "worker", "persona": "engineer", "extra": "carried"},
+ "seq": 42, "source": "<a source word the vocabulary admits>", "kind": "<kebab-case event kind>",
+ "labels": {"tenant": "acme", "attempt": 2, "extra": "carried"},
  "payload": {}, "artifacts": [{"id": "a-91", "kind": "log", "bytes": 21400}]}
 ```
 
-- `v` is a **`u32`** (the `u8` in `oneagentgraph` was the drift; `u32` is what
-  `onevcs` and `onepipeline` hold, and a `u8` reads every value the others
-  write). It is the **envelope schema version the producer wrote against**, per
-  producer: `agentgraph` and `vcs` write `1`, `pipeline` writes `2`; a relayed
-  envelope keeps its producer's number. The registry (Contract R) records the
-  read-set `[2, 1]` for the family `agent.event-envelope`.
+- `v` is a **`u32`**, the **envelope schema version the producer wrote
+  against**, per producer: `Vocabulary::write_version(source)` says which
+  version each source writes — a vocabulary fact, since producers move at their
+  own pace — and a relayed envelope keeps its producer's number. The registry
+  (Contract R) records which versions a build reads.
 - `seq` is a `u64`, monotonic per `stream`; merge order across streams is
   `(ts, stream, seq)`; a consumer detects loss as a per-stream gap; no
   cross-stream promise beyond timestamps.
 - `kind` is **open on the wire and a string newtype in the core**
   (`onemessagebus::Kind`), because a relay carries a sibling's kinds without
-  interpreting them; each producing library keeps its own closed enum and
-  converts into `Kind` (`From`).
-- `source` is a **closed enum in the profile**
-  (`onemessagebus_agent::Source::{Agentgraph, Vcs, Pipeline}`, serialized
-  lowercase) over an open core `onemessagebus::Source(String)`; the profile is
-  what makes it closed.
-- `phase` is a **reserved top-level dimension declared by the profile**:
-  `onemessagebus_agent::Phase::{Development, Integrate, Review, Release}`
-  (kebab-case), optional, omitted from the wire when absent, exactly as
-  `onepipeline` relays it today and `onevcs` stamps it. **The core has no
-  `Phase`**: it carries profile-declared dimensions as named extension fields
-  the vocabulary admits. The profile owns the closed enum, `onevcs` re-exports
-  it and keeps `Phase::of(kind)`, `onepipeline` drops its copy.
-- `labels` is the reserved keys the profile declares plus free-form extras
-  carried untouched: `run_id` (string), `round` (u64), `node`, `step`, `member`,
-  `persona` (strings); absent rather than empty when unknown; producers stamp
-  what they know, enrichers never rewrite. The core's `Labels` is an open
-  ordered map with a `Vocabulary` saying which keys are reserved and what each
-  admits; `onemessagebus_agent::Labels` is the typed struct with those six
-  optional fields and a flattened `extra` map, serializing to the same bytes the
-  three crates' structs do today.
+  interpreting them; a producing library keeps its own closed enum and converts
+  into `Kind` (`From`).
+- `source` is the vocabulary's `Source` type: open in the core
+  (`onemessagebus::Source(String)`), and closed when a vocabulary declares an
+  enum, which then refuses a word it does not name. `Vocabulary::DEFAULT_SOURCE`
+  is the word an emitter stamps when its caller names none.
+- **Dimensions** are the vocabulary's reserved top-level keys
+  (`Vocabulary::DIMENSIONS`), carried between `kind` and `labels` as named
+  fields, optional, and omitted from the wire when absent. **The core declares
+  none**: a key no vocabulary declares is refused at the top level rather than
+  carried.
+- `labels` is the reserved keys the vocabulary declares
+  (`Vocabulary::RESERVED`, each saying whether it admits text, an integer or a
+  closed word) plus free-form extras carried untouched; absent rather than empty
+  when unknown; producers stamp what they know, enrichers never rewrite. The
+  core's `Labels` is an open ordered map; a vocabulary may declare a typed
+  struct with its reserved keys as fields and a flattened map of extras.
 - `payload` is a JSON object whose text fields are bounded at **4096 bytes**
   (`MAX_PAYLOAD_TEXT_BYTES`) and whose summary fields are bounded at **160
   characters** (`MAX_ACTIVITY_DETAIL_CHARS`). The core offers **two cutting
   rules** over the first constant: `bound_text(&str) -> (String, bool)` keeps
   the **last** 4096 bytes, moved forward to a character boundary, and reports
-  the cut for the producer to record in its typed payload (`oneagentgraph`'s
-  field rule); `bound_payload(Map) -> Map` keeps the **first** 4096 bytes of
-  every top-level text value, moved back to a character boundary, and stamps
-  `"truncated": true` on the payload when any value was cut (`onevcs::stream`'s
-  and `onepipeline::journal`'s payload rule); `bound_detail(&str) -> (String,
+  the cut for the producer to record in its typed payload;
+  `bound_payload(Map) -> Map` keeps the **first** 4096 bytes of every top-level
+  text value, moved back to a character boundary, and stamps `"truncated":
+  true` on the payload when any value was cut; `bound_detail(&str) -> (String,
   bool)` collapses runs of whitespace to one space and keeps the first 160
   **characters**. Every cut leaves valid UTF-8 inside the bound. **The
   emitter's rule is `bound_payload`**: `Emitter::emit` — and so the binary's
@@ -85,52 +81,51 @@ One NDJSON line per event, byte-identical to what `oneagentgraph`, `onevcs` and
   evidence is an `ArtifactRef {id, kind, bytes}` stored by the producing library
   and read back through that library.
 - Redaction happens **before an envelope or artifact leaves the producing
-  library**: a `Redactor` with the credential-word and credential-prefix tables
-  `onevcs::stream` holds today (`TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`,
-  `CREDENTIAL`, `APIKEY`, `API_KEY`, `PRIVATE_KEY`; `ghp_`, `gho_`, `ghs_`,
-  `ghu_`, `ghr_`, `github_pat_`, `AKIA`) and the replacement `[redacted]`, so a
-  consumer that redacts through the bus redacts exactly what it redacts now.
-- Type names the consumers import: `onemessagebus_agent::event::{Envelope,
-  Labels, Source, Phase, ArtifactRef, EventFilter, Matcher}` and
-  `onemessagebus::{Kind, Emitter, Reader, Merge, bound_text, bound_payload,
-  bound_detail, Redactor, MAX_PAYLOAD_TEXT_BYTES, MAX_ACTIVITY_DETAIL_CHARS}`.
-  `Envelope` in the profile is the concrete type over the agent vocabulary; the
-  core's is generic over a `Vocabulary`. Deserialization refuses an unknown
-  top-level field, a non-`u64` `seq`, an unknown `source` word, a missing
-  required field.
+  library**: a `Redactor` with the credential-word table (`TOKEN`, `SECRET`,
+  `PASSWORD`, `PASSWD`, `CREDENTIAL`, `APIKEY`, `API_KEY`, `PRIVATE_KEY`), the
+  credential-prefix table (`ghp_`, `gho_`, `ghs_`, `ghu_`, `ghr_`,
+  `github_pat_`, `AKIA`) and the replacement `[redacted]`.
+- Type names a consumer imports: `onemessagebus::{Envelope, Labels, Source,
+  Kind, ArtifactRef, Vocabulary, Open, Emitter, Reader, Merge, bound_text,
+  bound_payload, bound_detail, Redactor, MAX_PAYLOAD_TEXT_BYTES,
+  MAX_ACTIVITY_DETAIL_CHARS}`. `Envelope` is generic over a `Vocabulary`.
+  Deserialization refuses an unknown top-level field, a non-`u64` `seq`, a
+  `source` word a closed vocabulary does not name, a missing required field.
+- `conformance::drive` is the one table every vocabulary is held to: the core's
+  own test drives a vocabulary of its own through it, and a program's vocabulary
+  is proven the same way.
 
 ### Contract F — the filter grammar
 
 <!-- fixture: filter -->
 ```json
-{"include": [{"kind": "member-*"}, {"member": "worker", "persona": "engineer"}],
- "exclude": [{"kind": "turn-activity"}, {"source": "vcs", "phase": "release"}]}
+{"include": [{"kind": "invoice-*"}, {"tenant": "acme", "region": "eu"}],
+ "exclude": [{"kind": "heartbeat"}, {"source": "ledger", "tenant": "internal"}]}
 ```
 
-- A matcher's fields are all optional and **conjoin**: `source` (exact),
-  `phase` (exact), `kind` (a glob over the kebab-case wire string where `*` is
-  any run of characters including none and every other character is itself),
-  and the reserved labels `run_id`, `node`, `step`, `member`, `persona` (exact;
-  a matcher naming a label the envelope did not stamp does not match it).
-  `stream` and payload fields are deliberately not matchable.
+- A matcher's fields are all optional and **conjoin**: `source` (exact), `kind`
+  (a glob over the kebab-case wire string where `*` is any run of characters
+  including none and every other character is itself), and the vocabulary's
+  dimensions and reserved labels (exact; a matcher naming a label the envelope
+  did not stamp does not match it). Over `Open`, which reserves nothing, a
+  matcher may name any label key and matches it as text. `stream` and payload
+  fields are deliberately not matchable.
 - An absent or empty `include` admits everything; a match in `exclude` rejects
   whatever `include` said.
 - **Validation at the trust boundary**: a matcher naming no field, or naming an
   empty field, is refused with a message naming the list, the index and the
-  matcher; an unknown field is refused by serde.
-- The core's `Filter`/`Matcher` are generic over the vocabulary (which keys
-  exist); `onemessagebus_agent::event::{EventFilter, Matcher}` are the concrete
-  types with exactly the fields above, with `EventFilter::validate() ->
-  Result<(), String>`, `EventFilter::parse(spec)` and `EventFilter::read(spec)`
-  for the `--event-filter` spelling the three CLIs accept today (inline JSON, or
-  a path to a YAML document), and `Matcher::parse(spec)` for one matcher.
+  matcher; a field the vocabulary does not declare is refused by name.
+- `onemessagebus::{Filter, Matcher}` are generic over the vocabulary (which keys
+  exist), with `Filter::validate() -> Result<(), String>`, `Filter::parse(spec)`
+  and `Filter::read(spec)` for the `--filter` spelling (inline JSON, or a path
+  to a YAML document), and `Matcher::parse(spec)` for one matcher.
 - Filtering decides what is **emitted**, never what a producer acts on; `seq`
   numbers what the stream carries, so a filtered stream has no gaps.
 
 ### Contract R — the schema registry
 
 - `onemessagebus::SchemaId` is `<namespace>.<name>@<version>` —
-  `agent.finding@1`, `agent.event-envelope@2`, `agent.former producer-frame.judge@6` —
+  `shop.order@1`, `shop.order@2`, `shop.fulfilment-frame.pick@6` —
   parsed and refused at the boundary (empty parts, a version that is not a
   positive integer). The namespace is the first dot-separated part alone; the
   name is everything after it up to the `@`, one or more parts joined by single
@@ -152,15 +147,14 @@ One NDJSON line per event, byte-identical to what `oneagentgraph`, `onevcs` and
   is read as the version this build writes, since every bump in the set is
   additive), and `Read::Unknown(..)` otherwise — the caller refuses, naming the
   declared version and the set.
-- The profile registers on construction: `agent.event-envelope` reads `[2, 1]`,
-  writes `2` for `pipeline` and `1` for `agentgraph` and `vcs` (per-source write
-  version is a profile fact). A protocol one program owns — its records and its
-  queues' layout — is not the profile's to register: that program publishes it
-  as a schema bundle a configuration links (Contract L).
+- The bus registers no product's schemas. A program's messages — its records,
+  and its queues' layout — are that program's to publish as a schema bundle a
+  configuration links (Contract L). A registry holding `shop.order@1` and
+  `shop.order@2` reads:
 
 <!-- fixture: read-sets -->
 ```json
-{"agent.event-envelope": [2, 1]}
+{"shop.order": [2, 1]}
 ```
 
 ### Contract E — emitting, reading and merging
@@ -183,10 +177,8 @@ One NDJSON line per event, byte-identical to what `oneagentgraph`, `onevcs` and
   merge` over such a file prints the whole records and reports the torn tail on
   stderr without failing. `Merge` folds several readers in `(ts, stream, seq)`
   order.
-- Byte-for-byte fidelity is proven, not asserted: a recorded stream from each
-  of the three repositories is checked in under
-  `crates/onemessagebus-agent/tests/recorded/` and round-trips through `Reader`
-  and `serde_json::to_string` with no byte changed.
+- An envelope round-trips through `Reader` and `serde_json::to_string` with no
+  byte changed: the wire order is the field order.
 
 ### Contract I — the inbox
 
@@ -244,79 +236,24 @@ own voice.
 
 The documents a spool holds, one per file (`<id>.offer.json`,
 `<id>.answer.json`, `spool.json`, `closed.json`), and a carry store's header and
-record lines:
+record lines, shown for a receiver that takes a shop's `shop.order@1` and
+answers each with a receipt:
 
 <!-- fixture: spool-documents -->
 ```json
-{"spool.json": {"schema_version": 1, "schema": "agent.note@1"},
- "offer": {"schema_version": 1, "schema": "agent.note@1", "message": {"addressee": "worker", "text": "look again at the migration"}},
- "answer": {"schema_version": 1, "answer": {"disposition": {"interrupted": {"party": "worker"}}}},
- "answer-closed": {"schema_version": 1, "answer": {"closed": {"reason": "the conversation ended"}}},
+{"spool.json": {"schema_version": 1, "schema": "shop.order@1"},
+ "offer": {"schema_version": 1, "schema": "shop.order@1", "message": {"sku": "A-1", "quantity": 2}},
+ "answer": {"schema_version": 1, "answer": {"disposition": {"filled": {"by": "stock-room"}}}},
+ "answer-closed": {"schema_version": 1, "answer": {"closed": {"reason": "the till closed"}}},
  "answer-refused": {"schema_version": 1, "answer": {"refused": {"reason": "<why the receiver could not read the offer>"}}},
- "closed.json": {"schema_version": 1, "reason": "the conversation ended"}}
+ "closed.json": {"schema_version": 1, "reason": "the till closed"}}
 ```
 
 <!-- fixture: carry-store -->
 ```json
 {"header": {"schema_version": 1, "kind": "onemessagebus-carry-store"},
- "record": {"ts": "<RFC 3339, millisecond precision, UTC>", "schema": "agent.note@1", "message": {"addressee": "both", "text": "the ruling applies to both of you"}}}
+ "record": {"ts": "<RFC 3339, millisecond precision, UTC>", "schema": "shop.order@1", "message": {"sku": "B-2", "quantity": 1}}}
 ```
-
-### Contract N — the agent note contract
-
-`onemessagebus_agent::note` declares, with the same names, the same serde shapes
-and the same refusals as `former producer::note` at release 0.8.1: `Addressee::{Worker,
-Supervisor, Both}` (lowercase on the wire), `Party`, `Criterion` (the newtype and
-its refusals), `CriterionRefused`, `NoteText`, `Note` (`new`, `to`, `binding`,
-`binds`), `NoteRefused`, `DeliveredNote`, `Accepted::{Queued, Interrupted {
-party }, JudgedWith}`, `Undelivered` (the note contract's own variants, re-exported
-at the crate root as `NoteUndelivered`), `Criteria::{compose, rendered, bound}`,
-and `supervisor_block`. `Note: Message` with schema `agent.note@1`; `Accepted:
-Disposition`, with `Carried` answering `Accepted::Queued`. `type Notes =
-Sender<Note, Accepted>` and `type NoteInbox = Inbox<Note, Accepted>`, with
-`Notes::channel()` building the in-process pair. What a conversation does with a
-delivered note stays in `former producer`.
-
-<!-- fixture: note -->
-```json
-{"addressee": "both", "text": "the bar moved", "criterion": "the flag defaults to off"}
-```
-
-<!-- fixture: accepted -->
-```json
-["queued", {"interrupted": {"party": "worker"}}, {"interrupted": {"party": "supervisor"}}, {"judged_with": {"completion_reason": "passed with the note in hand"}}]
-```
-
-<!-- fixture: note-undelivered -->
-```json
-[{"conversation_completed": {"completion_reason": "the work is done"}}, {"member_settled": {"outcome": "the conversation ended"}}, {"no_conversation": {"reason": "nothing ever read this channel"}}]
-```
-
-**Departures, ruled by the manager over the ask seam** and recorded here so the
-adopting nodes read them where they read the contract:
-
-1. `Notes::send` is the core's `Sender::send` through the alias, so it answers
-   `onemessagebus::Undelivered` rather than `note::Undelivered`: a crate cannot
-   add a method to the core's type. `note::Undelivered:
-   From<onemessagebus::Undelivered>` reads a note refusal carried in a close
-   (`Closed::from(&note::Undelivered)`) back into the same variant, a close in
-   anyone else's words into `MemberSettled`, and a backend failure into
-   `NoConversation`, so `former producer` adapts with one `.map_err(Into::into)`.
-   `Notes::channel()` keeps its signature through the core's `Sender::channel()`.
-2. `NoteInbox::delivered()` is `note::NoteInboxExt::delivered`, re-exported by
-   `note::prelude`. It lists the notes answered `Interrupted` (reaching the party
-   named) and `JudgedWith` (reaching the supervisor); a `Queued` note has reached
-   no party yet.
-3. `former producer`'s seven note shape tests moved verbatim. Its five channel tests
-   drive the phase machine that stays in `former producer`, and the core's inbox tests
-   prove the inbox-level equivalents: a dropped inbox answers every blocked
-   sender, and a closed inbox stays closed with its first reason.
-4. `worker_block` is public, the one item beyond the list above, because
-   `former producer`'s engine renders a worker's turn with it and a copy left there
-   drifts.
-5. `deliver` takes `--wait <SECONDS>` (default 30), a named option bound in
-   `CAPABILITIES`, so the lost state is observable through the binary;
-   `Spool::connect_within` is the library's way.
 
 ### Contract T — the transport plugin seam
 
@@ -643,9 +580,10 @@ and `schemas fetch` verbs. Every consumer restates it from there.
   envelope to the stream file `<file>` through `Emitter::shared`, so `seq` is
   taken from the file under its lock and several processes may append to one
   file at once; prints the envelope it wrote). **`--profile <name>` on both
-  `events` verbs defaults to the agent profile** the binary links, so a profile
-  — and with it the source words and each source's write version — is chosen
-  the same way on `emit` and on `merge`. **Payloads arrive on stdin or `--file`,
+  `events` verbs names a vocabulary the binary links, and defaults to `open`**,
+  the one it links; a name it does not link is refused naming the ones it does.
+  A profile — and with it the source words and each source's write version — is
+  chosen the same way on `emit` and on `merge`. **Payloads arrive on stdin or `--file`,
   never as a positional argument**: what the rule refuses is a payload the clap
   tree would read as a positional.
 - `onemessagebus deliver <address> [--message <M>] [--file <path>] [--wait
@@ -667,7 +605,7 @@ and `schemas fetch` verbs. Every consumer restates it from there.
   binding and no declared exclusion fails the build; `tests/library_surface.rs`
   exercises every named library entry. `sdk_schema::bundle()` emits the
   capability manifest beside the schema roots (`envelope`, `filter`,
-  `schema_id`, `registry_document`, `config`, and every message the profile
+  `schema_id`, `registry_document`, `config`, and every message the binary
   registers).
 - `onemessagebus send <queue> [--file <path>]` (a record on stdin or `--file`,
   shaped and checked by the layout, validated, appended; prints `{queue,

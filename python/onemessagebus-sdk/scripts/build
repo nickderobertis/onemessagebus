@@ -64,10 +64,10 @@ if set(CAPABILITIES) != checkout:
         f"{sorted(set(CAPABILITIES) ^ checkout)}",
         REGENERATE,
     )
-if models.EventEnvelope.__name__ != "Envelope":
+if models.TransportHello.__name__ != "PluginHello":
     refuse(
-        f"the wheel's models.EventEnvelope is {models.EventEnvelope.__name__}, "
-        "not the generated Envelope model",
+        f"the wheel's models.TransportHello is {models.TransportHello.__name__}, "
+        "not the generated PluginHello model",
         REGENERATE,
     )
 print(f"build: onemessagebus {stamped} wheel is typed, installs and imports")

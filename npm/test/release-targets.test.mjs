@@ -370,7 +370,6 @@ describe("the declared release targets", () => {
       raw.target.map((target) => [target.id, target.name]),
       [
         ["crate:onemessagebus", "crate"],
-        ["crate:onemessagebus-agent", "agent-crate"],
         ["pypi:onemessagebus-cli", "pypi"],
         ["npm:onemessagebus-cli", "npm"],
         ["pypi:onemessagebus", "sdk"],
@@ -424,13 +423,24 @@ describe("the declared release targets", () => {
   });
 });
 
+// The declared target `id` names, so a drift case edits it by name rather than by
+// a position a new or retired target would shift.
+function byId(document, id) {
+  const target = document.target.find((candidate) => candidate.id === id);
+  assert.ok(target, `the declaration no longer declares ${id}`);
+  return target;
+}
+
 describe("the drift gate itself", () => {
   it("fails on a name this repository publishes without declaring", () => {
     // The launcher stops covering one of the per-platform packages a release
     // still builds and publishes. Nothing would wait on that package — it is
     // covered, not a target — but the launcher would be shipping something the
     // declaration no longer accounts for.
-    const dropped = drift((document) => document.target[3].covers.pop(), coversEveryPublishedName);
+    const dropped = drift(
+      (document) => byId(document, "npm:onemessagebus-cli").covers.pop(),
+      coversEveryPublishedName,
+    );
     assert.match(dropped.message, /no declared target names or covers/);
     assert.match(dropped.message, /npm:onemessagebus-cli-win32-x64/);
 
@@ -444,12 +454,12 @@ describe("the drift gate itself", () => {
 
   it("fails on a name declared without this repository publishing it", () => {
     const renamed = drift((document) => {
-      document.target[2].id = "pypi:onemessagebus-command-line";
+      byId(document, "pypi:onemessagebus-cli").id = "pypi:onemessagebus-command-line";
     }, declaresNothingUnpublished);
     assert.match(renamed.message, /names an artifact this repository does not publish/);
 
     const covered = drift((document) => {
-      document.target[3].covers.push("npm:onemessagebus-cli-solaris-sparc");
+      byId(document, "npm:onemessagebus-cli").covers.push("npm:onemessagebus-cli-solaris-sparc");
     }, declaresNothingUnpublished);
     assert.match(covered.message, /claims to cover npm:onemessagebus-cli-solaris-sparc/);
   });

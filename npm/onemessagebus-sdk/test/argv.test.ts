@@ -23,12 +23,12 @@ const VALUES = {
   registry: "registry",
   files: ["a.ndjson", "b.ndjson"],
   filter: '{"all":[]}',
-  profile: "agent",
+  profile: "open",
   path: "events.ndjson",
-  kind: "change-merged",
+  kind: "invoice-issued",
   stream: "s1",
-  source: "pipeline",
-  labels: { run_id: "R", round: "2" },
+  source: "billing",
+  labels: { tenant: "acme", attempt: "2" },
   address: "spool",
   message: "{}",
   wait: 3,
@@ -259,7 +259,7 @@ describe("renderArgv", () => {
     expect(renderArgvError("ask", { queue: "q", blocking: "yes" }).message).toBe(
       "ask: `blocking` is true or false, not string",
     );
-    expect(renderArgvError("eventsEmit", { labels: "run_id=R" }).message).toBe(
+    expect(renderArgvError("eventsEmit", { labels: "tenant=acme" }).message).toBe(
       "eventsEmit: `labels` is an object of keys to values, not string",
     );
     expect(renderArgvError("eventsEmit", { labels: ["a"] }).message).toBe(

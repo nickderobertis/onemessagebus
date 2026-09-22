@@ -12,8 +12,9 @@
 //! 2. TypeScript declares `Farewell`, registers it and sends one; Python's `next`
 //!    receives it typed; the Rust CLI's `next` claims it and `schema check`
 //!    validates it.
-//! 3. A schema Rust declared with `schemars` and the profile registers
-//!    (`agent.note@1`) round-trips through both SDKs' generated models.
+//! 3. A schema Rust declared with `schemars` and the binary registers — the
+//!    core's own `onemessagebus.transport-hello@1` — round-trips through both
+//!    SDKs' generated models.
 //! 4. A payload the registered `demo.greeting@1` refuses, sent from each of the
 //!    three, is refused by the core naming the schema id and the JSON pointer, and
 //!    is appended nowhere.
@@ -466,92 +467,86 @@ fn a_type_defined_in_one_language_is_validated_by_the_rust_core_and_read_typed_i
     assert_eq!(checked.code, 0, "{}", checked.stderr);
 }
 
-const PYTHON_NOTE: &str = r#"
+const PYTHON_HELLO: &str = r#"
 import asyncio, json, os
 from onemessagebus import Client, ClientConfig
-from onemessagebus.models import Note
+from onemessagebus.models import TransportHello
 
 async def main():
     journey = json.loads(os.environ["JOURNEY"])
     config = ClientConfig(config=journey["config"], registry=journey["registry"])
     async with Client(config) as client:
-        claimed = await client.next("notes", type=Note)
-        assert claimed is not None and isinstance(claimed.record, Note)
-        echoed = claimed.record.model_copy(
-            update={"text": claimed.record.text + " (via python)"}
-        )
-        await client.send("notes", echoed)
+        claimed = await client.next("hellos", type=TransportHello)
+        assert claimed is not None and isinstance(claimed.record, TransportHello)
+        echoed = claimed.record.model_copy(update={"version": claimed.record.version + 1})
+        await client.send("hellos", echoed)
         print(json.dumps({"read": claimed.record.model_dump(mode="json", exclude_none=True)}))
 
 asyncio.run(main())
 "#;
 
-const TYPESCRIPT_NOTE: &str = r#"
+const TYPESCRIPT_HELLO: &str = r#"
 import { Client, schemas } from "@SDK@";
 
 const journey = JSON.parse(process.env.JOURNEY ?? "{}");
 const client = new Client({ config: { config: journey.config, registry: journey.registry } });
-const claimed = await client.next("notes", { type: schemas.Note });
+const claimed = await client.next("hellos", { type: schemas.TransportHello });
 if (!claimed) throw new Error("nothing to claim");
-const read = schemas.Note.parse(claimed.record);
-await client.send("notes", { ...read, text: `${read.text} (via typescript)` }, { type: schemas.Note });
+const read = schemas.TransportHello.parse(claimed.record);
+await client.send("hellos", { ...read, version: read.version + 1 }, { type: schemas.TransportHello });
 console.log(JSON.stringify({ read }));
 "#;
 
 #[test]
-fn a_rust_declared_profile_type_round_trips_through_both_generated_models() {
+fn a_rust_declared_core_type_round_trips_through_both_generated_models() {
     let scratch = Scratch::new();
-    let notes = scratch.config("notes.yaml", &[("notes", "agent.note@1")]);
-    let note =
-        json!({"addressee": "worker", "text": "the base moved", "criterion": "rebased onto main"});
-    let sent = notes.cli(&["send", "notes"], Some(&note.to_string()));
+    let hellos = scratch.config(
+        "hellos.yaml",
+        &[("hellos", "onemessagebus.transport-hello@1")],
+    );
+    let hello =
+        json!({"protocol": "onemessagebus-transport", "version": 1, "config": {"kind": "nats"}});
+    let sent = hellos.cli(&["send", "hellos"], Some(&hello.to_string()));
     assert_eq!(sent.code, 0, "{}", sent.stderr);
 
-    let python = notes
-        .python(&scratch, "note", PYTHON_NOTE)
-        .answer("python note");
-    assert_eq!(python["read"], note);
-    let typescript = notes
-        .typescript(&scratch, "note", TYPESCRIPT_NOTE)
-        .answer("typescript note");
+    let python = hellos
+        .python(&scratch, "hello", PYTHON_HELLO)
+        .answer("python hello");
+    assert_eq!(python["read"], hello);
+    let typescript = hellos
+        .typescript(&scratch, "hello", TYPESCRIPT_HELLO)
+        .answer("typescript hello");
     assert_eq!(
         typescript["read"],
-        json!({"addressee": "worker", "text": "the base moved (via python)", "criterion": "rebased onto main"})
+        json!({"protocol": "onemessagebus-transport", "version": 2, "config": {"kind": "nats"}})
     );
 
     // What each SDK sent back through its generated model is a record the Rust
-    // core accepted against agent.note@1 when it appended it; one it refuses is
-    // appended nowhere.
-    let refused = notes.cli(
-        &["send", "notes"],
-        Some(r#"{"addressee":"judge","text":"look again"}"#),
+    // core accepted against onemessagebus.transport-hello@1 when it appended it;
+    // one it refuses is appended nowhere.
+    let refused = hellos.cli(
+        &["send", "hellos"],
+        Some(r#"{"protocol":"onemessagebus-transport","version":"one","config":{"kind":"nats"}}"#),
     );
     assert_eq!(refused.code, 1, "{}", refused.stderr);
     assert!(
-        refused.stderr.contains("agent.note@1"),
+        refused.stderr.contains("onemessagebus.transport-hello@1"),
         "the core names no schema id: {}",
         refused.stderr
     );
-    let logged: Vec<Value> = scratch.log("notes");
+    let logged: Vec<Value> = scratch.log("hellos");
     assert!(
         logged
             .iter()
-            .all(|line| line["addressee"] == json!("worker")
-                && line["criterion"] == json!("rebased onto main")),
+            .all(|line| line["protocol"] == json!("onemessagebus-transport")
+                && line["config"] == json!({"kind": "nats"})),
         "{logged:?}"
     );
-    let texts: Vec<&str> = logged
+    let versions: Vec<u64> = logged
         .iter()
-        .map(|line| line["text"].as_str().expect("a text"))
+        .map(|line| line["version"].as_u64().expect("a version"))
         .collect();
-    assert_eq!(
-        texts,
-        [
-            "the base moved",
-            "the base moved (via python)",
-            "the base moved (via python) (via typescript)"
-        ]
-    );
+    assert_eq!(versions, [1, 2, 3]);
 }
 
 const PYTHON_VIOLATION: &str = r#"

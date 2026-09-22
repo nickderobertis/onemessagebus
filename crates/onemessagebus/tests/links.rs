@@ -23,7 +23,7 @@ fn frame(version: &str) -> Value {
     json!({
         "version": version,
         "description": "frames",
-        "schemas": [{"id": "agent.example-frame.hello@8", "schema": {"type": "object", "required": ["hello"]}}]
+        "schemas": [{"id": "example.frame.hello@8", "schema": {"type": "object", "required": ["hello"]}}]
     })
 }
 
@@ -33,10 +33,7 @@ fn a_bundle_reads_the_documented_shape_and_round_trips() {
     assert_eq!(read.version().to_string(), "8.1");
     assert_eq!(read.description(), Some("frames"));
     assert_eq!(read.schemas().len(), 1);
-    assert_eq!(
-        read.schemas()[0].id.to_string(),
-        "agent.example-frame.hello@8"
-    );
+    assert_eq!(read.schemas()[0].id.to_string(), "example.frame.hello@8");
     let written = serde_json::to_value(&read).expect("it serializes");
     assert_eq!(written, frame("8.1"));
     let again: SchemaBundle = serde_json::from_value(written).expect("it reads back");
@@ -53,10 +50,7 @@ fn a_bundle_reads_the_documented_shape_and_round_trips() {
     let mut registry = Registry::new();
     read.register_into(&mut registry).expect("it registers");
     assert!(registry
-        .check(
-            &"agent.example-frame.hello@8".parse().expect("id"),
-            &json!({})
-        )
+        .check(&"example.frame.hello@8".parse().expect("id"), &json!({}))
         .is_err());
     let schema = serde_json::to_value(schemars::schema_for!(SchemaBundle)).expect("a schema");
     assert!(

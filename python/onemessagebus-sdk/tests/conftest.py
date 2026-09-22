@@ -43,8 +43,8 @@ async def scratch(binary: Path, tmp_path_factory: pytest.TempPathFactory) -> Pat
 
     It holds `onemessagebus.yaml`, declaring a `greetings` queue typed by
     `demo.greeting@1` — the `Greeting` type above, registered in `registry/` through
-    the client as a user registers one — a `notes` queue typed by the profile's
-    `agent.note@1`, and a `questions` event queue whose asks are answered on
+    the client as a user registers one — a `hellos` queue typed by the core's own
+    `onemessagebus.transport-hello@1`, and a `questions` event queue whose asks are answered on
     `answers`, kept in `bus/`.
     """
     directory = tmp_path_factory.mktemp("bus")
@@ -53,7 +53,7 @@ async def scratch(binary: Path, tmp_path_factory: pytest.TempPathFactory) -> Pat
         f"transport: {{kind: local, dir: {directory / 'bus'}}}\n"
         "queues:\n"
         "  greetings: {schema: demo.greeting@1}\n"
-        "  notes: {schema: agent.note@1}\n"
+        "  hellos: {schema: onemessagebus.transport-hello@1}\n"
         "  questions: {policy: {hold_pending: true, blocking_first: true}, answers: answers}\n"
         "  answers: {numbered: true}\n"
         "  actions: {numbered: true}\n"
@@ -62,7 +62,7 @@ async def scratch(binary: Path, tmp_path_factory: pytest.TempPathFactory) -> Pat
         "    select: kind\n"
         "    frames:\n"
         "      finding:\n"
-        "        schema: agent.note@1\n"
+        "        schema: demo.greeting@1\n"
         "        bindings:\n"
         "          - do: answer\n"
         "            response: {completion: false}\n",

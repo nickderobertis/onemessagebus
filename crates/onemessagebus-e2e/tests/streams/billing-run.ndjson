@@ -1,0 +1,4 @@
+{"v":1,"ts":"2026-09-13T06:00:00.000Z","stream":"billing-1","seq":1,"source":"billing","kind":"invoice-issued","labels":{"tenant":"acme","order":"o-1"},"payload":{"amount":1200},"artifacts":[]}
+{"v":1,"ts":"2026-09-13T06:00:02.000Z","stream":"billing-1","seq":2,"source":"billing","kind":"heartbeat","labels":{},"payload":{},"artifacts":[]}
+{"v":1,"ts":"2026-09-13T06:00:04.000Z","stream":"billing-1","seq":3,"source":"billing","kind":"invoice-paid","labels":{"tenant":"acme","order":"o-1"},"payload":{"amount":1200},"artifacts":[]}
+{"v":1,"ts":"2026-09-13T06:00:06.500Z","stream":"billing-1","seq":4,"source":"billing","kind":"invoice-issued","labels":{"tenant":"globex","order":"o-2"},"payload":{"amount":300},"artifacts":[]}

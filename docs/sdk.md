@@ -101,9 +101,9 @@ and is appended nowhere. The registry directory is read again on every request,
 so a type registered while a resident core runs is one the next `send` validates
 by.
 
-Every schema the binary itself registers — the agent profile's messages, and the
-resident protocol's — is generated into both packages as a model, so a message
-Rust declared with `schemars` reads typed in Python and TypeScript too.
+Every schema the binary itself registers — the transport plugin protocol's and
+the resident protocol's — is generated into both packages as a model, so a
+message Rust declared with `schemars` reads typed in Python and TypeScript too.
 
 ## Transports
 

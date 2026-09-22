@@ -13,9 +13,11 @@ from pathlib import Path
 
 import onemessagebus
 from onemessagebus import Client, ClientConfig, ResidentTransport
-from onemessagebus.models import Note
+from onemessagebus.models import TransportHello
 
-NOTE = Note(addressee="worker", text="installed")
+HELLO = TransportHello.model_validate(
+    {"protocol": "onemessagebus-transport", "version": 1, "config": {"kind": "installed"}}
+)
 
 
 async def main(expected: str) -> None:
@@ -29,17 +31,17 @@ async def main(expected: str) -> None:
             "version: 1\n"
             f"transport: {{kind: local, dir: {Path(scratch, 'bus')}}}\n"
             "queues:\n"
-            "  notes: {schema: agent.note@1}\n",
+            "  hellos: {schema: onemessagebus.transport-hello@1}\n",
             encoding="utf-8",
         )
         config = ClientConfig(config=declared)
         async with Client(config) as client:
             if not any(kind.kind == "local" for kind in await client.transports()):
                 raise SystemExit("the installed binary lists no local transport")
-            await client.send("notes", NOTE)
+            await client.send("hellos", HELLO)
         resident = ResidentTransport(Path(scratch, "bus.sock"))
         async with Client(config, transport=resident) as client:
-            statuses = await client.status("notes")
+            statuses = await client.status("hellos")
             if statuses[0].records != 1:
                 raise SystemExit(f"the resident core reads {statuses[0]} for what was sent")
     print(
