@@ -1,8 +1,7 @@
-//! The core is usable with no agent concept in it: a vocabulary of this test's
-//! own — reserved labels `tenant` and `order` over sources `billing` and
-//! `shipping` — driven through the public API with the profile crate not
-//! linked, over the same conformance table the profile runs over the agent
-//! vocabulary.
+//! The core is usable with no product's words compiled into it: a vocabulary of
+//! this test's own — reserved labels `tenant` and `order` over sources `billing`
+//! and `shipping` — driven through the public API over the conformance table
+//! every vocabulary runs.
 
 use onemessagebus::conformance::{drive, Fixture, Sample};
 use onemessagebus::{
@@ -13,7 +12,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-/// A commerce vocabulary: nothing in it names an agent.
+/// A commerce vocabulary, declared here and nowhere in the core.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Commerce;
 
@@ -89,7 +88,7 @@ fn labels(tenant: &str, order: &str) -> CommerceLabels {
 }
 
 #[test]
-fn a_vocabulary_with_no_agent_word_holds_the_conformance_table() {
+fn a_vocabulary_declared_outside_the_core_holds_the_conformance_table() {
     let fixture = Fixture::<Commerce> {
         namespace: "commerce",
         sources: [Department::Billing, Department::Shipping],
@@ -100,7 +99,7 @@ fn a_vocabulary_with_no_agent_word_holds_the_conformance_table() {
             order: None,
         },
         dimensions: NoDimensions {},
-        unknown_key: "phase",
+        unknown_key: "region",
     };
     let sample = Sample::<Invoice> {
         conforming: Invoice {
@@ -190,9 +189,9 @@ fn the_commerce_bus_end_to_end() {
         0,
         "an order no envelope was stamped with matched"
     );
-    let refused = Filter::<Commerce>::parse(r#"{"include": [{"member": "worker"}]}"#)
-        .expect_err("an agent key is not one this vocabulary admits");
-    assert!(refused.to_string().contains("member"), "{refused}");
+    let refused = Filter::<Commerce>::parse(r#"{"include": [{"region": "eu"}]}"#)
+        .expect_err("a key this vocabulary does not reserve is refused");
+    assert!(refused.to_string().contains("region"), "{refused}");
 
     let mut registry = Registry::new();
     registry.register::<Invoice>().expect("registers");

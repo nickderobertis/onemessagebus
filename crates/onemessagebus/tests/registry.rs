@@ -12,40 +12,37 @@ const ONE: NonZeroU32 = NonZeroU32::MIN;
 
 #[test]
 fn a_well_formed_id_parses_to_its_family_and_version() {
-    let finding: SchemaId = "agent.finding@1".parse().expect("parses");
-    assert_eq!(finding.namespace(), "agent");
-    assert_eq!(finding.name(), "finding");
-    assert_eq!(finding.version(), 1);
-    assert_eq!(finding.family(), "agent.finding");
-    assert_eq!(finding.to_string(), "agent.finding@1");
-    let envelope: SchemaId = "agent.event-envelope@2".parse().expect("parses");
-    assert_eq!(envelope.family(), "agent.event-envelope");
-    assert_eq!(envelope.version(), 2);
-    assert_eq!(envelope.at(ONE).to_string(), "agent.event-envelope@1");
-    assert_eq!(SchemaId::literal("agent", "finding", 1), finding);
-    assert_eq!(
-        SchemaId::new("agent", "finding", 1).expect("builds"),
-        finding
-    );
-    let json = serde_json::to_string(&finding).expect("serializes");
-    assert_eq!(json, "\"agent.finding@1\"");
+    let order: SchemaId = "shop.order@1".parse().expect("parses");
+    assert_eq!(order.namespace(), "shop");
+    assert_eq!(order.name(), "order");
+    assert_eq!(order.version(), 1);
+    assert_eq!(order.family(), "shop.order");
+    assert_eq!(order.to_string(), "shop.order@1");
+    let invoice: SchemaId = "shop.invoice@2".parse().expect("parses");
+    assert_eq!(invoice.family(), "shop.invoice");
+    assert_eq!(invoice.version(), 2);
+    assert_eq!(invoice.at(ONE).to_string(), "shop.invoice@1");
+    assert_eq!(SchemaId::literal("shop", "order", 1), order);
+    assert_eq!(SchemaId::new("shop", "order", 1).expect("builds"), order);
+    let json = serde_json::to_string(&order).expect("serializes");
+    assert_eq!(json, "\"shop.order@1\"");
     assert_eq!(
         serde_json::from_str::<SchemaId>(&json).expect("reads"),
-        finding
+        order
     );
 }
 
 #[test]
 fn a_name_may_be_dot_joined_and_the_first_dot_still_ends_the_namespace() {
-    let frame: SchemaId = "agent.onejudge-frame.judge@6".parse().expect("parses");
-    assert_eq!(frame.namespace(), "agent");
-    assert_eq!(frame.name(), "onejudge-frame.judge");
+    let frame: SchemaId = "shop.fulfilment-frame.pick@6".parse().expect("parses");
+    assert_eq!(frame.namespace(), "shop");
+    assert_eq!(frame.name(), "fulfilment-frame.pick");
     assert_eq!(frame.version(), 6);
-    assert_eq!(frame.family(), "agent.onejudge-frame.judge");
-    assert_eq!(frame.to_string(), "agent.onejudge-frame.judge@6");
-    assert_eq!(SchemaId::literal("agent", "onejudge-frame.judge", 6), frame);
+    assert_eq!(frame.family(), "shop.fulfilment-frame.pick");
+    assert_eq!(frame.to_string(), "shop.fulfilment-frame.pick@6");
+    assert_eq!(SchemaId::literal("shop", "fulfilment-frame.pick", 6), frame);
     assert_eq!(
-        SchemaId::new("agent", "onejudge-frame.judge", 6).expect("builds"),
+        SchemaId::new("shop", "fulfilment-frame.pick", 6).expect("builds"),
         frame
     );
     let deep: SchemaId = "a.b.c.d@1".parse().expect("parses");
@@ -55,24 +52,24 @@ fn a_name_may_be_dot_joined_and_the_first_dot_still_ends_the_namespace() {
 #[test]
 fn a_malformed_id_is_refused_naming_the_fault() {
     let refusals = [
-        ("agent.finding", "names no version"),
-        ("agent.finding@0", "not a positive integer"),
-        ("agent.finding@x", "not a positive integer"),
-        (".finding@1", "namespace is empty"),
-        ("agent.@1", "name is empty"),
+        ("shop.order", "names no version"),
+        ("shop.order@0", "not a positive integer"),
+        ("shop.order@x", "not a positive integer"),
+        (".order@1", "namespace is empty"),
+        ("shop.@1", "name is empty"),
         ("@1", "names no namespace"),
-        ("agent.fin ding@1", "not letters, digits"),
-        ("agent.fin..ding@1", "dot-joined parts is empty"),
-        ("agent..finding@1", "dot-joined parts is empty"),
-        ("agent.finding.@1", "dot-joined parts is empty"),
-        ("agent.onejudge-frame.ju dge@6", "not letters, digits"),
+        ("shop.or der@1", "not letters, digits"),
+        ("shop.or..der@1", "dot-joined parts is empty"),
+        ("shop..order@1", "dot-joined parts is empty"),
+        ("shop.order.@1", "dot-joined parts is empty"),
+        ("shop.fulfilment-frame.pi ck@6", "not letters, digits"),
     ];
     for (text, names) in refusals {
         let refusal = text.parse::<SchemaId>().expect_err(text);
         assert!(refusal.to_string().contains(names), "{text}: {refusal}");
         assert!(refusal.to_string().contains(text), "{text}: {refusal}");
         assert!(
-            SchemaId::new("agent", "finding", 0).is_err(),
+            SchemaId::new("shop", "order", 0).is_err(),
             "a zero version is refused however it is built"
         );
     }
@@ -84,41 +81,37 @@ fn a_malformed_id_is_refused_naming_the_fault() {
 #[test]
 #[should_panic(expected = "SchemaId::literal: the namespace is not")]
 fn a_literal_with_an_empty_namespace_panics() {
-    let _ = SchemaId::literal(std::hint::black_box(""), "finding", 1);
+    let _ = SchemaId::literal(std::hint::black_box(""), "order", 1);
 }
 
 #[test]
 #[should_panic(expected = "SchemaId::literal: the name is not")]
 fn a_literal_whose_name_has_an_empty_dot_joined_part_panics() {
-    let _ = SchemaId::literal("agent", std::hint::black_box("fin..ding"), 1);
+    let _ = SchemaId::literal("shop", std::hint::black_box("or..der"), 1);
 }
 
 #[test]
 #[should_panic(expected = "SchemaId::literal: the namespace is not")]
 fn a_literal_whose_namespace_carries_a_dot_panics() {
-    let _ = SchemaId::literal(std::hint::black_box("age.nt"), "finding", 1);
+    let _ = SchemaId::literal(std::hint::black_box("sh.op"), "order", 1);
 }
 
 #[test]
 #[should_panic(expected = "SchemaId::literal: the version is not a positive integer")]
 fn a_literal_at_version_zero_panics() {
-    let _ = SchemaId::literal("agent", "finding", std::hint::black_box(0));
+    let _ = SchemaId::literal("shop", "order", std::hint::black_box(0));
 }
 
 #[test]
 fn an_id_moved_to_a_version_keeps_its_family_and_takes_that_version() {
-    let finding = SchemaId::literal("agent", "finding", 1);
+    let order = SchemaId::literal("shop", "order", 1);
     for version in [2, 7, u32::MAX] {
-        let moved = finding.at(NonZeroU32::new(version).expect("non-zero"));
-        assert_eq!(moved.family(), "agent.finding");
+        let moved = order.at(NonZeroU32::new(version).expect("non-zero"));
+        assert_eq!(moved.family(), "shop.order");
         assert_eq!(moved.version(), version);
-        assert_eq!(moved.to_string(), format!("agent.finding@{version}"));
+        assert_eq!(moved.to_string(), format!("shop.order@{version}"));
     }
-    assert_eq!(
-        finding.at(ONE),
-        finding,
-        "moving to its own version is itself"
-    );
+    assert_eq!(order.at(ONE), order, "moving to its own version is itself");
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

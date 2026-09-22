@@ -90,21 +90,21 @@ for command in schema events; do
   esac
 done
 
-# The profile's registry travels inside the binary, and listing it is what
-# proves the artifact can read a schema rather than only parse argv.
+# The binary's own registry travels inside it, and listing it is what proves
+# the artifact can read a schema rather than only parse argv.
 listed="$(onemessagebus schema list --format text 2>"$probe_stderr" | tr -d '\r')" || fail \
   "'schema list' failed: $(cat "$probe_stderr")" \
   "the installed binary cannot construct its own registry — reinstall this version and re-run"
 case "$listed" in
-  *"agent.event-envelope@2"*) ;;
-  *) fail "'schema list' does not name agent.event-envelope@2" \
-       "the installed binary does not carry the agent profile's registry — check 'command -v onemessagebus' is this install, then rebuild from crates/onemessagebus-cli, which links the profile" ;;
+  *"onemessagebus.transport-hello@1"*) ;;
+  *) fail "'schema list' does not name onemessagebus.transport-hello@1" \
+       "the installed binary does not carry the core's registry — check 'command -v onemessagebus' is this install rather than an older one earlier on PATH, then reinstall" ;;
 esac
 
 # A payload file that is not there is exit 2, and nothing on stdout: a caller
 # reads a line on stdout as a document, so a refusal must not produce one.
 code=0
-out="$(onemessagebus schema check agent.labels@1 --file no-such-payload.json 2>"$probe_stderr")" || code=$?
+out="$(onemessagebus schema check onemessagebus.transport-hello@1 --file no-such-payload.json 2>"$probe_stderr")" || code=$?
 why="$(cat "$probe_stderr")"
 if [ "$code" -ne 2 ]; then
   fail "'schema check' on a missing payload exited $code, not 2: $why" \
@@ -120,7 +120,7 @@ fi
 work="$(mktemp -d "${TMPDIR:-/tmp}/smoke-published.XXXXXX")" || fail "cannot create a working directory in ${TMPDIR:-/tmp}" \
   "free space there or point TMPDIR at a writable directory, then re-run"
 trap 'rm -rf "$work" "$probe_stderr"' EXIT
-if ! why="$(printf '{"smoke":true}' | onemessagebus events emit "$work/smoke.ndjson" --kind smoke --stream smoke --source pipeline 2>&1 >/dev/null)"; then
+if ! why="$(printf '{"smoke":true}' | onemessagebus events emit "$work/smoke.ndjson" --kind smoke --stream smoke --source smoke 2>&1 >/dev/null)"; then
   fail "'events emit' refused a payload it should write: $why" \
     "fix what that refusal names, or reinstall — an install that cannot append a stream is truncated or from the wrong revision"
 fi

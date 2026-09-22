@@ -25,7 +25,7 @@ try {
       "version: 1",
       `transport: {kind: local, dir: ${JSON.stringify(join(scratch, "bus"))}}`,
       "queues:",
-      "  notes: {schema: agent.note@1}",
+      "  hellos: {schema: onemessagebus.transport-hello@1}",
       "",
     ].join("\n"),
   );
@@ -35,14 +35,18 @@ try {
   if (!kinds.some((kind) => kind.kind === "local")) {
     throw new Error("the installed binary lists no local transport");
   }
-  await oneShot.send("notes", { addressee: "worker", text: "installed" }, { type: schemas.Note });
+  await oneShot.send(
+    "hellos",
+    { protocol: "onemessagebus-transport", version: 1, config: { kind: "installed" } },
+    { type: schemas.TransportHello },
+  );
   await oneShot[Symbol.asyncDispose]();
 
   const resident = new Client({
     config,
     transport: new ResidentTransport({ socket: join(scratch, "bus.sock") }),
   });
-  const statuses = await resident.status("notes");
+  const statuses = await resident.status("hellos");
   await resident[Symbol.asyncDispose]();
   if (statuses[0]?.records !== 1) {
     throw new Error(`the resident core reads ${JSON.stringify(statuses[0])} for what was sent`);

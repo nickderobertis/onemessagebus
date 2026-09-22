@@ -4,7 +4,7 @@
 //! The core knows the *shape* of an envelope — a version, a stamp, a stream, a
 //! sequence number, a source, a kind, the labels, the payload, the artifacts —
 //! and nothing about which words go in it. A [`Vocabulary`] supplies those words
-//! as types, so an envelope over the agent vocabulary and one over a billing
+//! as types, so an envelope over a billing vocabulary and one over a shipping
 //! vocabulary are the same [`Envelope`](crate::Envelope) with different type
 //! parameters, and neither can carry the other's keys by accident.
 
@@ -54,7 +54,7 @@ pub enum Admits {
 /// and what it admits.
 ///
 /// Data rather than only a type, because two things outside Rust's type system
-/// read it: the command line, which has to type a `--label round=2` as an
+/// read it: the command line, which has to type a `--label attempt=2` as an
 /// integer rather than a string, and the SDK manifest, which tells a generated
 /// client which keys a matcher may name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
@@ -140,7 +140,7 @@ pub trait Vocabulary: Debug + Clone + PartialEq + Send + Sync + 'static {
 /// dimensions.
 ///
 /// What a stream is read through when nothing more is known about it, and the
-/// profile the command line offers beside the agent one.
+/// one profile the command line offers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Open;
 

@@ -35,7 +35,6 @@ use onemessagebus::{
     ServeOptions, Served, Spool, Subscription, TransportKinds, Undelivered, Vocabulary,
     DEFAULT_REPLY_WINDOW, SPOOL_WAIT,
 };
-use onemessagebus_agent::Agent;
 use serde_json::{Map, Value};
 
 use crate::profile::Profile;
@@ -204,7 +203,7 @@ struct BusArgs {
     #[arg(long, value_name = "DIR", env = "ONEMESSAGEBUS_TRANSPORT_DIR")]
     transport_dir: Option<PathBuf>,
     /// A directory of registered documents, one `<id>.json` per schema, added
-    /// to the profile's own: the schemas a queue's `schema` may name, and every
+    /// to the binary's own: the schemas a queue's `schema` may name, and every
     /// record pushed onto it is validated against.
     #[arg(long, value_name = "DIR", env = "ONEMESSAGEBUS_REGISTRY")]
     registry: Option<PathBuf>,
@@ -334,7 +333,7 @@ struct StatusArgs {
 #[derive(Debug, Args)]
 struct RegistryArgs {
     /// A directory of registered documents, one `<id>.json` per schema, added
-    /// to the profile's own. `schema register` writes here.
+    /// to the binary's own. `schema register` writes here.
     #[arg(long, value_name = "DIR", env = "ONEMESSAGEBUS_REGISTRY")]
     registry: Option<PathBuf>,
     /// A configuration whose `schemas` links are resolved, and every document
@@ -383,7 +382,7 @@ enum SchemasVerb {
 
 #[derive(Debug, Subcommand)]
 enum SchemaVerb {
-    /// Every registered id, the profile's and the registry directory's.
+    /// Every registered id, the binary's own and the registry directory's.
     List {
         #[command(flatten)]
         registry: RegistryArgs,
@@ -1093,7 +1092,6 @@ fn events(verb: EventsVerb, out: &mut impl std::io::Write, io: &Io) -> Result<()
             profile,
             format,
         } => match Profile::select(profile.as_deref()).map_err(invalid)? {
-            Profile::Agent => merge::<Agent>(&files, filter.as_deref(), format, out),
             Profile::Open => merge::<Open>(&files, filter.as_deref(), format, out),
         },
         EventsVerb::Emit {
@@ -1116,7 +1114,6 @@ fn events(verb: EventsVerb, out: &mut impl std::io::Write, io: &Io) -> Result<()
                 format,
             };
             match Profile::select(profile.as_deref()).map_err(invalid)? {
-                Profile::Agent => emit::<Agent>(request, out, io),
                 Profile::Open => emit::<Open>(request, out, io),
             }
         }
@@ -1133,7 +1130,7 @@ fn deliver(args: DeliverArgs, out: &mut impl std::io::Write, io: &Io) -> Result<
     let declared =
         Spool::declared(&args.address).map_err(|failure| invalid(failure.to_string()))?;
     if let Some(schema) = declared {
-        let registry = onemessagebus_agent::registry();
+        let registry = crate::registry();
         if let Err(CheckError::Violation(violation)) = registry.check(&schema, &message) {
             return Err(failed(format!(
                 "the message is not the {schema} the spool's receiver takes: {violation}"

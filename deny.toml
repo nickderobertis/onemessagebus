@@ -41,7 +41,7 @@ wildcards = "deny"
 # that is never published into a manifest.
 allow-wildcard-paths = true
 allow = []
-# The library is a leaf. Neither published crate may depend on a sibling of the
+# The library is a leaf. The published crate may not depend on a sibling of the
 # stack: the bus is what those siblings adopt, and an edge back would make the
 # bus's release wait on theirs. The one crate allowed to name `onevcs` is the
 # unpublished `onemessagebus-repo`, whose release-declaration test hands

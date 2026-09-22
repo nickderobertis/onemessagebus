@@ -1,5 +1,5 @@
 //! The fixture the journeys share: the built binary, a scratch directory, and
-//! the recorded streams.
+//! the streams the `events` journeys merge.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -126,11 +126,11 @@ pub fn assert_usage_refused(run: &Run, verb: &str, what: &str) {
     );
 }
 
-/// The profile crate's recorded and golden fixtures.
+/// A stream under `tests/streams/`: open-profile envelopes this binary wrote,
+/// kept byte for byte so `events merge` is held to printing them unchanged.
 pub fn fixture(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        // llmlint: ignore[shared_internals_are_a_project_not_a_reach_in] the task places the recorded streams under the profile crate's tests/recorded/ and requires these journeys to run `events merge` over those same streams; they are byte-identical producer output, so a copy here would be a second one free to drift.
-        .join("../onemessagebus-agent/tests")
+        .join("tests/streams")
         .join(relative)
 }
 

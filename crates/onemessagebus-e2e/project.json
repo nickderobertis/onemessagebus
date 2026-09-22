@@ -4,7 +4,7 @@
   "projectType": "application",
   "sourceRoot": "crates/onemessagebus-e2e/tests",
   "tags": ["scope:e2e", "lang:rust", "type:e2e"],
-  "implicitDependencies": ["onemessagebus-cli", "onemessagebus-agent", "onemessagebus"],
+  "implicitDependencies": ["onemessagebus-cli", "onemessagebus"],
   "targets": {
     "bootstrap": { "command": "just _crate-bootstrap" },
     "format": { "command": "just _crate-format onemessagebus-e2e" },

@@ -28,7 +28,7 @@ transport: {kind: local, dir: runs/r1/bus}
 queues:
   questions: {policy: {hold_pending: true, blocking_first: true}, answers: answers}
   answers: {numbered: true}
-  notes: {schema: agent.note@1}
+  greetings: {}
 ```
 
 ```ts
@@ -105,16 +105,16 @@ its latest version and at every version:
 ```ts
 import { schemas, type MessageType } from "@onemessagebus/sdk";
 
-const claimed = await client.next("notes", { type: schemas.Note }); // agent.note@1
-type Note = MessageType<typeof schemas.Note>;
-schemas.EventEnvelope;    // agent.event-envelope@2; schemas.EventEnvelopeV1 is @1
-schemas.Note.schema;      // the Zod schema itself
+const hello = schemas.TransportHello.parse(line); // onemessagebus.transport-hello@1
+type TransportHello = MessageType<typeof schemas.TransportHello>;
+schemas.TransportHelloV1;        // the same definition, pinned to @1
+schemas.TransportHello.schema;   // the Zod schema itself
 ```
 
 `type` also takes a bare Zod schema; a violation is then reported as the
-payload's (`payload: at /text: ...`). `messages.AgentNoteV1`,
-`messages.AgentNoteV1Schema` and `messages.MESSAGES` (by id) are the
-same definitions by their full names.
+payload's (`payload: at /text: ...`). `messages.OnemessagebusTransportHelloV1`,
+`messages.OnemessagebusTransportHelloV1Schema` and `messages.MESSAGES` (by id)
+are the same definitions by their full names.
 
 ## Transports
 

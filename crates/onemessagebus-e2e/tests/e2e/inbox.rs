@@ -1,8 +1,9 @@
 //! The inbox verbs, through the built binary.
 //!
 //! `deliver` is the sender, in a process of its own, against a receiver this
-//! test binds on a real spool — the agent profile's note inbox — and `inbox
-//! carried` lists a carry store the carry backend wrote. Where a receiver has to
+//! test binds on a real spool — an inbox of `demo.memo@1`, the family these
+//! tests declare — and `inbox carried` lists a carry store the carry backend
+//! wrote. Where a receiver has to
 //! die without closing, it is this test binary re-run as a child and killed by
 //! the handle that started it.
 
@@ -14,43 +15,42 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use onemessagebus::{Carry, Closed, Spool};
-use onemessagebus_agent::note::{Accepted, Addressee, Note, NoteInbox, Notes, Party};
+use onemessagebus::resident::ResidentLine;
+use onemessagebus::{Carry, Closed, Inbox, Spool};
 use serde_json::{json, Value};
 
+use crate::memo::{memo_json, Desk, Filed, Memo, MemoInbox, Memos};
 use crate::support::{run_in, Run};
 
 /// The environment variable that makes this binary's `receiver_child` a
 /// receiver bound to the spool it names.
 const RECEIVER_SPOOL: &str = "ONEMESSAGEBUS_E2E_RECEIVER_SPOOL";
 
-/// What the in-test receiver answers a note with: decided by the note alone, so
+/// What the in-test receiver answers a memo with: decided by the memo alone, so
 /// a journey knows exactly which disposition the receiver gave.
-fn answer_for(note: &Note) -> Accepted {
-    match note.addressee {
-        Addressee::Worker => Accepted::Interrupted {
-            party: Party::Worker,
+fn answer_for(memo: &Memo) -> Filed {
+    match memo.to {
+        Desk::Front => Filed::Routed { desk: Desk::Front },
+        Desk::Back => Filed::Signed {
+            receipt: format!("filed with \"{}\" in hand", memo.text()),
         },
-        Addressee::Supervisor => Accepted::JudgedWith {
-            completion_reason: format!("passed with \"{}\" in hand", note.text),
-        },
-        Addressee::Both => Accepted::Queued,
+        Desk::Both => Filed::Queued,
     }
 }
 
-/// A receiver bound to a spool in this process, answering each note it takes
+/// A receiver bound to a spool in this process, answering each memo it takes
 /// after `delay`.
 struct Receiver {
-    inbox: Arc<NoteInbox>,
+    inbox: Arc<MemoInbox>,
     /// Held so the receiver stays bound for as long as it serves.
     _spool: Spool,
     stop: Arc<AtomicBool>,
-    serving: Option<JoinHandle<Vec<Note>>>,
+    serving: Option<JoinHandle<Vec<Memo>>>,
 }
 
 impl Receiver {
     fn bind(address: &Path, delay: Duration) -> Self {
-        let inbox = Arc::new(NoteInbox::new());
+        let inbox = Arc::new(MemoInbox::new());
         let spool = Spool::bind(address, &inbox).expect("the receiver binds its spool");
         let stop = Arc::new(AtomicBool::new(false));
         let serving = {
@@ -77,8 +77,8 @@ impl Receiver {
         }
     }
 
-    /// Stop serving, and hand back every note taken.
-    fn stop(mut self) -> Vec<Note> {
+    /// Stop serving, and hand back every memo taken.
+    fn stop(mut self) -> Vec<Memo> {
         self.stop.store(true, Ordering::SeqCst);
         self.serving
             .take()
@@ -86,10 +86,6 @@ impl Receiver {
             .join()
             .expect("the receiver stops")
     }
-}
-
-fn note_json(addressee: &str, text: &str) -> String {
-    json!({"addressee": addressee, "text": text}).to_string()
 }
 
 /// `deliver` with `args` after the verb, from `cwd`, timed.
@@ -131,32 +127,29 @@ fn assert_nothing_written(address: &Path) {
 #[test]
 fn deliver_reaches_a_bound_receiver_from_stdin_file_and_message_alike_and_prints_its_answer() {
     let dir = tempfile::tempdir().expect("a temp dir");
-    let address = dir.path().join("notes");
+    let address = dir.path().join("memos");
     let receiver = Receiver::bind(&address, Duration::ZERO);
     let spool = address.to_str().expect("UTF-8");
 
-    let on_stdin = note_json("worker", "the reviewer asked for a smaller diff");
+    let on_stdin = memo_json("front", "the reviewer asked for a smaller diff");
     let (stdin_run, _) = deliver(dir.path(), &[spool], Some(&on_stdin));
     assert_eq!(stdin_run.code, 0, "{}", stdin_run.stderr);
-    assert_eq!(
-        stdin_run.stdout,
-        "{\"interrupted\":{\"party\":\"worker\"}}\n"
-    );
+    assert_eq!(stdin_run.stdout, "{\"routed\":{\"desk\":\"front\"}}\n");
     assert!(stdin_run.stderr.is_empty(), "{}", stdin_run.stderr);
 
     std::fs::write(
-        dir.path().join("note.json"),
-        note_json("supervisor", "hold the bar where it is"),
+        dir.path().join("memo.json"),
+        memo_json("back", "hold the bar where it is"),
     )
     .expect("written");
-    let (file_run, _) = deliver(dir.path(), &[spool, "--file", "note.json"], None);
+    let (file_run, _) = deliver(dir.path(), &[spool, "--file", "memo.json"], None);
     assert_eq!(file_run.code, 0, "{}", file_run.stderr);
     assert_eq!(
         serde_json::from_str::<Value>(&file_run.stdout).expect("one JSON document"),
-        json!({"judged_with": {"completion_reason": "passed with \"hold the bar where it is\" in hand"}})
+        json!({"signed": {"receipt": "filed with \"hold the bar where it is\" in hand"}})
     );
 
-    let inline = note_json("both", "the ruling applies to both of you");
+    let inline = memo_json("both", "the ruling applies to both of you");
     let (message_run, _) = deliver(dir.path(), &[spool, "--message", &inline], None);
     assert_eq!(message_run.code, 0, "{}", message_run.stderr);
     assert_eq!(message_run.stdout, "\"queued\"\n");
@@ -165,11 +158,11 @@ fn deliver_reaches_a_bound_receiver_from_stdin_file_and_message_alike_and_prints
     assert_eq!(
         taken,
         [
-            Note::to(Addressee::Worker, "the reviewer asked for a smaller diff"),
-            Note::to(Addressee::Supervisor, "hold the bar where it is"),
-            Note::to(Addressee::Both, "the ruling applies to both of you"),
+            Memo::to(Desk::Front, "the reviewer asked for a smaller diff"),
+            Memo::to(Desk::Back, "hold the bar where it is"),
+            Memo::to(Desk::Both, "the ruling applies to both of you"),
         ],
-        "the receiver did not take exactly the notes the three invocations sent"
+        "the receiver did not take exactly the memos the three invocations sent"
     );
     assert_nothing_written(&address);
 }
@@ -177,7 +170,7 @@ fn deliver_reaches_a_bound_receiver_from_stdin_file_and_message_alike_and_prints
 #[test]
 fn deliver_stays_blocked_for_the_whole_time_the_receiver_takes_and_prints_exactly_its_answer() {
     let dir = tempfile::tempdir().expect("a temp dir");
-    let address = dir.path().join("notes");
+    let address = dir.path().join("memos");
     let delay = Duration::from_millis(2500);
     let receiver = Receiver::bind(&address, delay);
     // The bounded wait is shorter than the receiver's delay: it bounds how long a
@@ -189,7 +182,7 @@ fn deliver_stays_blocked_for_the_whole_time_the_receiver_takes_and_prints_exactl
             "--wait",
             "1",
             "--message",
-            &note_json("worker", "take your time"),
+            &memo_json("front", "take your time"),
         ],
         None,
     );
@@ -198,7 +191,7 @@ fn deliver_stays_blocked_for_the_whole_time_the_receiver_takes_and_prints_exactl
         elapsed >= delay,
         "deliver returned after {elapsed:?}, before the receiver answered at {delay:?}"
     );
-    assert_eq!(run.stdout, "{\"interrupted\":{\"party\":\"worker\"}}\n");
+    assert_eq!(run.stdout, "{\"routed\":{\"desk\":\"front\"}}\n");
     assert_eq!(receiver.stop().len(), 1);
 }
 
@@ -206,7 +199,7 @@ fn deliver_stays_blocked_for_the_whole_time_the_receiver_takes_and_prints_exactl
 fn deliver_against_a_closed_spool_exits_non_zero_with_the_closers_reason() {
     // Closed before the message is offered.
     let dir = tempfile::tempdir().expect("a temp dir");
-    let address = dir.path().join("notes");
+    let address = dir.path().join("memos");
     let receiver = Receiver::bind(&address, Duration::ZERO);
     receiver.inbox.close(Closed::new(
         "the member settled: its supervisor passed the work",
@@ -216,7 +209,7 @@ fn deliver_against_a_closed_spool_exits_non_zero_with_the_closers_reason() {
         &[
             address.to_str().expect("UTF-8"),
             "--message",
-            &note_json("worker", "too late"),
+            &memo_json("front", "too late"),
         ],
         None,
     );
@@ -237,8 +230,8 @@ fn deliver_against_a_closed_spool_exits_non_zero_with_the_closers_reason() {
     // Closed after the message arrived: taken, and the inbox closed instead of
     // answering it.
     let dir = tempfile::tempdir().expect("a temp dir");
-    let address = dir.path().join("notes");
-    let inbox = NoteInbox::new();
+    let address = dir.path().join("memos");
+    let inbox = MemoInbox::new();
     let spool = Spool::bind(&address, &inbox).expect("binds");
     let sending = {
         let cwd = dir.path().to_path_buf();
@@ -246,23 +239,23 @@ fn deliver_against_a_closed_spool_exits_non_zero_with_the_closers_reason() {
         std::thread::spawn(move || {
             deliver(
                 &cwd,
-                &[&spool, "--message", &note_json("worker", "in flight")],
+                &[&spool, "--message", &memo_json("front", "in flight")],
                 None,
             )
         })
     };
     let held = inbox
         .take_within(Duration::from_secs(30))
-        .expect("the spawned sender's note arrives");
-    assert_eq!(held.message(), &Note::to(Addressee::Worker, "in flight"));
+        .expect("the spawned sender's memo arrives");
+    assert_eq!(held.message(), &Memo::to(Desk::Front, "in flight"));
     inbox.close(Closed::new(
-        "the conversation ended before the note was read",
+        "the conversation ended before the memo was read",
     ));
     let (run, _) = sending.join().expect("the sender finishes");
     assert_eq!(run.code, 1, "{}", run.stderr);
     assert!(
         run.stderr
-            .contains("the conversation ended before the note was read"),
+            .contains("the conversation ended before the memo was read"),
         "{}",
         run.stderr
     );
@@ -271,13 +264,13 @@ fn deliver_against_a_closed_spool_exits_non_zero_with_the_closers_reason() {
 #[test]
 fn deliver_refuses_a_message_passed_as_a_second_positional_and_writes_nothing() {
     let dir = tempfile::tempdir().expect("a temp dir");
-    let address = dir.path().join("notes");
+    let address = dir.path().join("memos");
     let receiver = Receiver::bind(&address, Duration::ZERO);
     let (run, _) = deliver(
         dir.path(),
         &[
             address.to_str().expect("UTF-8"),
-            &note_json("worker", "as a positional"),
+            &memo_json("front", "as a positional"),
         ],
         None,
     );
@@ -294,23 +287,23 @@ fn deliver_refuses_a_message_passed_as_a_second_positional_and_writes_nothing() 
 #[test]
 fn deliver_refuses_more_than_one_message_source_naming_each_and_writes_nothing() {
     let dir = tempfile::tempdir().expect("a temp dir");
-    let address = dir.path().join("notes");
+    let address = dir.path().join("memos");
     let receiver = Receiver::bind(&address, Duration::ZERO);
     let spool = address.to_str().expect("UTF-8");
-    let note = note_json("worker", "twice");
-    std::fs::write(dir.path().join("note.json"), &note).expect("written");
+    let memo = memo_json("front", "twice");
+    std::fs::write(dir.path().join("memo.json"), &memo).expect("written");
 
     let cases: [(&[&str], Option<&str>, &str); 4] = [
         (
-            &["--message", &note, "--file", "note.json"],
+            &["--message", &memo, "--file", "memo.json"],
             None,
             "by --file and --message",
         ),
-        (&["--message", &note], Some(&note), "by stdin and --message"),
-        (&["--file", "note.json"], Some(&note), "by stdin and --file"),
+        (&["--message", &memo], Some(&memo), "by stdin and --message"),
+        (&["--file", "memo.json"], Some(&memo), "by stdin and --file"),
         (
-            &["--file", "note.json", "--message", &note],
-            Some(&note),
+            &["--file", "memo.json", "--message", &memo],
+            Some(&memo),
             "by stdin and --file and --message",
         ),
     ];
@@ -349,7 +342,7 @@ fn deliver_refuses_more_than_one_message_source_naming_each_and_writes_nothing()
 #[test]
 fn deliver_refuses_what_it_cannot_send_and_reports_what_the_receiver_refused() {
     let dir = tempfile::tempdir().expect("a temp dir");
-    let address = dir.path().join("notes");
+    let address = dir.path().join("memos");
     let receiver = Receiver::bind(&address, Duration::ZERO);
     let spool = address.to_str().expect("UTF-8");
 
@@ -361,24 +354,20 @@ fn deliver_refuses_what_it_cannot_send_and_reports_what_the_receiver_refused() {
         not_json.stderr
     );
 
-    // Checked against the schema the spool's receiver declared, before anything
-    // is offered.
+    // The receiver declared `demo.memo@1`, which this build does not register:
+    // nothing is checked before the offer, and the receiver refuses a message it
+    // cannot read in its own words — a well-formed no.
     let (off_schema, _) = deliver(
         dir.path(),
-        &[
-            spool,
-            "--message",
-            &note_json("manager", "not an addressee"),
-        ],
+        &[spool, "--message", &memo_json("manager", "not a desk")],
         None,
     );
     assert_eq!(off_schema.code, 1, "{}", off_schema.stderr);
     assert!(
-        off_schema.stderr.contains("agent.note@1") && off_schema.stderr.contains("/addressee"),
+        off_schema.stderr.contains("refused the message") && off_schema.stderr.contains("manager"),
         "{}",
         off_schema.stderr
     );
-    assert_nothing_written(&address);
 
     let (missing_file, _) = deliver(dir.path(), &[spool, "--file", "absent.json"], None);
     assert_eq!(missing_file.code, 2, "{}", missing_file.stderr);
@@ -394,7 +383,7 @@ fn deliver_refuses_what_it_cannot_send_and_reports_what_the_receiver_refused() {
         &[
             nowhere.to_str().expect("UTF-8"),
             "--message",
-            &note_json("worker", "x"),
+            &memo_json("front", "x"),
         ],
         None,
     );
@@ -405,11 +394,11 @@ fn deliver_refuses_what_it_cannot_send_and_reports_what_the_receiver_refused() {
         no_spool.stderr
     );
 
-    // Conforming to the schema and still not a note: the receiver refuses it in
-    // its own words, and that is a well-formed no.
+    // Well-formed and still not a memo: the receiver refuses it in its own words,
+    // and that is a well-formed no.
     let (blank, _) = deliver(
         dir.path(),
-        &[spool, "--message", &note_json("worker", "   ")],
+        &[spool, "--message", &memo_json("front", "   ")],
         None,
     );
     assert_eq!(blank.code, 1, "{}", blank.stderr);
@@ -419,6 +408,42 @@ fn deliver_refuses_what_it_cannot_send_and_reports_what_the_receiver_refused() {
         blank.stderr
     );
     assert!(receiver.stop().is_empty());
+}
+
+/// Where the spool's receiver declares a schema this build registers — the
+/// core's own `bus.resident-protocol@1` — `deliver` checks the message against
+/// it before anything is offered, and a message the receiver would refuse is
+/// refused here, naming the schema and the pointer, with nothing written.
+#[test]
+fn deliver_checks_a_message_against_a_schema_this_build_knows_before_offering_it() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let address = dir.path().join("lines");
+    let inbox = Inbox::<ResidentLine, Filed>::new();
+    let _spool = Spool::bind(&address, &inbox).expect("the receiver binds its spool");
+    let (off_schema, _) = deliver(
+        dir.path(),
+        &[
+            address.to_str().expect("UTF-8"),
+            "--wait",
+            "1",
+            "--message",
+            &memo_json("front", "not a resident line"),
+        ],
+        None,
+    );
+    assert_eq!(off_schema.code, 1, "{}", off_schema.stderr);
+    assert!(
+        off_schema
+            .stderr
+            .contains("is not the bus.resident-protocol@1 the spool's receiver takes"),
+        "{}",
+        off_schema.stderr
+    );
+    assert_nothing_written(&address);
+    assert!(
+        inbox.take_within(Duration::from_millis(50)).is_none(),
+        "a refused message reached the receiver"
+    );
 }
 
 #[test]
@@ -433,7 +458,7 @@ fn deliver_to_a_spool_nothing_services_reports_the_elapsed_wait_and_withdraws_th
             "--wait",
             "1",
             "--message",
-            &note_json("worker", "into the void"),
+            &memo_json("front", "into the void"),
         ],
         None,
     );
@@ -461,7 +486,7 @@ fn deliver_to_a_spool_nothing_services_reports_the_elapsed_wait_and_withdraws_th
 fn receiver_child() {
     let address = std::env::var_os(RECEIVER_SPOOL)
         .expect("run only as the killed-receiver journey's child, which names the spool");
-    let inbox = NoteInbox::new();
+    let inbox = MemoInbox::new();
     let _spool = Spool::bind(PathBuf::from(address), &inbox).expect("the child binds");
     // Bound until killed; the courier takes offers into an inbox nobody reads.
     loop {
@@ -481,7 +506,7 @@ fn bound(address: &Path) -> bool {
 fn deliver_to_a_receiver_killed_without_closing_reports_the_elapsed_wait_and_withdraws_the_message()
 {
     let dir = tempfile::tempdir().expect("a temp dir");
-    let address = dir.path().join("notes");
+    let address = dir.path().join("memos");
     let mut child: Child = Command::new(std::env::current_exe().expect("this test binary"))
         .args([
             "inbox::receiver_child",
@@ -519,7 +544,7 @@ fn deliver_to_a_receiver_killed_without_closing_reports_the_elapsed_wait_and_wit
             "--wait",
             "1",
             "--message",
-            &note_json("worker", "to a receiver that is gone"),
+            &memo_json("front", "to a receiver that is gone"),
         ],
         None,
     );
@@ -542,7 +567,7 @@ fn deliver_to_a_receiver_killed_without_closing_reports_the_elapsed_wait_and_wit
 #[test]
 fn deliver_reports_an_answer_document_that_is_not_an_answer_naming_it() {
     let dir = tempfile::tempdir().expect("a temp dir");
-    let address = dir.path().join("notes");
+    let address = dir.path().join("memos");
     std::fs::create_dir(&address).expect("made");
     let sending = {
         let cwd = dir.path().to_path_buf();
@@ -553,7 +578,7 @@ fn deliver_reports_an_answer_document_that_is_not_an_answer_naming_it() {
                 &[
                     &spool,
                     "--message",
-                    &note_json("worker", "answered in garbage"),
+                    &memo_json("front", "answered in garbage"),
                 ],
                 None,
             )
@@ -573,7 +598,7 @@ fn deliver_reports_an_answer_document_that_is_not_an_answer_naming_it() {
         }
         assert!(
             Instant::now() < until,
-            "the spawned sender never offered its note"
+            "the spawned sender never offered its memo"
         );
         std::thread::sleep(Duration::from_millis(5));
     };
@@ -603,33 +628,31 @@ fn inbox_carried_lists_a_carry_store_in_order_and_a_drained_store_prints_nothing
     let store_arg = store.to_str().expect("UTF-8");
 
     // The receiver's first lifetime: nothing carried yet, and then it is gone.
-    let first = NoteInbox::new();
+    let first = MemoInbox::new();
     assert_eq!(first.adopt_carried(&store), Ok(0));
     drop(first);
 
-    // With no receiver running, each note is carried and answered as queued.
-    let notes = [
-        Note::to(Addressee::Worker, "first, while nobody was running"),
-        Note::to(Addressee::Supervisor, "second"),
-        Note::to(Addressee::Both, "third")
-            .binding("the migration is covered")
-            .expect("binds"),
+    // With no receiver running, each memo is carried and answered as queued.
+    let memos = [
+        Memo::to(Desk::Front, "first, while nobody was running"),
+        Memo::to(Desk::Back, "second"),
+        Memo::to(Desk::Both, "third").referencing("o-1"),
     ];
-    let carrier: Notes = Carry::sender(&store);
-    for note in &notes {
-        assert_eq!(carrier.send(note.clone()), Ok(Accepted::Queued));
+    let carrier: Memos = Carry::sender(&store);
+    for memo in &memos {
+        assert_eq!(carrier.send(memo.clone()), Ok(Filed::Queued));
     }
 
     let listed = run_in(dir.path(), &["inbox", "carried", store_arg], None, &[]);
     assert_eq!(listed.code, 0, "{}", listed.stderr);
     assert!(listed.stderr.is_empty(), "{}", listed.stderr);
     let entries = listed.lines();
-    assert_eq!(entries.len(), notes.len());
-    for (entry, note) in entries.iter().zip(&notes) {
-        assert_eq!(entry["schema"], json!("agent.note@1"));
+    assert_eq!(entries.len(), memos.len());
+    for (entry, memo) in entries.iter().zip(&memos) {
+        assert_eq!(entry["schema"], json!("demo.memo@1"));
         assert_eq!(
             entry["message"],
-            serde_json::to_value(note).expect("a note")
+            serde_json::to_value(memo).expect("a memo")
         );
         assert!(
             entry["ts"].as_str().is_some_and(|ts| ts.ends_with('Z')),
@@ -644,23 +667,23 @@ fn inbox_carried_lists_a_carry_store_in_order_and_a_drained_store_prints_nothing
     );
     assert_eq!(text.code, 0, "{}", text.stderr);
     let lines: Vec<&str> = text.stdout.lines().collect();
-    assert_eq!(lines.len(), notes.len());
+    assert_eq!(lines.len(), memos.len());
     for (line, entry) in lines.iter().zip(&entries) {
         assert_eq!(
             *line,
             format!(
-                "{} agent.note@1 {}",
+                "{} demo.memo@1 {}",
                 entry["ts"].as_str().expect("ts"),
                 entry["message"]
             )
         );
     }
 
-    // The receiver's second lifetime takes each note exactly once, in order.
-    let second = NoteInbox::new();
-    assert_eq!(second.adopt_carried(&store), Ok(notes.len()));
-    for note in &notes {
-        assert_eq!(second.take().expect("a carried note").message(), note);
+    // The receiver's second lifetime takes each memo exactly once, in order.
+    let second = MemoInbox::new();
+    assert_eq!(second.adopt_carried(&store), Ok(memos.len()));
+    for memo in &memos {
+        assert_eq!(second.take().expect("a carried memo").message(), memo);
     }
     assert!(second.take().is_none());
 
@@ -669,7 +692,7 @@ fn inbox_carried_lists_a_carry_store_in_order_and_a_drained_store_prints_nothing
     assert!(drained.stdout.is_empty() && drained.stderr.is_empty());
 
     // And a third lifetime is handed none of them again.
-    assert_eq!(NoteInbox::new().adopt_carried(&store), Ok(0));
+    assert_eq!(MemoInbox::new().adopt_carried(&store), Ok(0));
 }
 
 #[test]
@@ -678,7 +701,7 @@ fn inbox_carried_refuses_a_path_that_is_no_carry_store_by_name() {
     let stream = dir.path().join("run.ndjson");
     std::fs::write(
         &stream,
-        "{\"v\":1,\"ts\":\"2026-09-13T00:00:00.000Z\",\"stream\":\"s\",\"seq\":1,\"source\":\"vcs\",\"kind\":\"push\",\"payload\":{},\"artifacts\":[]}\n",
+        "{\"v\":1,\"ts\":\"2026-09-13T00:00:00.000Z\",\"stream\":\"s\",\"seq\":1,\"source\":\"billing\",\"kind\":\"push\",\"payload\":{},\"artifacts\":[]}\n",
     )
     .expect("written");
     for (path, why) in [

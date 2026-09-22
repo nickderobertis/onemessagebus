@@ -8,10 +8,10 @@
 //!
 //! Nothing here names an agent. Which source words exist, which label keys are
 //! reserved, and which top-level dimensions an envelope carries are a
-//! [`Vocabulary`]'s to declare: the `onemessagebus-agent` crate declares the
-//! agent stack's, and [`Open`] is the vocabulary that reserves nothing. The
-//! [`conformance`] module is the one journey every vocabulary is driven
-//! through, so a vocabulary of your own is proven the same way the agent one is.
+//! [`Vocabulary`]'s to declare: a program declares its own in its own crate,
+//! and [`Open`] is the vocabulary that reserves nothing. The [`conformance`]
+//! module is the one journey every vocabulary is driven through, so a
+//! vocabulary of your own is proven the same way [`Open`] is.
 //!
 //! The wire shape — one JSON object per line, `(ts, stream, seq)` merge order,
 //! per-stream `seq` gaps as loss detection — is stated in `docs/wire.md` and

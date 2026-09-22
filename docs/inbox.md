@@ -2,9 +2,9 @@
 
 A typed channel into a running process, whose sender learns what the receiver
 did with the message — the approved contract's Contract I, said in this
-repository's own voice. The core crate declares it with no message family of
-its own; the agent note contract (`onemessagebus_agent::note`, Contract N) is the
-first family carried over it. `docs/contract.md` is the text both restate.
+repository's own voice. The core declares it with no message family of its own:
+a program brings its message and its disposition, and the inbox carries them.
+`docs/contract.md` is the text both restate.
 
 ## The pair
 
@@ -112,8 +112,8 @@ its sender withdrawing it cannot both succeed.
 the minting process's id, and a per-process counter (20 digits), joined by `-`:
 the courier takes offers in the order of their minting instants, which is
 the order they were made unless the system clock steps back. The exact documents are
-`docs/contract.md`'s `spool-documents` fixture, which the profile's contract
-test holds to what a bound spool writes.
+`docs/contract.md`'s `spool-documents` fixture, which the core's contract test
+holds to what a bound spool writes.
 
 ### `Carry`
 
@@ -134,18 +134,3 @@ emptied, so a message is in the store or in the inbox and never in both. A path
 with nothing at it, a directory, or a file without that header is no carry
 store and is refused by name; a store nothing was ever carried into adopts as
 empty.
-
-## The agent note family
-
-`onemessagebus_agent::note` declares `Note`, the message `agent.note@1`, and
-`Accepted`, its disposition, which carries as `Queued`: a note carried to a
-conversation that is not running is queued for that conversation's next turn.
-`Notes` and `NoteInbox` are `Sender<Note, Accepted>` and `Inbox<Note, Accepted>`.
-On the wire an `Accepted` is `"queued"`, `{"interrupted": {"party": ...}}` or
-`{"judged_with": {"completion_reason": ...}}`.
-
-A conversation closing its inbox with a note refusal closes it with
-`Closed::from(&refusal)`, and its caller reads the same refusal back with
-`note::Undelivered::from(undelivered)`; a close in anyone else's words reads back
-as `MemberSettled`, and a backend that could not produce an answer as
-`NoConversation`.

@@ -30,23 +30,23 @@ cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebu
   message through the named `--message` option, and takes it from exactly one
   of the three.
 - **`--profile <name>` chooses the vocabulary on both `events` verbs, and it
-  defaults to `agent`** — the profile this binary links. `open` is the other:
-  any source word, any labels, no dimensions. The source words and each source's
-  write version come from the profile, chosen the same way on `emit` and on
-  `merge`.
+  defaults to `open`** — the one profile this binary links: any source word, any
+  labels, no dimensions. A name this build does not link is refused (exit 2),
+  naming the profiles it does. The source words and each source's write version
+  come from the profile, chosen the same way on `emit` and on `merge`.
 - **`--format json|text` on every reading verb.** JSON is the contract: one
   document, or one per line. Text is a deterministic rendering of the same
   content for a person, never separate content.
 - **`--registry <dir>` / `ONEMESSAGEBUS_REGISTRY`** on every `schema` verb names
-  a directory of registered documents added to the profile's own.
+  a directory of registered documents added to the binary's own.
 - **`--config <path>` on every `schema` verb** names a configuration whose
   `schemas` links are resolved and every linked document registered beside the
-  profile's and the directory's. A `schema` verb reads
+  binary's and the directory's. A `schema` verb reads
   it from the flag alone, never from the configuration variable the queue verbs
   read, so an environment set for them changes nothing here.
 - **A verb that loads a configuration resolves its `schemas` links first.** Each
   link names a schema bundle, and every document of every bundle is registered
-  beside the profile's schemas and the registry directory's, as the `schemas`
+  beside the binary's own schemas and the registry directory's, as the `schemas`
   section below says.
 - **The queue verbs read one configuration.** `send`, `next`, `ask`, `reply`,
   `subscribe`, `status`, `validate` and `serve` take `--config <path>` (or `ONEMESSAGEBUS_CONFIG`),
@@ -86,8 +86,9 @@ The other verbs print clap's usage report for a usage error, at the same exit.
 
 ### `schema list [--registry DIR] [--config PATH] [--format json|text]`
 
-Every registered id — the profile's and the registry directory's — and nothing
-else. JSON is a list of `{id, family, version}`; text is one id per line.
+Every registered id — the binary's own (the transport plugin protocol's and the
+resident protocol's), the registry directory's and every linked bundle's — and
+nothing else. JSON is a list of `{id, family, version}`; text is one id per line.
 
 ### `schema check <id> [--file PATH] [--registry DIR] [--config PATH]`
 
@@ -96,8 +97,8 @@ under `<id>`. Exit 0 when it conforms; exit 1 naming the id and the JSON
 pointer of the first violation when it does not.
 
 ```bash
-$ echo '{"run_id":"R","round":"two"}' | onemessagebus schema check agent.labels@1
-onemessagebus: agent.labels@1: at /round: "two" is not of types "null", "integer"
+$ echo '{"protocol":"onemessagebus-transport","version":"two","config":{"kind":"local"}}' | onemessagebus schema check onemessagebus.transport-hello@1
+onemessagebus: onemessagebus.transport-hello@1: at /version: "two" is not of type "integer"
 ```
 
 ### `schema gen --lang json|rust|python|typescript <id> [--registry DIR] [--config PATH]`
@@ -127,10 +128,10 @@ Record the JSON Schema document in `--file` under `<id>`, in the registry
 directory, where every later invocation over the same `--registry` /
 `ONEMESSAGEBUS_REGISTRY` lists it and checks against it. Registering the same
 document again is fine; a different document under an id already held — the
-profile's or the directory's — is refused naming the id, and nothing is written.
+binary's or the directory's — is refused naming the id, and nothing is written.
 
 **The registry directory** holds one file per schema, named by its id —
-`<dir>/agent.finding@1.json` — each a document `{"id": ..., "schema": ...}`, so
+`<dir>/shop.order@1.json` — each a document `{"id": ..., "schema": ...}`, so
 a file is self-describing and readable with nothing but `cat`. A file whose id
 disagrees with its name is refused, and so is a `--registry` path that exists
 but is not a directory.
@@ -195,9 +196,10 @@ one file at once and leave one gapless series. `--kind` must be kebab-case —
 lowercase ASCII letters and digits in words joined by single hyphens — and any
 other spelling is refused naming it; `events merge` carries whatever kinds a
 stream holds. `--source` defaults to the
-profile's default word (`pipeline` for the agent profile); a word the profile
+profile's default word (`onemessagebus` under `open`); a word the profile
 does not admit is refused. `--label` stamps a label, typed by what the profile
-says its key admits (`--label round=2` is an integer under the agent profile).
+says its key admits; `open` reserves no key, so every label it stamps is text
+(`--label run=R`).
 
 Before the envelope is stamped the emitter's rule is applied: credential-shaped
 values are redacted, and every top-level text value of the payload is bounded

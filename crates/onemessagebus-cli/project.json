@@ -5,7 +5,7 @@
   "projectType": "application",
   "sourceRoot": "crates/onemessagebus-cli/src",
   "tags": ["scope:cli", "lang:rust", "type:app"],
-  "implicitDependencies": ["onemessagebus", "onemessagebus-agent"],
+  "implicitDependencies": ["onemessagebus"],
   "targets": {
     "bootstrap": { "command": "just _crate-bootstrap" },
     "format": { "command": "just _crate-format onemessagebus-cli && node node_modules/@biomejs/biome/bin/biome format --write crates/onemessagebus-cli/sdk-bundle.mjs" },

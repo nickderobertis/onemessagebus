@@ -1,5 +1,5 @@
 //! The `onemessagebus` command line: the schema registry verbs and the stream
-//! verbs, over the agent profile by default and the open vocabulary on request.
+//! verbs, over the core's open vocabulary.
 //!
 //! Every verb is a `Capability` in [`onemessagebus::CAPABILITIES`];
 //! `tests/capability.rs` walks the clap tree [`Cli`] declares and holds the two
@@ -15,17 +15,21 @@ mod registry_dir;
 pub use cli::{run, run_with, Cli};
 
 /// The schemas this binary registers before any `--registry` directory adds to
-/// them: the agent profile's, and the resident protocol's
-/// (`bus.resident-protocol@1`), which `serve --resident` speaks.
+/// them: the core's own — the transport plugin protocol's, and the resident
+/// protocol's (`bus.resident-protocol@1`), which `serve --resident` speaks. No
+/// product's schema is compiled in: a program publishes its own as a bundle a
+/// configuration links, or a `--registry` directory holds it.
 ///
 /// The SDK bundle both language packages generate from is built over this
 /// registry, so what `schema list` names is what the SDKs carry.
 #[must_use]
 pub fn registry() -> onemessagebus::Registry {
-    let mut registry = onemessagebus_agent::registry();
+    let mut registry = onemessagebus::Registry::new();
+    onemessagebus::transport::register_protocol(&mut registry)
+        .expect("the transport plugin protocol's schemas register");
     registry
         .register::<onemessagebus::resident::ResidentLine>()
-        .expect("the profile registers nothing under bus.resident-protocol@1");
+        .expect("nothing else registers under bus.resident-protocol@1");
     registry
 }
 

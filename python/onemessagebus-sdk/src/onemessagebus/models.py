@@ -2,17 +2,11 @@
 # schema bundle. Do not edit: run the generator.
 """The generated model of every message the registry holds, by its family's name.
 
-`EventEnvelope` is the `agent.event-envelope` family's model at the latest version the
-registry holds, and `EventEnvelopeV1` names version 1; `messages.MESSAGES` maps each
-id to its model.
+`TransportHello` is the `onemessagebus.transport-hello` family's model at the latest
+version the registry holds, and `TransportHelloV1` names version 1;
+`messages.MESSAGES` maps each id to its model.
 """
 
-from ._generated.messages.agent_artifact_ref_v1 import ArtifactRef as ArtifactRefV1
-from ._generated.messages.agent_event_envelope_v1 import Envelope as EventEnvelopeV1
-from ._generated.messages.agent_event_envelope_v2 import Envelope as EventEnvelopeV2
-from ._generated.messages.agent_event_filter_v1 import Filter as EventFilterV1
-from ._generated.messages.agent_labels_v1 import Labels as LabelsV1
-from ._generated.messages.agent_note_v1 import Note as NoteV1
 from ._generated.messages.bus_resident_protocol_v1 import ResidentLine as ResidentProtocolV1
 from ._generated.messages.onemessagebus_transport_hello_v1 import PluginHello as TransportHelloV1
 from ._generated.messages.onemessagebus_transport_reply_v1 import PluginReply as TransportReplyV1
@@ -20,28 +14,12 @@ from ._generated.messages.onemessagebus_transport_request_v1 import (
     PluginRequest as TransportRequestV1,
 )
 
-ArtifactRef = ArtifactRefV1
-EventEnvelope = EventEnvelopeV2
-EventFilter = EventFilterV1
-Labels = LabelsV1
-Note = NoteV1
 ResidentProtocol = ResidentProtocolV1
 TransportHello = TransportHelloV1
 TransportReply = TransportReplyV1
 TransportRequest = TransportRequestV1
 
 __all__ = [
-    "ArtifactRef",
-    "ArtifactRefV1",
-    "EventEnvelope",
-    "EventEnvelopeV1",
-    "EventEnvelopeV2",
-    "EventFilter",
-    "EventFilterV1",
-    "Labels",
-    "LabelsV1",
-    "Note",
-    "NoteV1",
     "ResidentProtocol",
     "ResidentProtocolV1",
     "TransportHello",

@@ -4,10 +4,9 @@
 //! envelopes over it, serializes and reads them back, filters on its reserved
 //! keys, emits and merges streams, and registers and checks a message under a
 //! schema id of its own namespace — through the public API and nothing else.
-//! The core's own tests drive it over a vocabulary with no agent word in it;
-//! the agent profile drives the same table over its vocabulary; and a
-//! vocabulary of your own is proven the same way, differing only in the
-//! [`Fixture`] handed in.
+//! The core's own tests drive it over a vocabulary of their own, and a
+//! vocabulary a program declares in its own crate is proven the same way,
+//! differing only in the [`Fixture`] handed in.
 //!
 //! Every check here panics on failure, the way a test does: this module is
 //! test support, published so a profile crate can run the table without
@@ -1269,7 +1268,7 @@ pub fn a_fingerprint_moves_when_the_queue_does_and_a_wait_sees_it(fresh: Fresh<'
     );
 }
 
-/// The desk: a layout with no agent word in it, whose `orders` queue checks
+/// The desk: a layout of the core's own, whose `orders` queue checks
 /// each order's author against its allowlist.
 #[derive(Debug)]
 struct Desk;

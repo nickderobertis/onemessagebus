@@ -17,10 +17,11 @@ import {
 import {
   baseConfig,
   bindSpool,
+  Finding,
   caught,
   caughtAs,
   Greeting,
-  NOTE,
+  HELLO,
   QUESTION,
   removeScratch,
   scratch,
@@ -63,6 +64,7 @@ for (const transport of TRANSPORTS) {
 
     test("schema.register records a defineMessage type, and a different document under a held id is refused", async () => {
       expect(await client.schema.register(Greeting)).toBe("demo.greeting@1");
+      expect(await client.schema.register(Finding)).toBe("demo.finding@1");
       // the same document again is fine
       expect(await client.schema.register(Greeting)).toBe("demo.greeting@1");
       expect(existsSync(join(dir, "registry", "demo.greeting@1.json"))).toBe(true);
@@ -79,12 +81,13 @@ for (const transport of TRANSPORTS) {
       );
     });
 
-    test("schemaList lists the profile's ids and the registered ones", async () => {
+    test("schemaList lists the binary's own ids and the registered ones", async () => {
       const ids = (await client.schema.list()).map((entry) => entry.id);
       expect(ids).toContain("demo.greeting@1");
       expect(ids).toContain("bus.resident-protocol@1");
       const text = await client.schemaList({ format: "text" });
-      expect(text.split("\n")).toContain("agent.note@1");
+      expect(text.split("\n")).toContain("onemessagebus.transport-hello@1");
+      expect(ids.filter((id) => id.startsWith("agent."))).toEqual([]);
       writeFileSync(join(dir, "not-a-directory"), "");
       const refused = await refusedWith(BusError, () =>
         client.schemaList({ registry: join(dir, "not-a-directory") }),
@@ -361,16 +364,45 @@ for (const transport of TRANSPORTS) {
 
     test("eventsEmit appends an envelope and eventsMerge reads the stream back", async () => {
       const path = join(dir, "events.ndjson");
+      // No profile named: the binary's one, `open`, whose default source is its own.
       const envelope = await client.eventsEmit(
-        { path, kind: "change-merged", stream: "s1", labels: { run_id: "R", round: "2" } },
-        { branch: "main" },
+        { path, kind: "invoice-issued", stream: "s1", labels: { tenant: "acme", attempt: "2" } },
+        { amount: 12 },
       );
       expect(envelope.seq).toBe(1);
-      expect(envelope.labels?.round).toBe(2);
+      expect(envelope.source).toBe("onemessagebus");
+      expect(envelope.labels).toEqual({ tenant: "acme", attempt: "2" });
+      const billed = await client.eventsEmit(
+        { path, kind: "invoice-paid", stream: "s1", source: "billing" },
+        { amount: 12 },
+      );
+      expect(billed.source).toBe("billing");
       const merged = await client.eventsMerge({ files: [path] });
-      expect(merged).toHaveLength(1);
+      expect(merged.map((read) => [read.seq, read.source])).toEqual([
+        [1, "onemessagebus"],
+        [2, "billing"],
+      ]);
+      const acme = await client.eventsMerge({
+        files: [path],
+        filter: JSON.stringify({ include: [{ tenant: "acme" }] }),
+      });
+      expect(acme.map((read) => read.seq)).toEqual([1]);
+      // `open` named is the default spelled out; a profile this build does not link
+      // is refused by the binary's generic refusal, and nothing is appended.
+      const named = await client.eventsMerge({ files: [path], profile: "open" });
+      expect(named).toEqual(merged);
+      const refusal = "`agent` is not a profile this build links; choose one of: open";
+      const emitAgent = await refusedWith(BusRefused, () =>
+        client.eventsEmit({ path, kind: "noted", stream: "s1", profile: "agent" }, {}),
+      );
+      expect(emitAgent.message).toContain(refusal);
+      const mergeAgent = await refusedWith(BusRefused, () =>
+        client.eventsMerge({ files: [path], profile: "agent" }),
+      );
+      expect(mergeAgent.message).toContain(refusal);
+      expect(await client.eventsMerge({ files: [path] })).toHaveLength(2);
       expect(await client.eventsMerge({ files: [path], format: "text" })).toContain(
-        "change-merged",
+        "billing invoice-paid stream=s1 seq=2",
       );
       const badKind = await refusedWith(BusRefused, () =>
         client.eventsEmit({ path, kind: "Not_Kebab", stream: "s1" }, {}),
@@ -401,7 +433,7 @@ for (const transport of TRANSPORTS) {
       }, 20);
       try {
         expect(
-          await client.deliver({ address: spool, wait: 5 }, { addressee: "worker", text: "hi" }),
+          await client.deliver({ address: spool, wait: 5 }, { to: "front", text: "hi" }),
         ).toEqual({ queued: true });
       } finally {
         clearInterval(courier);
@@ -415,15 +447,15 @@ for (const transport of TRANSPORTS) {
 
     test("inboxCarried lists a carry store, and refuses a path that is none", async () => {
       const store = join(dir, "carried.ndjson");
-      const note = { addressee: "worker", text: "carried while nobody ran" };
+      const memo = { to: "front", text: "carried while nobody ran" };
       writeFileSync(
         store,
-        `{"schema_version":1,"kind":"onemessagebus-carry-store"}\n${JSON.stringify({ ts: "2026-09-13T00:00:00.000Z", schema: "agent.note@1", message: note })}\n`,
+        `{"schema_version":1,"kind":"onemessagebus-carry-store"}\n${JSON.stringify({ ts: "2026-09-13T00:00:00.000Z", schema: "demo.memo@1", message: memo })}\n`,
       );
       const entries = await client.inboxCarried({ store });
       expect(entries).toHaveLength(1);
-      expect(entries[0]?.message).toEqual(note);
-      expect(await client.inboxCarried({ store, format: "text" })).toContain("agent.note@1");
+      expect(entries[0]?.message).toEqual(memo);
+      expect(await client.inboxCarried({ store, format: "text" })).toContain("demo.memo@1");
       const refused = await refusedWith(BusRefused, () =>
         client.inboxCarried({ store: join(dir, "nowhere") }),
       );
@@ -433,7 +465,7 @@ for (const transport of TRANSPORTS) {
     test("serve answers each frame of a codec session, and refuses an operation it does not serve", async () => {
       expect(await client.serve({ queue: "questions", codec: "example" }, "")).toEqual([]);
       const [response] = await client.serve({ queue: "questions", codec: "example" }, [
-        { kind: "finding", ...NOTE },
+        { kind: "finding", text: "the base moved" },
       ]);
       expect(response?.completion).toBe(false);
       const refused = await refusedWith(BusRefused, () =>
@@ -443,35 +475,43 @@ for (const transport of TRANSPORTS) {
       const invalid = await refusedWith(BusRefused, () =>
         client.serve({ queue: "questions", codec: "example" }, [{ kind: "finding", text: 7 }]),
       );
-      expect(invalid.message).toContain("the frame does not validate against agent.note@1");
+      expect(invalid.message).toContain("the frame does not validate against demo.finding@1");
     });
 
-    test("a profile's Rust-registered message round-trips through its generated schema", async () => {
-      await client.send("notes", schemas.Note.parse({ ...NOTE, text: "typed" }));
-      const claimed = await client.next("notes", { type: schemas.Note });
-      expect(claimed?.record.text).toBe("typed");
-      expect(messages.AgentNoteV1Schema.parse(claimed?.record).addressee).toBe("worker");
-      expect(messages.MESSAGES["agent.note@1"].id).toBe("agent.note@1");
-      expect(schemas.Note).toBe(schemas.NoteV1);
-      expect(schemas.EventEnvelope.id).toBe("agent.event-envelope@2");
+    test("a core Rust-registered message round-trips through its generated schema", async () => {
+      await client.send("hellos", schemas.TransportHello.parse({ ...HELLO, version: 2 }));
+      const claimed = await client.next("hellos", { type: schemas.TransportHello });
+      expect(claimed?.record.version).toBe(2);
+      expect(messages.OnemessagebusTransportHelloV1Schema.parse(claimed?.record).config.kind).toBe(
+        "nats",
+      );
+      expect(messages.MESSAGES["onemessagebus.transport-hello@1"].id).toBe(
+        "onemessagebus.transport-hello@1",
+      );
+      expect(schemas.TransportHello).toBe(schemas.TransportHelloV1);
+      expect(Object.keys(messages.MESSAGES).filter((id) => id.startsWith("agent."))).toEqual([]);
       // a bare Zod schema is a type too
-      await client.send("notes", { ...NOTE, text: "bare" });
-      const bare = await client.next("notes", { type: schemas.Note.schema });
-      expect(bare?.record.text).toBe("bare");
-      // A note its schema refuses, arriving as JSON from outside TypeScript's view:
+      await client.send("hellos", { ...HELLO, version: 3 });
+      const bare = await client.next("hellos", { type: schemas.TransportHello.schema });
+      expect(bare?.record.version).toBe(3);
+      // A hello its schema refuses, arriving as JSON from outside TypeScript's view:
       // stopped in the SDK, and by the bus in Rust when nothing typed it.
       const refused = await refusedWith(BusFailed, () =>
-        client.send("notes", JSON.parse('{"addressee":"worker","text":7}'), {
-          type: schemas.Note.schema,
-        }),
+        client.send(
+          "hellos",
+          JSON.parse('{"protocol":"onemessagebus-transport","version":"one"}'),
+          {
+            type: schemas.TransportHello.schema,
+          },
+        ),
       );
       expect(refused.message).toStartWith("payload: at /");
       const inRust = await refusedWith(BusFailed, () =>
-        client.send("notes", { addressee: "judge", text: "look again" }),
+        client.send("hellos", { protocol: 7, version: 1, config: { kind: "nats" } }),
       );
-      expect(inRust.message).toContain("agent.note@1");
-      expect(await client.next("notes")).toBeUndefined();
-      expect(messages.AgentNoteV1.jsonSchema()).toHaveProperty("$defs");
+      expect(inRust.message).toContain("onemessagebus.transport-hello@1");
+      expect(await client.next("hellos")).toBeUndefined();
+      expect(messages.OnemessagebusTransportHelloV1.jsonSchema()).toHaveProperty("$defs");
     });
   });
 }

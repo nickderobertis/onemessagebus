@@ -9,7 +9,7 @@
 //!   lacks; every flag of a verb under its heading, and no heading flag or
 //!   value the verb does not take; each rule that names a flag on every verb
 //!   of a family; the exit code table; the default profile, the default source
-//!   word, the integer label and the payload bound; every sample invocation.
+//!   word, the label typing and the payload bound; every sample invocation.
 //! - `README.md`: every verb of each family in its verb list and no other;
 //!   the profile names, and which is the default; every sample invocation.
 
@@ -20,7 +20,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use clap::Parser as _;
 use clap_tree::{clap_verbs, long_flags};
 use onemessagebus::{Admits, Open, Vocabulary as _, MAX_PAYLOAD_TEXT_BYTES};
-use onemessagebus_agent::Agent;
 use onemessagebus_cli::{Cli, EXIT_FAILED, EXIT_INVALID, EXIT_OK};
 
 const CLI_MD: (&str, &str) = ("docs/cli.md", include_str!("../../../docs/cli.md"));
@@ -298,31 +297,29 @@ fn cli_md_states_the_defaults_and_bounds_the_binary_links() {
     let default_profile = between(CLI_MD, "and it defaults to `", "`");
     assert_eq!(
         default_profile,
-        Agent::NAME,
-        "{file} says `--profile` defaults to `{default_profile}`, but the default is `{}`",
-        Agent::NAME
-    );
-    let other = between(CLI_MD, "the profile this binary links. `", "`");
-    assert_eq!(
-        other,
         Open::NAME,
-        "{file} names `{other}` as the other profile, but it is `{}`",
+        "{file} says `--profile` defaults to `{default_profile}`, but the default is `{}`",
         Open::NAME
     );
     let default_source = between(CLI_MD, "profile's default word (`", "`");
     assert_eq!(
         default_source,
-        Agent::DEFAULT_SOURCE,
-        "{file} says the agent profile's default source is `{default_source}`, but it is `{}`",
-        Agent::DEFAULT_SOURCE
+        Open::DEFAULT_SOURCE,
+        "{file} says the open profile's default source is `{default_source}`, but it is `{}`",
+        Open::DEFAULT_SOURCE
     );
     let label = between(CLI_MD, "(`--label ", "=");
     assert!(
-        Agent::RESERVED
+        !Open::RESERVED
             .iter()
             .any(|reserved| reserved.key == label && reserved.admits == Admits::Integer),
-        "{file} gives `--label {label}=…` as an integer label, but the agent profile does not \
-         type `{label}` as one"
+        "{file} gives `--label {label}=…` as a text label, but the open profile types `{label}` \
+         as an integer"
+    );
+    assert_eq!(
+        flat(CLI_MD.1).contains("`open` reserves no key"),
+        Open::RESERVED.is_empty(),
+        "{file} says whether `open` reserves a label key, and it must agree with Open::RESERVED"
     );
     let bound = between(CLI_MD, "bounded to ", " bytes");
     assert_eq!(
@@ -374,7 +371,7 @@ fn the_readme_lists_every_verb_and_only_the_binarys() {
         .into_iter()
         .filter_map(|span| span.strip_prefix("--profile ").map(str::to_owned))
         .collect();
-    let linked = vec![Agent::NAME.to_owned(), Open::NAME.to_owned()];
+    let linked = vec![Open::NAME.to_owned()];
     assert_eq!(
         profiles, linked,
         "{file} names the profiles {profiles:?}, but the binary links {linked:?}, default first"
@@ -382,9 +379,9 @@ fn the_readme_lists_every_verb_and_only_the_binarys() {
     let default = between(README, "`--profile ", "` (the default)");
     assert_eq!(
         default,
-        Agent::NAME,
+        Open::NAME,
         "{file} calls `{default}` the default profile, but it is `{}`",
-        Agent::NAME
+        Open::NAME
     );
 }
 

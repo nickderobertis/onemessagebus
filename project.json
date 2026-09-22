@@ -8,7 +8,6 @@
   ],
   "implicitDependencies": [
     "onemessagebus",
-    "onemessagebus-agent",
     "onemessagebus-cli",
     "onemessagebus-e2e",
     "onemessagebus-npm",
@@ -29,7 +28,6 @@
         {
           "projects": [
             "onemessagebus",
-            "onemessagebus-agent",
             "onemessagebus-cli",
             "onemessagebus-e2e",
             "onemessagebus-repo"

@@ -12,10 +12,10 @@ use serde_json::{json, Map, Value};
 
 #[test]
 fn reserved_keys_say_what_they_admit() {
-    assert_eq!(Reserved::text("node").admits, Admits::Text);
-    assert_eq!(Reserved::integer("round").admits, Admits::Integer);
-    assert_eq!(Reserved::word("phase").admits, Admits::Word);
-    assert_eq!(Reserved::text("node").key, "node");
+    assert_eq!(Reserved::text("tenant").admits, Admits::Text);
+    assert_eq!(Reserved::integer("attempt").admits, Admits::Integer);
+    assert_eq!(Reserved::word("region").admits, Admits::Word);
+    assert_eq!(Reserved::text("tenant").key, "tenant");
     assert_eq!(
         serde_json::to_value(Admits::Integer).expect("serializes"),
         json!("integer")
@@ -115,7 +115,7 @@ fn the_registry_renders_itself_and_refuses_a_bad_namespace_by_name() {
         unknown.to_string().contains("registered: nothing"),
         "{unknown}"
     );
-    let bad = "agent space.name@1"
+    let bad = "shop space.name@1"
         .parse::<SchemaId>()
         .expect_err("refused");
     assert!(

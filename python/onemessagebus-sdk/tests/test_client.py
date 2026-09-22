@@ -85,40 +85,51 @@ async def test_the_schema_verbs(client: Client, scratch: Path) -> None:
 
 async def test_the_events_verbs(client: Client, scratch: Path) -> None:
     stream = scratch / "events.jsonl"
+    # With no profile named, the binary's one: `open`, whose default source is its own.
     first = await client.events_emit(
-        stream, "change-merged", "s1", {"branch": "main"}, labels={"run_id": "R", "round": 2}
+        stream, "invoice-issued", "s1", {"amount": 12}, labels={"tenant": "acme", "attempt": 2}
     )
     assert isinstance(first, Envelope)
     assert (first.seq, first.kind, first.source, first.payload) == (
         1,
-        "change-merged",
-        "pipeline",
-        {"branch": "main"},
+        "invoice-issued",
+        "onemessagebus",
+        {"amount": 12},
     )
     assert first.labels is not None
-    assert (first.labels.run_id, first.labels.round) == ("R", 2)
+    assert first.labels.model_dump() == {"tenant": "acme", "attempt": "2"}, "open labels are text"
     payload = scratch / "payload.json"
-    payload.write_text('{"branch": "next"}', encoding="utf-8")
+    payload.write_text('{"amount": 30}', encoding="utf-8")
     text = await client.events_emit(
-        stream, "change-merged", "s1", file=payload, source="vcs", format="text"
+        stream, "invoice-paid", "s1", file=payload, source="billing", format="text"
     )
-    assert " vcs change-merged stream=s1 seq=2 " in text
+    assert " billing invoice-paid stream=s1 seq=2 " in text
 
     merged = await client.events_merge([stream])
-    assert [(envelope.seq, envelope.source) for envelope in merged] == [(1, "pipeline"), (2, "vcs")]
+    assert [(envelope.seq, envelope.source) for envelope in merged] == [
+        (1, "onemessagebus"),
+        (2, "billing"),
+    ]
     assert len((await client.events_merge([stream], format="text")).splitlines()) == 2
-    run_r = await client.events_merge([stream], filter={"include": [{"run_id": "R"}]})
-    assert [envelope.seq for envelope in run_r] == [1]
+    acme = await client.events_merge([stream], filter={"include": [{"tenant": "acme"}]})
+    assert [envelope.seq for envelope in acme] == [1]
     with pytest.raises(BusRefused, match="the event filter is unusable"):
         await client.events_merge([stream], filter={"nope": 1})
 
-    # Another profile's envelopes are documents: the models are the agent vocabulary's.
+    # Naming `open` is the default spelled out; naming a profile this build does not
+    # link is refused by the binary's generic refusal.
     opened = await client.events_emit(
         scratch / "open.jsonl", "noted", "s2", {"a": 1}, profile="open", source="anything"
     )
-    assert opened["source"] == "anything"
+    assert opened.source == "anything"
     read = await client.events_merge([scratch / "open.jsonl"], profile="open")
-    assert read[0]["payload"] == {"a": 1}
+    assert read[0].payload == {"a": 1}
+    refusal = "`agent` is not a profile this build links; choose one of: open"
+    with pytest.raises(BusRefused, match=refusal):
+        await client.events_emit(stream, "noted", "s1", {}, profile="agent")
+    with pytest.raises(BusRefused, match=refusal):
+        await client.events_merge([stream], profile="agent")
+    assert len(await client.events_merge([stream])) == 2, "a refused emit appended nothing"
     with pytest.raises(BusRefused, match="`Bad_Kind` is not kebab-case"):
         await client.events_emit(stream, "Bad_Kind", "s1", {})
 
@@ -128,7 +139,7 @@ def bound_spool(directory: Path) -> Iterator[None]:
     """A receiver bound to a spool, as `docs/inbox.md` lays one out: its document and its lock."""
     directory.mkdir()
     (directory / "spool.json").write_text(
-        '{"schema_version": 1, "schema": "agent.note@1"}', encoding="utf-8"
+        '{"schema_version": 1, "schema": "demo.memo@1"}', encoding="utf-8"
     )
     with (directory / "receiver.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -153,27 +164,27 @@ def answer_one(directory: Path, disposition: object) -> None:
 
 async def test_the_inbox_verbs(client: Client, scratch: Path) -> None:
     spool = scratch / "spool"
-    note = {"addressee": "worker", "text": "look again at the migration"}
+    note = {"to": "front", "text": "look again at the ledger"}
     with bound_spool(spool):
         answering = asyncio.ensure_future(
-            asyncio.to_thread(answer_one, spool, {"interrupted": {"party": "worker"}})
+            asyncio.to_thread(answer_one, spool, {"filed": {"desk": "front"}})
         )
         disposition = await client.deliver(spool, note, wait=30)
         await answering
-    assert disposition == {"interrupted": {"party": "worker"}}
+    assert disposition == {"filed": {"desk": "front"}}
     with pytest.raises(BusRefused):
         await client.deliver(scratch / "no-such-spool", message=note, wait=1)
 
     store = scratch / "carried.jsonl"
     store.write_text(
         '{"schema_version": 1, "kind": "onemessagebus-carry-store"}\n'
-        + json.dumps({"ts": "2026-09-13T00:00:00.000Z", "schema": "agent.note@1", "message": note})
+        + json.dumps({"ts": "2026-09-13T00:00:00.000Z", "schema": "demo.memo@1", "message": note})
         + "\n",
         encoding="utf-8",
     )
     carried = await client.inbox_carried(store)
-    assert [(entry.schema_, entry.message) for entry in carried] == [("agent.note@1", note)]
-    assert "agent.note@1" in await client.inbox_carried(store, format="text")
+    assert [(entry.schema_, entry.message) for entry in carried] == [("demo.memo@1", note)]
+    assert "demo.memo@1" in await client.inbox_carried(store, format="text")
     with pytest.raises(BusRefused, match="is not a carry store"):
         await client.inbox_carried(scratch / "no-such-store")
 
@@ -200,7 +211,7 @@ async def test_the_queue_verbs(client: Client, scratch: Path) -> None:
     [questions] = await client.status("questions")
     assert (questions.queue, questions.records) == ("questions", 2)
     every = {status.queue for status in await client.status()}
-    assert every == {"questions", "answers", "actions", "notes", "greetings"}
+    assert every == {"questions", "answers", "actions", "hellos", "greetings"}
     assert (await client.status("questions", format="text")).startswith("questions records=2")
     with pytest.raises(BusRefused, match="`nosuch` is not a queue"):
         await client.status("nosuch")

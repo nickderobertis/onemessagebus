@@ -8,7 +8,7 @@ from pydantic import BaseModel, ValidationError
 from onemessagebus import BusFailed, Client, Message, messages
 from onemessagebus._generated.contract import Config
 from onemessagebus._message import DRAFT_2020_12
-from onemessagebus.models import Note, NoteV1
+from onemessagebus.models import TransportHello, TransportHelloV1
 from tests.conftest import Greeting
 
 
@@ -90,22 +90,28 @@ async def test_a_plain_model_or_document_registers_under_the_id_it_is_given(
         await client.schema.register(document)
 
 
-async def test_a_profile_schema_round_trips_through_its_generated_model(client: Client) -> None:
-    assert messages.MESSAGES["agent.note@1"] is Note is NoteV1
+async def test_a_core_schema_round_trips_through_its_generated_model(client: Client) -> None:
+    assert messages.MESSAGES["onemessagebus.transport-hello@1"] is TransportHello
+    assert TransportHello is TransportHelloV1
     registered = {entry.id for entry in await client.schema_list()}
-    assert set(messages.MESSAGES) <= registered
-    note = Note(addressee="worker", text="the base moved", criterion="rebased onto main")
-    await client.send("notes", note)
-    claimed = await client.next("notes", type=Note)
-    assert claimed is not None
-    assert isinstance(claimed.record, Note)
-    assert (claimed.record.addressee, claimed.record.text, claimed.record.criterion) == (
-        "worker",
-        "the base moved",
-        "rebased onto main",
+    assert set(messages.MESSAGES) == {
+        entry for entry in registered if not entry.startswith("demo.")
+    }, "the models are the binary's own registry, and nothing of a product's"
+    assert not any(entry.startswith("agent.") for entry in registered)
+    hello = TransportHello.model_validate(
+        {"protocol": "onemessagebus-transport", "version": 1, "config": {"kind": "nats"}}
     )
-    with pytest.raises(BusFailed, match=r"agent\.note@1"):
-        await client.send("notes", {"addressee": "worker", "text": 7})
-    with pytest.raises(BusFailed, match=r"agent\.note@1"):
-        await client.send("notes", {"addressee": "judge", "text": "look again"})
-    assert await client.next("notes") is None, "nothing refused was appended"
+    await client.send("hellos", hello)
+    claimed = await client.next("hellos", type=TransportHello)
+    assert claimed is not None
+    assert isinstance(claimed.record, TransportHello)
+    assert claimed.record.model_dump(mode="json", exclude_none=True) == {
+        "protocol": "onemessagebus-transport",
+        "version": 1,
+        "config": {"kind": "nats"},
+    }
+    with pytest.raises(BusFailed, match=r"onemessagebus\.transport-hello@1"):
+        await client.send("hellos", {"protocol": "onemessagebus-transport", "version": "one"})
+    with pytest.raises(BusFailed, match=r"onemessagebus\.transport-hello@1"):
+        await client.send("hellos", {"protocol": 7, "version": 1, "config": {"kind": "nats"}})
+    assert await client.next("hellos") is None, "nothing refused was appended"

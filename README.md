@@ -1,29 +1,21 @@
 # onemessagebus
 
-A typed NDJSON message bus for agent communication — and for anything else
-that speaks in events. One envelope, one filter grammar, payload bounds and
+A typed NDJSON message bus for anything that speaks in events. One envelope, one filter grammar, payload bounds and
 redaction, a schema registry with version read-sets, and an emitter and reader
 over streams, generic over the **vocabulary** a consumer declares.
 
-Three artifacts:
+Two artifacts:
 
 - **`onemessagebus`** — the core library. It knows the shape of an envelope and
   none of the words: which sources exist, which label keys are reserved and
   which top-level dimensions an envelope carries are a `Vocabulary`'s to
-  declare. `Open` reserves nothing; a vocabulary of your own is proven through
-  the same conformance table the agent one is.
-- **`onemessagebus-agent`** — the agent profile: the sources `agentgraph`,
-  `vcs`, `pipeline`; the `phase` dimension; the reserved labels `run_id`,
-  `round`, `node`, `step`, `member`, `persona`; and the schema families the
-  stack registers (`agent.event-envelope` at `[2, 1]`, and the note, the labels,
-  the filter and the artifact reference at 1). Its types serialize to the bytes `oneagentgraph`, `onevcs` and
-  `onepipeline` write today, which the recorded streams under
-  `crates/onemessagebus-agent/tests/recorded/` prove byte for byte.
+  declare. `Open` reserves nothing; a vocabulary of your own — declared in the
+  program that owns it, never in the bus — is proven through the same
+  conformance table.
 - **`onemessagebus`**, the binary — `schema list|check|gen|register` over the
   registry, `schemas` with `schemas clear|fetch` over the cache of schema
   bundles a configuration links by URL, `events merge|emit` over streams with
-  `--profile agent` (the
-  default) or `--profile open`, `deliver` and `inbox carried` over the inbox —
+  `--profile open` (the default) — the one vocabulary it links — `deliver` and `inbox carried` over the inbox —
   a typed channel into a running process whose sender learns what the receiver
   did with each message — and `send`, `next`, `reply`, `subscribe` and `status`
   over durable queues kept on a transport a configuration names — under a
@@ -45,10 +37,10 @@ cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebu
 ```
 
 ```bash
-$ echo '{"note":"hello"}' | onemessagebus events emit run.ndjson --kind note-left --stream s-1 --source vcs --label run_id=R
-{"v":1,"ts":"2026-09-13T06:16:27.838Z","stream":"s-1","seq":1,"source":"vcs","kind":"note-left","labels":{"run_id":"R"},"payload":{"note":"hello"},"artifacts":[]}
-$ onemessagebus events merge run.ndjson other.ndjson --filter '{"include":[{"source":"vcs"}]}' --format text
-$ onemessagebus schema check agent.event-envelope@2 --file envelope.json
+$ echo '{"note":"hello"}' | onemessagebus events emit run.ndjson --kind note-left --stream s-1 --source billing --label tenant=acme
+{"v":1,"ts":"2026-09-13T06:16:27.838Z","stream":"s-1","seq":1,"source":"billing","kind":"note-left","labels":{"tenant":"acme"},"payload":{"note":"hello"},"artifacts":[]}
+$ onemessagebus events merge run.ndjson other.ndjson --filter '{"include":[{"source":"billing"}]}' --format text
+$ onemessagebus schema check onemessagebus.transport-hello@1 --file hello.json
 ```
 
 <!-- llmlint: ignore-block[no_redundant_instruction_pointers] this README is also the PyPI page of the `onemessagebus-cli` wheel (pyproject.toml's `readme`) and the repository's front page, read by someone who has installed or found the tool and never opens AGENTS.md; these links are how that reader reaches the command line, the wire and the contract. -->
@@ -60,13 +52,16 @@ consumers restate from.
 ## Use the library
 
 ```rust
-use onemessagebus_agent::{Emitter, EventFilter, Labels, Source};
+use onemessagebus::{Emitter, Filter, Labels, Matcher, Open, Source};
 use serde_json::Map;
 
-let emitter = Emitter::new("run-1", Source::Vcs, Box::new(std::io::stdout()))
-    .with_labels(Labels { run_id: Some("R".into()), ..Labels::default() })
-    .with_filter(EventFilter::parse(r#"{"exclude":[{"kind":"heartbeat"}]}"#)?);
-let envelope = emitter.emit("push", Map::new());
+let emitter = Emitter::<Open>::new("billing-1", Source::from("billing"), Box::new(std::io::stdout()))
+    .with_labels(Labels::new().with("tenant", "acme"))
+    .with_filter(Filter {
+        include: Vec::new(),
+        exclude: vec![Matcher::new().kind("heartbeat")],
+    });
+let envelope = emitter.emit("invoice-issued", Map::new());
 assert_eq!(envelope.seq, 1);
 ```
 
