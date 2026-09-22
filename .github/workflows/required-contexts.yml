@@ -1,0 +1,55 @@
+# Branch protection is the authoritative list of what must be green to merge, and
+# it lives on GitHub rather than in this tree. This job is the one gate that reads
+# it: on every push to main it derives the contexts ci.yml emits — every job, and
+# for a matrix job every leg, by the name GitHub gives its check run — and fails
+# unless main's protection requires exactly those.
+#
+# Without it, a job can claim to gate merges while protection has never heard of
+# it, which is how a broken journey merges; that is not hypothetical, it is what
+# issue #123 found for both `sdk-install` legs. Nothing in the tree restates the
+# list, so there is nothing to drift: one side is derived and the other is read.
+#
+# On a push to main rather than on a pull request, so it cannot itself be a
+# required context — a gate that requires itself can never be added to protection
+# — and because the contexts it derives are the ones a pull request has already
+# run. A failure here is a standing signal to change the branch-protection
+# setting, not a reason to revert the commit that exposed it.
+name: Required contexts
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: required-contexts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  required-contexts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # For the YAML reader the derivation parses ci.yml with, from the committed
+      # lockfile — the same resolution every other job here gets.
+      - name: Install the workspace's Node dependencies
+        run: npm ci
+      # Reading branch protection needs repository-administration read, which
+      # GITHUB_TOKEN does not have at any `permissions:` setting. RELEASE_PLZ_TOKEN
+      # is the PAT that does and this repository already holds it, so nothing new
+      # is provisioned. The script refuses a read it could not make rather than
+      # reading a refusal as "no contexts required", and names this secret and
+      # that permission when it does.
+      - name: Branch protection requires exactly the contexts ci.yml emits
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          node scripts/required-contexts.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --branch "$GITHUB_REF_NAME" \
+            --workflow .github/workflows/ci.yml
