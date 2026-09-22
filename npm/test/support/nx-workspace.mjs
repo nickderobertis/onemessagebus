@@ -15,7 +15,7 @@ import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const WRAPPERS = ["nx", "nx-affected.sh", "preserved-log.sh"];
+const WRAPPERS = ["nx", "nx-affected.sh", "node-modules.sh", "preserved-log.sh"];
 
 /// The caller's environment, minus everything that could steer Nx, git or the
 /// wrappers from outside a case. Each of these is really set where this suite

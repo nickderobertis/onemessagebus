@@ -171,24 +171,22 @@ you:
   commits and rebase-merging are off, so one PR is one squash commit whose
   subject is the PR title. Queue with `gh pr merge --auto --squash`; head
   branches auto-delete. Admins may bypass in a break-glass.
-- **All gating checks are required**, by the context each reports: `gate`,
-  `changes`, `cross (macos-latest)`, `cross (windows-latest)`, `msrv`, `deny`,
-  `install (ubuntu-latest)`, `install (macos-latest)`, `install (windows-latest)`,
-  `wheel`, `sdk-install (ubuntu-latest)`, `sdk-install (macos-latest)`,
-  `pr-title`, and `llmlint`. A matrix job reports one context per
-  platform — and only when it is scheduled, so `cross` and `install` carry no
-  job-level condition on `changes`: on a crate-free change each leg succeeds
-  through one step that says so, because a leg skipped at job level reports
-  no per-platform context and the required check waits for ever. Their
-  `runs-on` is conditional on the same output, for the reason the `cross`
-  comment in `ci.yml` gives (`npm/test/required-contexts.test.mjs` evaluates
-  the runner expression and the step conditions the way GitHub does, and is
-  where that scheduling is held). `changes` is required
-  because the jobs it gates are skipped — which counts as passing — when it
-  fails. `install-documented.yml` runs
-  on a push to `main`, never on a pull request, so it cannot be required. `notignored` is deliberately
-  not: it is the review artifact naming the suppressions a PR adds, and a fork's
-  read-only token cannot post it.
+- **Every context `ci.yml` emits is required to merge, and the list is not
+  restated here.** `main`'s branch protection holds it, a pull request shows it,
+  and `required-contexts.yml` fails on every push to `main` unless protection
+  requires exactly what `ci.yml`'s jobs emit (`just required-contexts`). A red
+  run there means the protection setting needs changing, not the commit that
+  exposed it. It reads protection with `RELEASE_PLZ_TOKEN` because
+  `GITHUB_TOKEN` cannot, and it runs on a push because a required check cannot
+  require itself.
+- **A matrix job's legs report a context only while the job is scheduled**, so
+  `cross`, `install` and `sdk-install` carry no job-level condition: skipped
+  there, a leg reports nothing and the required check waits for ever, so the
+  skip lives on their steps. `changes` is required because the jobs it gates are
+  skipped — which counts as passing — when it fails. `install-documented.yml`
+  and `required-contexts.yml` run only on a push to `main`, so neither can be
+  required. `notignored` is deliberately not: it is the review artifact naming
+  the suppressions a PR adds, and a fork's read-only token cannot post it.
 - **The broader tier runs on the release PR.** release-plz batches merges
   behind a release PR, so the commit that ships is that PR's, and it is the
   one CI sweeps whole (`just check` over every project), once — nothing

@@ -109,6 +109,16 @@ affected-crate:
 affected-sdk:
     @bash scripts/nx-affected.sh --affects onemessagebus-sdk-install-e2e
 
+# The contexts branch protection must require are derived from ci.yml's jobs and
+# never restated, so this is how you read or check them: `--list` alone needs no
+# credential and is what a maintainer pastes into the setting; the comparison
+# reads GitHub and needs GH_TOKEN to be a token with repository-administration
+# reach (RELEASE_PLZ_TOKEN, which is what required-contexts.yml gives it).
+# Hold a branch's required status checks to exactly the contexts ci.yml emits.
+required-contexts *ARGS:
+    @bash scripts/node-modules.sh
+    @node scripts/required-contexts.mjs {{ARGS}}
+
 # Escape hatch for Nx itself, e.g. `just nx show projects` or `just nx graph`.
 # Run an arbitrary Nx command against this workspace.
 nx *ARGS:

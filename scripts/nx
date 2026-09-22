@@ -2,10 +2,9 @@
 # The one entry point to this workspace's Nx.
 #
 # Nx lives in `node_modules/.bin`, which a fresh clone does not have, so every
-# invocation heals through a locked install first. That is what lets `just check`
-# work from a clean clone without a separate "install the orchestrator" step, and
-# what keeps one recipe from failing with `nx: command not found` while another
-# quietly repaired it.
+# invocation heals through `scripts/node-modules.sh` first. That is what lets
+# `just check` work from a clean clone without a separate "install the
+# orchestrator" step.
 #
 # Quiet on success, specific on failure. Every gate recipe runs through here, so
 # this wrapper's output *is* `just check`'s output, and a green run owes a line
@@ -40,20 +39,9 @@ export NX_DAEMON="${NX_DAEMON-false}"
 # for housekeeping: this workspace's pinned Nx is the only one that may run.
 export NX_USE_LOCAL=true
 
-if [ ! -e node_modules/.bin/nx ] && [ ! -e node_modules/.bin/nx.cmd ]; then
-  if ! command -v npm >/dev/null 2>&1; then
-    echo "nx: npm not found; cannot install the pinned Nx the project graph needs" >&2
-    echo "ACTION: install Node.js 20+ (https://nodejs.org/) and re-run 'just bootstrap'" >&2
-    exit 1
-  fi
-  # Installer chatter is not this command's output: in show-output mode stdout is
-  # read for Nx's answer, so anything that is not that answer goes to stderr.
-  if ! npm ci --silent --no-audit --no-fund >&2; then
-    echo "nx: 'npm ci' failed in $ROOT" >&2
-    echo "ACTION: check network access to the npm registry, then re-run 'just bootstrap'" >&2
-    exit 1
-  fi
-fi
+# The locked install the orchestrator lives in, healed by the one script that
+# heals it for every entry point that needs it.
+bash "$ROOT/scripts/node-modules.sh"
 
 # The npm-written shim rather than a path inside the package: Nx has moved its
 # bin entry between releases, and the shim is the one name that cannot.
