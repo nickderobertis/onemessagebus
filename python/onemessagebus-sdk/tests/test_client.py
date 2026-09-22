@@ -164,26 +164,26 @@ def answer_one(directory: Path, disposition: object) -> None:
 
 async def test_the_inbox_verbs(client: Client, scratch: Path) -> None:
     spool = scratch / "spool"
-    note = {"to": "front", "text": "look again at the ledger"}
+    memo = {"to": "front", "text": "look again at the ledger"}
     with bound_spool(spool):
         answering = asyncio.ensure_future(
             asyncio.to_thread(answer_one, spool, {"filed": {"desk": "front"}})
         )
-        disposition = await client.deliver(spool, note, wait=30)
+        disposition = await client.deliver(spool, memo, wait=30)
         await answering
     assert disposition == {"filed": {"desk": "front"}}
     with pytest.raises(BusRefused):
-        await client.deliver(scratch / "no-such-spool", message=note, wait=1)
+        await client.deliver(scratch / "no-such-spool", message=memo, wait=1)
 
     store = scratch / "carried.jsonl"
     store.write_text(
         '{"schema_version": 1, "kind": "onemessagebus-carry-store"}\n'
-        + json.dumps({"ts": "2026-09-13T00:00:00.000Z", "schema": "demo.memo@1", "message": note})
+        + json.dumps({"ts": "2026-09-13T00:00:00.000Z", "schema": "demo.memo@1", "message": memo})
         + "\n",
         encoding="utf-8",
     )
     carried = await client.inbox_carried(store)
-    assert [(entry.schema_, entry.message) for entry in carried] == [("demo.memo@1", note)]
+    assert [(entry.schema_, entry.message) for entry in carried] == [("demo.memo@1", memo)]
     assert "demo.memo@1" in await client.inbox_carried(store, format="text")
     with pytest.raises(BusRefused, match="is not a carry store"):
         await client.inbox_carried(scratch / "no-such-store")
