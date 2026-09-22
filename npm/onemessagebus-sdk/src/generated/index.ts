@@ -88,7 +88,11 @@ export { ValidateOptionsSchema } from "./options/validate-options.js";
 export * from "./capabilities.js";
 export * as messages from "./messages/index.js";
 
-/** The vocabulary the roots above are generated over. */
+/**
+ * The vocabulary the roots above are generated over. `as const` keeps its name
+ * and words literal types, so a caller comparing a profile name against it is
+ * checked against the words themselves rather than any string.
+ */
 export const VOCABULARY = {
   name: "open",
   reserved: [],

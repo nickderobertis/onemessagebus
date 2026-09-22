@@ -18,7 +18,11 @@ export {
   OnemessagebusTransportRequestV1Schema,
 } from "./onemessagebus-transport-request-1.js";
 
-/** Every message the Rust registry holds, by id. */
+/**
+ * Every message the Rust registry holds, by id. `as const` keeps each id a
+ * literal key, so `MESSAGES[id]` is typed as that id's own message rather than
+ * as a union of every message.
+ */
 export const MESSAGES = {
   "bus.resident-protocol@1": BusResidentProtocolV1,
   "onemessagebus.transport-hello@1": OnemessagebusTransportHelloV1,

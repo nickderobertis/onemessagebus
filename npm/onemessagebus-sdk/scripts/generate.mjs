@@ -191,7 +191,11 @@ ${messageIds.map((id) => `import { ${messageType(id)} } from "./${kebab(id)}.js"
 
 ${messageIds.map((id) => `export { ${messageType(id)}, ${messageType(id)}Schema } from "./${kebab(id)}.js";`).join("\n")}
 
-/** Every message the Rust registry holds, by id. */
+/**
+ * Every message the Rust registry holds, by id. \`as const\` keeps each id a
+ * literal key, so \`MESSAGES[id]\` is typed as that id's own message rather than
+ * as a union of every message.
+ */
 export const MESSAGES = {
 ${messageIds.map((id) => `  ${JSON.stringify(id)}: ${messageType(id)},`).join("\n")}
 } as const;
@@ -206,7 +210,11 @@ ${optionRoots.map((key) => rootExport(`./options/${kebab(key)}.js`, pascal(key))
 export * from "./capabilities.js";
 export * as messages from "./messages/index.js";
 
-/** The vocabulary the roots above are generated over. */
+/**
+ * The vocabulary the roots above are generated over. \`as const\` keeps its name
+ * and words literal types, so a caller comparing a profile name against it is
+ * checked against the words themselves rather than any string.
+ */
 export const VOCABULARY = ${JSON.stringify(bundle.vocabulary)} as const;
 `,
   );
