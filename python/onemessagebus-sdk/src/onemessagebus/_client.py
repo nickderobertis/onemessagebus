@@ -324,9 +324,10 @@ class Client:
     ) -> list[Envelope] | list[dict[str, Any]] | str:
         """Merge stream files into one stream in `(ts, stream, seq)` order.
 
-        With no profile named the binary reads through its one, `open`, and envelopes
-        are read into `Envelope`, the model of that vocabulary; a profile named
-        otherwise hands them back as documents.
+        The binary reads through `open`, the one profile it links, whether or not
+        `profile` names it, and each envelope is read into `Envelope`, that
+        vocabulary's model. Naming a profile the binary does not link raises
+        `BusRefused`.
         """
         values = {"files": files, "filter": _spec(filter), "profile": profile, "format": format}
         shape = list[Envelope] if profile in (None, VOCABULARY_NAME) else list[dict[str, Any]]
