@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 use onemessagebus::sdk_schema::{self, Bundle, Format, Lang};
 use onemessagebus::{
     Admits, Allowlist, Author, Emitter, Filter, FlagKind, Kind, LabelMatch, Labels, Matcher, Merge,
-    OpWord, Open, Reader, Reading, Redactor, Registry, Reserved, SchemaId, Source,
+    OpWord, Open, Operation, Reader, Reading, Redactor, Registry, Reserved, SchemaId, Source,
+    NOT_GRANTED,
 };
 use serde_json::{json, Map, Value};
 
@@ -86,6 +87,60 @@ fn an_allowlist_reports_its_declared_authors_and_grants() {
         refusal.why.contains("`stranger` is not an author") && refusal.why.contains("sentinel"),
         "{refusal}"
     );
+}
+
+/// A program's closed operation vocabulary, as its own crate declares one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Desk {
+    Retry,
+    Escalate,
+    Close,
+}
+
+impl Operation for Desk {
+    fn name(&self) -> &str {
+        match self {
+            Desk::Retry => "retry",
+            Desk::Escalate => "escalate",
+            Desk::Close => "close",
+        }
+    }
+}
+
+#[test]
+fn an_allowlist_over_a_closed_vocabulary_reads_the_same_as_words() {
+    let clerk = Author::from("clerk");
+    let mut typed = Allowlist::new([Desk::Retry, Desk::Escalate, Desk::Close]);
+    typed.grant(clerk.clone(), Desk::Retry).refuse(
+        clerk.clone(),
+        &Desk::Escalate,
+        "a clerk hands escalations up",
+    );
+
+    // A consumer that does not link the program's type reads the same
+    // allowlist by word: the vocabulary, each grant, and each recorded reason.
+    let words = typed.words();
+    let word = |text: &str| OpWord(text.to_owned());
+    assert_eq!(
+        words.vocabulary(),
+        [word("retry"), word("escalate"), word("close")]
+    );
+    assert_eq!(words.authors().as_slice(), std::slice::from_ref(&clerk));
+    assert_eq!(words.granted(&clerk), [word("retry")]);
+    assert_eq!(words.allows(&clerk, &word("retry")), Ok(()));
+    let escalate = words
+        .allows(&clerk, &word("escalate"))
+        .expect_err("refused with its reason");
+    assert_eq!(escalate.reason, "a clerk hands escalations up");
+    assert_eq!(
+        typed.allows(&clerk, &Desk::Escalate).expect_err("refused"),
+        escalate,
+        "the typed and the word allowlist refuse alike"
+    );
+    let close = words
+        .allows(&clerk, &word("close"))
+        .expect_err("refused by omission");
+    assert_eq!(close.reason, NOT_GRANTED);
 }
 
 #[test]

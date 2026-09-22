@@ -1,3 +1,3 @@
-{"v":1,"ts":"2026-09-13T06:00:01.000Z","stream":"shipping-1","seq":1,"source":"shipping","kind":"parcel-packed","labels":{"tenant":"acme","order":"o-1","attempt":"1"},"payload":{"parcels":2},"artifacts":[{"id":"label-pdf","kind":"document","bytes":2048}]}
+{"v":1,"ts":"2026-09-13T06:00:01.000Z","stream":"shipping-1","seq":1,"source":"shipping","kind":"parcel-packed","labels":{"tenant":"acme","order":"o-1","attempt":1},"payload":{"parcels":2},"artifacts":[{"id":"label-pdf","kind":"document","bytes":2048}]}
 {"v":1,"ts":"2026-09-13T06:00:04.000Z","stream":"shipping-1","seq":2,"source":"shipping","kind":"parcel-shipped","labels":{"tenant":"acme","order":"o-1","attempt":"1"},"payload":{"carrier":"post"},"artifacts":[]}
 {"v":1,"ts":"2026-09-13T06:00:05.000Z","stream":"shipping-1","seq":3,"source":"shipping","kind":"heartbeat","labels":{},"payload":{},"artifacts":[]}

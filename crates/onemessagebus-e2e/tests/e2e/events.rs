@@ -10,9 +10,10 @@ use serde_json::{json, Value};
 
 use crate::support::{ascii, fixture, onemessagebus, run, run_in, Run};
 
-/// The streams the journeys merge: three producers of one commerce run, written
-/// by this binary under the open profile, their timestamps interleaved and two
-/// of them tied across streams.
+/// The streams the journeys merge: three producers of one commerce run under
+/// the open profile, their timestamps interleaved and two of them tied across
+/// streams. One producer stamps an integer label and an artifact, which
+/// `events emit` does not write but `events merge` carries.
 const RECORDED: &[&str] = &[
     "billing-run.ndjson",
     "shipping-run.ndjson",
@@ -227,7 +228,10 @@ fn events_merge_renders_text_deterministically() {
             .as_object()
             .expect("labels")
             .iter()
-            .map(|(key, value)| format!(" {key}={}", value.as_str().expect("a text label")))
+            .map(|(key, value)| match value {
+                Value::String(text) => format!(" {key}={text}"),
+                other => format!(" {key}={other}"),
+            })
             .collect();
         assert!(text.contains(&labels), "{text}\n{labels}");
     }
@@ -558,6 +562,11 @@ fn events_emit_redacts_credential_shaped_values_before_writing() {
         payload.insert((*word).to_owned(), json!(format!("printed {value} here")));
     }
     payload.insert("tokens".to_owned(), json!(prefixed.join(" ")));
+    // However deeply nested: a list of tokens, and an object inside it.
+    payload.insert(
+        "nested".to_owned(),
+        json!([prefixed[0], { "deeper": [prefixed[0], 7] }]),
+    );
     payload.insert("plain".to_owned(), json!("nothing to see"));
     let emitted = emit_in(
         dir.path(),
@@ -591,6 +600,10 @@ fn events_emit_redacts_credential_shaped_values_before_writing() {
     assert_eq!(
         envelope["payload"]["tokens"],
         json!(vec![REDACTED; prefixed.len()].join(" "))
+    );
+    assert_eq!(
+        envelope["payload"]["nested"],
+        json!([REDACTED, { "deeper": [REDACTED, 7] }])
     );
     assert_eq!(envelope["payload"]["plain"], json!("nothing to see"));
 }

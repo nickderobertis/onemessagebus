@@ -1260,6 +1260,18 @@ fn schemas_lists_clears_and_fetch_warms_revalidating_whatever_the_window() {
         "{}",
         reused.stderr
     );
+    // The text rendering says the same: the link, `reused`, the version, and why.
+    let reused_text = scratch.run(&["schemas", "fetch", &one, "--format", "text"], None, &[]);
+    assert_eq!(reused_text.code, 0, "{}", reused_text.stderr);
+    assert!(
+        reused_text
+            .stdout
+            .starts_with(&format!("{one} reused 8.1 ("))
+            && reused_text.stdout.ends_with(")\n")
+            && reused_text.stdout.lines().count() == 1,
+        "{}",
+        reused_text.stdout
+    );
 
     // A link it cannot resolve: the report, then exit 1 naming it.
     let absent = "http://127.0.0.1:9/absent.json@1";

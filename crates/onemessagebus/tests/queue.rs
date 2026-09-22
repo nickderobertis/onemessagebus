@@ -485,3 +485,40 @@ fn a_handle_names_what_it_was_opened_with() {
     let blank = serde_json::from_value::<Asker>(json!("  ")).expect_err("a blank asker");
     assert!(blank.to_string().contains("blank value"), "{blank}");
 }
+
+/// Answering the pending slot releases what it holds and hands it back; an
+/// empty slot releases nothing, and a plain queue has no slot to answer.
+#[test]
+fn answering_the_pending_slot_releases_the_held_question_once() {
+    let (_, queue) = memory_queue("events", held_policy());
+    let anyone = ConsumerName::default_consumer();
+    queue
+        .push(json!({"blocking": true, "text": "which base?"}))
+        .expect("queued");
+    queue.claim(&anyone).expect("a claim").expect("claimed");
+    assert!(queue.status().expect("a status").pending.is_some());
+
+    let released = queue
+        .answer_pending()
+        .expect("answered")
+        .expect("the held question");
+    assert_eq!(released["id"], json!(0));
+    assert_eq!(released["text"], json!("which base?"));
+    let status = queue.status().expect("a status");
+    assert!(status.pending.is_none(), "{status:?}");
+    assert!(status.waiting.is_empty(), "{status:?}");
+    assert_eq!(
+        queue.answer_pending().expect("answered"),
+        None,
+        "an empty slot releases nothing"
+    );
+
+    let (_, plain) = memory_queue("plain", Policy::default());
+    let refusal = plain
+        .answer_pending()
+        .expect_err("a plain queue has no pending slot");
+    assert!(
+        refusal.to_string().contains("plain"),
+        "the refusal names the queue: {refusal}"
+    );
+}

@@ -685,6 +685,20 @@ fn a_registry_directory_that_is_not_one_is_refused_naming_the_file() {
     );
     std::fs::remove_file(registry.join("shop.other@1.json")).expect("removed");
 
+    // An entry named like a document that cannot be read as one: refused naming
+    // it, rather than skipped as though that schema had never been registered.
+    std::fs::create_dir(registry.join("shop.folder@1.json")).expect("created");
+    let unreadable = run_in(dir.path(), &["schema", "list"], None, &env);
+    assert_eq!(unreadable.code, 2, "{}", unreadable.stderr);
+    assert!(
+        unreadable
+            .stderr
+            .contains("shop.folder@1.json is not a registry document"),
+        "{}",
+        unreadable.stderr
+    );
+    std::fs::remove_dir(registry.join("shop.folder@1.json")).expect("removed");
+
     // A file that is not a registry document at all.
     std::fs::write(registry.join("shop.broken@1.json"), "not json").expect("written");
     let corrupt = run_in(dir.path(), &["schema", "list"], None, &env);

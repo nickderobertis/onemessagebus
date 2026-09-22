@@ -466,3 +466,53 @@ fn queue_mismatch_and_unregistered_schema_are_refused_before_input() {
         assert!(refused.stdout.is_empty());
     }
 }
+
+#[test]
+fn a_session_bound_or_frame_file_the_verb_cannot_honour_is_refused_before_a_frame_is_read() {
+    let scratch = Scratch::new();
+    let serve = |extra: &[&str], env: &[(&str, &str)]| {
+        let mut args = vec![
+            "serve",
+            "questions",
+            "--codec",
+            "example",
+            "--config",
+            &scratch.config,
+        ];
+        args.extend_from_slice(extra);
+        run_in(scratch.dir.path(), &args, Some("not JSON\n"), env)
+    };
+
+    let zero = serve(&["--session-seconds", "0"], &[]);
+    assert_eq!(zero.code, 2, "{}", zero.stderr);
+    assert!(
+        zero.stderr
+            .contains("--session-seconds is a whole number of seconds greater than zero"),
+        "{}",
+        zero.stderr
+    );
+
+    // The configured `session_env` is read when the flag is absent, and a value
+    // that is not a bound is refused naming the variable and the value.
+    let unreadable = serve(&[], &[("EXAMPLE_SESSION", "soon")]);
+    assert_eq!(unreadable.code, 2, "{}", unreadable.stderr);
+    assert!(
+        unreadable
+            .stderr
+            .contains("EXAMPLE_SESSION is a whole number of seconds greater than zero")
+            && unreadable.stderr.contains("\"soon\""),
+        "{}",
+        unreadable.stderr
+    );
+
+    let missing = serve(&["--file", "no-such-frames.jsonl"], &[]);
+    assert_eq!(missing.code, 2, "{}", missing.stderr);
+    assert!(
+        missing.stderr.contains("cannot read no-such-frames.jsonl"),
+        "{}",
+        missing.stderr
+    );
+    for refused in [&zero, &unreadable, &missing] {
+        assert!(refused.stdout.is_empty(), "{}", refused.stdout);
+    }
+}
