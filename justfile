@@ -237,6 +237,15 @@ _sdk-install-test:
     platform="$(node scripts/npm-build.mjs platform --target "$target" --binary target/release/onemessagebus --out "$work/npm")"
     launcher="$(node scripts/npm-build.mjs launcher --out "$work/npm")"
     just node-sdk-dist "$work/tarballs" || fail "the Node SDK did not build — its output is above"
+    # The Node SDK's package test assembles its platform package around
+    # target/debug/onemessagebus, which this project depends on
+    # `onemessagebus-cli:build` for — but that target declares no outputs, so a
+    # cache hit replays its log and restores no binary, and running this recipe
+    # by name skips the dependency altogether. Build through Nx so the graph is
+    # what schedules it, then guarantee the artifact the test spawns exists.
+    just nx run onemessagebus-cli:build || fail "the debug binary did not build — its output is above"
+    [ -x target/debug/onemessagebus ] || just _crate-build onemessagebus-cli \
+      || fail "the debug binary the Node SDK's package test spawns did not build — its output is above"
     bun run --cwd npm/onemessagebus-sdk test:package \
       || fail "the Node SDK's packed tarball did not install and run — its output is above"
     for dir in "$platform" "$launcher"; do
