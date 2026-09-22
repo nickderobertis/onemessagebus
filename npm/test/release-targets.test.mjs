@@ -437,7 +437,10 @@ describe("the drift gate itself", () => {
     // still builds and publishes. Nothing would wait on that package — it is
     // covered, not a target — but the launcher would be shipping something the
     // declaration no longer accounts for.
-    const dropped = drift((document) => byId(document, "npm:onemessagebus-cli").covers.pop(), coversEveryPublishedName);
+    const dropped = drift(
+      (document) => byId(document, "npm:onemessagebus-cli").covers.pop(),
+      coversEveryPublishedName,
+    );
     assert.match(dropped.message, /no declared target names or covers/);
     assert.match(dropped.message, /npm:onemessagebus-cli-win32-x64/);
 
