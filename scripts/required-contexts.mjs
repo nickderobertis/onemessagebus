@@ -46,11 +46,33 @@ const SECRET = "RELEASE_PLZ_TOKEN";
 const PERMISSION =
   "repository administration (read), which is what branch-protection read requires";
 
+/// This repository's exit codes are a contract: `0` did it, `1` a well-formed
+/// no, `2` refused input. Drift is the well-formed no — the comparison ran and
+/// its answer is that protection does not require these contexts. Everything
+/// else here is input this gate refuses to work from: an argument it cannot
+/// read, a workflow it cannot derive from, a protection read it could not make.
+const REFUSED_INPUT = 2;
+const WELL_FORMED_NO = 1;
+
 class Refusal extends Error {
-  constructor(message, action) {
+  constructor(message, action, code = REFUSED_INPUT) {
     super(message);
     this.action = action;
+    this.code = code;
   }
+}
+
+/// A GitHub owner/repository pair and a branch name, as the API will take them.
+/// Both reach the endpoint this script builds, so both are checked at the
+/// boundary rather than interpolated on trust: a path segment that is not one
+/// would silently ask a different question.
+function identifier(flag, value, pattern) {
+  if (typeof value !== "string" || !pattern.test(value) || value.includes("..")) {
+    throw usage(
+      `\`${flag}\` is not a value this script will put in an API path: ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
 }
 
 function usage(problem) {
@@ -70,8 +92,8 @@ function parseArgv(argv) {
       return argv[at];
     };
     if (flag === "--list") options.list = true;
-    else if (flag === "--repo") options.repo = value();
-    else if (flag === "--branch") options.branch = value();
+    else if (flag === "--repo") options.repo = identifier(flag, value(), /^[\w.-]+\/[\w.-]+$/);
+    else if (flag === "--branch") options.branch = identifier(flag, value(), /^[\w./-]+$/);
     else if (flag === "--workflow") options.workflow = value();
     else throw usage(`unknown argument \`${flag}\``);
   }
@@ -130,7 +152,15 @@ function matrixLegs(job, matrix) {
 /// the pull request could never merge. The skip belongs inside the job, on its
 /// steps, where every leg still reports.
 function contextsEmittedBy(workflowText, where) {
-  const workflow = parse(workflowText);
+  let workflow;
+  try {
+    workflow = parse(workflowText);
+  } catch (error) {
+    throw new Refusal(
+      `${where} is not readable YAML: ${error.message}`,
+      "fix the workflow's syntax; until it parses, nothing can say which contexts it emits",
+    );
+  }
   const jobs = workflow?.jobs;
   if (!jobs || typeof jobs !== "object") {
     throw new Refusal(
@@ -162,6 +192,16 @@ function contextsEmittedBy(workflowText, where) {
       contexts.push(`${name} (${values.join(", ")})`);
     }
   }
+  // Two jobs (or two legs) that render one name would collapse in the
+  // comparison, and the set protection required would silently cover one fewer
+  // check than the workflow runs.
+  const duplicated = contexts.filter((context, at) => contexts.indexOf(context) !== at);
+  if (duplicated.length > 0) {
+    throw new Refusal(
+      `${where} emits the same context more than once: ${[...new Set(duplicated)].map((context) => `\`${context}\``).join(", ")}`,
+      "give each job a distinct name, so every check run protection requires is one this gate can account for",
+    );
+  }
   if (contexts.length === 0) {
     throw new Refusal(
       `${where} emits no contexts`,
@@ -178,13 +218,24 @@ function requiredContexts(document, where) {
   const required = document?.required_status_checks;
   if (!required) {
     throw new Refusal(
-      `${where} requires no status checks at all`,
-      "turn on required status checks for this branch, then re-run; until then nothing holds a merge to a green CI run",
+      `${where} requires no status checks at all, while the workflow emits contexts to require`,
+      "turn on required status checks for this branch and set them to the contexts `--list` gives; until then nothing holds a merge to a green CI run",
+      WELL_FORMED_NO,
     );
   }
-  const checks = required.checks;
-  if (Array.isArray(checks)) return checks.map((check) => String(check?.context));
-  if (Array.isArray(required.contexts)) return required.contexts.map(String);
+  const named = (values, field) =>
+    values.map((value, at) => {
+      const context = field === "checks" ? value?.context : value;
+      if (typeof context !== "string" || context.trim() === "") {
+        throw new Refusal(
+          `${where} lists a required check with no context name at \`${field}[${at}]\`: ${JSON.stringify(value)}`,
+          "check the API answer by hand; this gate will not guess at which check an unnamed entry stands for",
+        );
+      }
+      return context;
+    });
+  if (Array.isArray(required.checks)) return named(required.checks, "checks");
+  if (Array.isArray(required.contexts)) return named(required.contexts, "contexts");
   throw new Refusal(
     `${where} answered with no readable list of required contexts`,
     "check the API answer by hand; this gate cannot compare against a shape it does not recognise",
@@ -240,6 +291,7 @@ function compare(emitted, required, where) {
   throw new Refusal(
     lines.join("\n"),
     `set this branch's required status checks to exactly these ${emitted.length}:\n${emitted.map((context) => `  ${context}`).join("\n")}`,
+    WELL_FORMED_NO,
   );
 }
 
@@ -276,5 +328,5 @@ try {
 } catch (error) {
   if (!(error instanceof Refusal)) throw error;
   process.stderr.write(`required-contexts: ${error.message}\nACTION: ${error.action}\n`);
-  process.exit(1);
+  process.exit(error.code);
 }

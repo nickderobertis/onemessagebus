@@ -104,11 +104,19 @@ export function deriveFrom(workflow = CI_WORKFLOW) {
   return requiredContexts(["--list", "--workflow", workflow]);
 }
 
-/// A refusal is a non-zero exit, nothing on stdout — stdout is where `--list`
-/// puts an answer a maintainer pastes into a setting — and a reason with a next
-/// action on stderr.
-export function assertRefused(result, because) {
-  assert.notEqual(result.status, 0, `${because}: expected a non-zero exit, got 0`);
+/// This repository's exit codes: `0` did it, `1` a well-formed no, `2` refused
+/// input. A no of either kind writes nothing to stdout — stdout is where `--list`
+/// puts an answer a maintainer pastes into a setting, so one byte there would be
+/// read as a context — and gives a reason with a next action on stderr.
+export const WELL_FORMED_NO = 1;
+export const REFUSED_INPUT = 2;
+
+export function assertRefused(result, code, because) {
+  assert.equal(
+    result.status,
+    code,
+    `${because}: expected exit ${code}, got ${result.status}: ${result.stderr}`,
+  );
   assert.equal(result.stdout, "", `${because}: wrote to stdout while refusing`);
   assert.match(result.stderr, /ACTION: /, `${because}: gave no next action on stderr`);
 }

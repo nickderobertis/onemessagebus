@@ -35,21 +35,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      # For the YAML reader the derivation parses ci.yml with, from the committed
-      # lockfile — the same resolution every other job here gets.
-      - name: Install the workspace's Node dependencies
-        run: npm ci
+      - uses: ./.github/actions/setup-just
       # Reading branch protection needs repository-administration read, which
       # GITHUB_TOKEN does not have at any `permissions:` setting. RELEASE_PLZ_TOKEN
       # is the PAT that does and this repository already holds it, so nothing new
-      # is provisioned. The script refuses a read it could not make rather than
+      # is provisioned. The recipe refuses a read it could not make rather than
       # reading a refusal as "no contexts required", and names this secret and
       # that permission when it does.
       - name: Branch protection requires exactly the contexts ci.yml emits
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
         run: |
-          node scripts/required-contexts.mjs \
+          just required-contexts \
             --repo "$GITHUB_REPOSITORY" \
             --branch "$GITHUB_REF_NAME" \
             --workflow .github/workflows/ci.yml

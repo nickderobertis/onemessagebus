@@ -53,7 +53,9 @@ import { parse } from "yaml";
 
 import {
   CI_WORKFLOW,
+  REFUSED_INPUT,
   SHIMMABLE,
+  WELL_FORMED_NO,
   assertRefused,
   deriveFrom,
   protectionRequiring,
@@ -326,9 +328,45 @@ describe("the contexts ci.yml emits", () => {
     );
     try {
       const result = requiredContexts(["--list", "--workflow", path]);
-      assertRefused(result, "a matrix job with a job-level `if`");
+      assertRefused(result, REFUSED_INPUT, "a matrix job with a job-level `if`");
       assert.match(result.stderr, /sdk-install/);
       assert.match(result.stderr, /job-level `if`/);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a workflow two jobs would report one context for", () => {
+    // Collapsed into one name, the set protection requires covers one fewer
+    // check than the workflow runs, and nothing downstream could tell.
+    const { path, directory } = workflowWith((text) =>
+      text.replace(
+        "  msrv:\n    needs: changes\n",
+        "  msrv:\n    name: gate\n    needs: changes\n",
+      ),
+    );
+    try {
+      const result = requiredContexts(["--list", "--workflow", path]);
+      assertRefused(result, REFUSED_INPUT, "two jobs reporting one context");
+      assert.match(result.stderr, /the same context more than once: `gate`/);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a workflow it cannot read, rather than dumping a stack trace", () => {
+    const { path, directory } = workflowWith((text) => `${text}\n  : : not: yaml\n`);
+    try {
+      assertRefused(
+        requiredContexts(["--list", "--workflow", path]),
+        REFUSED_INPUT,
+        "a workflow that is not readable YAML",
+      );
+      assertRefused(
+        requiredContexts(["--list", "--workflow", `${path}.absent`]),
+        REFUSED_INPUT,
+        "a workflow that is not there",
+      );
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -367,7 +405,7 @@ describe("branch protection against the contexts ci.yml emits", () => {
     const result = requiredContexts(["--repo", REPO, "--branch", "main"], {
       answer: recordedProtection(),
     });
-    assertRefused(result, "protection missing two emitted contexts");
+    assertRefused(result, WELL_FORMED_NO, "protection missing two emitted contexts");
     assert.match(result.stderr, /missing: `sdk-install \(ubuntu-latest\)`/);
     assert.match(result.stderr, /missing: `sdk-install \(macos-latest\)`/);
     // And the next action is the list to set, so nobody has to assemble one.
@@ -379,7 +417,7 @@ describe("branch protection against the contexts ci.yml emits", () => {
     const result = requiredContexts(["--repo", REPO, "--branch", "main"], {
       answer: protectionRequiring([...CONTEXTS, "cross (freebsd-latest)"]),
     });
-    assertRefused(result, "protection requiring a context no job emits");
+    assertRefused(result, WELL_FORMED_NO, "protection requiring a context no job emits");
     assert.match(result.stderr, /extra: +`cross \(freebsd-latest\)`/);
   });
 
@@ -388,7 +426,7 @@ describe("branch protection against the contexts ci.yml emits", () => {
     const result = requiredContexts(["--repo", REPO, "--branch", "main"], {
       refusal: "gh: Resource not accessible by integration (HTTP 403)",
     });
-    assertRefused(result, "a refused protection read");
+    assertRefused(result, REFUSED_INPUT, "a refused protection read");
     assert.match(result.stderr, /RELEASE_PLZ_TOKEN/);
     assert.match(result.stderr, /administration \(read\)/);
     assert.match(result.stderr, /Resource not accessible by integration/);
@@ -396,12 +434,35 @@ describe("branch protection against the contexts ci.yml emits", () => {
     assert.doesNotMatch(result.stderr, /requires exactly/);
   });
 
+  it("refuses a repository or branch it will not put in an API path", () => {
+    // Both reach the endpoint the read is built from, so neither is interpolated
+    // on trust: a segment that is not an identifier asks a different question.
+    for (const argv of [
+      ["--repo", "nickderobertis"],
+      ["--repo", "nickderobertis/one messagebus"],
+      ["--repo", "../../etc"],
+      ["--repo", REPO, "--branch", "../main"],
+      ["--repo", REPO, "--branch", ""],
+    ]) {
+      assertRefused(requiredContexts(argv), REFUSED_INPUT, `the arguments ${argv.join(" ")}`);
+    }
+  });
+
+  it("refuses a protection answer whose required check has no name", (t) => {
+    if (skipUnshimmable(t)) return;
+    const unnamed = recordedProtection();
+    unnamed.required_status_checks.checks = [{ app_id: null }];
+    const result = requiredContexts(["--repo", REPO, "--branch", "main"], { answer: unnamed });
+    assertRefused(result, REFUSED_INPUT, "a required check with no context name");
+    assert.match(result.stderr, /`checks\[0\]`/);
+  });
+
   it("refuses a branch that requires no status checks at all", (t) => {
     if (skipUnshimmable(t)) return;
     const unprotected = recordedProtection();
     unprotected.required_status_checks = undefined;
     const result = requiredContexts(["--repo", REPO, "--branch", "main"], { answer: unprotected });
-    assertRefused(result, "a branch with no required status checks");
+    assertRefused(result, WELL_FORMED_NO, "a branch with no required status checks");
     assert.match(result.stderr, /requires no status checks/);
   });
 });

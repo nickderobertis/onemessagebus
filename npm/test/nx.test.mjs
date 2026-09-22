@@ -127,7 +127,7 @@ describe("scripts/nx", { skip: POSIX_ONLY }, () => {
     assert.equal(result.status, 1);
     assert.match(
       result.stderr,
-      /nx: npm not found; cannot install the pinned Nx the project graph needs/,
+      /node-modules: npm not found; cannot install the workspace's locked dependencies/,
     );
     assert.match(result.stderr, /ACTION: install Node\.js 20\+ .* and re-run 'just bootstrap'/);
   });
@@ -137,7 +137,7 @@ describe("scripts/nx", { skip: POSIX_ONLY }, () => {
     const bare = checkout(scratch, "no-lockfile", upstream.dir, { linkNodeModules: false });
     const result = wrapper(bare, "nx", ["show", "projects"]);
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /nx: 'npm ci' failed in /);
+    assert.match(result.stderr, /node-modules: 'npm ci' failed in /);
     assert.match(
       result.stderr,
       /ACTION: check network access to the npm registry, then re-run 'just bootstrap'/,
