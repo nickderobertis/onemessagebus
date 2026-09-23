@@ -10,6 +10,14 @@ files:
   # List committed files that shouldn't be judged (lock files, generated output).
   exclude:
     - "**/.git/**"
+    # Generated output, which the comment above says belongs here: the committed
+    # screenshots are `screenshots/capture.sh`'s rendering of the real binary and
+    # the digest baseline is screencomp's, both gated on their content hashes
+    # rather than read (screenshots/AGENTS.md). The font is vendored third-party
+    # bytes under its own OFL licence.
+    - "docs/screenshots/**"
+    - "shots/baseline/**"
+    - "screenshots/fonts/**"
 rationales: true
 # No `agents` block: the harness/model are NOT pinned here. `oneharness.toml`
 # (composed alongside this file) selects them in fallback mode — codex + gpt-5.5
