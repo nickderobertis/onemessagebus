@@ -105,9 +105,10 @@ rationale; the mechanics live in the files named. -->
   installed beside the binary the way a user installs them, and smoke-tested),
   `onemessagebus-cross-language-e2e` (the journey across Rust, Python and
   TypeScript, apart from the Rust journeys with edges to both SDKs),
-  `onemessagebus-visual-docs` (the screencomp capture, whose one target is the
-  `bootstrap` that activates the pre-push guard — it owns no gate target on
-  purpose),
+  `onemessagebus-visual-docs` (the screencomp capture: the `bootstrap` that
+  activates the pre-push guard, and the lint and journeys over the guard and its
+  scripts — but no capture target, because rendering a screenshot belongs to no
+  gate),
   and the root `workspace` project (the
   coverage floor and the supply-chain check). The binary is its own
   `publish = false` crate so the core stays a library with no command-line

@@ -186,6 +186,28 @@ _crate-test crate:
     @cargo test --doc -p {{crate}} --locked --quiet \
       || { echo "{{crate}}: doctests failed — fix the sample named above, or the README it is compiled from" >&2; exit 1; }
 
+# `onemessagebus-repo` holds root configuration to root sources; the two journeys
+# over the visual guard and its scripts live in the same crate but belong to
+# `onemessagebus-visual-docs`, which owns the code they drive (screenshots/AGENTS.md).
+# Nextest filters decide which run where, the way `_e2e-test` splits the
+# cross-language journey out of the e2e crate.
+visual-docs-binaries := "binary(visual_docs_guard) + binary(visual_docs_scripts)"
+
+# The repository-configuration tests, without the visual-docs journeys.
+_repo-test:
+    @cargo llvm-cov --no-report nextest -p onemessagebus-repo --locked -E 'not ({{visual-docs-binaries}})' --status-level fail --final-status-level fail \
+      || { echo "onemessagebus-repo: tests failed — fix the failures named above" >&2; exit 1; }
+    @cargo test --doc -p onemessagebus-repo --locked --quiet \
+      || { echo "onemessagebus-repo: doctests failed — fix the sample named above" >&2; exit 1; }
+
+# The visual guard and the scripts around it, driven the way git and a maintainer
+# drive them, with screencomp, freeze and the capture stood in for at the
+# subprocess seam. Renders no screenshot, so it is a gate target where a capture
+# is not.
+_visual-docs-test:
+    @cargo llvm-cov --no-report nextest -p onemessagebus-repo --locked -E '{{visual-docs-binaries}}' --status-level fail --final-status-level fail \
+      || { echo "onemessagebus-visual-docs: the journeys failed — fix the failures named above" >&2; exit 1; }
+
 # The compiled-binary journeys: the binary built instrumented in the coverage
 # target directory, so what the journeys spawn is attributed to the crates it
 # was built from, then the journey crate's tests over it.

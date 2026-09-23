@@ -1,7 +1,7 @@
 {
   "name": "onemessagebus-repo",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
-  "//": "llmlint: ignore[expensive_tests_stay_behind_their_own_edge] measured: both visual-docs journeys run in 0.27s with no build, no network and no install — the order of a test this target already carried. The tiers split behind their own edge each compile or install something first. `test`'s inputs name every root file these tests read, because Nx cannot see through an `include_str!`.",
+  "//": "`test`'s inputs name every root file these tests read, because Nx cannot see through an `include_str!`. The `visual_docs_guard` and `visual_docs_scripts` binaries sit in this crate but are run by `onemessagebus-visual-docs`, which owns the scripts they drive; the nextest filters in the justfile are what split them, as they split the cross-language journey out of the e2e crate.",
   "projectType": "library",
   "sourceRoot": "crates/onemessagebus-repo/tests",
   "tags": ["scope:repo", "lang:rust", "type:repo"],
@@ -12,7 +12,7 @@
     "format-check": { "command": "just _crate-fmt-check onemessagebus-repo" },
     "lint": { "command": "just _crate-lint onemessagebus-repo" },
     "test": {
-      "command": "just _crate-test onemessagebus-repo",
+      "command": "just _repo-test",
       "inputs": [
         "crateSource",
         "{workspaceRoot}/release-targets.toml",
@@ -20,14 +20,7 @@
         "{workspaceRoot}/clippy.toml",
         "{workspaceRoot}/rustfmt.toml",
         "{workspaceRoot}/rust-toolchain.toml",
-        "{workspaceRoot}/.github/workflows/visual-docs.yml",
-        "{workspaceRoot}/.githooks/pre-push",
-        "{workspaceRoot}/screenshots/*.sh",
-        "{workspaceRoot}/screenshots/freeze.sha256",
-        "{workspaceRoot}/screenshots/fixture/frames.json",
-        "{workspaceRoot}/crates/onemessagebus-e2e/tests/layouts/desk.json",
-        "{workspaceRoot}/crates/onemessagebus-e2e/tests/e2e/support.rs",
-        "{workspaceRoot}/screencomp.toml"
+        "{workspaceRoot}/.github/workflows/visual-docs.yml"
       ]
     },
     "doc": { "command": "just _crate-doc onemessagebus-repo" },

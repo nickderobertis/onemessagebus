@@ -7,6 +7,10 @@
 //! cheaply and offline is everything around it — the renderer's installer over a
 //! stand-in release tree, the fixture stager, the normalizer, and the blessing
 //! command's refusals — so each is.
+//!
+//! These live in this crate because a Rust integration test must, and are run by
+//! `onemessagebus-visual-docs`, whose `implicitDependencies` declare both the
+//! scripts they drive and the `onemessagebus-e2e` fixture they reconcile against.
 
 #![cfg(unix)]
 

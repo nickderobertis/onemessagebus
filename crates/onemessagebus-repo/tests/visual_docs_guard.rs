@@ -8,6 +8,10 @@
 //! here — over a throwaway repository with a real git history, the real
 //! `screenshots/host-arch.sh` and the real `screenshots/bless-baseline.sh`.
 //!
+//! It lives in this crate because a Rust integration test must, and is run by
+//! `onemessagebus-visual-docs` — the project that owns the guard and the scripts
+//! it drives — so the reach into them is a declared edge rather than a reach-in.
+//!
 //! What is stood in for is the subprocess seam: `screencomp` and `freeze` on
 //! `PATH`, and `screenshots/capture.sh`. Running the real capture would put a
 //! screenshot step inside `just check`, which the adoption keeps it out of
