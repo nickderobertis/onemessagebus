@@ -57,8 +57,6 @@ fn stderr(run: &Output) -> String {
     String::from_utf8_lossy(&run.stderr).into_owned()
 }
 
-// --- normalize.sh: the one place the per-run values are rewritten ------------
-
 #[test]
 fn the_normalizer_fixes_every_per_run_value_and_leaves_the_rest_alone() {
     let dir = tempfile::tempdir().expect("a scratch directory");
@@ -96,8 +94,6 @@ fn the_normalizer_fixes_every_per_run_value_and_leaves_the_rest_alone() {
     let again = run("normalize.sh", &[], &[], dir.path(), &out);
     assert_eq!(stdout(&again), out, "normalizing twice moved the text");
 }
-
-// --- stage-fixture.sh: the bus both renderers take their pictures over -------
 
 #[test]
 fn the_stager_writes_one_configuration_both_renderers_can_read() {
@@ -169,8 +165,6 @@ fn the_stager_refuses_a_directory_the_configuration_could_not_name() {
         stderr(&missing)
     );
 }
-
-// --- install-freeze.sh: the renderer, from a stand-in release tree -----------
 
 /// A release tree the installer can fetch over `file://`: one archive holding
 /// `freeze_<version>_Linux_<arch>/freeze`, and a digest pin file for it.
@@ -396,8 +390,6 @@ fn the_installer_refuses_a_base_url_and_a_destination_it_cannot_trust() {
         );
     }
 }
-
-// --- bless-baseline.sh: what it refuses before it rewrites anything ----------
 
 #[test]
 fn blessing_refuses_when_there_is_no_capture_to_bless() {

@@ -15,9 +15,9 @@ set -euo pipefail
 REMOTE="${1:-origin}"
 
 LANE="$(bash screenshots/host-arch.sh)"
-MANIFEST="shots/baseline/${LANE}.json"     # the lane's committed baseline
-GALLERY="shots/review"                     # [guard].gallery (review output)
-CURRENT="shots/current"                    # capture root, mirrors visual-docs.yml
+MANIFEST="shots/baseline/${LANE}.json"
+GALLERY="shots/review"
+CURRENT="shots/current"
 
 # No-op under CI: the visual-docs workflow is the source of truth there.
 [ -n "${CI:-}" ] && exit 0
@@ -151,13 +151,18 @@ if [ "$status" -eq 0 ]; then
   echo "pre-push: screenshots unchanged against $MANIFEST — ok to push"
   exit 0
 elif [ "$status" -ne 3 ]; then
-  echo "pre-push: screencomp classify failed (exit $status)" >&2
-  exit "$status"
+  # Anything but 0 (clean) or 3 (drift) is screencomp failing rather than
+  # answering. Its status is its own vocabulary, so refuse in this repository's:
+  # the guard could not evaluate the push, which is a well-formed no.
+  echo "pre-push: 'screencomp classify' could not evaluate the capture against" >&2
+  echo "          $MANIFEST (exit $status). Is screencomp current? Re-run, or" >&2
+  echo "          bypass this push with: git push --no-verify" >&2
+  exit 1
 fi
 
 # Drift (exit 3): re-bless this lane and render it for review, then refuse — so
 # the refreshed baseline and README images are committed deliberately.
-SHOTS_CURRENT="$CURRENT" bash screenshots/bless-baseline.sh   # rewrites $MANIFEST
+SHOTS_CURRENT="$CURRENT" bash screenshots/bless-baseline.sh
 screencomp gallery --input "$CURRENT" --arch "$LANE" \
   --output "$GALLERY" --title "Pre-push screenshot review" >/dev/null
 

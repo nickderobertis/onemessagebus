@@ -42,39 +42,31 @@ away from what the tool prints ([`screenshots/AGENTS.md`](screenshots/AGENTS.md)
 
 ## Queues
 
-`send` appends a record to a queue, `next` claims one, `subscribe` tails the log
-as it grows, and `status` says what each queue holds. A record is shaped by the
-layout's writers, checked against its author's grants and validated against the
-queue's schema before it lands, and the queue's policy — ordering, retention,
-whether a claimed record is held pending an answer — is the layout's to declare
-(`docs/queues.md`). The GIF above is `subscribe` on the same queue. `validate`
-judges a record exactly as `send` would and appends nothing (`docs/validators.md`),
-and `transports` lists the kinds this build can open — the built-in `local` and
-`memory`, and every plugin on `PATH` (`docs/transport.md`).
+A queue is a log a transport keeps, under a layout that says how its records are
+shaped, who may write them and what happens to one that is claimed. `send`
+appends, `next` claims, `subscribe` tails as it grows — the GIF above is
+`subscribe` on this queue — `status` reports, `validate` judges without appending
+and `transports` lists the kinds this build can open. `docs/queues.md`,
+`docs/validators.md` and `docs/transport.md` are those stories.
 
 ![A send printing the queue, byte position and id its record landed at; a claim printing that record back; then one counts line per queue — records, waiting, pending, abandoned, unread — each with its consumers' cursors indented beneath it](docs/screenshots/queues.svg)
 
 ## Ask, and the answer that echoes the correlation
 
 `ask` raises a question and waits for the one reply that carries its
-correlation. The correlation is printed on stderr the moment the question is on
-the queue, so a second process can bind its `reply` to exactly that question;
-between the two lines the `ask` is simply waiting, for as long as `--timeout`
-allows. What it prints when the answer arrives is one JSON line carrying the
-reply record (`docs/ask.md`).
+correlation; `reply` is how another process gives it. What the picture shows is
+the shape of that wait: a correlation the moment the question is queued, then
+nothing at all, then the answer. `docs/ask.md` is the rest.
 
 ![An ask printing `correlation: c-…` and then, after a lead answers from another shell, one JSON line whose answer is `reply` and whose reply record carries that same correlation](docs/screenshots/ask.svg)
 
 ## Streams
 
-`events emit` appends one envelope to a stream file under its lock, so several
-processes may write one file and leave a gapless series; `events merge` reads
-any number of stream files into one stream in `(ts, stream, seq)` order.
-`--filter` is the one filter grammar, inline JSON or a YAML file, and text
-format renders one line per envelope. Which source words an envelope may carry
-and which labels are typed how come from the vocabulary `--profile` names —
-`--profile open` (the default) is the one this binary links, and it reserves
-nothing.
+`events emit` appends one envelope to a stream file, `events merge` reads any
+number of them back as one ordered stream, and `--filter` narrows what comes out.
+Which source words an envelope may carry, and how its labels are typed, come from
+the vocabulary `--profile` names — `--profile open` (the default) is the one this
+binary links. `docs/wire.md` is the envelope.
 
 ![Two NDJSON streams merged into one timestamp-ordered listing — a checkout's and a warehouse's envelopes interleaved, with labels, payload and an artifact reference — then the same merge narrowed by a filter to one source](docs/screenshots/events-merge.svg)
 
@@ -85,36 +77,30 @@ $ echo '{"note":"hello"}' | onemessagebus events emit run.ndjson --kind note-lef
 
 ## Schemas
 
-`schema list` is every id this build knows: its own, whatever a `--registry`
-directory holds, and every document of every bundle a configuration's `schemas`
-links resolved to (`docs/schema-links.md`). `schema check` judges a payload
-against one of them and names the JSON pointer of the first violation, which is
-the same check a record passes on its way onto a queue. `schema register` records
-a document in a `--registry` directory and `schema gen` renders one as JSON or as
-Rust that regenerates it. `schemas` lists the cache those links resolve through,
-and `schemas clear|fetch` empties and warms it.
+`schema list` is every id this build knows, `schema check` judges a payload
+against one, `schema register` records a document of your own and `schema gen`
+renders one back as JSON or as Rust. Under them, `schemas` and
+`schemas clear|fetch` are the cache a configuration's links resolve through.
+`docs/schema-links.md` is how a link and its pin work.
 
 ![A listing of registered schema ids — the bus's own transport and resident protocols beside a linked bundle's desk and frame schemas — then a check refusing a record at `/blocking` and exiting 1](docs/screenshots/schema.svg)
 
 ## Serve a member protocol
 
-`serve --codec` answers a configured member protocol: one frame in, one response
-out, with the frame validated against the schema its codec names before any
-binding runs (`docs/codecs.md`). With `--resident --socket` instead, `serve`
-holds the configured transport open and answers every capability over a unix
-socket — which is how both SDKs subscribe without spawning a process per call.
-`deliver` and `inbox carried` are the other side of that: one message into the
-spool a running receiver bound, and the store that keeps messages for a receiver
-that is not running (`docs/inbox.md`).
+`serve` answers a configured member protocol — `serve --codec`, one frame in and
+one response out — and `serve --resident --socket` instead holds the transport open
+and answers every capability over a unix socket, which is how both SDKs subscribe
+without spawning a process per call. `deliver` and `inbox carried` are the other
+side of that, for a receiver that is running and one that is not.
+`docs/codecs.md` and `docs/inbox.md` are those two.
 
 ![A quote frame piped into a codec session and the response document it answered with, built from the frame's own fields](docs/screenshots/serve.svg)
 
 ## Exit codes are a contract
 
-`0` did it; `1` is well-formed input whose answer is no — a payload that violates
-its schema, a question nobody answered; `2` is input the verb refuses. A usage
-error of `ask`, `reply` or `validate` is one line naming the verb, what was
-wrong, and that verb's `--help`, with nothing of clap's own report.
+Three of them, and the table that assigns them is `docs/cli.md`'s. What the
+picture shows is the shape a refusal takes when you meet one: a single line
+naming the verb, what was wrong with it, and where to read more.
 
 ![A one-line refusal — the verb, the invalid `--timeout` value and a pointer to that verb's help — and the exit code 2 the shell then reports](docs/screenshots/refusal.svg)
 
