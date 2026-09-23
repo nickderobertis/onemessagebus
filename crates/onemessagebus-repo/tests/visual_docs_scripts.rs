@@ -203,6 +203,12 @@ impl Release {
         Self { dir, stem }
     }
 
+    /// Replace the archive's bytes, keeping its name — for the paths after the
+    /// digest check.
+    fn replace_archive(&self, bytes: &[u8]) {
+        std::fs::write(self.archive(), bytes).expect("the archive is replaced");
+    }
+
     fn base_url(&self) -> String {
         format!("file://{}", self.dir.path().display())
     }
@@ -502,4 +508,255 @@ fn the_lane_name_is_the_same_for_every_spelling_of_one_architecture() {
             "a host reporting {reported} was given the wrong lane"
         );
     }
+}
+
+/// The three overrides that point the installer at a stand-in release tree.
+fn installing<'a>(release: &'a Release, sums: &'a Path, into: &'a Path) -> Vec<(&'a str, String)> {
+    vec![
+        ("FREEZE_BASE_URL", release.base_url()),
+        (
+            "FREEZE_INSTALL_DIR",
+            into.to_str().expect("a UTF-8 path").to_owned(),
+        ),
+        (
+            "FREEZE_SHA256_FILE",
+            sums.to_str().expect("a UTF-8 path").to_owned(),
+        ),
+    ]
+}
+
+fn install(env: &[(&str, String)], cwd: &Path) -> Output {
+    let borrowed: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    run("install-freeze.sh", &[], &borrowed, cwd, "")
+}
+
+#[test]
+fn the_installer_refuses_a_release_that_has_no_archive_to_download() {
+    let release = Release::new("#!/usr/bin/env bash\n");
+    let sums = release.sums(None);
+    std::fs::remove_file(release.archive()).expect("the archive is taken away");
+    let into = tempfile::tempdir().expect("an install directory");
+
+    let refused = install(&installing(&release, &sums, into.path()), into.path());
+
+    assert_eq!(
+        refused.status.code(),
+        Some(1),
+        "a missing archive installed"
+    );
+    assert!(
+        stderr(&refused).contains("could not download"),
+        "{}",
+        stderr(&refused)
+    );
+    assert!(
+        stderr(&refused).contains("install freeze from"),
+        "the refusal does not say how to get one another way: {}",
+        stderr(&refused)
+    );
+    assert!(!into.path().join("freeze").exists());
+}
+
+#[test]
+fn the_installer_refuses_an_archive_that_matches_its_pin_but_does_not_unpack() {
+    let release = Release::new("#!/usr/bin/env bash\n");
+    release.replace_archive(b"not a gzip stream at all");
+    // Pinned to what is really there, so the digest check passes and the failure
+    // is the one after it.
+    let sums = release.sums(None);
+    let into = tempfile::tempdir().expect("an install directory");
+
+    let refused = install(&installing(&release, &sums, into.path()), into.path());
+
+    assert_eq!(
+        refused.status.code(),
+        Some(1),
+        "an unreadable archive installed"
+    );
+    assert!(
+        stderr(&refused).contains("did not\n                unpack"),
+        "{}",
+        stderr(&refused)
+    );
+    assert!(!into.path().join("freeze").exists());
+}
+
+#[test]
+fn the_installer_refuses_an_archive_that_carries_no_renderer() {
+    let release = Release::new("#!/usr/bin/env bash\n");
+    // A well-formed archive of the right name holding something else entirely.
+    let elsewhere = tempfile::tempdir().expect("a scratch tree");
+    std::fs::write(elsewhere.path().join("README"), "no freeze here\n").expect("a decoy");
+    let tar = Command::new("tar")
+        .args([
+            "-czf",
+            release.archive().to_str().expect("a UTF-8 path"),
+            "-C",
+        ])
+        .arg(elsewhere.path())
+        .arg("README")
+        .output()
+        .expect("tar runs");
+    assert!(tar.status.success());
+    let sums = release.sums(None);
+    let into = tempfile::tempdir().expect("an install directory");
+
+    let refused = install(&installing(&release, &sums, into.path()), into.path());
+
+    assert_eq!(refused.status.code(), Some(1), "an empty archive installed");
+    assert!(
+        stderr(&refused).contains("upstream changed the archive layout"),
+        "{}",
+        stderr(&refused)
+    );
+    assert!(!into.path().join("freeze").exists());
+}
+
+#[test]
+fn the_installer_refuses_a_destination_it_cannot_write() {
+    let release = Release::new("#!/usr/bin/env bash\n");
+    let sums = release.sums(None);
+    let into = tempfile::tempdir().expect("an install directory");
+    let readonly = into.path().join("readonly");
+    std::fs::create_dir(&readonly).expect("a directory");
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mut mode = std::fs::metadata(&readonly)
+            .expect("it is there")
+            .permissions();
+        mode.set_mode(0o500);
+        std::fs::set_permissions(&readonly, mode).expect("it is made read-only");
+    }
+
+    let refused = install(
+        &installing(&release, &sums, &readonly.join("bin")),
+        into.path(),
+    );
+
+    assert_eq!(
+        refused.status.code(),
+        Some(1),
+        "it installed into a read-only tree"
+    );
+    assert!(
+        stderr(&refused).contains("could not install into"),
+        "{}",
+        stderr(&refused)
+    );
+}
+
+#[test]
+fn the_installer_refuses_an_architecture_it_pins_no_build_for() {
+    let release = Release::new("#!/usr/bin/env bash\n");
+    let sums = release.sums(None);
+    let into = tempfile::tempdir().expect("an install directory");
+    let bin = into.path().join("stand-ins");
+    std::fs::create_dir_all(&bin).expect("a stand-in bin");
+    std::fs::write(
+        bin.join("uname"),
+        "#!/usr/bin/env bash\nprintf 's390x\\n'\n",
+    )
+    .expect("a stand-in uname");
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mut mode = std::fs::metadata(bin.join("uname"))
+            .expect("it is there")
+            .permissions();
+        mode.set_mode(0o755);
+        std::fs::set_permissions(bin.join("uname"), mode).expect("it is executable");
+    }
+
+    let mut env = installing(&release, &sums, into.path());
+    env.push((
+        "PATH",
+        format!("{}:/usr/bin:/bin", bin.to_str().expect("a UTF-8 path")),
+    ));
+    let refused = install(&env, into.path());
+
+    assert_eq!(
+        refused.status.code(),
+        Some(1),
+        "an unpinned architecture installed"
+    );
+    assert!(stderr(&refused).contains("s390x"), "{}", stderr(&refused));
+    assert!(
+        stderr(&refused).contains("Linux x86_64 and arm64 only"),
+        "the refusal does not say what is pinned: {}",
+        stderr(&refused)
+    );
+}
+
+#[test]
+fn the_stager_refuses_a_directory_it_cannot_create_or_write() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let readonly = dir.path().join("readonly");
+    std::fs::create_dir(&readonly).expect("a directory");
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mut mode = std::fs::metadata(&readonly)
+            .expect("it is there")
+            .permissions();
+        mode.set_mode(0o500);
+        std::fs::set_permissions(&readonly, mode).expect("it is made read-only");
+    }
+
+    let refused = run(
+        "stage-fixture.sh",
+        &[readonly.join("fixture").to_str().expect("a UTF-8 path")],
+        &[],
+        dir.path(),
+        "",
+    );
+    assert_eq!(
+        refused.status.code(),
+        Some(1),
+        "it staged into a read-only tree"
+    );
+    assert!(
+        stderr(&refused).contains("could not make the fixture directory"),
+        "{}",
+        stderr(&refused)
+    );
+
+    // And when the directory is there but its configuration cannot be written.
+    let refused = run(
+        "stage-fixture.sh",
+        &[readonly.to_str().expect("a UTF-8 path")],
+        &[],
+        dir.path(),
+        "",
+    );
+    assert_eq!(
+        refused.status.code(),
+        Some(1),
+        "it wrote into a read-only directory"
+    );
+    assert!(
+        stderr(&refused).contains("could not write the configuration"),
+        "{}",
+        stderr(&refused)
+    );
+}
+
+#[test]
+fn blessing_refuses_a_capture_root_that_reads_as_an_option() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let refused = run(
+        "bless-baseline.sh",
+        &[],
+        &[("SHOTS_CURRENT", "--input")],
+        dir.path(),
+        "",
+    );
+
+    assert_eq!(
+        refused.status.code(),
+        Some(1),
+        "an option was blessed as a capture"
+    );
+    assert!(
+        stderr(&refused).contains("SHOTS_CURRENT"),
+        "{}",
+        stderr(&refused)
+    );
 }

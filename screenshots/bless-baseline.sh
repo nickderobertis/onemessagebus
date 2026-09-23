@@ -15,6 +15,13 @@ if ! command -v screencomp >/dev/null 2>&1; then
 fi
 
 current="${SHOTS_CURRENT:-shots/current}"
+case "$current" in
+-*)
+  echo "bless-baseline: SHOTS_CURRENT must name the capture to bless, not" >&2
+  echo "                something screencomp would read as an option: $current" >&2
+  exit 1
+  ;;
+esac
 if [ ! -d "$current" ]; then
   echo "bless-baseline: no capture to bless at $current" >&2
   echo "                Capture one first: just screenshots" >&2
