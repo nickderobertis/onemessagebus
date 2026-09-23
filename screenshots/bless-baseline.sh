@@ -21,7 +21,11 @@ if [ ! -d "$current" ]; then
   exit 1
 fi
 
-lane="$(bash "$(dirname "$0")/host-arch.sh")"
+lane="$(bash "$(dirname "$0")/host-arch.sh")" || {
+  echo "bless-baseline: this host's lane could not be named (the error is above)," >&2
+  echo "                so there is no baseline to refresh." >&2
+  exit 1
+}
 screencomp manifest --input "$current" --arch "$lane" --output "shots/baseline/${lane}.json" || {
   echo "bless-baseline: screencomp could not write the $lane baseline from" >&2
   echo "                $current (its error is above). Recapture first:" >&2

@@ -12,7 +12,12 @@
 set -euo pipefail
 
 root="${1:?stage-fixture: name the directory to stage the fixture in}"
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || {
+  echo "stage-fixture: cannot resolve this script's own directory, so the layout" >&2
+  echo "               and frame bundles it links cannot be found. Run it from a" >&2
+  echo "               checkout rather than a copied file." >&2
+  exit 1
+}
 desk="$here/../crates/onemessagebus-e2e/tests/layouts/desk.json"
 
 # `$root` is interpolated into a double-quoted YAML scalar and into a `file://`

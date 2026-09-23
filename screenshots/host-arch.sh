@@ -8,7 +8,12 @@
 # [capture].arches in screencomp.toml, which is what screencomp fans CI out over.
 set -euo pipefail
 
-arch="$(uname -m)"
+arch="$(uname -m)" || {
+  echo "host-arch: 'uname -m' did not answer, so this host's capture lane cannot" >&2
+  echo "           be named. Run it by hand to see why; every screenshot command" >&2
+  echo "           needs a lane." >&2
+  exit 1
+}
 case "$arch" in
 x86_64 | amd64) arch="x86_64" ;;
 arm64 | aarch64) arch="arm64" ;;

@@ -16,4 +16,10 @@ set -euo pipefail
 sed \
   -e 's/c-[0-9a-f]\{32\}/c-4f3c1d92a08b47e6b1d5c0a7e93f2b18/g' \
   -e 's/"raised_at":[0-9]\{13\}/"raised_at":1789300000000/g' \
-  -e 's/"at":[0-9]\{13\}/"at":1789300000000/g'
+  -e 's/"at":[0-9]\{13\}/"at":1789300000000/g' || {
+  echo "normalize: the per-run values were not rewritten (sed's error is above)," >&2
+  echo "           so what a caller captured still carries this run's correlation" >&2
+  echo "           and instants and cannot be hashed. Re-run; if it repeats, the" >&2
+  echo "           expressions above need a sed this host has." >&2
+  exit 1
+}

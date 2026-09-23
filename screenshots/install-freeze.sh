@@ -85,7 +85,12 @@ curl -fsSL -o "$tmp/freeze.tar.gz" "$base_url/v${freeze_version}/${stem}.tar.gz"
 # Validate the archive before unpacking it. The expected digest is pinned in THIS
 # repository rather than fetched beside the archive: a checksum served from the
 # download's own origin vouches for nothing.
-expected="$(awk -v want="${stem}.tar.gz" '$2 == want { print $1 }' "$sums_file")"
+expected="$(awk -v want="${stem}.tar.gz" '$2 == want { print $1 }' "$sums_file")" || {
+  echo "install-freeze: could not read the digest pins in $sums_file (the error is" >&2
+  echo "                above). Restore it from git; without it nothing vouches" >&2
+  echo "                for the download." >&2
+  exit 1
+}
 if [ -z "$expected" ]; then
   echo "install-freeze: no pinned sha256 for ${stem}.tar.gz in $sums_file" >&2
   echo "                Add its line from" >&2

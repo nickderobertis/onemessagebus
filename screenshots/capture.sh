@@ -167,8 +167,12 @@ run() { (cd "$work" && "$bus" "$@"); }
 # same one the animated hero passes its tail through.
 normalize() {
   local rewritten="$1.normalized"
-  bash "$repo_root/screenshots/normalize.sh" <"$1" >"$rewritten"
-  mv "$rewritten" "$1"
+  bash "$repo_root/screenshots/normalize.sh" <"$1" >"$rewritten" && mv "$rewritten" "$1" || {
+    echo "screenshots: a scene's per-run values were not rewritten (the error is" >&2
+    echo "             above), so its bytes would differ on every machine and" >&2
+    echo "             could not be hashed. Nothing was rendered." >&2
+    exit 1
+  }
 }
 
 # The scene being built: `emit` appends one line of it, and `render` turns it
