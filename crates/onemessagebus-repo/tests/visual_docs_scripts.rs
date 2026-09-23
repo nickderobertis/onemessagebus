@@ -493,16 +493,22 @@ fn the_installer_refuses_a_base_url_and_a_destination_it_cannot_trust() {
 #[test]
 fn blessing_refuses_when_there_is_no_capture_to_bless() {
     let dir = tempfile::tempdir().expect("a scratch directory");
+    // On a PATH with no screencomp, because what the caller asked for is wrong
+    // whether or not this host could render: a lane without the tool must still
+    // be told there is nothing to bless rather than to go and install it.
     let refused = run(
         "bless-baseline.sh",
         &[],
-        &[(
-            "SHOTS_CURRENT",
-            dir.path()
-                .join("never-captured")
-                .to_str()
-                .expect("a UTF-8 path"),
-        )],
+        &[
+            ("PATH", "/usr/bin:/bin"),
+            (
+                "SHOTS_CURRENT",
+                dir.path()
+                    .join("never-captured")
+                    .to_str()
+                    .expect("a UTF-8 path"),
+            ),
+        ],
         dir.path(),
         "",
     );
@@ -834,10 +840,12 @@ fn the_stager_refuses_a_directory_it_cannot_create_or_write() {
 #[test]
 fn blessing_refuses_a_capture_root_that_reads_as_an_option() {
     let dir = tempfile::tempdir().expect("a scratch directory");
+    // On a screencomp-free PATH, for the reason above: naming the typo beats
+    // sending the caller to install a renderer it would refuse again without.
     let refused = run(
         "bless-baseline.sh",
         &[],
-        &[("SHOTS_CURRENT", "--input")],
+        &[("PATH", "/usr/bin:/bin"), ("SHOTS_CURRENT", "--input")],
         dir.path(),
         "",
     );

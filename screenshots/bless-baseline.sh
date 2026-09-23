@@ -7,13 +7,10 @@
 # the lane or the manifest path. $SHOTS_CURRENT overrides the capture root.
 set -euo pipefail
 
-if ! command -v screencomp >/dev/null 2>&1; then
-  echo "bless-baseline: screencomp is not installed, so the baseline cannot be" >&2
-  echo "                refreshed. Install it and retry:" >&2
-  echo "                https://github.com/nickderobertis/screencomp#install" >&2
-  exit 1
-fi
-
+# What the caller asked for is checked before this host is: a wrong
+# $SHOTS_CURRENT is wrong on every machine, while a missing screencomp is only
+# true of this one, and a lane without the renderer is owed the refusal it
+# actually earned rather than an install link it would hit again afterwards.
 current="${SHOTS_CURRENT:-shots/current}"
 case "$current" in
 -*)
@@ -25,6 +22,13 @@ esac
 if [ ! -d "$current" ]; then
   echo "bless-baseline: no capture to bless at $current" >&2
   echo "                Capture one first: just screenshots" >&2
+  exit 1
+fi
+
+if ! command -v screencomp >/dev/null 2>&1; then
+  echo "bless-baseline: screencomp is not installed, so the baseline cannot be" >&2
+  echo "                refreshed. Install it and retry:" >&2
+  echo "                https://github.com/nickderobertis/screencomp#install" >&2
   exit 1
 fi
 
