@@ -1,7 +1,7 @@
 {
   "name": "onemessagebus-repo",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
-  "//": "`test`'s inputs name every root file these tests read, so a change to one re-runs them. The visual-docs entries are the coupling `onemessagebus-visual-docs` cannot carry as a graph edge: this is a crate, and npm/test/project-boundaries.test.mjs holds a crate's implicitDependencies to exactly its Cargo workspace dependencies, which are none.",
+  "//": "llmlint: ignore[expensive_tests_stay_behind_their_own_edge] measured rather than inferred: the two visual-docs journeys run in 0.27s together, spawn no build, no network and no package install, and are the same order as `retired_codec_words.rs` (0.26s), which has always been in this target. The tiers this repository really did split behind their own edge — `onemessagebus-e2e`, `onemessagebus-sdk-install-e2e`, `onemessagebus-cross-language-e2e` — each compile a binary or install a package first. An edge here would buy nothing and cost a project. `test`'s inputs name every root file these tests read, so a change to one re-runs them. The visual-docs entries are the coupling `onemessagebus-visual-docs` cannot carry as a graph edge: this is a crate, and npm/test/project-boundaries.test.mjs holds a crate's implicitDependencies to exactly its Cargo workspace dependencies, which are none.",
   "projectType": "library",
   "sourceRoot": "crates/onemessagebus-repo/tests",
   "tags": ["scope:repo", "lang:rust", "type:repo"],
