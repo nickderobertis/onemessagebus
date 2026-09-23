@@ -14,7 +14,11 @@ freeze_version="0.2.2"
 # freeze's Linux release assets are named for the arch the way screencomp names
 # its lanes (x86_64 / arm64); map explicitly anyway, since that is a coincidence
 # of two vocabularies rather than one shared name.
-host="$(uname -m)"
+host="$(uname -m)" || {
+  echo "install-freeze: 'uname -m' did not answer, so the release asset for this" >&2
+  echo "                machine cannot be chosen. Run it by hand to see why." >&2
+  exit 1
+}
 case "$host" in
 x86_64 | amd64) asset_arch="x86_64" ;;
 arm64 | aarch64) asset_arch="arm64" ;;

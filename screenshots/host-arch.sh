@@ -18,4 +18,14 @@ case "$arch" in
 x86_64 | amd64) arch="x86_64" ;;
 arm64 | aarch64) arch="arm64" ;;
 esac
+# A lane names a directory and a committed baseline file, so an architecture
+# nobody here has mapped still has to be a plain path component.
+case "$arch" in
+*[!A-Za-z0-9_-]* | "")
+  echo "host-arch: 'uname -m' answered \"$arch\", which cannot name a capture" >&2
+  echo "           lane — a lane is a directory and a shots/baseline/<arch>.json." >&2
+  echo "           Map it in this script if this host should have one." >&2
+  exit 1
+  ;;
+esac
 printf '%s\n' "$arch"

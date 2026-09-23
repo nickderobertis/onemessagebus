@@ -138,6 +138,8 @@ fn the_stager_refuses_a_directory_the_configuration_could_not_name() {
     for (root, what) in [
         ("-rf", "reads as an option"),
         ("a\"quote", "carries a quote"),
+        ("a space", "carries a quote"),
+        ("a#fragment", "carries a quote"),
     ] {
         let refused = run("stage-fixture.sh", &[root], &[], dir.path(), "");
         assert_eq!(
@@ -756,6 +758,48 @@ fn blessing_refuses_a_capture_root_that_reads_as_an_option() {
     );
     assert!(
         stderr(&refused).contains("SHOTS_CURRENT"),
+        "{}",
+        stderr(&refused)
+    );
+}
+
+#[test]
+fn a_lane_name_has_to_be_something_a_path_and_a_baseline_can_be_named_for() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let bin = dir.path().join("bin");
+    std::fs::create_dir_all(&bin).expect("a stand-in bin");
+    std::fs::write(
+        bin.join("uname"),
+        "#!/usr/bin/env bash\nprintf 'x86_64; rm -rf /\\n'\n",
+    )
+    .expect("the stand-in uname");
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mut mode = std::fs::metadata(bin.join("uname"))
+            .expect("it is there")
+            .permissions();
+        mode.set_mode(0o755);
+        std::fs::set_permissions(bin.join("uname"), mode).expect("it is executable");
+    }
+
+    let refused = run(
+        "host-arch.sh",
+        &[],
+        &[(
+            "PATH",
+            &format!("{}:/usr/bin:/bin", bin.to_str().expect("a UTF-8 path")),
+        )],
+        dir.path(),
+        "",
+    );
+
+    assert_eq!(
+        refused.status.code(),
+        Some(1),
+        "an architecture that cannot name a directory was handed back as a lane"
+    );
+    assert!(
+        stderr(&refused).contains("cannot name a capture"),
         "{}",
         stderr(&refused)
     );

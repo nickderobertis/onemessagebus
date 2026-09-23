@@ -281,8 +281,20 @@ render() {
     echo "             just screenshots-tools" >&2
     exit 1
   }
+  # freeze exiting 0 is not the same as freeze having written a picture, and an
+  # empty file would be hashed and blessed as this scene's bytes.
+  if [ ! -s "$SHOTS_OUT/$image" ]; then
+    echo "screenshots: freeze reported success for scene '$name' but left no" >&2
+    echo "             image at $SHOTS_OUT/$image. Check the pinned renderer is" >&2
+    echo "             the one installed: just screenshots-tools" >&2
+    exit 1
+  fi
   local hash
-  hash="$(sha256 "$SHOTS_OUT/$image")"
+  hash="$(sha256 "$SHOTS_OUT/$image")" || {
+    echo "screenshots: could not hash the rendered '$name' (the error is above)," >&2
+    echo "             so it cannot enter the capture index screencomp reads." >&2
+    exit 1
+  }
   entries+=("$name|{}|$hash|$image")
   cp "$SHOTS_OUT/$image" "$docs_dir/$image" || {
     echo "screenshots: rendered '$name' but could not put the committed copy in" >&2

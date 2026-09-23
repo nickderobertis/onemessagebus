@@ -20,10 +20,10 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || {
 }
 desk="$here/../crates/onemessagebus-e2e/tests/layouts/desk.json"
 
-# `$root` is interpolated into a double-quoted YAML scalar and into a `file://`
-# link, so a path carrying a quote, a backslash or a newline would produce a
-# configuration that is not the one asked for. Refuse it here, named.
-unsafe=$'"\\\n\t\r\v\f\a\b\e'
+# The path lands in a double-quoted YAML scalar and in a `file://` URI, so a
+# quote, a backslash, a control character or a character a URI reads as
+# structure would produce a configuration other than the one asked for.
+unsafe=$'"\\\n\t\r\v\f\a\b\e #?%'"'"
 case "$root" in
 -*)
   echo "stage-fixture: the fixture directory must be a path, not something that" >&2
@@ -31,9 +31,9 @@ case "$root" in
   exit 1
   ;;
 *["$unsafe"]*)
-  echo "stage-fixture: the fixture directory's path carries a quote, a backslash" >&2
-  echo "               or a control character, none of which can go into the" >&2
-  echo "               configuration this writes: $root" >&2
+  echo "stage-fixture: the fixture directory's path carries a quote, a space, a" >&2
+  echo "               control character or one a URI reads as structure, none of" >&2
+  echo "               which can go into the configuration this writes: $root" >&2
   echo "               Stage the fixture somewhere plainer." >&2
   exit 1
   ;;
