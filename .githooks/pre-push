@@ -73,6 +73,18 @@ if [ -n "${SCREENCOMP_GUARD_RANGE:-}" ]; then
     exit 1
     ;;
   esac
+  # A two-ended range, not a lone revision: `git diff HEAD` compares a commit to
+  # the WORKING TREE, so a bare revision here would decide relevance from
+  # uncommitted edits rather than from what is being pushed.
+  case "$SCREENCOMP_GUARD_RANGE" in
+  *..*) ;;
+  *)
+    echo "pre-push: SCREENCOMP_GUARD_RANGE must be a two-ended revision range" >&2
+    echo "          (<from>..<to>); a lone revision would diff the working tree" >&2
+    echo "          rather than the commits being pushed: $SCREENCOMP_GUARD_RANGE" >&2
+    exit 1
+    ;;
+  esac
   # Both ends, not just one: `HEAD..never-existed` resolves on its left and is
   # still a range `git diff` cannot take.
   for end in "${SCREENCOMP_GUARD_RANGE%%..*}" "${SCREENCOMP_GUARD_RANGE##*..}"; do

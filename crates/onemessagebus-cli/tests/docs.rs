@@ -11,13 +11,14 @@
 //!   of a family; the exit code table; the default profile, the default source
 //!   word, the label typing and the payload bound; every sample invocation.
 //! - `README.md`: every verb of each family in its verb list and no other;
-//!   the profile names, and which is the default; every sample invocation.
+//!   the profile names, and which is the default; every sample invocation; and
+//!   every flag its prose names in a span about this binary.
 
 mod clap_tree;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use clap::Parser as _;
+use clap::{CommandFactory as _, Parser as _};
 use clap_tree::{clap_verbs, long_flags};
 use onemessagebus::{Admits, Open, Vocabulary as _, MAX_PAYLOAD_TEXT_BYTES};
 use onemessagebus_cli::{Cli, EXIT_FAILED, EXIT_INVALID, EXIT_OK};
@@ -425,4 +426,51 @@ fn every_sample_invocation_names_a_real_verb_and_its_real_flags() {
         }
     }
     assert!(samples > 0, "no sample invocation was found to hold");
+}
+
+#[test]
+fn every_flag_the_readme_names_is_one_the_binary_takes() {
+    // The README's sections introduce the command line rather than restating
+    // it — `docs/cli.md` is the reference — but the flags they name are claims
+    // about the surface, and a renamed or retired one would go on being
+    // advertised on the crates.io and PyPI front page with nothing to notice.
+    // Every long flag the binary declares anywhere, and every one the README
+    // spells inside a code span, held together.
+    let (file, doc) = README;
+    let declared: BTreeSet<String> = clap_verbs()
+        .iter()
+        .flat_map(|(_, command)| long_flags(command))
+        .chain(long_flags(&Cli::command()))
+        .collect();
+    assert!(
+        !declared.is_empty(),
+        "the clap tree declares no long flags at all; this gate reads nothing"
+    );
+
+    // Only spans that are about this binary: one naming it, one naming a verb of
+    // it, or a bare flag. `just --list` is a span too, and is not a claim here.
+    let verbs: BTreeSet<String> = clap_verbs()
+        .iter()
+        .map(|(path, _)| path[0].clone())
+        .collect();
+    let named: BTreeSet<String> = ticked(&flat(&prose(doc)))
+        .iter()
+        .filter(|span| {
+            span.split_whitespace().next().is_some_and(|first| {
+                first == "onemessagebus" || first.starts_with('-') || verbs.contains(first)
+            })
+        })
+        .flat_map(|span| flags_in(span))
+        .collect();
+    assert!(
+        !named.is_empty(),
+        "{file} names no flag in a code span; this gate reads nothing"
+    );
+
+    let unknown: Vec<&String> = named.difference(&declared).collect();
+    assert!(
+        unknown.is_empty(),
+        "{file} names {unknown:?}, which the binary does not take; the flags it \
+         does take are {declared:?}"
+    );
 }

@@ -38,6 +38,9 @@ consumers restate from.
 Every picture below is a capture of that binary run against a fixture of the
 kind the end-to-end journeys stage, gated on its content hash so it cannot drift
 away from what the tool prints ([`screenshots/AGENTS.md`](screenshots/AGENTS.md)).
+The prose around them is an introduction: `docs/cli.md` is the reference, and
+`crates/onemessagebus-cli/tests/docs.rs` holds this page's verbs, profiles, flags
+and sample commands to the binary itself.
 <!-- llmlint: ignore-end[no_redundant_instruction_pointers] -->
 
 ## Queues

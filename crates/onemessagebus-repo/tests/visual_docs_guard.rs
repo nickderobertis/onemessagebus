@@ -581,7 +581,14 @@ fn a_new_branch_with_no_merge_base_captures_rather_than_guessing() {
 
 #[test]
 fn a_range_override_that_names_no_revision_is_refused() {
-    for range in ["--output=/dev/null", "refs/heads/never-existed..HEAD"] {
+    for range in [
+        "--output=/dev/null",
+        "refs/heads/never-existed..HEAD",
+        "HEAD..refs/heads/never-existed",
+        // A lone revision resolves at both "ends" and still makes `git diff`
+        // compare a commit to the working tree rather than to another commit.
+        "HEAD",
+    ] {
         let guarded = Guarded::new("screenshots/capture-inputs.txt");
         let tools = guarded.tools(Stand::declaring(&guarded.lane));
         let run = guarded.push(&tools, &[("SCREENCOMP_GUARD_RANGE", range)]);
