@@ -304,6 +304,43 @@ fn sha256(path: &Path) -> String {
 }
 
 #[test]
+fn the_committed_digest_pins_cover_the_version_the_installer_names() {
+    // The installer refuses an archive it finds no pin for, so a version bump
+    // that forgets to refresh the pin file fails — but only for whoever runs it
+    // next, and only on their architecture. The committed file is held to the
+    // committed version here instead, for both architectures it can install.
+    let version = pinned_version();
+    let sums = std::fs::read_to_string(script("freeze.sha256")).expect("the digest pins");
+
+    for arch in ["x86_64", "arm64"] {
+        let archive = format!("freeze_{version}_Linux_{arch}.tar.gz");
+        let digest = sums
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .find_map(|line| {
+                let (digest, named) = line.split_once("  ")?;
+                (named.trim() == archive).then(|| digest.to_owned())
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "screenshots/freeze.sha256 pins no digest for {archive}, which \
+                     screenshots/install-freeze.sh would install on a Linux {arch} \
+                     host; refresh it from that release's checksums.txt"
+                )
+            });
+        assert_eq!(
+            digest.len(),
+            64,
+            "the pin for {archive} is not a SHA-256: {digest}"
+        );
+        assert!(
+            digest.chars().all(|c| c.is_ascii_hexdigit()),
+            "the pin for {archive} is not hexadecimal: {digest}"
+        );
+    }
+}
+
+#[test]
 fn the_installer_puts_the_pinned_renderer_where_it_was_asked_to() {
     let release = Release::new("#!/usr/bin/env bash\necho stand-in freeze\n");
     let sums = release.sums(None);

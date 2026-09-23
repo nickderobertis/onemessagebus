@@ -296,6 +296,7 @@ render() {
   hash="$(sha256 "$SHOTS_OUT/$image")" || {
     echo "screenshots: could not hash the rendered '$name' (the error is above)," >&2
     echo "             so it cannot enter the capture index screencomp reads." >&2
+    echo "             This needs sha256sum (coreutils) or shasum (Perl) on PATH." >&2
     exit 1
   }
   entries+=("$name|{}|$hash|$image")

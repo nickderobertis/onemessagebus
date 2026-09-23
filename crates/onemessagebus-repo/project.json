@@ -23,6 +23,7 @@
         "{workspaceRoot}/.github/workflows/visual-docs.yml",
         "{workspaceRoot}/.githooks/pre-push",
         "{workspaceRoot}/screenshots/*.sh",
+        "{workspaceRoot}/screenshots/freeze.sha256",
         "{workspaceRoot}/screenshots/fixture/frames.json",
         "{workspaceRoot}/crates/onemessagebus-e2e/tests/layouts/desk.json",
         "{workspaceRoot}/crates/onemessagebus-e2e/tests/e2e/support.rs",
