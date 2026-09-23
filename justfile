@@ -399,12 +399,9 @@ msrv:
 session-setup:
     ./scripts/session-setup.sh
 
-# --- Terminal screenshots (informational; never part of `check` or CI's gate) --
-# Deterministic SVGs of the real CLI's output, rendered by `freeze` from a
-# vendored pinned font, gated/galleried/PR-commented by screencomp. What the
-# scenes are and why is screenshots/AGENTS.md. Regenerating is out of the gate,
-# like `deps-check`: CI's Visual-docs workflow owns the comparison, and the
-# pre-push guard regenerates this host's lane baseline locally on drift.
+# The screenshot recipes are informational and deliberately out of `check` and
+# CI's gate, like `deps-check`: the Visual-docs workflow owns the comparison and
+# the pre-push guard owns the local half (screenshots/AGENTS.md).
 
 # Install the pinned screenshot renderer (`freeze`) into ~/.local/bin, on demand.
 screenshots-tools:

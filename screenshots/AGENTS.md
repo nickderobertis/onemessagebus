@@ -136,9 +136,10 @@ not change.
 ## Changing the screenshots
 
 Editing the CLI surface or its renderings, the core they answer from, the `desk`
-layout, or the scenes will change the SVGs. That is expected: run `just
-screenshots-bless` and commit the refreshed `shots/baseline/` with
-`docs/screenshots/`. `just screenshots` captures without blessing,
-`just screenshots-tools` installs the renderer, `just screenshots-gif` redraws
-the hero, and `screencomp doctor --env` says whether the setup is actually wired.
-Bumping the renderer or the font reflows every shot; bless once.
+layout, or the scenes changes the SVGs. That is the gate working, not a
+regression: `just screenshots` recaptures, and `just screenshots-bless` does that
+and blesses the new bytes into this host's lane, which is what an intended change
+owes. Commit the refreshed `shots/baseline/` together with `docs/screenshots/` —
+an image the README embeds and a digest that no longer matches it are the one
+state this arrangement cannot survive. Bumping the renderer or the font reflows
+every shot, so bless once rather than per scene.

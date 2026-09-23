@@ -69,6 +69,31 @@ fn git(dir: &Path, args: &[&str]) {
     );
 }
 
+/// How the stand-in tools answer: which lanes `screencomp arches` names and with
+/// what status, whether `scope` calls the push relevant, whether `classify` sees
+/// drift, and whether the renderer is installed at all.
+#[derive(Clone, Copy)]
+struct Stand<'a> {
+    lanes: &'a str,
+    arches_status: i32,
+    relevant: bool,
+    drifted: bool,
+    renderer: bool,
+}
+
+impl<'a> Stand<'a> {
+    /// A working setup that declares `lanes` and sees no drift.
+    fn declaring(lanes: &'a str) -> Self {
+        Self {
+            lanes,
+            arches_status: 0,
+            relevant: true,
+            drifted: false,
+            renderer: true,
+        }
+    }
+}
+
 impl Guarded {
     /// Stand up the repository with one commit that changes `changed`, so the
     /// guard has a real range to diff.
@@ -122,6 +147,18 @@ impl Guarded {
         git(at, &["init", "--quiet", "--initial-branch", "main"]);
         git(at, &["add", "-A"]);
         git(at, &["commit", "--quiet", "-m", "base"]);
+        // The branch as the remote has it, which a push of a NEW branch has no
+        // `remote_sha` for: the guard falls back to the merge base with
+        // `origin/HEAD`, so give it one to find.
+        git(at, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(
+            at,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/main",
+            ],
+        );
         write(&at.join(changed), "two\n");
         git(at, &["add", "-A"]);
         git(at, &["commit", "--quiet", "-m", "change"]);
@@ -133,10 +170,8 @@ impl Guarded {
         self.dir.path()
     }
 
-    /// The stand-in tools, on a `PATH` of their own. `arches` answers `lanes`,
-    /// `scope` answers relevant when `relevant`, and `classify` answers drift
-    /// when `drift`. `freeze` is present unless `freeze` says otherwise.
-    fn tools(&self, lanes: &str, relevant: bool, drift: bool, freeze: bool) -> PathBuf {
+    /// The stand-in tools, on a `PATH` of their own.
+    fn tools(&self, stand: Stand<'_>) -> PathBuf {
         let bin = self.at().join("stand-ins");
         executable(
             &bin.join("screencomp"),
@@ -144,7 +179,7 @@ impl Guarded {
                 "#!/usr/bin/env bash\nset -euo pipefail\n\
                  echo \"$1\" >>\"$GUARD_LOG.screencomp\"\n\
                  case \"$1\" in\n\
-                 arches) printf '{lanes}' ;;\n\
+                 arches) printf '{lanes}'; exit {arches} ;;\n\
                  scope) cat >/dev/null; exit {scope} ;;\n\
                  classify) exit {classify} ;;\n\
                  manifest) shift; while [ \"$1\" != --output ]; do shift; done; \
@@ -153,12 +188,13 @@ impl Guarded {
                    mkdir -p \"$2\"; printf 'gallery\\n' >\"$2/index.html\" ;;\n\
                  *) echo \"stand-in screencomp: unexpected $*\" >&2; exit 64 ;;\n\
                  esac\n",
-                lanes = lanes,
-                scope = if relevant { 3 } else { 0 },
-                classify = if drift { 3 } else { 0 },
+                lanes = stand.lanes,
+                arches = stand.arches_status,
+                scope = if stand.relevant { 3 } else { 0 },
+                classify = if stand.drifted { 3 } else { 0 },
             ),
         );
-        if freeze {
+        if stand.renderer {
             executable(&bin.join("freeze"), "#!/usr/bin/env bash\nexit 0\n");
         }
         bin
@@ -187,6 +223,47 @@ impl Guarded {
         command.output().expect("the guard runs")
     }
 
+    /// The commit `revision` names, as git spells it on a hook's stdin.
+    fn sha(&self, revision: &str) -> String {
+        let run = Command::new("git")
+            .args(["rev-parse", revision])
+            .current_dir(self.at())
+            .output()
+            .expect("git runs");
+        assert!(run.status.success(), "rev-parse {revision}");
+        String::from_utf8(run.stdout)
+            .expect("a UTF-8 sha")
+            .trim()
+            .to_owned()
+    }
+
+    /// Run the guard the way git really invokes it: the ref lines on stdin and
+    /// no range override, so the hook's own range arithmetic decides.
+    fn push_over_stdin(&self, path: &Path, lines: &str) -> Output {
+        use std::io::Write as _;
+        let mut child = Command::new("bash")
+            .arg(".githooks/pre-push")
+            .args(["origin", "https://example.invalid/guarded.git"])
+            .current_dir(self.at())
+            .env("PATH", format!("{}:/usr/bin:/bin", path.display()))
+            .env("GUARD_LOG", self.at().join("guard"))
+            .env_remove("CI")
+            .env_remove("SCREENCOMP_GUARD_RANGE")
+            .env_remove("SCREENCOMP_GUARD_REQUIRE")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("the guard spawns");
+        child
+            .stdin
+            .take()
+            .expect("a stdin pipe")
+            .write_all(lines.as_bytes())
+            .expect("the ref lines are written");
+        child.wait_with_output().expect("the guard exits")
+    }
+
     /// What a stand-in recorded, or nothing when it never ran.
     fn log(&self, tool: &str) -> String {
         std::fs::read_to_string(self.at().join(format!("guard.{tool}"))).unwrap_or_default()
@@ -209,7 +286,10 @@ fn stdout(run: &Output) -> String {
 #[test]
 fn a_push_touching_nothing_screenshot_relevant_passes_without_capturing() {
     let guarded = Guarded::new("docs/unrelated.md");
-    let tools = guarded.tools(&guarded.lane, false, false, true);
+    let tools = guarded.tools(Stand {
+        relevant: false,
+        ..Stand::declaring(&guarded.lane)
+    });
     let run = guarded.push(&tools, &[]);
 
     assert!(run.status.success(), "{}", stderr(&run));
@@ -224,7 +304,7 @@ fn a_push_touching_nothing_screenshot_relevant_passes_without_capturing() {
 #[test]
 fn a_relevant_push_captures_and_passes_when_the_capture_has_not_drifted() {
     let guarded = Guarded::new("screenshots/capture-inputs.txt");
-    let tools = guarded.tools(&guarded.lane, true, false, true);
+    let tools = guarded.tools(Stand::declaring(&guarded.lane));
     let run = guarded.push(&tools, &[]);
 
     assert!(run.status.success(), "{}", stderr(&run));
@@ -248,7 +328,10 @@ fn a_relevant_push_captures_and_passes_when_the_capture_has_not_drifted() {
 #[test]
 fn drift_re_blesses_this_lane_builds_a_gallery_and_blocks_the_push() {
     let guarded = Guarded::new("screenshots/capture-inputs.txt");
-    let tools = guarded.tools(&guarded.lane, true, true, true);
+    let tools = guarded.tools(Stand {
+        drifted: true,
+        ..Stand::declaring(&guarded.lane)
+    });
     let run = guarded.push(&tools, &[]);
 
     assert_eq!(run.status.code(), Some(1), "drift did not block the push");
@@ -270,7 +353,10 @@ fn drift_re_blesses_this_lane_builds_a_gallery_and_blocks_the_push() {
 #[test]
 fn a_relevant_push_refuses_when_the_renderer_is_not_installed() {
     let guarded = Guarded::new("screenshots/capture-inputs.txt");
-    let tools = guarded.tools(&guarded.lane, true, false, false);
+    let tools = guarded.tools(Stand {
+        renderer: false,
+        ..Stand::declaring(&guarded.lane)
+    });
     let run = guarded.push(&tools, &[]);
 
     assert_eq!(
@@ -289,7 +375,7 @@ fn a_relevant_push_refuses_when_the_renderer_is_not_installed() {
 #[test]
 fn a_host_whose_arch_no_lane_declares_is_refused_by_name() {
     let guarded = Guarded::new("screenshots/capture-inputs.txt");
-    let tools = guarded.tools("s390x\\n", true, false, true);
+    let tools = guarded.tools(Stand::declaring("s390x\\n"));
     let run = guarded.push(&tools, &[]);
 
     assert_eq!(
@@ -341,9 +427,108 @@ fn without_screencomp_it_warns_loudly_and_only_fails_when_told_to() {
 #[test]
 fn under_ci_the_guard_stands_down_for_the_workflow() {
     let guarded = Guarded::new("screenshots/capture-inputs.txt");
-    let tools = guarded.tools(&guarded.lane, true, true, true);
+    let tools = guarded.tools(Stand {
+        drifted: true,
+        ..Stand::declaring(&guarded.lane)
+    });
     let run = guarded.push(&tools, &[("CI", "true")]);
 
     assert!(run.status.success(), "{}", stderr(&run));
     assert_eq!(guarded.log("capture"), "", "it captured under CI");
+}
+
+/// The zero sha git writes for the side of a push that does not exist.
+const ABSENT: &str = "0000000000000000000000000000000000000000";
+
+#[test]
+fn an_ordinary_update_diffs_what_the_remote_already_has_against_what_is_pushed() {
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    let tools = guarded.tools(Stand::declaring(&guarded.lane));
+    let run = guarded.push_over_stdin(
+        &tools,
+        &format!(
+            "refs/heads/main {} refs/heads/main {}\n",
+            guarded.sha("HEAD"),
+            guarded.sha("HEAD~1"),
+        ),
+    );
+
+    assert!(run.status.success(), "{}", stderr(&run));
+    assert!(
+        !guarded.log("capture").is_empty(),
+        "the update's own commit was never diffed, so nothing was captured"
+    );
+}
+
+#[test]
+fn a_new_branch_falls_back_to_its_merge_base_with_the_remote_head() {
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    let tools = guarded.tools(Stand::declaring(&guarded.lane));
+    // No `remote_sha`: the remote has never seen this branch.
+    let run = guarded.push_over_stdin(
+        &tools,
+        &format!(
+            "refs/heads/shots {} refs/heads/shots {ABSENT}\n",
+            guarded.sha("HEAD"),
+        ),
+    );
+
+    assert!(run.status.success(), "{}", stderr(&run));
+    assert!(
+        !guarded.log("capture").is_empty(),
+        "a new branch's commits were not diffed against origin/HEAD"
+    );
+}
+
+#[test]
+fn a_branch_deletion_carries_nothing_to_capture() {
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    let tools = guarded.tools(Stand::declaring(&guarded.lane));
+    // No `local_sha`: this push removes the branch.
+    let run = guarded.push_over_stdin(
+        &tools,
+        &format!(
+            "(delete) {ABSENT} refs/heads/gone {}\n",
+            guarded.sha("HEAD")
+        ),
+    );
+
+    assert!(run.status.success(), "{}", stderr(&run));
+    assert_eq!(
+        guarded.log("capture"),
+        "",
+        "a deletion captured screenshots"
+    );
+}
+
+#[test]
+fn a_screencomp_that_names_no_lane_is_refused_rather_than_read_as_an_empty_set() {
+    for stand in [
+        Stand {
+            arches_status: 1,
+            ..Stand::declaring("")
+        },
+        Stand::declaring("\\n"),
+    ] {
+        let guarded = Guarded::new("screenshots/capture-inputs.txt");
+        let tools = guarded.tools(stand);
+        let run = guarded.push(&tools, &[]);
+
+        assert_eq!(
+            run.status.code(),
+            Some(1),
+            "a screencomp answering no lane did not refuse: {}",
+            stderr(&run)
+        );
+        assert!(
+            stderr(&run).contains("named no capture lane"),
+            "{}",
+            stderr(&run)
+        );
+        assert_eq!(
+            guarded.log("capture"),
+            "",
+            "it captured with no lane to classify"
+        );
+    }
 }

@@ -8,10 +8,6 @@
 # Bypass one push: git push --no-verify
 set -euo pipefail
 
-# The declared [capture].arches lanes and this host's own lane among them. A host
-# whose arch no lane declares has no committed baseline and no CI job, so refuse
-# loudly rather than classify against somebody else's lane.
-LANES="$(screencomp arches 2>/dev/null || true)"
 LANE="$(bash screenshots/host-arch.sh)"
 MANIFEST="shots/baseline/${LANE}.json"     # the lane's committed baseline
 GALLERY="shots/review"                     # [guard].gallery (review output)
@@ -20,8 +16,11 @@ CURRENT="shots/current"                    # capture root, mirrors visual-docs.y
 # No-op under CI: the visual-docs workflow is the source of truth there.
 [ -n "${CI:-}" ] && exit 0
 
-# Without the CLI the guard CANNOT evaluate the push, so do NOT skip silently.
-# Warn loudly and skip; set SCREENCOMP_GUARD_REQUIRE=1 to fail here instead.
+# llmlint: ignore[cli_output_contract] a pre-push hook's exit status is the push
+# decision, not a report on the hook: an optional third-party tool that a clean
+# clone's `just bootstrap` does not install must not block every contributor's
+# push, and CI's strict gate is the backstop that catches what was skipped here.
+# The skip is loud on stderr and SCREENCOMP_GUARD_REQUIRE=1 makes it fatal.
 if ! command -v screencomp >/dev/null 2>&1; then
   {
     echo "pre-push: screencomp is NOT on PATH — the visual guard cannot run."
@@ -32,6 +31,19 @@ if ! command -v screencomp >/dev/null 2>&1; then
   exit 0
 fi
 
+# The declared [capture].arches lanes, read from the one place they live. This is
+# the guard's own input, so a screencomp that failed or answered nothing is a
+# refusal rather than an empty lane set that would refuse this host by the wrong
+# name.
+if ! LANES="$(screencomp arches)" || [ -z "${LANES//[[:space:]]/}" ]; then
+  echo "pre-push: 'screencomp arches' named no capture lane, so there is nothing" >&2
+  echo "          to classify this host against. Check [capture].arches in" >&2
+  echo "          screencomp.toml and that screencomp is current." >&2
+  exit 1
+fi
+
+# A host whose arch no lane declares has no committed baseline and no CI job, so
+# refuse loudly rather than classify against somebody else's lane.
 if ! printf '%s\n' "$LANES" | grep -qxF "$LANE"; then
   echo "pre-push: this host's architecture ($LANE) has no lane in [capture].arches" >&2
   echo "          of screencomp.toml, so it has no committed baseline to classify" >&2
@@ -41,7 +53,7 @@ if ! printf '%s\n' "$LANES" | grep -qxF "$LANE"; then
   exit 1
 fi
 
-# --- 1. Compute the push range(s) from git's stdin ---------------------------
+# git hands a pre-push hook one line per ref it is about to update, on stdin.
 ranges=()
 if [ -n "${SCREENCOMP_GUARD_RANGE:-}" ]; then
   ranges+=("$SCREENCOMP_GUARD_RANGE")   # test/override: diff this range directly
@@ -63,7 +75,6 @@ fi
 
 changed="$(for r in "${ranges[@]}"; do git diff --name-only "$r"; done | sort -u)"
 
-# --- 2. Cheap path: is anything screenshot-relevant? -------------------------
 # `scope` exits 3 when a changed path matches [guard].paths, 0 when none do, and
 # any OTHER non-zero on error. Treat ONLY exit 3 as relevant; on an error, warn
 # and skip rather than force a slow capture — CI is the backstop.
@@ -74,6 +85,11 @@ set -e
 case "$scope_status" in
   0) exit 0 ;;                            # nothing relevant: pass silently
   3) : ;;                                 # a relevant path matched: capture below
+  # llmlint: ignore[cli_output_contract] same reasoning as the missing-CLI skip
+  # above: the exit status is the push decision, a screencomp too old to answer
+  # `scope` is not this push's fault, and CI's strict gate still catches the
+  # drift. Forcing the slow capture instead would punish every push for a
+  # version skew.
   *)
     echo "pre-push: 'screencomp scope' failed (exit $scope_status); skipping the" >&2
     echo "          visual guard. Is screencomp current? CI still gates this." >&2
@@ -81,7 +97,6 @@ case "$scope_status" in
     ;;
 esac
 
-# --- 3. Relevant change: re-capture natively (needs the pinned freeze) --------
 if ! command -v freeze >/dev/null 2>&1; then
   echo "pre-push: screenshot-relevant files changed but 'freeze' is not installed" >&2
   echo "          to re-capture. Install it: just screenshots-tools" >&2
@@ -90,7 +105,6 @@ if ! command -v freeze >/dev/null 2>&1; then
 fi
 SHOTS_OUT="$CURRENT/$LANE" bash screenshots/capture.sh
 
-# --- 4. Classify the capture against the committed baseline manifest ---------
 set +e
 screencomp classify --baseline-manifest "$MANIFEST" --current "$CURRENT" --arch "$LANE" --exit-code
 status=$?
@@ -104,7 +118,8 @@ elif [ "$status" -ne 3 ]; then
   exit "$status"
 fi
 
-# --- On drift (classify exit 3): regenerate, build a gallery, BLOCK. ---------
+# Drift (exit 3): re-bless this lane and render it for review, then refuse — so
+# the refreshed baseline and README images are committed deliberately.
 SHOTS_CURRENT="$CURRENT" bash screenshots/bless-baseline.sh   # rewrites $MANIFEST
 screencomp gallery --input "$CURRENT" --arch "$LANE" \
   --output "$GALLERY" --title "Pre-push screenshot review" >/dev/null
