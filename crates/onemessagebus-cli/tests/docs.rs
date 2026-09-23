@@ -18,7 +18,7 @@ mod clap_tree;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use clap::{CommandFactory as _, Parser as _};
+use clap::Parser as _;
 use clap_tree::{clap_verbs, long_flags};
 use onemessagebus::{Admits, Open, Vocabulary as _, MAX_PAYLOAD_TEXT_BYTES};
 use onemessagebus_cli::{Cli, EXIT_FAILED, EXIT_INVALID, EXIT_OK};
@@ -434,8 +434,8 @@ fn every_flag_the_readme_names_is_one_that_verb_takes() {
     // it — `docs/cli.md` is the reference — but the flags they name are claims
     // about the surface, and a renamed, retired or MOVED one would go on being
     // advertised on the crates.io and PyPI front page with nothing to notice.
-    // A span that names a verb is checked against that verb's own flags; one
-    // that is a bare flag against every flag the tree declares.
+    // Every flag is held to ONE verb's own flags, so that moving it to another
+    // verb is a failure here rather than a flag still findable somewhere.
     let (file, doc) = README;
     let mut by_verb: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (path, command) in clap_verbs() {
@@ -444,44 +444,52 @@ fn every_flag_the_readme_names_is_one_that_verb_takes() {
             .or_default()
             .extend(long_flags(&command));
     }
-    let anywhere: BTreeSet<String> = by_verb
-        .values()
-        .flatten()
-        .cloned()
-        .chain(long_flags(&Cli::command()))
-        .collect();
     assert!(
-        !anywhere.is_empty(),
+        by_verb.values().any(|flags| !flags.is_empty()),
         "the clap tree declares no long flags at all; this gate reads nothing"
     );
 
+    // The verb the prose is explaining, carried across spans: a bare `--filter`
+    // under `## Streams` is a claim about the `events` the sentence just named,
+    // not about the binary at large.
+    let mut about: Option<String> = None;
     let mut checked = 0;
     for span in ticked(&flat(&prose(doc))) {
         let Some(first) = span.split_whitespace().next() else {
             continue;
         };
-        // The verb the span is about, if it names one: `onemessagebus serve …`,
-        // `serve --codec`, or a bare flag, which belongs to no verb in
-        // particular.
+        // The verb the span is about: `onemessagebus serve …`, `serve --codec`,
+        // or — for a bare flag — whichever verb the prose last named.
         let verb = match first {
             "onemessagebus" => span.split_whitespace().nth(1).map(str::to_owned),
             first if by_verb.contains_key(first) => Some(first.to_owned()),
-            first if first.starts_with('-') => None,
+            first if first.starts_with('-') => about.clone(),
             _ => continue,
         };
-        let allowed = match &verb {
-            Some(verb) => by_verb
-                .get(verb)
-                .unwrap_or_else(|| panic!("{file}: `{span}` names no verb of the binary")),
-            None => &anywhere,
+        if let Some(named) = &verb {
+            if by_verb.contains_key(named) {
+                about = Some(named.clone());
+            }
+        }
+        let flags = flags_in(&span);
+        if flags.is_empty() {
+            continue;
+        }
+        let Some(verb) = verb else {
+            panic!(
+                "{file}: `{span}` names a flag before any verb, so there is no \
+                 verb to hold it to; name the verb it belongs to"
+            );
         };
-        for flag in flags_in(&span) {
+        let allowed = by_verb
+            .get(&verb)
+            .unwrap_or_else(|| panic!("{file}: `{span}` names no verb of the binary"));
+        for flag in flags {
             checked += 1;
             assert!(
                 allowed.contains(&flag),
-                "{file}: `{span}` names {flag}, which {} does not take; it takes {allowed:?}",
-                verb.as_deref()
-                    .map_or_else(|| "the binary".to_owned(), |verb| format!("`{verb}`")),
+                "{file}: `{span}` names {flag}, which `{verb}` does not take; \
+                 it takes {allowed:?}"
             );
         }
     }

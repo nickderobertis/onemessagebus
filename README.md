@@ -105,7 +105,7 @@ Three of them, and the table that assigns them is `docs/cli.md`'s. What the
 picture shows is the shape a refusal takes when you meet one: a single line
 naming the verb, what was wrong with it, and where to read more.
 
-![A one-line refusal — the verb, the invalid `--timeout` value and a pointer to that verb's help — and the exit code 2 the shell then reports](docs/screenshots/refusal.svg)
+![A one-line refusal from `onemessagebus ask` — the verb, the invalid `--timeout` value it was given and a pointer to that verb's help — and the exit code 2 the shell then reports](docs/screenshots/refusal.svg)
 
 ## Use the library
 

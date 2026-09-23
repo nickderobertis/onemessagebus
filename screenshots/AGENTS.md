@@ -72,8 +72,9 @@ adoption deliberately did not make.
 
 ## When the output changes
 
-Expected, not a regression. `just screenshots` recaptures; `just screenshots-bless`
-does that and blesses this host's lane, which is what an intended change owes.
-Commit `shots/baseline/` together with `docs/screenshots/`: an image the README
-embeds beside a digest that no longer matches it is the one state this arrangement
-cannot survive. Bumping the renderer or the font reflows every shot, so bless once.
+Expected, not a regression. An intended change owes `just screenshots-bless`;
+`just screenshots` is for looking first, when you are not yet sure the change was
+intended. Commit `shots/baseline/` together with `docs/screenshots/`: an image
+the README embeds beside a digest that no longer matches it is the one state this
+arrangement cannot survive. Bumping the renderer or the font reflows every shot,
+so bless once.
