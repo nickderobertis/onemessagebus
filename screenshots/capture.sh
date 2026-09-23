@@ -23,6 +23,9 @@ set -euo pipefail
 # as tests/e2e/support.rs clears them for the journeys — except the one this
 # script's own contract is to honour, which is read here before the sweep.
 binary_override="${ONEMESSAGEBUS_BIN:-}"
+# Where the caller ran this from, captured before the `cd` below, so a relative
+# override still means what they meant by it.
+invoked_from="$PWD"
 for _var in $(compgen -e); do
   case "$_var" in
   ONEMESSAGEBUS_*) unset "$_var" ;;
@@ -60,7 +63,14 @@ fi
 # resolve the part of it that already exists and check where that really is.
 existing="$SHOTS_OUT"
 while [ ! -d "$existing" ] && [ "$existing" != "." ]; do existing="$(dirname "$existing")"; done
-resolved="$(cd "$existing" && pwd -P)"
+resolved="$(cd "$existing" && pwd -P)" || {
+  echo "screenshots: SHOTS_OUT's nearest existing directory, $existing, could not" >&2
+  echo "             be entered to find out where it really is (the error is" >&2
+  echo "             above), so the capture cannot tell whether it stays inside" >&2
+  echo "             this checkout. Make it readable and executable, or unset" >&2
+  echo "             SHOTS_OUT for the default, shots/current/$arch." >&2
+  exit 1
+}
 case "$resolved" in
 "$repo_root" | "$repo_root"/*) ;;
 *)
@@ -81,8 +91,15 @@ if ! command -v freeze >/dev/null 2>&1; then
   exit 1
 fi
 
-# The binary the scenes drive: release, the way a user runs it.
+# The binary the scenes drive: release, the way a user runs it. A relative
+# override is made absolute HERE, at the boundary: the scenes run from the staged
+# fixture ($work, below), where a bare `target/release/onemessagebus` names
+# nothing — or names something else that happens to be sitting there.
 bus="${binary_override:-$repo_root/target/release/onemessagebus}"
+case "$bus" in
+/*) ;;
+*) bus="$invoked_from/$bus" ;;
+esac
 if [ -z "${SCREENSHOTS_NO_BUILD:-}" ]; then
   cargo build --release --locked -p onemessagebus-cli >&2 || {
     echo "screenshots: the binary the scenes drive did not build (cargo's error is" >&2
@@ -137,6 +154,9 @@ freeze_flags=(
 rm -rf "$SHOTS_OUT" && mkdir -p "$SHOTS_OUT" "$docs_dir" || {
   echo "screenshots: could not empty and re-create $SHOTS_OUT and $docs_dir (the" >&2
   echo "             error is above), so there is nowhere to capture into." >&2
+  echo "             Check both are writable and that nothing is holding a file" >&2
+  echo "             open under them, or unset SHOTS_OUT for the default," >&2
+  echo "             shots/current/$arch." >&2
   exit 1
 }
 work="$(mktemp -d)" || {

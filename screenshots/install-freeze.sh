@@ -107,7 +107,13 @@ if [ -z "$expected" ]; then
   echo "                $base_url/v${freeze_version}/checksums.txt" >&2
   exit 1
 fi
-actual="$(sha256 "$tmp/freeze.tar.gz")"
+actual="$(sha256 "$tmp/freeze.tar.gz")" || {
+  echo "install-freeze: the download could not be hashed (the reason is above)," >&2
+  echo "                so nothing vouches for it and it was NOT installed." >&2
+  echo "                Make sure a working sha256sum (coreutils) or shasum" >&2
+  echo "                (Perl) is on PATH, then re-run." >&2
+  exit 1
+}
 if [ "$actual" != "$expected" ]; then
   echo "install-freeze: sha256 mismatch for ${stem}.tar.gz — NOT installing" >&2
   echo "                expected $expected (pinned in $sums_file)" >&2

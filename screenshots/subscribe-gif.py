@@ -282,7 +282,11 @@ def render(frames_: list[Frame], font_path: Path, out: Path) -> None:
 
 def main() -> int:
     repo = Path(__file__).resolve().parent.parent
-    bus = os.environ.get("ONEMESSAGEBUS_BIN", str(repo / "target/release/onemessagebus"))
+    # Absolute at the boundary: the scenes run with the staged fixture as their
+    # working directory, so a relative override checked from here would name
+    # something else — or nothing — by the time it is spawned.
+    override = os.environ.get("ONEMESSAGEBUS_BIN")
+    bus = str(Path(override or repo / "target/release/onemessagebus").resolve())
     font = repo / "screenshots/fonts/JetBrainsMono-Regular.ttf"
     out = Path(os.environ.get("SUBSCRIBE_GIF_OUT", repo / "docs/screenshots/subscribe.gif"))
     # The renderer creates this path's parents and overwrites what is there, so

@@ -1,3 +1,4 @@
+<!-- llmlint: ignore-file[no_redundant_instruction_pointers] this file is not an instruction document but the product's front page — the PyPI page of the `onemessagebus-cli` wheel (pyproject.toml's `readme`) and what crates.io and GitHub show — read by someone who has just found or installed the tool and who opens no AGENTS.md and has no docs/cli.md loaded. Every pointer in it is that reader's only route from a section to the reference behind it, so the redundancy the rule prevents between instruction layers is, here, the page's whole job. The scope is the file because what justifies it is what the file IS, not where any one link sits. -->
 # onemessagebus
 
 ![A terminal tailing a queue: three backlogged records land at once, then new ones append a line at a time as another process writes them — each an id, a kind, a message and the instant the bus stamped it](docs/screenshots/subscribe.gif)
@@ -28,20 +29,16 @@ npm install -g onemessagebus-cli       # npm launcher, no toolchain needed
 cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebus-cli --locked
 ```
 
-<!-- llmlint: ignore-block[no_redundant_instruction_pointers] this README is also the PyPI page of the `onemessagebus-cli` wheel (pyproject.toml's `readme`) and the repository's front page, read by someone who has installed or found the tool and never opens AGENTS.md; these links are how that reader reaches the command line, the wire and the contract. -->
 [`docs/cli.md`](docs/cli.md) is the whole command line; [`docs/wire.md`](docs/wire.md)
 is the wire; [`docs/contract.md`](docs/contract.md) is the approved contract the
 consumers restate from.
-<!-- llmlint: ignore-end[no_redundant_instruction_pointers] -->
 
-<!-- llmlint: ignore-block[no_redundant_instruction_pointers] this README is the PyPI page of the `onemessagebus-cli` wheel and the repository's front page, read by someone who never opens an AGENTS.md; a reader who wonders whether these pictures are real has nowhere else to look. -->
 Every picture below is a capture of that binary run against a fixture of the
 kind the end-to-end journeys stage, gated on its content hash so it cannot drift
 away from what the tool prints ([`screenshots/AGENTS.md`](screenshots/AGENTS.md)).
 The prose around them is an introduction: `docs/cli.md` is the reference, and
 `crates/onemessagebus-cli/tests/docs.rs` holds this page's verbs, profiles, sample
 commands, and every flag it names beside a verb, to the binary itself.
-<!-- llmlint: ignore-end[no_redundant_instruction_pointers] -->
 
 ## Queues
 

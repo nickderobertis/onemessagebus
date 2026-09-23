@@ -192,9 +192,13 @@ impl Guarded {
                    exit \"$SCOPE_FORCE\"; fi; \
                    if grep -q '^screenshots/'; then exit 3; else exit 0; fi ;;\n\
                  classify) exit \"${{CLASSIFY_FORCE:-{classify}}}\" ;;\n\
-                 manifest) shift; while [ \"$1\" != --output ]; do shift; done; \
+                 manifest) [ -z \"${{MANIFEST_FAILS:-}}\" ] || \
+                   {{ echo 'manifest: no' >&2; exit 1; }}; \
+                   shift; while [ \"$1\" != --output ]; do shift; done; \
                    printf 'blessed\\n' >\"$2\" ;;\n\
-                 gallery) shift; while [ \"$1\" != --output ]; do shift; done; \
+                 gallery) [ -z \"${{GALLERY_FAILS:-}}\" ] || \
+                   {{ echo 'gallery: no' >&2; exit 1; }}; \
+                   shift; while [ \"$1\" != --output ]; do shift; done; \
                    mkdir -p \"$2\"; printf 'gallery\\n' >\"$2/index.html\" ;;\n\
                  *) echo \"stand-in screencomp: unexpected $*\" >&2; exit 64 ;;\n\
                  esac\n",
@@ -354,6 +358,63 @@ fn drift_re_blesses_this_lane_builds_a_gallery_and_blocks_the_push() {
     let said = stderr(&run);
     assert!(said.contains("shots/review/index.html"), "{said}");
     assert!(said.contains("docs/screenshots"), "{said}");
+}
+
+#[test]
+fn drift_whose_baseline_cannot_be_refreshed_still_blocks_the_push() {
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    let tools = guarded.tools(Stand {
+        drifted: true,
+        ..Stand::declaring(&guarded.lane)
+    });
+    let run = guarded.push(&tools, &[("MANIFEST_FAILS", "1")]);
+
+    assert_eq!(
+        run.status.code(),
+        Some(1),
+        "a drift the guard could not re-bless was let through"
+    );
+    let said = stderr(&run);
+    assert!(
+        said.contains("could not be") && said.contains("refreshed"),
+        "the refusal does not name what failed: {said}"
+    );
+    assert!(
+        said.contains("git push --no-verify"),
+        "the refusal does not say what the pusher can do: {said}"
+    );
+}
+
+#[test]
+fn drift_whose_gallery_cannot_be_rendered_still_blocks_the_push() {
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    let tools = guarded.tools(Stand {
+        drifted: true,
+        ..Stand::declaring(&guarded.lane)
+    });
+    let run = guarded.push(&tools, &[("GALLERY_FAILS", "1")]);
+
+    assert_eq!(
+        run.status.code(),
+        Some(1),
+        "a drift with no gallery to review was let through"
+    );
+    // The baseline is refreshed before the gallery, so that half stands and the
+    // refusal has to point at it rather than at a review page there is not.
+    assert_eq!(
+        guarded.baseline(),
+        "blessed\n",
+        "the lane was not re-blessed before the gallery was attempted"
+    );
+    let said = stderr(&run);
+    assert!(
+        said.contains("gallery could not be rendered"),
+        "the refusal does not name what failed: {said}"
+    );
+    assert!(
+        said.contains("docs/screenshots"),
+        "the refusal does not say what to review instead: {said}"
+    );
 }
 
 #[test]

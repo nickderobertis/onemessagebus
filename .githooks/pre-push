@@ -174,9 +174,24 @@ fi
 
 # Drift (exit 3): re-bless this lane and render it for review, then refuse — so
 # the refreshed baseline and README images are committed deliberately.
-SHOTS_CURRENT="$CURRENT" bash screenshots/bless-baseline.sh
+# Either step failing still blocks: the drift is real whether or not the review
+# materials could be produced, so the push never becomes allowed by a refusal.
+SHOTS_CURRENT="$CURRENT" bash screenshots/bless-baseline.sh || {
+  echo "pre-push: the screenshots drifted, but this lane's baseline could not be" >&2
+  echo "          refreshed (the reason is above), so there is nothing to review." >&2
+  echo "          The push is blocked either way. Fix that, re-run" >&2
+  echo "          'just screenshots-bless', or bypass with: git push --no-verify" >&2
+  exit 1
+}
 screencomp gallery --input "$CURRENT" --arch "$LANE" \
-  --output "$GALLERY" --title "Pre-push screenshot review" >/dev/null
+  --output "$GALLERY" --title "Pre-push screenshot review" >/dev/null || {
+  echo "pre-push: the screenshots drifted and $MANIFEST was refreshed, but the" >&2
+  echo "          review gallery could not be rendered (the reason is above)." >&2
+  echo "          The push is blocked either way. Review the refreshed" >&2
+  echo "          docs/screenshots/ and $MANIFEST directly, or bypass with:" >&2
+  echo "          git push --no-verify" >&2
+  exit 1
+}
 
 {
   echo

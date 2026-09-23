@@ -53,6 +53,20 @@ fn run(name: &str, args: &[&str], env: &[(&str, &str)], cwd: &Path, stdin: &str)
     child.wait_with_output().expect("the script exits")
 }
 
+/// An executable `name` running `body`, in `dir`, for a `PATH` that shadows the
+/// real tool — the way a host whose `uname`, `mktemp`, `sed` or checksum program
+/// fails looks to these scripts.
+fn stand_in(dir: &Path, name: &str, body: &str) -> String {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::create_dir_all(dir).expect("a stand-in bin");
+    let at = dir.join(name);
+    std::fs::write(&at, format!("#!/usr/bin/env bash\n{body}\n")).expect("the stand-in");
+    let mut mode = std::fs::metadata(&at).expect("it is there").permissions();
+    mode.set_mode(0o755);
+    std::fs::set_permissions(&at, mode).expect("it is executable");
+    format!("{}:/usr/bin:/bin", dir.to_str().expect("a UTF-8 path"))
+}
+
 fn stdout(run: &Output) -> String {
     String::from_utf8_lossy(&run.stdout).into_owned()
 }
@@ -899,6 +913,135 @@ fn a_lane_name_has_to_be_something_a_path_and_a_baseline_can_be_named_for() {
     );
     assert!(
         stderr(&refused).contains("cannot name a capture"),
+        "{}",
+        stderr(&refused)
+    );
+}
+
+#[test]
+fn a_lane_cannot_be_named_when_uname_itself_does_not_answer() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let path = stand_in(&dir.path().join("bin"), "uname", "exit 1");
+
+    let refused = run("host-arch.sh", &[], &[("PATH", &path)], dir.path(), "");
+
+    assert_eq!(
+        refused.status.code(),
+        Some(1),
+        "a lane was named without asking this host what it is"
+    );
+    assert!(
+        stderr(&refused).contains("did not answer"),
+        "{}",
+        stderr(&refused)
+    );
+    assert!(
+        stderr(&refused).contains("Run it by hand"),
+        "the refusal does not say how to find out why: {}",
+        stderr(&refused)
+    );
+}
+
+#[test]
+fn the_installer_refuses_when_uname_itself_does_not_answer() {
+    let release = Release::new("#!/usr/bin/env bash\n");
+    let sums = release.sums(None);
+    let into = tempfile::tempdir().expect("an install directory");
+    let path = stand_in(&into.path().join("stand-ins"), "uname", "exit 1");
+
+    let mut env = installing(&release, &sums, into.path());
+    env.push(("PATH", path));
+    let refused = install(&env, into.path());
+
+    assert_eq!(
+        refused.status.code(),
+        Some(1),
+        "an asset was chosen without knowing the architecture"
+    );
+    assert!(
+        stderr(&refused).contains("did not answer"),
+        "{}",
+        stderr(&refused)
+    );
+}
+
+#[test]
+fn the_installer_refuses_when_there_is_nowhere_to_download_into() {
+    let release = Release::new("#!/usr/bin/env bash\n");
+    let sums = release.sums(None);
+    let into = tempfile::tempdir().expect("an install directory");
+    let path = stand_in(&into.path().join("stand-ins"), "mktemp", "exit 1");
+
+    let mut env = installing(&release, &sums, into.path());
+    env.push(("PATH", path));
+    let refused = install(&env, into.path());
+
+    assert_eq!(
+        refused.status.code(),
+        Some(1),
+        "it downloaded with no scratch directory to download into"
+    );
+    assert!(
+        stderr(&refused).contains("no scratch directory"),
+        "{}",
+        stderr(&refused)
+    );
+    assert!(
+        stderr(&refused).contains("TMPDIR"),
+        "the refusal does not say where to make room: {}",
+        stderr(&refused)
+    );
+}
+
+#[test]
+fn the_installer_refuses_when_the_download_cannot_be_hashed() {
+    let release = Release::new("#!/usr/bin/env bash\n");
+    let sums = release.sums(None);
+    let into = tempfile::tempdir().expect("an install directory");
+    // The tool is there and fails, which is not the same as its absence: the
+    // digest is unanswered either way, so nothing may be installed.
+    let path = stand_in(&into.path().join("stand-ins"), "sha256sum", "exit 1");
+
+    let mut env = installing(&release, &sums, into.path());
+    env.push(("PATH", path));
+    let refused = install(&env, into.path());
+
+    assert_eq!(
+        refused.status.code(),
+        Some(1),
+        "an unvouched-for download was installed"
+    );
+    assert!(
+        stderr(&refused).contains("could not be hashed"),
+        "{}",
+        stderr(&refused)
+    );
+    assert!(
+        !into.path().join("freeze").exists(),
+        "the renderer was installed without its digest ever being checked"
+    );
+}
+
+#[test]
+fn the_normalizer_refuses_when_sed_cannot_rewrite_what_was_captured() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let path = stand_in(&dir.path().join("bin"), "sed", "exit 1");
+
+    let refused = run(
+        "normalize.sh",
+        &[],
+        &[("PATH", &path)],
+        dir.path(),
+        "correlation: c-aa0c643d5613f4eaf184cade12551980\n",
+    );
+
+    assert_eq!(
+        refused.status.code(),
+        Some(1),
+        "text that still carries this run's values was handed back as normalised"
+    );
+    assert!(
+        stderr(&refused).contains("were not rewritten"),
         "{}",
         stderr(&refused)
     );

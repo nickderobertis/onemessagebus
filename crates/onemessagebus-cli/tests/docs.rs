@@ -434,43 +434,46 @@ fn every_flag_the_readme_names_is_one_that_verb_takes() {
     // it — `docs/cli.md` is the reference — but the flags they name are claims
     // about the surface, and a renamed, retired or MOVED one would go on being
     // advertised on the crates.io and PyPI front page with nothing to notice.
-    // Every flag is held to ONE verb's own flags, so that moving it to another
-    // verb is a failure here rather than a flag still findable somewhere.
+    // Every flag is held to the flags of ONE command, indexed by its whole argv
+    // path, so that a flag moving between two verbs of a family — `events emit`
+    // to `events merge` — fails here rather than being found under `events`.
     let (file, doc) = README;
-    let mut by_verb: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for (path, command) in clap_verbs() {
-        by_verb
-            .entry(path[0].clone())
-            .or_default()
-            .extend(long_flags(&command));
-    }
+    let by_path: BTreeMap<Vec<String>, BTreeSet<String>> = clap_verbs()
+        .into_iter()
+        .map(|(path, command)| (path, long_flags(&command)))
+        .collect();
     assert!(
-        by_verb.values().any(|flags| !flags.is_empty()),
+        by_path.values().any(|flags| !flags.is_empty()),
         "the clap tree declares no long flags at all; this gate reads nothing"
     );
+    // The longest declared path `words` begins with: `events merge`, not the
+    // `events` it is a verb of.
+    let named = |words: &[&str]| -> Option<Vec<String>> {
+        by_path
+            .keys()
+            .filter(|path| words.starts_with(&path.iter().map(String::as_str).collect::<Vec<_>>()))
+            .max_by_key(|path| path.len())
+            .cloned()
+    };
 
-    // The verb the prose is explaining, carried across spans: a bare `--filter`
-    // under `## Streams` is a claim about the `events` the sentence just named,
-    // not about the binary at large.
-    let mut about: Option<String> = None;
+    // The command the prose is explaining, carried across spans: a bare
+    // `--filter` under `## Streams` is a claim about the `events merge` the
+    // sentence just named, not about the binary at large.
+    let mut about: Option<Vec<String>> = None;
     let mut checked = 0;
     for span in ticked(&flat(&prose(doc))) {
-        let Some(first) = span.split_whitespace().next() else {
-            continue;
-        };
-        // The verb the span is about: `onemessagebus serve …`, `serve --codec`,
-        // or — for a bare flag — whichever verb the prose last named.
-        let verb = match first {
-            "onemessagebus" => span.split_whitespace().nth(1).map(str::to_owned),
-            first if by_verb.contains_key(first) => Some(first.to_owned()),
-            first if first.starts_with('-') => about.clone(),
-            _ => continue,
-        };
-        if let Some(named) = &verb {
-            if by_verb.contains_key(named) {
-                about = Some(named.clone());
+        let words: Vec<&str> = span.split_whitespace().collect();
+        // `onemessagebus ask` and `ask` are the same claim about the same verb.
+        let words = words.strip_prefix(&["onemessagebus"]).unwrap_or(&words);
+        let verb = match named(words) {
+            Some(path) => {
+                about = Some(path.clone());
+                Some(path)
             }
-        }
+            // A bare flag belongs to the command the prose last named.
+            None if words.first().is_some_and(|word| word.starts_with('-')) => about.clone(),
+            None => continue,
+        };
         let flags = flags_in(&span);
         if flags.is_empty() {
             continue;
@@ -478,12 +481,11 @@ fn every_flag_the_readme_names_is_one_that_verb_takes() {
         let Some(verb) = verb else {
             panic!(
                 "{file}: `{span}` names a flag before any verb, so there is no \
-                 verb to hold it to; name the verb it belongs to"
+                 command to hold it to; name the verb it belongs to"
             );
         };
-        let allowed = by_verb
-            .get(&verb)
-            .unwrap_or_else(|| panic!("{file}: `{span}` names no verb of the binary"));
+        let allowed = &by_path[&verb];
+        let verb = verb.join(" ");
         for flag in flags {
             checked += 1;
             assert!(
