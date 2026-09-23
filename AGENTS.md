@@ -105,6 +105,9 @@ rationale; the mechanics live in the files named. -->
   installed beside the binary the way a user installs them, and smoke-tested),
   `onemessagebus-cross-language-e2e` (the journey across Rust, Python and
   TypeScript, apart from the Rust journeys with edges to both SDKs),
+  `onemessagebus-visual-docs` (the screencomp capture, whose one target is the
+  `bootstrap` that activates the pre-push guard — it owns no gate target on
+  purpose, `screenshots/AGENTS.md`),
   and the root `workspace` project (the
   coverage floor and the supply-chain check). The binary is its own
   `publish = false` crate so the core stays a library with no command-line
@@ -161,6 +164,13 @@ you:
   `crates/onemessagebus/src/capability.rs`, then a method in both SDK clients
   (`just sdk-coverage` fails until both exist), then `just node-sdk-generate`,
   `just python-sdk-generate` and `just parity-audit`.
+- **`just bootstrap` installs a git hook.** The screenshots project's `bootstrap`
+  target sets `core.hooksPath` to the committed `.githooks/`, which carries the
+  screencomp pre-push guard **and nothing else** — `just gate` is not wired into
+  it. The guard re-captures only when a `[guard].paths` file changes and blocks a
+  push whose capture drifted from `shots/baseline/<arch>.json`. Screenshots are
+  informational and sit outside `check`, `gate` and CI's gate job, beside
+  `deps-check` and the llmlint tier; `screenshots/AGENTS.md` is the whole story.
 - **Affected selection fails closed** (`scripts/nx-affected.sh`): with no
   derivable merge base it runs everything, because a speed optimisation that
   can silently skip a check is a correctness hole.
