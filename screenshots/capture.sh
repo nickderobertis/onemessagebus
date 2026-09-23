@@ -32,9 +32,10 @@ cd "$repo_root"
 arch="$(bash "$repo_root/screenshots/host-arch.sh")"
 SHOTS_OUT="${SHOTS_OUT:-shots/current/$arch}"
 case "$SHOTS_OUT" in
-"" | /* | *..*)
+"" | -* | /* | *..*)
   echo "screenshots: SHOTS_OUT must be a path inside this checkout, written" >&2
-  echo "             relative to its root and without '..'; the capture empties" >&2
+  echo "             relative to its root, without '..' and not reading as an" >&2
+  echo "             option to the commands it is handed to; the capture empties" >&2
   echo "             it before it writes. Got: ${SHOTS_OUT:-<empty>}" >&2
   echo "             Unset it for the default, shots/current/$arch." >&2
   exit 1
@@ -73,7 +74,12 @@ fi
 # The binary the scenes drive: release, the way a user runs it.
 bus="${ONEMESSAGEBUS_BIN:-$repo_root/target/release/onemessagebus}"
 if [ -z "${SCREENSHOTS_NO_BUILD:-}" ]; then
-  cargo build --release --locked -p onemessagebus-cli >&2
+  cargo build --release --locked -p onemessagebus-cli >&2 || {
+    echo "screenshots: the binary the scenes drive did not build (cargo's error is" >&2
+    echo "             above). Fix it, or point ONEMESSAGEBUS_BIN at a binary you" >&2
+    echo "             already have and set SCREENSHOTS_NO_BUILD=1." >&2
+    exit 1
+  }
 fi
 if [ ! -x "$bus" ]; then
   echo "screenshots: no onemessagebus binary at $bus" >&2
@@ -247,7 +253,12 @@ render() {
   normalize "$src"
   # `< /dev/null`: freeze reads stdin whenever it is not a character device, so
   # under CI's piped stdin it would ignore the file argument and render nothing.
-  freeze "$src" "${freeze_flags[@]}" -o "$SHOTS_OUT/$image" </dev/null >&2
+  freeze "$src" "${freeze_flags[@]}" -o "$SHOTS_OUT/$image" </dev/null >&2 || {
+    echo "screenshots: freeze could not render scene '$name' (its error is above)." >&2
+    echo "             Check the pinned renderer is the one installed:" >&2
+    echo "             just screenshots-tools" >&2
+    exit 1
+  }
   local hash
   hash="$(sha256 "$SHOTS_OUT/$image")"
   entries+=("$name|{}|$hash|$image")

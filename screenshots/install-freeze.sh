@@ -44,11 +44,14 @@ https://* | file://*) ;;
   exit 1
   ;;
 esac
-if [ -z "$install_dir" ]; then
-  echo "install-freeze: FREEZE_INSTALL_DIR is empty; it must name a directory to" >&2
-  echo "                install into. Unset it to use ~/.local/bin." >&2
+case "$install_dir" in
+"" | -*)
+  echo "install-freeze: FREEZE_INSTALL_DIR must name a directory to install into," >&2
+  echo "                not something \`install\` would read as an option." >&2
+  echo "                Got: ${install_dir:-<empty>}; unset it for ~/.local/bin." >&2
   exit 1
-fi
+  ;;
+esac
 if [ ! -r "$sums_file" ]; then
   echo "install-freeze: no readable digest pin file at $sums_file" >&2
   echo "                Restore screenshots/freeze.sha256, or point" >&2
@@ -68,7 +71,12 @@ sha256() {
   fi
 }
 
-curl -fsSL -o "$tmp/freeze.tar.gz" "$base_url/v${freeze_version}/${stem}.tar.gz"
+curl -fsSL -o "$tmp/freeze.tar.gz" "$base_url/v${freeze_version}/${stem}.tar.gz" || {
+  echo "install-freeze: could not download ${stem}.tar.gz (curl's error is above)." >&2
+  echo "                Check network reach to $base_url, or install freeze from" >&2
+  echo "                source: go install github.com/charmbracelet/freeze@v$freeze_version" >&2
+  exit 1
+}
 
 # Validate the archive before unpacking it. The expected digest is pinned in THIS
 # repository rather than fetched beside the archive: a checksum served from the
@@ -91,7 +99,13 @@ if [ "$actual" != "$expected" ]; then
   exit 1
 fi
 
-tar -xzf "$tmp/freeze.tar.gz" -C "$tmp"
+tar -xzf "$tmp/freeze.tar.gz" -C "$tmp" || {
+  echo "install-freeze: ${stem}.tar.gz matched its pinned digest but did not" >&2
+  echo "                unpack (tar's error is above). Re-run; if it repeats, the" >&2
+  echo "                pinned digest in screenshots/freeze.sha256 names an" >&2
+  echo "                archive this tar cannot read." >&2
+  exit 1
+}
 if [ ! -f "$tmp/$stem/freeze" ]; then
   echo "install-freeze: ${stem}.tar.gz matched its pinned digest but holds no" >&2
   echo "                $stem/freeze — upstream changed the archive layout." >&2
@@ -99,6 +113,9 @@ if [ ! -f "$tmp/$stem/freeze" ]; then
   exit 1
 fi
 
-install -d "$install_dir"
-install "$tmp/$stem/freeze" "$install_dir/freeze"
+install -d "$install_dir" && install "$tmp/$stem/freeze" "$install_dir/freeze" || {
+  echo "install-freeze: could not install into $install_dir (the error is above)." >&2
+  echo "                Point FREEZE_INSTALL_DIR at a directory you can write." >&2
+  exit 1
+}
 echo "install-freeze: installed freeze v$freeze_version ($asset_arch) to $install_dir" >&2

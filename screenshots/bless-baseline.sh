@@ -22,4 +22,9 @@ if [ ! -d "$current" ]; then
 fi
 
 lane="$(bash "$(dirname "$0")/host-arch.sh")"
-screencomp manifest --input "$current" --arch "$lane" --output "shots/baseline/${lane}.json"
+screencomp manifest --input "$current" --arch "$lane" --output "shots/baseline/${lane}.json" || {
+  echo "bless-baseline: screencomp could not write the $lane baseline from" >&2
+  echo "                $current (its error is above). Recapture first:" >&2
+  echo "                just screenshots" >&2
+  exit 1
+}

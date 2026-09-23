@@ -1,7 +1,7 @@
 {
   "name": "onemessagebus-visual-docs",
   "$schema": "../node_modules/nx/schemas/project-schema.json",
-  "//": "No format-check, lint, typecheck, test, doc or check target, and that is the point: screenshots are informational, so nothing this project owns is reachable from `just check`, `just gate` or ci.yml's gate job (screenshots/AGENTS.md). The `desk` layout bundle the capture links is `onemessagebus-e2e`'s, declared here rather than reached into. The one target is `bootstrap`, which activates the committed pre-push guard — the local half of the strict gate — so `just bootstrap` leaves a clean clone guarded.",
+  "//": "`lint` is a syntax check over the scripts this project owns; there is deliberately no capture target, because screenshots are informational and no step that renders one is reachable from `just check`, `just gate` or ci.yml's gate job (screenshots/AGENTS.md). The guard's own behaviour is gated by crates/onemessagebus-repo/tests/visual_docs_guard.rs, which drives it with the three tools it shells out to stood in for. The `desk` layout bundle the capture links is `onemessagebus-e2e`'s, declared here rather than reached into. The one target is `bootstrap`, which activates the committed pre-push guard — the local half of the strict gate — so `just bootstrap` leaves a clean clone guarded.",
   "projectType": "library",
   "sourceRoot": "screenshots",
   "tags": ["scope:docs", "lang:sh", "type:docs"],
@@ -10,6 +10,10 @@
     "bootstrap": {
       "command": "git config core.hooksPath .githooks",
       "cache": false
+    },
+    "lint": {
+      "command": "just _visual-docs-lint",
+      "inputs": ["default", "{workspaceRoot}/.githooks/pre-push"]
     }
   }
 }

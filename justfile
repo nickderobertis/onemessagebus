@@ -403,6 +403,13 @@ session-setup:
 # CI's gate, like `deps-check`: the Visual-docs workflow owns the comparison and
 # the pre-push guard owns the local half (screenshots/AGENTS.md).
 
+# Every shell file the visual-docs project owns, parsed. Deterministic, offline
+# and instant: it renders nothing, so it is a gate target where a capture is not.
+_visual-docs-lint:
+    @for f in screenshots/*.sh .githooks/pre-push; do \
+      bash -n "$f" || { echo "$f: does not parse — fix the syntax error above" >&2; exit 1; }; \
+    done
+
 # Install the pinned screenshot renderer (`freeze`) into ~/.local/bin, on demand.
 screenshots-tools:
     @bash screenshots/install-freeze.sh

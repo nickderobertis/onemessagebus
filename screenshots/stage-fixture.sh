@@ -20,6 +20,11 @@ desk="$here/../crates/onemessagebus-e2e/tests/layouts/desk.json"
 # configuration that is not the one asked for. Refuse it here, named.
 unsafe=$'"\\\n'
 case "$root" in
+-*)
+  echo "stage-fixture: the fixture directory must be a path, not something that" >&2
+  echo "               reads as an option to the commands it is handed to: $root" >&2
+  exit 1
+  ;;
 *["$unsafe"]*)
   echo "stage-fixture: the fixture directory's path carries a quote, a backslash" >&2
   echo "               or a newline, which cannot go into the configuration this" >&2
@@ -29,7 +34,11 @@ case "$root" in
   ;;
 esac
 
-mkdir -p "$root"
+mkdir -p "$root" || {
+  echo "stage-fixture: could not make the fixture directory (the error is above)." >&2
+  echo "               Name a directory this user can create: $root" >&2
+  exit 1
+}
 cat >"$root/bus.yaml" <<YAML
 version: 1
 transport: {kind: local, dir: "$root/bus"}
