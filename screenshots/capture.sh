@@ -358,6 +358,9 @@ printf '%s' "$verdict" | run "${reply_argv[@]}" >/dev/null || {
     echo "             scene has no answer to show. Its error is above; the ask"
     echo "             it was bound to said:"
     sed 's/^/             /' "$work/ask.err"
+    echo "             Stage the fixture by hand"
+    echo "             (bash screenshots/stage-fixture.sh \"\$(mktemp -d)\") and run"
+    echo "             the same ask and reply over it to see which one refuses."
   } >&2
   kill "$asking" 2>/dev/null || true
   exit 1
