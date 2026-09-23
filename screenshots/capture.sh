@@ -92,7 +92,7 @@ if [ -z "${SCREENSHOTS_NO_BUILD:-}" ]; then
   }
 fi
 if [ ! -x "$bus" ]; then
-  echo "screenshots: no onemessagebus binary at $bus" >&2
+  echo "screenshots: no runnable onemessagebus binary at $bus" >&2
   if [ -n "${SCREENSHOTS_NO_BUILD:-}" ]; then
     echo "             SCREENSHOTS_NO_BUILD is set, so nothing built it. Unset it," >&2
     echo "             or point ONEMESSAGEBUS_BIN at a binary you already have." >&2

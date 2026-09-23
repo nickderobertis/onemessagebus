@@ -2,8 +2,9 @@
 
 Tests only, over files at the root rather than over any crate: the release
 declaration, the toolchain and workflow pins restated outside their sources, and
-the committed `.githooks/pre-push` and the scripts around it, driven for real
-with the third-party tools they shell out to stood in for. `screenshots/capture.sh`
+the committed `.githooks/pre-push`, the scripts around it and the activation its
+project's `bootstrap` declares, each driven for real with the third-party tools
+they shell out to stood in for. `screenshots/capture.sh`
 is deliberately absent — driving it renders screenshots, which belong to no gate
 (`screenshots/AGENTS.md`) — and its output is gated by the committed digest
 baseline instead.

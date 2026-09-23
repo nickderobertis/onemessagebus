@@ -73,12 +73,15 @@ if [ -n "${SCREENCOMP_GUARD_RANGE:-}" ]; then
     exit 1
     ;;
   esac
-  if ! git rev-parse --quiet --verify "$SCREENCOMP_GUARD_RANGE^{commit}" >/dev/null 2>&1 \
-    && ! git rev-parse --quiet --verify "${SCREENCOMP_GUARD_RANGE%%..*}^{commit}" >/dev/null 2>&1; then
-    echo "pre-push: SCREENCOMP_GUARD_RANGE names no revision this repository has:" >&2
-    echo "          $SCREENCOMP_GUARD_RANGE" >&2
-    exit 1
-  fi
+  # Both ends, not just one: `HEAD..never-existed` resolves on its left and is
+  # still a range `git diff` cannot take.
+  for end in "${SCREENCOMP_GUARD_RANGE%%..*}" "${SCREENCOMP_GUARD_RANGE##*..}"; do
+    if ! git rev-parse --quiet --verify "$end^{commit}" >/dev/null 2>&1; then
+      echo "pre-push: SCREENCOMP_GUARD_RANGE names no revision this repository" >&2
+      echo "          has: $end (in $SCREENCOMP_GUARD_RANGE)" >&2
+      exit 1
+    fi
+  done
   ranges+=("$SCREENCOMP_GUARD_RANGE")
 else
   zero='^0+$'

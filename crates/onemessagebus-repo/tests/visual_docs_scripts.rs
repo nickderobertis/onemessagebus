@@ -454,3 +454,52 @@ fn blessing_refuses_without_the_tool_that_writes_the_baseline() {
         stderr(&refused)
     );
 }
+
+#[test]
+fn the_lane_name_is_the_same_for_every_spelling_of_one_architecture() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let bin = dir.path().join("bin");
+    std::fs::create_dir_all(&bin).expect("a stand-in bin");
+
+    // `uname -m` is the only input, and the lane name is what `screencomp.toml`
+    // declares and `shots/baseline/<arch>.json` is named for — so the two
+    // spellings of each architecture must not name two lanes.
+    for (reported, lane) in [
+        ("x86_64", "x86_64"),
+        ("amd64", "x86_64"),
+        ("aarch64", "arm64"),
+        ("arm64", "arm64"),
+        ("riscv64", "riscv64"),
+    ] {
+        std::fs::write(
+            bin.join("uname"),
+            format!("#!/usr/bin/env bash\nprintf '{reported}\\n'\n"),
+        )
+        .expect("the stand-in uname");
+        let mut mode = std::fs::metadata(bin.join("uname"))
+            .expect("the stand-in is there")
+            .permissions();
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            mode.set_mode(0o755);
+        }
+        std::fs::set_permissions(bin.join("uname"), mode).expect("it is executable");
+
+        let named = run(
+            "host-arch.sh",
+            &[],
+            &[(
+                "PATH",
+                &format!("{}:/usr/bin:/bin", bin.to_str().expect("a UTF-8 path")),
+            )],
+            dir.path(),
+            "",
+        );
+        assert!(named.status.success(), "{}", stderr(&named));
+        assert_eq!(
+            stdout(&named).trim(),
+            lane,
+            "a host reporting {reported} was given the wrong lane"
+        );
+    }
+}

@@ -111,11 +111,17 @@ ARRIVING: list[Question] = [
 def stage(root: Path, repo: Path) -> Path:
     """Stage the fixture through the one script that writes it, so the hero is
     taken over the same layout as the stills rather than a second copy of it."""
-    staged = subprocess.run(
+    staged = Path(subprocess.run(
         ["bash", str(repo / "screenshots/stage-fixture.sh"), str(root)],
         check=True, capture_output=True, text=True,
-    ).stdout.strip()
-    return Path(staged)
+    ).stdout.strip())
+    expected = root / "bus.yaml"
+    if staged != expected:
+        raise SystemExit(
+            f"subscribe-gif: the fixture was staged somewhere the tail does not read:"
+            f" stage-fixture.sh answered {staged}, not {expected}. Reconcile the two."
+        )
+    return staged
 
 
 def tail_argv(config: Path) -> list[str]:
@@ -292,14 +298,14 @@ def main() -> int:
         return 1
     out = resolved
 
-    if not Path(bus).is_file():
+    if not os.access(bus, os.X_OK):
         if not os.environ.get("SCREENSHOTS_NO_BUILD"):
             subprocess.run(
                 ["cargo", "build", "--release", "--locked", "-p", "onemessagebus-cli"],
                 cwd=repo, check=True,
             )
-        if not Path(bus).is_file():
-            print(f"subscribe-gif: no onemessagebus binary at {bus}", file=sys.stderr)
+        if not os.access(bus, os.X_OK):
+            print(f"subscribe-gif: no runnable onemessagebus binary at {bus}", file=sys.stderr)
             print("               Build it: cargo build --release -p onemessagebus-cli",
                   file=sys.stderr)
             return 1

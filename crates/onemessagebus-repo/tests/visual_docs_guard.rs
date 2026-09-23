@@ -128,6 +128,7 @@ impl Guarded {
             &at.join("screenshots/capture.sh"),
             "#!/usr/bin/env bash\nset -euo pipefail\n\
              echo \"$SHOTS_OUT\" >>\"$GUARD_LOG.capture\"\n\
+             [ -z \"${CAPTURE_FAILS:-}\" ] || { echo 'capture: no' >&2; exit 1; }\n\
              mkdir -p \"$SHOTS_OUT\"\n\
              printf '{\"schema\":1,\"shots\":[]}\\n' >\"$SHOTS_OUT/captures.json\"\n",
         );
@@ -186,7 +187,7 @@ impl Guarded {
                  scope) if [ -n \"${{SCOPE_FORCE:-}}\" ]; then cat >/dev/null; \
                    exit \"$SCOPE_FORCE\"; fi; \
                    if grep -q '^screenshots/'; then exit 3; else exit 0; fi ;;\n\
-                 classify) exit {classify} ;;\n\
+                 classify) exit \"${{CLASSIFY_FORCE:-{classify}}}\" ;;\n\
                  manifest) shift; while [ \"$1\" != --output ]; do shift; done; \
                    printf 'blessed\\n' >\"$2\" ;;\n\
                  gallery) shift; while [ \"$1\" != --output ]; do shift; done; \
@@ -664,5 +665,119 @@ fn a_push_to_another_remote_forks_from_that_remote_rather_than_origin() {
         !stderr(&run).contains("no merge base"),
         "it fell back instead of forking from upstream: {}",
         stderr(&run)
+    );
+}
+
+#[test]
+fn a_capture_that_fails_blocks_the_push_rather_than_passing_it() {
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    let tools = guarded.tools(Stand::declaring(&guarded.lane));
+    let run = guarded.push(&tools, &[("CAPTURE_FAILS", "1")]);
+
+    assert_ne!(
+        run.status.code(),
+        Some(0),
+        "a push whose capture never ran was let through: {}",
+        stderr(&run)
+    );
+    assert!(
+        !guarded.log("screencomp").contains("classify"),
+        "it classified a capture that was never written"
+    );
+}
+
+#[test]
+fn a_classify_that_cannot_answer_refuses_in_this_repositorys_exit_codes() {
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    let tools = guarded.tools(Stand::declaring(&guarded.lane));
+    // Neither 0 (clean) nor 3 (drift): screencomp failing rather than answering.
+    let run = guarded.push(&tools, &[("CLASSIFY_FORCE", "64")]);
+
+    assert_eq!(
+        run.status.code(),
+        Some(1),
+        "the tool's own status escaped a hook whose codes are 0/1/2: {}",
+        stderr(&run)
+    );
+    assert!(
+        stderr(&run).contains("could not evaluate the capture"),
+        "the refusal does not say what went wrong: {}",
+        stderr(&run)
+    );
+    assert_eq!(
+        guarded.baseline(),
+        "{\"schema\":1,\"shots\":[]}\n",
+        "it re-blessed a lane it could not classify"
+    );
+}
+
+#[test]
+fn bootstrapping_a_clone_leaves_the_committed_guard_active() {
+    // The command is read from the manifest rather than restated, so this proves
+    // what `just bootstrap` really runs: Nx fans `bootstrap` across every
+    // project, and this project's is the whole of the activation.
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(repo_root().join("screenshots/project.json"))
+            .expect("the visual-docs project manifest"),
+    )
+    .expect("the manifest is JSON");
+    let command = manifest["targets"]["bootstrap"]["command"]
+        .as_str()
+        .expect("screenshots/project.json declares no bootstrap command");
+
+    let clone = tempfile::tempdir().expect("a fresh clone");
+    git(
+        clone.path(),
+        &["init", "--quiet", "--initial-branch", "main"],
+    );
+    assert!(
+        Command::new("git")
+            .args(["config", "--get", "core.hooksPath"])
+            .current_dir(clone.path())
+            .output()
+            .expect("git runs")
+            .stdout
+            .is_empty(),
+        "a fresh clone already had a hooks path"
+    );
+
+    let ran = Command::new("bash")
+        .args(["-c", command])
+        .current_dir(clone.path())
+        .output()
+        .expect("the bootstrap command runs");
+    assert!(
+        ran.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+
+    let configured = Command::new("git")
+        .args(["config", "--get", "core.hooksPath"])
+        .current_dir(clone.path())
+        .output()
+        .expect("git runs");
+    let path = String::from_utf8_lossy(&configured.stdout)
+        .trim()
+        .to_owned();
+    assert_eq!(
+        path, ".githooks",
+        "bootstrapping did not point git at the committed hooks directory"
+    );
+    // And that directory carries the guard — and, per Contract 3, nothing else.
+    let hooks: Vec<String> = std::fs::read_dir(repo_root().join(&path))
+        .expect("the committed hooks directory")
+        .map(|entry| {
+            entry
+                .expect("a hook")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(
+        hooks,
+        vec!["pre-push".to_owned()],
+        "the guard directory carries something other than the visual guard"
     );
 }
