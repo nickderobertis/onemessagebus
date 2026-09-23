@@ -39,7 +39,7 @@ mkdir -p "$root" || {
   echo "               Name a directory this user can create: $root" >&2
   exit 1
 }
-cat >"$root/bus.yaml" <<YAML
+if ! cat >"$root/bus.yaml" <<YAML
 version: 1
 transport: {kind: local, dir: "$root/bus"}
 profile: desk
@@ -61,4 +61,9 @@ codecs:
               units: "{frame.units}"
               ships_from: eu-2
 YAML
+then
+  echo "stage-fixture: could not write the configuration into $root (the error is" >&2
+  echo "               above). Name a directory this user can write." >&2
+  exit 1
+fi
 printf '%s\n' "$root/bus.yaml"

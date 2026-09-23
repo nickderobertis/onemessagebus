@@ -279,6 +279,18 @@ def main() -> int:
     bus = os.environ.get("ONEMESSAGEBUS_BIN", str(repo / "target/release/onemessagebus"))
     font = repo / "screenshots/fonts/JetBrainsMono-Regular.ttf"
     out = Path(os.environ.get("SUBSCRIBE_GIF_OUT", repo / "docs/screenshots/subscribe.gif"))
+    # The renderer creates this path's parents and overwrites what is there, so
+    # bound it the way the still capture bounds `$SHOTS_OUT`: inside this
+    # checkout, and a file rather than a directory.
+    resolved = (repo / out).resolve() if not out.is_absolute() else out.resolve()
+    if repo not in resolved.parents or resolved.is_dir():
+        print(
+            f"subscribe-gif: SUBSCRIBE_GIF_OUT must name a file inside this checkout;"
+            f" {resolved} is not one. Unset it for docs/screenshots/subscribe.gif.",
+            file=sys.stderr,
+        )
+        return 1
+    out = resolved
 
     if not Path(bus).is_file():
         if not os.environ.get("SCREENSHOTS_NO_BUILD"):

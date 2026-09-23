@@ -403,12 +403,17 @@ session-setup:
 # CI's gate, like `deps-check`: the Visual-docs workflow owns the comparison and
 # the pre-push guard owns the local half (screenshots/AGENTS.md).
 
-# Every shell file the visual-docs project owns, parsed. Deterministic, offline
-# and instant: it renders nothing, so it is a gate target where a capture is not.
+# Every file the visual-docs project owns, parsed by the interpreter that runs
+# it. Deterministic, offline and instant: it renders nothing, so it is a gate
+# target where a capture is not.
 _visual-docs-lint:
     @for f in screenshots/*.sh .githooks/pre-push; do \
       bash -n "$f" || { echo "$f: does not parse — fix the syntax error above" >&2; exit 1; }; \
     done
+    @command -v python3 >/dev/null || { echo "python3 not found: needed to parse screenshots/subscribe-gif.py; install a Python 3" >&2; exit 1; }
+    @python3 -m py_compile screenshots/subscribe-gif.py \
+      || { echo "screenshots/subscribe-gif.py: does not parse — fix the syntax error above" >&2; exit 1; }
+    @rm -rf screenshots/__pycache__
 
 # Install the pinned screenshot renderer (`freeze`) into ~/.local/bin, on demand.
 screenshots-tools:

@@ -60,7 +60,11 @@ if [ ! -r "$sums_file" ]; then
 fi
 
 stem="freeze_${freeze_version}_Linux_${asset_arch}"
-tmp="$(mktemp -d)"
+tmp="$(mktemp -d)" || {
+  echo "install-freeze: no scratch directory to download into (the error is" >&2
+  echo "                above). Free space under \$TMPDIR and re-run." >&2
+  exit 1
+}
 trap 'rm -rf "$tmp"' EXIT
 
 sha256() {

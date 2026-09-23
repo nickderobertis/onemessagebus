@@ -5,6 +5,14 @@
 #
 # Needs `freeze` on PATH (bash screenshots/install-freeze.sh) and builds the
 # release binary it drives.
+# llmlint: ignore-file[changed_behavior_has_e2e] exercising this script means
+# rendering screenshots, and the visual-docs adoption keeps every step that
+# renders one out of `just check`, `just gate` and CI's gate job
+# (screenshots/AGENTS.md) — an end-to-end test here would put one back. What it
+# produces is gated instead by the committed digest baseline, which CI refuses
+# the moment a byte moves; the scripts around it are driven for real by
+# crates/onemessagebus-repo/tests/visual_docs_scripts.rs, and the guard that
+# calls it by tests/visual_docs_guard.rs.
 set -euo pipefail
 
 # Byte-determinism starts with the environment. The queue verbs read
@@ -12,7 +20,9 @@ set -euo pipefail
 # the schema-cache settings ahead of this capture's own flags, so a shell that
 # exports one would steer a scene away from the fixture and drift its hash
 # against a baseline captured in a clean shell. Clear every one of them, exactly
-# as tests/e2e/support.rs clears them for the journeys.
+# as tests/e2e/support.rs clears them for the journeys — except the one this
+# script's own contract is to honour, which is read here before the sweep.
+binary_override="${ONEMESSAGEBUS_BIN:-}"
 for _var in $(compgen -e); do
   case "$_var" in
   ONEMESSAGEBUS_*) unset "$_var" ;;
@@ -72,7 +82,7 @@ if ! command -v freeze >/dev/null 2>&1; then
 fi
 
 # The binary the scenes drive: release, the way a user runs it.
-bus="${ONEMESSAGEBUS_BIN:-$repo_root/target/release/onemessagebus}"
+bus="${binary_override:-$repo_root/target/release/onemessagebus}"
 if [ -z "${SCREENSHOTS_NO_BUILD:-}" ]; then
   cargo build --release --locked -p onemessagebus-cli >&2 || {
     echo "screenshots: the binary the scenes drive did not build (cargo's error is" >&2
@@ -126,14 +136,22 @@ freeze_flags=(
 
 rm -rf "$SHOTS_OUT"
 mkdir -p "$SHOTS_OUT" "$docs_dir"
-work="$(mktemp -d)"
+work="$(mktemp -d)" || {
+  echo "screenshots: no scratch directory to stage the fixture in (the error is" >&2
+  echo "             above). Free space under \$TMPDIR and re-run." >&2
+  exit 1
+}
 trap 'rm -rf "$work"' EXIT
 
 # captures.json identity is `name + JSON.stringify(toggles)`; entries collect one
 # "name|toggles|hash|image" record per rendered scene, sorted at the end.
 entries=()
 
-config="$(bash "$repo_root/screenshots/stage-fixture.sh" "$work")"
+config="$(bash "$repo_root/screenshots/stage-fixture.sh" "$work")" || {
+  echo "screenshots: the fixture the scenes run over was not staged (its error is" >&2
+  echo "             above), so there is nothing to capture." >&2
+  exit 1
+}
 [ "$config" = "$work/bus.yaml" ] || {
   echo "screenshots: the fixture was staged somewhere the scenes do not read;" >&2
   echo "             screenshots/stage-fixture.sh answered $config, not" >&2
@@ -262,14 +280,23 @@ render() {
   local hash
   hash="$(sha256 "$SHOTS_OUT/$image")"
   entries+=("$name|{}|$hash|$image")
-  cp "$SHOTS_OUT/$image" "$docs_dir/$image"
+  cp "$SHOTS_OUT/$image" "$docs_dir/$image" || {
+    echo "screenshots: rendered '$name' but could not put the committed copy in" >&2
+    echo "             $docs_dir (the error is above). The README embeds it from" >&2
+    echo "             there, so fix that directory and re-run." >&2
+    exit 1
+  }
   scene=""
 }
 
 # The two stream fixtures and the malformed record, beside the configuration, so
 # every scene's argv names them the short way a reader would type.
-cp "$fixture/checkout.ndjson" "$fixture/fulfilment.ndjson" "$work/"
-cp "$fixture/draft-question.json" "$work/draft.json"
+cp "$fixture/checkout.ndjson" "$fixture/fulfilment.ndjson" "$work/" \
+  && cp "$fixture/draft-question.json" "$work/draft.json" || {
+  echo "screenshots: the committed scene fixtures under $fixture could not be" >&2
+  echo "             staged (the error is above). Restore them from git." >&2
+  exit 1
+}
 
 # The question is raised by an `ask` left running with piped stdio — the way
 # tests/e2e/ask.rs holds one open — and answered from a second invocation over
