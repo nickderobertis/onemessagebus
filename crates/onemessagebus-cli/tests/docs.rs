@@ -12,7 +12,7 @@
 //!   word, the label typing and the payload bound; every sample invocation.
 //! - `README.md`: every verb of each family in its verb list and no other;
 //!   the profile names, and which is the default; every sample invocation; and
-//!   every flag its prose names in a span about this binary.
+//!   every flag its prose names, against the verb the span names it beside.
 
 mod clap_tree;
 
@@ -429,48 +429,64 @@ fn every_sample_invocation_names_a_real_verb_and_its_real_flags() {
 }
 
 #[test]
-fn every_flag_the_readme_names_is_one_the_binary_takes() {
+fn every_flag_the_readme_names_is_one_that_verb_takes() {
     // The README's sections introduce the command line rather than restating
     // it — `docs/cli.md` is the reference — but the flags they name are claims
-    // about the surface, and a renamed or retired one would go on being
+    // about the surface, and a renamed, retired or MOVED one would go on being
     // advertised on the crates.io and PyPI front page with nothing to notice.
-    // Every long flag the binary declares anywhere, and every one the README
-    // spells inside a code span, held together.
+    // A span that names a verb is checked against that verb's own flags; one
+    // that is a bare flag against every flag the tree declares.
     let (file, doc) = README;
-    let declared: BTreeSet<String> = clap_verbs()
-        .iter()
-        .flat_map(|(_, command)| long_flags(command))
+    let mut by_verb: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (path, command) in clap_verbs() {
+        by_verb
+            .entry(path[0].clone())
+            .or_default()
+            .extend(long_flags(&command));
+    }
+    let anywhere: BTreeSet<String> = by_verb
+        .values()
+        .flatten()
+        .cloned()
         .chain(long_flags(&Cli::command()))
         .collect();
     assert!(
-        !declared.is_empty(),
+        !anywhere.is_empty(),
         "the clap tree declares no long flags at all; this gate reads nothing"
     );
 
-    // Only spans that are about this binary: one naming it, one naming a verb of
-    // it, or a bare flag. `just --list` is a span too, and is not a claim here.
-    let verbs: BTreeSet<String> = clap_verbs()
-        .iter()
-        .map(|(path, _)| path[0].clone())
-        .collect();
-    let named: BTreeSet<String> = ticked(&flat(&prose(doc)))
-        .iter()
-        .filter(|span| {
-            span.split_whitespace().next().is_some_and(|first| {
-                first == "onemessagebus" || first.starts_with('-') || verbs.contains(first)
-            })
-        })
-        .flat_map(|span| flags_in(span))
-        .collect();
+    let mut checked = 0;
+    for span in ticked(&flat(&prose(doc))) {
+        let Some(first) = span.split_whitespace().next() else {
+            continue;
+        };
+        // The verb the span is about, if it names one: `onemessagebus serve …`,
+        // `serve --codec`, or a bare flag, which belongs to no verb in
+        // particular.
+        let verb = match first {
+            "onemessagebus" => span.split_whitespace().nth(1).map(str::to_owned),
+            first if by_verb.contains_key(first) => Some(first.to_owned()),
+            first if first.starts_with('-') => None,
+            _ => continue,
+        };
+        let allowed = match &verb {
+            Some(verb) => by_verb
+                .get(verb)
+                .unwrap_or_else(|| panic!("{file}: `{span}` names no verb of the binary")),
+            None => &anywhere,
+        };
+        for flag in flags_in(&span) {
+            checked += 1;
+            assert!(
+                allowed.contains(&flag),
+                "{file}: `{span}` names {flag}, which {} does not take; it takes {allowed:?}",
+                verb.as_deref()
+                    .map_or_else(|| "the binary".to_owned(), |verb| format!("`{verb}`")),
+            );
+        }
+    }
     assert!(
-        !named.is_empty(),
-        "{file} names no flag in a code span; this gate reads nothing"
-    );
-
-    let unknown: Vec<&String> = named.difference(&declared).collect();
-    assert!(
-        unknown.is_empty(),
-        "{file} names {unknown:?}, which the binary does not take; the flags it \
-         does take are {declared:?}"
+        checked > 0,
+        "{file} names no flag beside a verb; this gate reads nothing"
     );
 }

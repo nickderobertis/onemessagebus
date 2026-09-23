@@ -164,10 +164,20 @@ fn the_stager_and_the_journeys_helper_configure_one_bus() {
         stager.contains("tests/layouts/desk.json"),
         "screenshots/stage-fixture.sh no longer links the journeys' desk layout"
     );
-    for producer in [&helper, &stager] {
+    // The pin has to be the DESK's, not any `@1` the file happens to carry: both
+    // producers write the link on one line, so read it there.
+    for (what, producer, names_the_desk) in [
+        ("support.rs", &helper, "desk_bundle()"),
+        ("screenshots/stage-fixture.sh", &stager, "$desk"),
+    ] {
+        let link = producer
+            .lines()
+            .find(|line| line.contains(names_the_desk) && line.contains('@'))
+            .unwrap_or_else(|| panic!("{what} links the desk layout at no version at all"));
         assert!(
-            producer.contains("@1\""),
-            "one of the two producers links the desk layout at a pin other than @1"
+            link.contains("@1"),
+            "{what} links the desk layout at a pin other than @1: {}",
+            link.trim()
         );
     }
 }
