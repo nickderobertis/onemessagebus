@@ -28,12 +28,19 @@ on:
     # the branch without bound (keeps the 20 most recent versions).
     - cron: "41 5 1 * *"
 
+# Read-only by default, so anything added here later starts with no write reach.
 permissions:
-  contents: write       # push the gh-pages gallery
-  pull-requests: write  # post the diff comment
+  contents: read
 
 jobs:
   visual-docs:
+    # The writes belong to this job alone: screencomp pushes the gallery branch
+    # and upserts one sticky comment. GitHub Actions takes no expression here, so
+    # a run that cannot use a scope — a scheduled prune has no comment to post —
+    # still carries it; the job boundary is as narrow as the platform allows.
+    permissions:
+      contents: write
+      pull-requests: write
     uses: nickderobertis/screencomp/.github/workflows/visual-docs-reusable.yml@v0.4.8
     with:
       screencomp-version: v0.4.8
@@ -65,8 +72,9 @@ jobs:
       # in this repository), then capture. The reusable workflow exports
       # $SHOTS_OUT as shots/current/<arch>; the script writes captures.json and
       # the SVGs under it.
+      # llmlint: ignore-block[work_goes_through_command_surface] there is no `just` in this container, so the two recipes that wrap these lines — `screenshots-tools` and `screenshots` — cannot be invoked; each line is exactly the body of its recipe.
       capture-command: |
         export RUSTUP_TOOLCHAIN=1.97.1
         FREEZE_INSTALL_DIR=/usr/local/bin bash screenshots/install-freeze.sh
-        # llmlint: ignore[work_goes_through_command_surface] there is no `just` in this container; `just screenshots` wraps exactly this line
         bash screenshots/capture.sh
+      # llmlint: ignore-end[work_goes_through_command_surface]

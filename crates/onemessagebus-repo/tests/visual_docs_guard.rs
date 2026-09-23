@@ -76,7 +76,9 @@ fn git(dir: &Path, args: &[&str]) {
 struct Stand<'a> {
     lanes: &'a str,
     arches_status: i32,
-    relevant: bool,
+    /// What `screencomp scope` exits with: `0` nothing relevant, `3` relevant,
+    /// anything else an error the guard cannot act on.
+    scope_status: i32,
     drifted: bool,
     renderer: bool,
 }
@@ -87,7 +89,7 @@ impl<'a> Stand<'a> {
         Self {
             lanes,
             arches_status: 0,
-            relevant: true,
+            scope_status: 3,
             drifted: false,
             renderer: true,
         }
@@ -190,7 +192,7 @@ impl Guarded {
                  esac\n",
                 lanes = stand.lanes,
                 arches = stand.arches_status,
-                scope = if stand.relevant { 3 } else { 0 },
+                scope = stand.scope_status,
                 classify = if stand.drifted { 3 } else { 0 },
             ),
         );
@@ -287,7 +289,7 @@ fn stdout(run: &Output) -> String {
 fn a_push_touching_nothing_screenshot_relevant_passes_without_capturing() {
     let guarded = Guarded::new("docs/unrelated.md");
     let tools = guarded.tools(Stand {
-        relevant: false,
+        scope_status: 0,
         ..Stand::declaring(&guarded.lane)
     });
     let run = guarded.push(&tools, &[]);
@@ -531,4 +533,62 @@ fn a_screencomp_that_names_no_lane_is_refused_rather_than_read_as_an_empty_set()
             "it captured with no lane to classify"
         );
     }
+}
+
+#[test]
+fn a_new_branch_with_no_remote_head_to_fork_from_still_sees_its_own_tree() {
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    // A clone with no `origin/HEAD` — a fresh remote, or one whose default
+    // branch was never fetched — leaves the guard no merge base to diff from.
+    git(
+        guarded.at(),
+        &["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"],
+    );
+    // The single-sha fallback diffs that commit against the working tree, so
+    // this is what it has to find.
+    std::fs::write(
+        guarded.at().join("screenshots/capture-inputs.txt"),
+        "three\n",
+    )
+    .expect("the working tree is dirtied");
+
+    let tools = guarded.tools(Stand::declaring(&guarded.lane));
+    let run = guarded.push_over_stdin(
+        &tools,
+        &format!(
+            "refs/heads/shots {} refs/heads/shots {ABSENT}\n",
+            guarded.sha("HEAD"),
+        ),
+    );
+
+    assert!(run.status.success(), "{}", stderr(&run));
+    assert!(
+        !guarded.log("capture").is_empty(),
+        "with no merge base the guard saw nothing at all, so it would let a \
+         screenshot-relevant push through uncaptured"
+    );
+}
+
+#[test]
+fn a_scope_it_cannot_act_on_lets_the_push_through_rather_than_capturing_blindly() {
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    // Neither 0 (nothing relevant) nor 3 (relevant): a screencomp too old to
+    // answer, which is not this push's fault and which CI still gates.
+    let tools = guarded.tools(Stand {
+        scope_status: 64,
+        ..Stand::declaring(&guarded.lane)
+    });
+    let run = guarded.push(&tools, &[]);
+
+    assert!(run.status.success(), "an unusable scope blocked the push");
+    assert!(
+        stderr(&run).contains("skipping the"),
+        "the skip was silent: {}",
+        stderr(&run)
+    );
+    assert_eq!(
+        guarded.log("capture"),
+        "",
+        "it paid for a capture it could not decide it needed"
+    );
 }

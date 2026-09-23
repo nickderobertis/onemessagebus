@@ -25,8 +25,21 @@ cd "$repo_root"
 
 # This host's capture lane (shots/current/<arch>), named the same way the
 # pre-push guard and `just screenshots-bless` name it. CI overrides SHOTS_OUT.
+#
+# SHOTS_OUT comes from outside and the capture starts by emptying it, so bound it
+# first: a path inside this checkout, named without walking out of it. Everything
+# that sets it — the guard, the reusable workflow, this default — already does.
 arch="$(bash "$repo_root/screenshots/host-arch.sh")"
 SHOTS_OUT="${SHOTS_OUT:-shots/current/$arch}"
+case "$SHOTS_OUT" in
+"" | /* | *..*)
+  echo "screenshots: SHOTS_OUT must be a path inside this checkout, written" >&2
+  echo "             relative to its root and without '..'; the capture empties" >&2
+  echo "             it before it writes. Got: ${SHOTS_OUT:-<empty>}" >&2
+  echo "             Unset it for the default, shots/current/$arch." >&2
+  exit 1
+  ;;
+esac
 if [ -e "$SHOTS_OUT" ] && [ ! -d "$SHOTS_OUT" ]; then
   echo "screenshots: SHOTS_OUT must name a directory to capture into;" >&2
   echo "             $SHOTS_OUT is not one. Unset it or point it elsewhere." >&2
@@ -35,7 +48,6 @@ fi
 
 font="$repo_root/screenshots/fonts/JetBrainsMono-Regular.ttf"
 fixture="$repo_root/screenshots/fixture"
-desk="$repo_root/crates/onemessagebus-e2e/tests/layouts/desk.json"
 docs_dir="$repo_root/docs/screenshots"
 
 if ! command -v freeze >/dev/null 2>&1; then
@@ -46,12 +58,17 @@ fi
 
 # The binary the scenes drive: release, the way a user runs it.
 bus="${ONEMESSAGEBUS_BIN:-$repo_root/target/release/onemessagebus}"
-if [ -z "${SCREENSHOTS_NO_BUILD:-}" ] || [ ! -x "$bus" ]; then
+if [ -z "${SCREENSHOTS_NO_BUILD:-}" ]; then
   cargo build --release --locked -p onemessagebus-cli >&2
 fi
 if [ ! -x "$bus" ]; then
   echo "screenshots: no onemessagebus binary at $bus" >&2
-  echo "             Build it: cargo build --release -p onemessagebus-cli" >&2
+  if [ -n "${SCREENSHOTS_NO_BUILD:-}" ]; then
+    echo "             SCREENSHOTS_NO_BUILD is set, so nothing built it. Unset it," >&2
+    echo "             or point ONEMESSAGEBUS_BIN at a binary you already have." >&2
+  else
+    echo "             Build it: cargo build --release -p onemessagebus-cli" >&2
+  fi
   exit 1
 fi
 
@@ -96,32 +113,13 @@ trap 'rm -rf "$work"' EXIT
 # "name|toggles|hash|image" record per rendered scene, sorted at the end.
 entries=()
 
-# What `desk_config` stages for the journeys, plus the codec the `serve` scene
-# answers and its frame bundle reached by a `file://` link — so even the link
-# machinery runs with no HTTP.
-queues="$work/bus"
-cat >"$work/bus.yaml" <<YAML
-version: 1
-transport: {kind: local, dir: "$queues"}
-profile: desk
-schemas:
-  - "$desk@1"
-  - "file://$fixture/frames.json@1"
-codecs:
-  checkout:
-    queue: questions
-    reply_window_seconds: 1
-    select: op
-    frames:
-      quote:
-        schema: checkout.frame.quote@1
-        bindings:
-          - do: answer
-            response:
-              sku: "{frame.sku}"
-              units: "{frame.units}"
-              ships_from: eu-2
-YAML
+config="$(bash "$repo_root/screenshots/stage-fixture.sh" "$work")"
+[ "$config" = "$work/bus.yaml" ] || {
+  echo "screenshots: the fixture was staged somewhere the scenes do not read;" >&2
+  echo "             screenshots/stage-fixture.sh answered $config, not" >&2
+  echo "             $work/bus.yaml. Reconcile the two." >&2
+  exit 1
+}
 
 # Every scene runs from $work, so the paths a transcript quotes are the short
 # relative ones a reader would type rather than this machine's temp directory.
@@ -161,6 +159,9 @@ render() {
   printf '%s' "$scene" >"$src"
   if [ ! -s "$src" ]; then
     echo "screenshots: scene '$name' produced no output — cannot render." >&2
+    echo "             Run that scene's commands by hand over a staged fixture" >&2
+    echo "             (bash screenshots/stage-fixture.sh \"\$(mktemp -d)\") and" >&2
+    echo "             see what the verb says." >&2
     exit 1
   fi
   normalize "$src"
@@ -210,7 +211,14 @@ for _ in $(seq 1 600); do
 done
 if [ -z "$correlation" ]; then
   kill "$asking" 2>/dev/null || true
-  echo "screenshots: the ask never printed a correlation; nothing to capture" >&2
+  {
+    echo "screenshots: the ask never printed a correlation, so the question never"
+    echo "             reached the queue and there is nothing to capture. What it"
+    echo "             said:"
+    sed 's/^/             /' "$work/ask.err"
+    echo "             Raise the same question by hand over a staged fixture"
+    echo "             (bash screenshots/stage-fixture.sh \"\$(mktemp -d)\")."
+  } >&2
   exit 1
 fi
 printf '%s' "$verdict" | run reply questions --correlation "$correlation" --config bus.yaml >/dev/null

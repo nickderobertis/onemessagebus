@@ -51,9 +51,10 @@ candidates are deliberately absent, and should stay absent:
 
 ## The fixture: free, offline, and the journeys' own
 
-The capture stages what `desk_config` stages for the end-to-end journeys, and
-links the journeys' own `desk` layout document rather than a copy, so a change to
-the layout moves both. **No model, no network, no credential, no cost**: the
+`stage-fixture.sh` writes what `desk_config` writes for the end-to-end journeys,
+and links the journeys' own `desk` layout document rather than a copy, so a change
+to the layout moves both. It is one script because the stills and the animated
+hero must be taken over the same bus, not two that drift. **No model, no network, no credential, no cost**: the
 transport is a directory of files and the codec's frame bundle is reached by a
 `file://` link, so even the link machinery runs with no HTTP. `fixture/` holds
 only what the journeys do not already provide.

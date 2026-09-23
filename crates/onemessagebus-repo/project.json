@@ -1,6 +1,7 @@
 {
   "name": "onemessagebus-repo",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "//": "`test`'s inputs name every root file these tests read, so a change to one re-runs them. The visual-docs entries are the coupling `onemessagebus-visual-docs` cannot carry as a graph edge: this is a crate, and npm/test/project-boundaries.test.mjs holds a crate's implicitDependencies to exactly its Cargo workspace dependencies, which are none.",
   "projectType": "library",
   "sourceRoot": "crates/onemessagebus-repo/tests",
   "tags": ["scope:repo", "lang:rust", "type:repo"],
@@ -17,7 +18,12 @@
         "{workspaceRoot}/release-targets.toml",
         "{workspaceRoot}/scripts/release-probe.sh",
         "{workspaceRoot}/clippy.toml",
-        "{workspaceRoot}/rustfmt.toml"
+        "{workspaceRoot}/rustfmt.toml",
+        "{workspaceRoot}/rust-toolchain.toml",
+        "{workspaceRoot}/.github/workflows/visual-docs.yml",
+        "{workspaceRoot}/.githooks/pre-push",
+        "{workspaceRoot}/screenshots/*.sh",
+        "{workspaceRoot}/screencomp.toml"
       ]
     },
     "doc": { "command": "just _crate-doc onemessagebus-repo" },

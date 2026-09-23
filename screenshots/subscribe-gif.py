@@ -109,18 +109,13 @@ ARRIVING: list[Question] = [
 
 
 def stage(root: Path, repo: Path) -> Path:
-    """Write what `desk_config` stages for the journeys: a local transport under
-    `root` with the bus's own `desk` layout bundle linked at `@1`."""
-    desk = repo / "crates/onemessagebus-e2e/tests/layouts/desk.json"
-    config = root / "bus.yaml"
-    config.write_text(
-        "version: 1\n"
-        f'transport: {{kind: local, dir: "{root / "bus"}"}}\n'
-        "profile: desk\n"
-        "schemas:\n"
-        f'  - "{desk}@1"\n'
-    )
-    return config
+    """Stage the fixture through the one script that writes it, so the hero is
+    taken over the same layout as the stills rather than a second copy of it."""
+    staged = subprocess.run(
+        ["bash", str(repo / "screenshots/stage-fixture.sh"), str(root)],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    return Path(staged)
 
 
 def tail(bus: str, root: Path, config: Path) -> list[Arrival]:
@@ -130,6 +125,13 @@ def tail(bus: str, root: Path, config: Path) -> list[Arrival]:
     # would steer the tail away from this fixture.
     env = {k: v for k, v in os.environ.items() if not k.startswith("ONEMESSAGEBUS_")}
 
+    # llmlint: ignore-block[contracts_have_one_source_or_a_drift_gate] a capture's
+    # argv is the scene, not a restatement of the command line: it is the command
+    # the picture is of. It is also self-gating at the moment it matters — this
+    # CLI refuses an argv it does not have (exit 2), `check=True` below and the
+    # `subscribe` status check further down turn that into a failed
+    # `just screenshots-gif` rather than a stale picture, so a flag that has moved
+    # cannot be rendered. `docs/cli.md` remains the one statement of the surface.
     def send(question: Question) -> None:
         subprocess.run(
             [bus, "send", "questions", "--config", str(config)],
@@ -162,7 +164,12 @@ def tail(bus: str, root: Path, config: Path) -> list[Arrival]:
         send(question)
 
     if child.wait(timeout=60) != 0:
-        raise SystemExit("subscribe-gif: the tail did not end on its predicate")
+        raise SystemExit(
+            "subscribe-gif: the tail did not end on its predicate, so there is no "
+            "arrival sequence to animate. Run the same `subscribe` by hand over a "
+            "staged fixture (bash screenshots/stage-fixture.sh \"$(mktemp -d)\")."
+        )
+    # llmlint: ignore-end[contracts_have_one_source_or_a_drift_gate]
     reader.join(timeout=5)
     if not arrivals:
         raise SystemExit("subscribe-gif: the tail printed nothing to animate")
