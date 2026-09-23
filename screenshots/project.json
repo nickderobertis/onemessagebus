@@ -1,0 +1,33 @@
+{
+  "name": "onemessagebus-visual-docs",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "//": "There is deliberately no capture target: a step that renders a screenshot belongs to no gate (screenshots/AGENTS.md). `lint` parses what this project owns and `test` drives it — the guard and the scripts, with screencomp, freeze and the capture stood in for, so nothing is rendered. Those journeys are Rust and so live in `onemessagebus-repo`'s crate, which is why this project runs them by nextest filter rather than by path; running them here is what makes their reach into this project's scripts and into `onemessagebus-e2e`'s fixture declared edges rather than reach-ins.",
+  "projectType": "library",
+  "sourceRoot": "screenshots",
+  "tags": ["scope:docs", "lang:sh", "type:docs"],
+  "implicitDependencies": ["onemessagebus-cli", "onemessagebus-e2e"],
+  "targets": {
+    "bootstrap": {
+      "command": "git config core.hooksPath .githooks",
+      "cache": false
+    },
+    "lint": {
+      "command": "just _visual-docs-lint",
+      "inputs": ["default", "{workspaceRoot}/.githooks/pre-push"]
+    },
+    "test": {
+      "command": "just _visual-docs-test",
+      "inputs": [
+        "default",
+        "{workspaceRoot}/crates/onemessagebus-repo/tests/visual_docs_guard.rs",
+        "{workspaceRoot}/crates/onemessagebus-repo/tests/visual_docs_scripts.rs",
+        "{workspaceRoot}/crates/onemessagebus-e2e/tests/e2e/support.rs",
+        "{workspaceRoot}/crates/onemessagebus-e2e/tests/layouts/desk.json",
+        "{workspaceRoot}/.githooks/pre-push",
+        "{workspaceRoot}/screencomp.toml",
+        "sharedGlobals"
+      ],
+      "outputs": []
+    }
+  }
+}

@@ -186,6 +186,28 @@ _crate-test crate:
     @cargo test --doc -p {{crate}} --locked --quiet \
       || { echo "{{crate}}: doctests failed — fix the sample named above, or the README it is compiled from" >&2; exit 1; }
 
+# `onemessagebus-repo` holds root configuration to root sources; the two journeys
+# over the visual guard and its scripts live in the same crate but belong to
+# `onemessagebus-visual-docs`, which owns the code they drive (screenshots/AGENTS.md).
+# Nextest filters decide which run where, the way `_e2e-test` splits the
+# cross-language journey out of the e2e crate.
+visual-docs-binaries := "binary(visual_docs_guard) + binary(visual_docs_scripts)"
+
+# The repository-configuration tests, without the visual-docs journeys.
+_repo-test:
+    @cargo llvm-cov --no-report nextest -p onemessagebus-repo --locked -E 'not ({{visual-docs-binaries}})' --status-level fail --final-status-level fail \
+      || { echo "onemessagebus-repo: tests failed — fix the failures named above" >&2; exit 1; }
+    @cargo test --doc -p onemessagebus-repo --locked --quiet \
+      || { echo "onemessagebus-repo: doctests failed — fix the sample named above" >&2; exit 1; }
+
+# The visual guard and the scripts around it, driven the way git and a maintainer
+# drive them, with screencomp, freeze and the capture stood in for at the
+# subprocess seam. Renders no screenshot, so it is a gate target where a capture
+# is not.
+_visual-docs-test:
+    @cargo llvm-cov --no-report nextest -p onemessagebus-repo --locked -E '{{visual-docs-binaries}}' --status-level fail --final-status-level fail \
+      || { echo "onemessagebus-visual-docs: the journeys failed — fix the failures named above" >&2; exit 1; }
+
 # The compiled-binary journeys: the binary built instrumented in the coverage
 # target directory, so what the journeys spawn is attributed to the crates it
 # was built from, then the journey crate's tests over it.
@@ -398,6 +420,48 @@ msrv:
 # Provision the dev toolchain for a session. Idempotent, no-ops in CI.
 session-setup:
     ./scripts/session-setup.sh
+
+# The screenshot recipes are informational and deliberately out of `check` and
+# CI's gate, like `deps-check`: the Visual-docs workflow owns the comparison and
+# the pre-push guard owns the local half (screenshots/AGENTS.md).
+
+# Every file the visual-docs project owns, parsed by the interpreter that runs
+# it. Deterministic, offline and instant: it renders nothing, so it is a gate
+# target where a capture is not.
+_visual-docs-lint:
+    @for f in screenshots/*.sh .githooks/pre-push; do \
+      bash -n "$f" || { echo "$f: does not parse — fix the syntax error above" >&2; exit 1; }; \
+    done
+    @command -v python3 >/dev/null || { echo "python3 not found: needed to parse screenshots/subscribe-gif.py; install a Python 3" >&2; exit 1; }
+    @python3 -m py_compile screenshots/subscribe-gif.py \
+      || { echo "screenshots/subscribe-gif.py: does not parse — fix the syntax error above" >&2; exit 1; }
+    @rm -rf screenshots/__pycache__
+
+# Install the pinned screenshot renderer (`freeze`) into ~/.local/bin, on demand.
+screenshots-tools:
+    @bash screenshots/install-freeze.sh
+
+# Drives the real binary over the e2e tier's own fixture layout and renders each
+# scene to shots/current/<arch>/ and docs/screenshots/. Needs `freeze` on PATH.
+# Capture the terminal screenshots.
+screenshots:
+    @bash screenshots/capture.sh
+
+# A `subscribe` tail filling as a sibling process sends. Like the stills it drives
+# the real binary over the same fixture, but it is NOT hash-gated — a GIF is not
+# byte-reproducible across rendering libraries — so it is regenerated on demand and
+# committed. Pillow comes from uv, so nothing has to be installed first.
+# Regenerate the animated README hero (docs/screenshots/subscribe.gif).
+screenshots-gif:
+    @uv run --no-project --quiet --with 'pillow==11.3.0' python screenshots/subscribe-gif.py
+
+# There is one lane per arch in [capture].arches (screencomp.toml) and this rewrites
+# THIS host's lane only, via screenshots/host-arch.sh so the name matches what the
+# pre-push guard classifies. Commit shots/baseline/ with docs/screenshots/.
+# Recapture and refresh this host's baseline, after an INTENDED output change.
+screenshots-bless: screenshots
+    @bash screenshots/bless-baseline.sh
+    @echo "baseline refreshed for the $(bash screenshots/host-arch.sh) lane; commit shots/baseline/ + docs/screenshots/"
 
 # Install/refresh the llmlint toolchain (oneharness + llmlint). Idempotent.
 setup-llmlint:

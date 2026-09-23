@@ -1,6 +1,7 @@
 {
   "name": "onemessagebus-repo",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "//": "`test`'s inputs name every root file these tests read, because Nx cannot see through an `include_str!`. The `visual_docs_guard` and `visual_docs_scripts` binaries sit in this crate but are run by `onemessagebus-visual-docs`, which owns the scripts they drive; the nextest filters in the justfile are what split them, as they split the cross-language journey out of the e2e crate.",
   "projectType": "library",
   "sourceRoot": "crates/onemessagebus-repo/tests",
   "tags": ["scope:repo", "lang:rust", "type:repo"],
@@ -11,13 +12,15 @@
     "format-check": { "command": "just _crate-fmt-check onemessagebus-repo" },
     "lint": { "command": "just _crate-lint onemessagebus-repo" },
     "test": {
-      "command": "just _crate-test onemessagebus-repo",
+      "command": "just _repo-test",
       "inputs": [
         "crateSource",
         "{workspaceRoot}/release-targets.toml",
         "{workspaceRoot}/scripts/release-probe.sh",
         "{workspaceRoot}/clippy.toml",
-        "{workspaceRoot}/rustfmt.toml"
+        "{workspaceRoot}/rustfmt.toml",
+        "{workspaceRoot}/rust-toolchain.toml",
+        "{workspaceRoot}/.github/workflows/visual-docs.yml"
       ]
     },
     "doc": { "command": "just _crate-doc onemessagebus-repo" },

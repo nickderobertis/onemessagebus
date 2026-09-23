@@ -11,7 +11,8 @@
 //!   of a family; the exit code table; the default profile, the default source
 //!   word, the label typing and the payload bound; every sample invocation.
 //! - `README.md`: every verb of each family in its verb list and no other;
-//!   the profile names, and which is the default; every sample invocation.
+//!   the profile names, and which is the default; every sample invocation; and
+//!   every flag its prose names, against the verb the span names it beside.
 
 mod clap_tree;
 
@@ -425,4 +426,77 @@ fn every_sample_invocation_names_a_real_verb_and_its_real_flags() {
         }
     }
     assert!(samples > 0, "no sample invocation was found to hold");
+}
+
+#[test]
+fn every_flag_the_readme_names_is_one_that_verb_takes() {
+    // The README's sections introduce the command line rather than restating
+    // it — `docs/cli.md` is the reference — but the flags they name are claims
+    // about the surface, and a renamed, retired or MOVED one would go on being
+    // advertised on the crates.io and PyPI front page with nothing to notice.
+    // Every flag is held to the flags of ONE command, indexed by its whole argv
+    // path, so that a flag moving between two verbs of a family — `events emit`
+    // to `events merge` — fails here rather than being found under `events`.
+    let (file, doc) = README;
+    let by_path: BTreeMap<Vec<String>, BTreeSet<String>> = clap_verbs()
+        .into_iter()
+        .map(|(path, command)| (path, long_flags(&command)))
+        .collect();
+    assert!(
+        by_path.values().any(|flags| !flags.is_empty()),
+        "the clap tree declares no long flags at all; this gate reads nothing"
+    );
+    // The longest declared path `words` begins with: `events merge`, not the
+    // `events` it is a verb of.
+    let named = |words: &[&str]| -> Option<Vec<String>> {
+        by_path
+            .keys()
+            .filter(|path| words.starts_with(&path.iter().map(String::as_str).collect::<Vec<_>>()))
+            .max_by_key(|path| path.len())
+            .cloned()
+    };
+
+    // The command the prose is explaining, carried across spans: a bare
+    // `--filter` under `## Streams` is a claim about the `events merge` the
+    // sentence just named, not about the binary at large.
+    let mut about: Option<Vec<String>> = None;
+    let mut checked = 0;
+    for span in ticked(&flat(&prose(doc))) {
+        let words: Vec<&str> = span.split_whitespace().collect();
+        // `onemessagebus ask` and `ask` are the same claim about the same verb.
+        let words = words.strip_prefix(&["onemessagebus"]).unwrap_or(&words);
+        let verb = match named(words) {
+            Some(path) => {
+                about = Some(path.clone());
+                Some(path)
+            }
+            // A bare flag belongs to the command the prose last named.
+            None if words.first().is_some_and(|word| word.starts_with('-')) => about.clone(),
+            None => continue,
+        };
+        let flags = flags_in(&span);
+        if flags.is_empty() {
+            continue;
+        }
+        let Some(verb) = verb else {
+            panic!(
+                "{file}: `{span}` names a flag before any verb, so there is no \
+                 command to hold it to; name the verb it belongs to"
+            );
+        };
+        let allowed = &by_path[&verb];
+        let verb = verb.join(" ");
+        for flag in flags {
+            checked += 1;
+            assert!(
+                allowed.contains(&flag),
+                "{file}: `{span}` names {flag}, which `{verb}` does not take; \
+                 it takes {allowed:?}"
+            );
+        }
+    }
+    assert!(
+        checked > 0,
+        "{file} names no flag beside a verb; this gate reads nothing"
+    );
 }

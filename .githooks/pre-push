@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+# The screencomp visual guard, and the only hook this directory carries: `just
+# gate` is deliberately not wired in here. Re-capture when a [guard].paths file
+# changes and block the push on drift, so the refreshed baseline is committed
+# deliberately and CI stays green. Why, and how this is activated:
+# screenshots/AGENTS.md.
+#
+# Bypass one push: git push --no-verify
+set -euo pipefail
+
+# git passes the remote this push is going to as $1 — a name, or a URL when the
+# push names no remote. A branch's fork point is the default branch of THAT
+# remote, so a push to a fork or a second remote is not measured against
+# `origin`'s history.
+REMOTE="${1:-origin}"
+
+LANE="$(bash screenshots/host-arch.sh)"
+MANIFEST="shots/baseline/${LANE}.json"
+GALLERY="shots/review"
+CURRENT="shots/current"
+
+# No-op under CI: the visual-docs workflow is the source of truth there.
+[ -n "${CI:-}" ] && exit 0
+
+# llmlint: ignore[cli_output_contract] a pre-push hook's exit status is the push
+# decision, not a report on the hook: an optional third-party tool that a clean
+# clone's `just bootstrap` does not install must not block every contributor's
+# push, and CI's strict gate is the backstop that catches what was skipped here.
+# The skip is loud on stderr and SCREENCOMP_GUARD_REQUIRE=1 makes it fatal.
+if ! command -v screencomp >/dev/null 2>&1; then
+  {
+    echo "pre-push: screencomp is NOT on PATH — the visual guard cannot run."
+    echo "          Install it: https://github.com/nickderobertis/screencomp#install"
+    echo "          Set SCREENCOMP_GUARD_REQUIRE=1 to fail here instead."
+  } >&2
+  [ -n "${SCREENCOMP_GUARD_REQUIRE:-}" ] && exit 1
+  exit 0
+fi
+
+# The declared [capture].arches lanes, read from the one place they live. This is
+# the guard's own input, so a screencomp that failed or answered nothing is a
+# refusal rather than an empty lane set that would refuse this host by the wrong
+# name.
+if ! LANES="$(screencomp arches)" || [ -z "${LANES//[[:space:]]/}" ]; then
+  echo "pre-push: 'screencomp arches' named no capture lane, so there is nothing" >&2
+  echo "          to classify this host against. Check [capture].arches in" >&2
+  echo "          screencomp.toml and that screencomp is current." >&2
+  exit 1
+fi
+
+# A host whose arch no lane declares has no committed baseline and no CI job, so
+# refuse loudly rather than classify against somebody else's lane.
+if ! printf '%s\n' "$LANES" | grep -qxF "$LANE"; then
+  echo "pre-push: this host's architecture ($LANE) has no lane in [capture].arches" >&2
+  echo "          of screencomp.toml, so it has no committed baseline to classify" >&2
+  echo "          against. Declared: $(printf '%s' "$LANES" | tr '\n' ' ')" >&2
+  echo "          Add \"$LANE\" there (CI fans one job out per lane), capture it" >&2
+  echo "          with 'just screenshots-bless', and commit $MANIFEST." >&2
+  exit 1
+fi
+
+# git hands a pre-push hook one line per ref it is about to update, on stdin.
+# `undecidable` records a ref whose changed paths cannot be derived at all.
+ranges=()
+undecidable=""
+if [ -n "${SCREENCOMP_GUARD_RANGE:-}" ]; then
+  # A test/override, so it steers `git diff` directly: accept only something git
+  # resolves, and never an option.
+  case "$SCREENCOMP_GUARD_RANGE" in
+  -*)
+    echo "pre-push: SCREENCOMP_GUARD_RANGE must name a revision range, not an" >&2
+    echo "          option: $SCREENCOMP_GUARD_RANGE" >&2
+    exit 1
+    ;;
+  esac
+  # A two-ended range, not a lone revision: `git diff HEAD` compares a commit to
+  # the WORKING TREE, so a bare revision here would decide relevance from
+  # uncommitted edits rather than from what is being pushed.
+  case "$SCREENCOMP_GUARD_RANGE" in
+  *..*) ;;
+  *)
+    echo "pre-push: SCREENCOMP_GUARD_RANGE must be a two-ended revision range" >&2
+    echo "          (<from>..<to>); a lone revision would diff the working tree" >&2
+    echo "          rather than the commits being pushed: $SCREENCOMP_GUARD_RANGE" >&2
+    exit 1
+    ;;
+  esac
+  # Both ends, not just one: `HEAD..never-existed` resolves on its left and is
+  # still a range `git diff` cannot take.
+  for end in "${SCREENCOMP_GUARD_RANGE%%..*}" "${SCREENCOMP_GUARD_RANGE##*..}"; do
+    if ! git rev-parse --quiet --verify "$end^{commit}" >/dev/null 2>&1; then
+      echo "pre-push: SCREENCOMP_GUARD_RANGE names no revision this repository" >&2
+      echo "          has: $end (in $SCREENCOMP_GUARD_RANGE)" >&2
+      exit 1
+    fi
+  done
+  ranges+=("$SCREENCOMP_GUARD_RANGE")
+else
+  zero='^0+$'
+  while read -r _local_ref local_sha _remote_ref remote_sha; do
+    [ -z "${local_sha:-}" ] && continue
+    if [[ "$local_sha" =~ $zero ]]; then
+      continue                            # branch deletion: nothing to capture
+    elif [[ "$remote_sha" =~ $zero ]]; then
+      # A branch the remote has never seen: its fork point is the merge base
+      # with that remote's default branch. With no `<remote>/HEAD` there is
+      # none — a fresh remote, a clone that never fetched it — and `git diff <sha>`
+      # would compare that commit to the working tree and report nothing, which
+      # reads as "no screenshot changed" for a push that may be full of them.
+      # Fail closed: a relevance check that can silently skip is a correctness
+      # hole, exactly as `scripts/nx-affected.sh` treats the same situation.
+      base="$(git merge-base "refs/remotes/$REMOTE/HEAD" "$local_sha" 2>/dev/null || true)"
+      [ -n "$base" ] && ranges+=("${base}..${local_sha}") || undecidable=1
+    else
+      ranges+=("${remote_sha}..${local_sha}")
+    fi
+  done
+fi
+[ "${#ranges[@]}" -eq 0 ] && [ -z "$undecidable" ] && exit 0
+
+if [ -n "$undecidable" ]; then
+  echo "pre-push: no merge base against $REMOTE for a branch it has not seen, so" >&2
+  echo "          what this push changes cannot be derived — capturing rather" >&2
+  echo "          than guessing." >&2
+  scope_status=3
+else
+  changed="$(for r in "${ranges[@]}"; do git diff --name-only "$r"; done | sort -u)"
+
+  # `scope` exits 3 when a changed path matches [guard].paths, 0 when none do,
+  # and any OTHER non-zero on error. Treat ONLY exit 3 as relevant; on an error,
+  # warn and skip rather than force a slow capture — CI is the backstop.
+  set +e
+  printf '%s\n' "$changed" | screencomp scope --changed-from - --exit-code --quiet
+  scope_status=$?
+  set -e
+fi
+case "$scope_status" in
+  0) exit 0 ;;                            # nothing relevant: pass silently
+  3) : ;;                                 # a relevant path matched: capture below
+  # llmlint: ignore-block[cli_output_contract] same reasoning as the missing-CLI skip above: the exit status is the push decision, a screencomp too old to answer `scope` is not this push's fault, and CI's strict gate still catches the drift. Forcing the slow capture instead would punish every push for a version skew.
+  *)
+    echo "pre-push: 'screencomp scope' failed (exit $scope_status); skipping the" >&2
+    echo "          visual guard. Is screencomp current? CI still gates this." >&2
+    exit 0
+    ;;
+  # llmlint: ignore-end[cli_output_contract]
+esac
+
+if ! command -v freeze >/dev/null 2>&1; then
+  echo "pre-push: screenshot-relevant files changed but 'freeze' is not installed" >&2
+  echo "          to re-capture. Install it: just screenshots-tools" >&2
+  echo "          then retry, or bypass with: git push --no-verify" >&2
+  exit 1
+fi
+SHOTS_OUT="$CURRENT/$LANE" bash screenshots/capture.sh
+
+set +e
+screencomp classify --baseline-manifest "$MANIFEST" --current "$CURRENT" --arch "$LANE" --exit-code
+status=$?
+set -e
+
+if [ "$status" -eq 0 ]; then
+  echo "pre-push: screenshots unchanged against $MANIFEST — ok to push"
+  exit 0
+elif [ "$status" -ne 3 ]; then
+  # Anything but 0 (clean) or 3 (drift) is screencomp failing rather than
+  # answering. Its status is its own vocabulary, so refuse in this repository's:
+  # the guard could not evaluate the push, which is a well-formed no.
+  echo "pre-push: 'screencomp classify' could not evaluate the capture against" >&2
+  echo "          $MANIFEST (exit $status). Is screencomp current? Re-run, or" >&2
+  echo "          bypass this push with: git push --no-verify" >&2
+  exit 1
+fi
+
+# Drift (exit 3): re-bless this lane and render it for review, then refuse — so
+# the refreshed baseline and README images are committed deliberately.
+# Either step failing still blocks: the drift is real whether or not the review
+# materials could be produced, so the push never becomes allowed by a refusal.
+SHOTS_CURRENT="$CURRENT" bash screenshots/bless-baseline.sh || {
+  echo "pre-push: the screenshots drifted, but this lane's baseline could not be" >&2
+  echo "          refreshed (the reason is above), so there is nothing to review." >&2
+  echo "          The push is blocked either way. Fix that, re-run" >&2
+  echo "          'just screenshots-bless', or bypass with: git push --no-verify" >&2
+  exit 1
+}
+screencomp gallery --input "$CURRENT" --arch "$LANE" \
+  --output "$GALLERY" --title "Pre-push screenshot review" >/dev/null || {
+  echo "pre-push: the screenshots drifted and $MANIFEST was refreshed, but the" >&2
+  echo "          review gallery could not be rendered (the reason is above)." >&2
+  echo "          The push is blocked either way. Review the refreshed" >&2
+  echo "          docs/screenshots/ and $MANIFEST directly, or bypass with:" >&2
+  echo "          git push --no-verify" >&2
+  exit 1
+}
+
+{
+  echo
+  echo "  SCREENSHOTS CHANGED — push blocked for review"
+  echo "  Review the rendered gallery: $GALLERY/index.html"
+  echo "  Also commit the refreshed README images in docs/screenshots/."
+  echo "  If intended: git add $MANIFEST docs/screenshots && git commit, push again."
+  echo "  If not: investigate the diff. Bypass with: git push --no-verify"
+  echo
+} >&2
+exit 1

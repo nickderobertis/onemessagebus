@@ -1,0 +1,2 @@
+{"v":1,"ts":"2026-05-04T09:12:05.207Z","stream":"order-8841","seq":1,"source":"fulfilment","kind":"stock-reserved","labels":{"tenant":"acme","warehouse":"eu-2"},"payload":{"sku":"KB-118","units":1},"artifacts":[]}
+{"v":1,"ts":"2026-05-04T09:12:08.740Z","stream":"order-8841","seq":2,"source":"fulfilment","kind":"label-printed","labels":{"tenant":"acme","warehouse":"eu-2"},"payload":{"carrier":"dhl"},"artifacts":[{"id":"label-8841","kind":"shipping-label","bytes":48213}]}

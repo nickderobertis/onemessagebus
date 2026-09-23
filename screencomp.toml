@@ -1,0 +1,37 @@
+# screencomp configuration. See https://github.com/nickderobertis/screencomp.
+
+[capture]
+# One lane. The shots are deterministic SVGs — pure layout maths over a vendored,
+# pinned font embedded into each file as base64 — so their bytes do not depend on
+# the CPU, and a second lane would commit a baseline nothing here has captured.
+# The pre-push guard is LOCAL and classifies the lane of the host it runs on, so
+# it refuses an undeclared host arch loudly rather than guessing; add the arch
+# here and bless it from such a host to gain that lane, and CI fans one job out
+# per lane automatically.
+arches = ["x86_64"]
+
+[comment]
+title = "Terminal screenshots"
+marker = "screencomp"        # [A-Za-z0-9_-]; one sticky comment per marker
+embed_limit = 10             # embed images inline when <= N shots differ (0 disables)
+
+# One card per scene, all scripted in screenshots/capture.sh and explained in
+# screenshots/AGENTS.md: `ask` (the correlation, the wait, the answer), `queues`
+# (send, next, status), `events-merge`, `schema`, `serve` and `refusal`. No scene
+# renders a second variant of itself, so no card carries a toggle and
+# screencomp.toml declares none: a shot naming a toggle key no `[[toggle]]`
+# declares is what `screencomp doctor` refuses.
+
+[guard]
+# Local pre-push guard (.githooks/pre-push): re-capture only when something that
+# can change the rendered output changes — the CLI surface and the renderings it
+# prints, the core the verbs answer from, the layout the fixture links, or the
+# capture machinery itself.
+paths = [
+  "crates/onemessagebus-cli/src/**",
+  "crates/onemessagebus/src/**",
+  "crates/onemessagebus-e2e/tests/layouts/desk.json",
+  "screenshots/**",
+  "screencomp.toml",
+]
+gallery = "shots/review"
