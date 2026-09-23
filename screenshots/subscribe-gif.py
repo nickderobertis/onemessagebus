@@ -23,7 +23,6 @@ adoption is what CI enforces.
 from __future__ import annotations
 
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -190,11 +189,14 @@ def tail(bus: str, root: Path, config: Path) -> list[Arrival]:
     return arrivals
 
 
-def normalize(text: str) -> str:
-    """Rewrite the per-run values the desk stamps to the same fixed placeholders
-    the hash-gated stills use, so the two read as one session."""
-    text = re.sub(r"c-[0-9a-f]{32}", "c-4f3c1d92a08b47e6b1d5c0a7e93f2b18", text)
-    return re.sub(r'"raised_at":\d{13}', '"raised_at":1789300000000', text)
+def normalize(repo: Path, text: str) -> str:
+    """Rewrite the per-run values the desk stamps, through the one script that
+    writes them — the same one the hash-gated stills pass their scenes through,
+    so the hero and the stills read as one session."""
+    return subprocess.run(
+        ["bash", str(repo / "screenshots/normalize.sh")],
+        input=text, check=True, capture_output=True, text=True,
+    ).stdout
 
 
 def prompt(argv: list[str]) -> list[str]:
@@ -218,7 +220,7 @@ def wrap(line: str) -> list[str]:
     return [line[i:i + COLS] for i in range(0, len(line), COLS)] or [""]
 
 
-def frames(command: list[str], arrivals: list[Arrival]) -> list[Frame]:
+def frames(repo: Path, command: list[str], arrivals: list[Arrival]) -> list[Frame]:
     """One frame per arriving line, held for the gap until the next one really
     arrived."""
     prompt: list[list[Segment]] = [[Segment("$ ", CYAN), Segment(command[0], FG)]]
@@ -227,7 +229,7 @@ def frames(command: list[str], arrivals: list[Arrival]) -> list[Frame]:
     out = [Frame(list(prompt), 700)]
     shown = list(prompt)
     for index, arrival in enumerate(arrivals):
-        for part in wrap(normalize(arrival.line)):
+        for part in wrap(normalize(repo, arrival.line)):
             position, _, rest = part.partition(" ")
             shown = shown + [
                 [Segment(position + " ", DIM), Segment(rest, FG)] if rest
@@ -301,7 +303,7 @@ def main() -> int:
         shutil.rmtree(root, ignore_errors=True)
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    render(frames(prompt(tail_argv(config)), arrivals), font, out)
+    render(frames(repo, prompt(tail_argv(config)), arrivals), font, out)
     print(f"subscribe-gif: wrote {out} ({len(arrivals)} lines tailed)", file=sys.stderr)
     return 0
 

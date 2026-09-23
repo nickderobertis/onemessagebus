@@ -76,9 +76,6 @@ fn git(dir: &Path, args: &[&str]) {
 struct Stand<'a> {
     lanes: &'a str,
     arches_status: i32,
-    /// What `screencomp scope` exits with: `0` nothing relevant, `3` relevant,
-    /// anything else an error the guard cannot act on.
-    scope_status: i32,
     drifted: bool,
     renderer: bool,
 }
@@ -89,7 +86,6 @@ impl<'a> Stand<'a> {
         Self {
             lanes,
             arches_status: 0,
-            scope_status: 3,
             drifted: false,
             renderer: true,
         }
@@ -173,6 +169,11 @@ impl Guarded {
     }
 
     /// The stand-in tools, on a `PATH` of their own.
+    ///
+    /// `screencomp scope` decides relevance from the changed paths it is handed,
+    /// the way the real one decides it against `[guard].paths` — so a journey
+    /// that gets the range wrong is a journey where nothing is captured.
+    /// `$SCOPE_FORCE` overrides it, for the statuses the guard cannot act on.
     fn tools(&self, stand: Stand<'_>) -> PathBuf {
         let bin = self.at().join("stand-ins");
         executable(
@@ -182,7 +183,9 @@ impl Guarded {
                  echo \"$1\" >>\"$GUARD_LOG.screencomp\"\n\
                  case \"$1\" in\n\
                  arches) printf '{lanes}'; exit {arches} ;;\n\
-                 scope) cat >/dev/null; exit {scope} ;;\n\
+                 scope) if [ -n \"${{SCOPE_FORCE:-}}\" ]; then cat >/dev/null; \
+                   exit \"$SCOPE_FORCE\"; fi; \
+                   if grep -q '^screenshots/'; then exit 3; else exit 0; fi ;;\n\
                  classify) exit {classify} ;;\n\
                  manifest) shift; while [ \"$1\" != --output ]; do shift; done; \
                    printf 'blessed\\n' >\"$2\" ;;\n\
@@ -192,7 +195,6 @@ impl Guarded {
                  esac\n",
                 lanes = stand.lanes,
                 arches = stand.arches_status,
-                scope = stand.scope_status,
                 classify = if stand.drifted { 3 } else { 0 },
             ),
         );
@@ -241,11 +243,11 @@ impl Guarded {
 
     /// Run the guard the way git really invokes it: the ref lines on stdin and
     /// no range override, so the hook's own range arithmetic decides.
-    fn push_over_stdin(&self, path: &Path, lines: &str) -> Output {
+    fn push_over_stdin(&self, path: &Path, remote: &str, lines: &str) -> Output {
         use std::io::Write as _;
         let mut child = Command::new("bash")
             .arg(".githooks/pre-push")
-            .args(["origin", "https://example.invalid/guarded.git"])
+            .args([remote, "https://example.invalid/guarded.git"])
             .current_dir(self.at())
             .env("PATH", format!("{}:/usr/bin:/bin", path.display()))
             .env("GUARD_LOG", self.at().join("guard"))
@@ -288,10 +290,7 @@ fn stdout(run: &Output) -> String {
 #[test]
 fn a_push_touching_nothing_screenshot_relevant_passes_without_capturing() {
     let guarded = Guarded::new("docs/unrelated.md");
-    let tools = guarded.tools(Stand {
-        scope_status: 0,
-        ..Stand::declaring(&guarded.lane)
-    });
+    let tools = guarded.tools(Stand::declaring(&guarded.lane));
     let run = guarded.push(&tools, &[]);
 
     assert!(run.status.success(), "{}", stderr(&run));
@@ -448,6 +447,7 @@ fn an_ordinary_update_diffs_what_the_remote_already_has_against_what_is_pushed()
     let tools = guarded.tools(Stand::declaring(&guarded.lane));
     let run = guarded.push_over_stdin(
         &tools,
+        "origin",
         &format!(
             "refs/heads/main {} refs/heads/main {}\n",
             guarded.sha("HEAD"),
@@ -469,6 +469,7 @@ fn a_new_branch_falls_back_to_its_merge_base_with_the_remote_head() {
     // No `remote_sha`: the remote has never seen this branch.
     let run = guarded.push_over_stdin(
         &tools,
+        "origin",
         &format!(
             "refs/heads/shots {} refs/heads/shots {ABSENT}\n",
             guarded.sha("HEAD"),
@@ -486,12 +487,15 @@ fn a_new_branch_falls_back_to_its_merge_base_with_the_remote_head() {
 fn a_branch_deletion_carries_nothing_to_capture() {
     let guarded = Guarded::new("screenshots/capture-inputs.txt");
     let tools = guarded.tools(Stand::declaring(&guarded.lane));
-    // No `local_sha`: this push removes the branch.
+    // No `local_sha`: this push removes the branch. The sha the remote holds it
+    // at is one whose tree differs from this one in a screenshot-relevant file,
+    // so a guard that read the deletion as a range would capture.
     let run = guarded.push_over_stdin(
         &tools,
+        "origin",
         &format!(
             "(delete) {ABSENT} refs/heads/gone {}\n",
-            guarded.sha("HEAD")
+            guarded.sha("HEAD~1")
         ),
     );
 
@@ -548,14 +552,10 @@ fn a_new_branch_with_no_merge_base_captures_rather_than_guessing() {
         &["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"],
     );
 
-    let tools = guarded.tools(Stand {
-        // Nothing reaches `scope` on this path; a status that would mean "not
-        // relevant" proves the guard did not consult it.
-        scope_status: 0,
-        ..Stand::declaring(&guarded.lane)
-    });
+    let tools = guarded.tools(Stand::declaring(&guarded.lane));
     let run = guarded.push_over_stdin(
         &tools,
+        "origin",
         &format!(
             "refs/heads/shots {} refs/heads/shots {ABSENT}\n",
             guarded.sha("HEAD"),
@@ -571,6 +571,10 @@ fn a_new_branch_with_no_merge_base_captures_rather_than_guessing() {
         stderr(&run).contains("no merge base"),
         "it captured without saying why: {}",
         stderr(&run)
+    );
+    assert!(
+        !guarded.log("screencomp").contains("scope"),
+        "it asked `scope` about a changed-path list it could not derive"
     );
 }
 
@@ -601,11 +605,8 @@ fn a_scope_it_cannot_act_on_lets_the_push_through_rather_than_capturing_blindly(
     let guarded = Guarded::new("screenshots/capture-inputs.txt");
     // Neither 0 (nothing relevant) nor 3 (relevant): a screencomp too old to
     // answer, which is not this push's fault and which CI still gates.
-    let tools = guarded.tools(Stand {
-        scope_status: 64,
-        ..Stand::declaring(&guarded.lane)
-    });
-    let run = guarded.push(&tools, &[]);
+    let tools = guarded.tools(Stand::declaring(&guarded.lane));
+    let run = guarded.push(&tools, &[("SCOPE_FORCE", "64")]);
 
     assert!(run.status.success(), "an unusable scope blocked the push");
     assert!(
@@ -617,5 +618,51 @@ fn a_scope_it_cannot_act_on_lets_the_push_through_rather_than_capturing_blindly(
         guarded.log("capture"),
         "",
         "it paid for a capture it could not decide it needed"
+    );
+}
+
+#[test]
+fn a_push_to_another_remote_forks_from_that_remote_rather_than_origin() {
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    // A fork, with `origin` already carrying this commit and `upstream` a commit
+    // behind: measuring against `origin` would report nothing changed at all.
+    // The push is going to `upstream`, and that is whose history the range must
+    // be taken against.
+    git(
+        guarded.at(),
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    );
+    git(
+        guarded.at(),
+        &["update-ref", "refs/remotes/upstream/main", "HEAD~1"],
+    );
+    git(
+        guarded.at(),
+        &[
+            "symbolic-ref",
+            "refs/remotes/upstream/HEAD",
+            "refs/remotes/upstream/main",
+        ],
+    );
+
+    let tools = guarded.tools(Stand::declaring(&guarded.lane));
+    let run = guarded.push_over_stdin(
+        &tools,
+        "upstream",
+        &format!(
+            "refs/heads/shots {} refs/heads/shots {ABSENT}\n",
+            guarded.sha("HEAD"),
+        ),
+    );
+
+    assert!(run.status.success(), "{}", stderr(&run));
+    assert!(
+        !guarded.log("capture").is_empty(),
+        "the fork point came from a remote this push is not going to"
+    );
+    assert!(
+        !stderr(&run).contains("no merge base"),
+        "it fell back instead of forking from upstream: {}",
+        stderr(&run)
     );
 }

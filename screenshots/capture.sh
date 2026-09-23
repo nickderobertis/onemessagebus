@@ -45,6 +45,20 @@ if [ -e "$SHOTS_OUT" ] && [ ! -d "$SHOTS_OUT" ]; then
   echo "             $SHOTS_OUT is not one. Unset it or point it elsewhere." >&2
   exit 1
 fi
+# A relative path can still leave the checkout through a symlinked component, so
+# resolve the part of it that already exists and check where that really is.
+existing="$SHOTS_OUT"
+while [ ! -d "$existing" ] && [ "$existing" != "." ]; do existing="$(dirname "$existing")"; done
+resolved="$(cd "$existing" && pwd -P)"
+case "$resolved" in
+"$repo_root" | "$repo_root"/*) ;;
+*)
+  echo "screenshots: SHOTS_OUT resolves outside this checkout, to $resolved," >&2
+  echo "             and the capture empties it before it writes. Unset it for" >&2
+  echo "             the default, shots/current/$arch." >&2
+  exit 1
+  ;;
+esac
 
 font="$repo_root/screenshots/fonts/JetBrainsMono-Regular.ttf"
 fixture="$repo_root/screenshots/fixture"
@@ -125,23 +139,16 @@ config="$(bash "$repo_root/screenshots/stage-fixture.sh" "$work")"
 # relative ones a reader would type rather than this machine's temp directory.
 run() { (cd "$work" && "$bus" "$@"); }
 
-# Per-run values the bus mints, rewritten to fixed placeholders so the bytes are
-# identical on every machine: the 32-hex correlation `ask` mints, and the
-# epoch-millisecond instants the desk layout stamps onto a question and an
-# answer. There is no clock-override or fixed-id switch on this CLI and this
-# capture does not add one — a flag is a capability-manifest change first.
+# Per-run values the bus mints, through the one script that rewrites them — the
+# same one the animated hero passes its tail through.
 normalize() {
-  sed -i \
-    -e 's/c-[0-9a-f]\{32\}/c-4f3c1d92a08b47e6b1d5c0a7e93f2b18/g' \
-    -e 's/"raised_at":[0-9]\{13\}/"raised_at":1789300000000/g' \
-    -e 's/"at":[0-9]\{13\}/"at":1789300000000/g' \
-    "$1"
+  local rewritten="$1.normalized"
+  bash "$repo_root/screenshots/normalize.sh" <"$1" >"$rewritten"
+  mv "$rewritten" "$1"
 }
 
-# Every scene's prompt line is DERIVED from the argv that was run, never written
-# beside it: `show` is what both prints and runs, so a transcript cannot come to
-# quote a flag the capture did not pass. It folds an over-wide command the way a
-# person would, with a trailing `\` and a four-space continuation.
+# The scene being built: `emit` appends one line of it, and `render` turns it
+# into the SVG screencomp hashes.
 scene=""
 emit() { scene+="$1"$'\n'; }
 
@@ -203,11 +210,25 @@ show() {
   fi
   status=$?
   set -e
-  emit "$out"
   if [ -n "${SHOW_STATUS:-}" ]; then
+    emit "$out"
     emit '$ echo $?'
     emit "$status"
+    return
   fi
+  # A scene that is not about a refusal must not render one: a verb that failed
+  # here would otherwise be photographed as the documented happy path.
+  if [ "$status" -ne 0 ]; then
+    {
+      echo "screenshots: 'onemessagebus $*' exited $status, so this scene would"
+      echo "             show a failure as the surface it documents. What it said:"
+      printf '%s\n' "$out" | sed 's/^/             /'
+      echo "             Run it by hand over a staged fixture"
+      echo "             (bash screenshots/stage-fixture.sh \"\$(mktemp -d)\")."
+    } >&2
+    exit 1
+  fi
+  emit "$out"
 }
 
 # Render the scene buffer to an SVG, hash it, record it, and copy the committed

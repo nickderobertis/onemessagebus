@@ -34,10 +34,16 @@ permissions:
 
 jobs:
   visual-docs:
-    # The writes belong to this job alone: screencomp pushes the gallery branch
-    # and upserts one sticky comment. GitHub Actions takes no expression here, so
-    # a run that cannot use a scope — a scheduled prune has no comment to post —
-    # still carries it; the job boundary is as narrow as the platform allows.
+    # The writes belong to this job alone — screencomp pushes the gallery branch
+    # and upserts one sticky comment — and the workflow default above is read.
+    #
+    # llmlint: ignore[least_privilege_grants] GitHub Actions accepts no expression
+    # in `permissions`, so scoping `pull-requests: write` to the pull-request
+    # event would mean calling the reusable workflow from two jobs under
+    # different `if:` conditions — and the `with:` block below, which is this
+    # repository's whole capture configuration, would then exist twice with
+    # nothing reconciling the copies. This is the narrowest scope the platform
+    # allows without turning one configuration into two that drift.
     permissions:
       contents: write
       pull-requests: write

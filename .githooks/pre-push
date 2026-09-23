@@ -8,6 +8,12 @@
 # Bypass one push: git push --no-verify
 set -euo pipefail
 
+# git passes the remote this push is going to as $1 — a name, or a URL when the
+# push names no remote. A branch's fork point is the default branch of THAT
+# remote, so a push to a fork or a second remote is not measured against
+# `origin`'s history.
+REMOTE="${1:-origin}"
+
 LANE="$(bash screenshots/host-arch.sh)"
 MANIFEST="shots/baseline/${LANE}.json"     # the lane's committed baseline
 GALLERY="shots/review"                     # [guard].gallery (review output)
@@ -82,13 +88,13 @@ else
       continue                            # branch deletion: nothing to capture
     elif [[ "$remote_sha" =~ $zero ]]; then
       # A branch the remote has never seen: its fork point is the merge base
-      # with the remote's default branch. With no `origin/HEAD` there is none —
-      # a fresh remote, a clone that never fetched it — and `git diff <sha>`
+      # with that remote's default branch. With no `<remote>/HEAD` there is
+      # none — a fresh remote, a clone that never fetched it — and `git diff <sha>`
       # would compare that commit to the working tree and report nothing, which
       # reads as "no screenshot changed" for a push that may be full of them.
       # Fail closed: a relevance check that can silently skip is a correctness
       # hole, exactly as `scripts/nx-affected.sh` treats the same situation.
-      base="$(git merge-base origin/HEAD "$local_sha" 2>/dev/null || true)"
+      base="$(git merge-base "refs/remotes/$REMOTE/HEAD" "$local_sha" 2>/dev/null || true)"
       [ -n "$base" ] && ranges+=("${base}..${local_sha}") || undecidable=1
     else
       ranges+=("${remote_sha}..${local_sha}")
@@ -98,8 +104,9 @@ fi
 [ "${#ranges[@]}" -eq 0 ] && [ -z "$undecidable" ] && exit 0
 
 if [ -n "$undecidable" ]; then
-  echo "pre-push: no merge base for a branch the remote has not seen, so what it" >&2
-  echo "          changes cannot be derived — capturing rather than guessing." >&2
+  echo "pre-push: no merge base against $REMOTE for a branch it has not seen, so" >&2
+  echo "          what this push changes cannot be derived — capturing rather" >&2
+  echo "          than guessing." >&2
   scope_status=3
 else
   changed="$(for r in "${ranges[@]}"; do git diff --name-only "$r"; done | sort -u)"

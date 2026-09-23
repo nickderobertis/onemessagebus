@@ -15,6 +15,20 @@ root="${1:?stage-fixture: name the directory to stage the fixture in}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 desk="$here/../crates/onemessagebus-e2e/tests/layouts/desk.json"
 
+# `$root` is interpolated into a double-quoted YAML scalar and into a `file://`
+# link, so a path carrying a quote, a backslash or a newline would produce a
+# configuration that is not the one asked for. Refuse it here, named.
+unsafe=$'"\\\n'
+case "$root" in
+*["$unsafe"]*)
+  echo "stage-fixture: the fixture directory's path carries a quote, a backslash" >&2
+  echo "               or a newline, which cannot go into the configuration this" >&2
+  echo "               writes: $root" >&2
+  echo "               Stage the fixture somewhere plainer." >&2
+  exit 1
+  ;;
+esac
+
 mkdir -p "$root"
 cat >"$root/bus.yaml" <<YAML
 version: 1

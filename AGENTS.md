@@ -164,13 +164,13 @@ you:
   `crates/onemessagebus/src/capability.rs`, then a method in both SDK clients
   (`just sdk-coverage` fails until both exist), then `just node-sdk-generate`,
   `just python-sdk-generate` and `just parity-audit`.
-- **`just bootstrap` installs a git hook.** The screenshots project's `bootstrap`
-  target sets `core.hooksPath` to the committed `.githooks/`, which carries the
-  screencomp pre-push guard **and nothing else** — `just gate` is not wired into
-  it. The guard re-captures only when a `[guard].paths` file changes and blocks a
-  push whose capture drifted from `shots/baseline/<arch>.json`. Screenshots are
-  informational and sit outside `check`, `gate` and CI's gate job, beside
-  `deps-check` and the llmlint tier; `screenshots/AGENTS.md` is the whole story.
+- **`just bootstrap` installs a git hook**, which nothing here used to do: the
+  screenshots project's `bootstrap` target points `core.hooksPath` at the
+  committed `.githooks/`. That directory carries the screencomp visual guard and
+  nothing else — `just gate` is not wired into it, and what the gate is and when
+  you run it are unchanged. The screenshot tier itself is informational and sits
+  outside `check`, `gate` and CI's gate job, beside `deps-check` and the llmlint
+  tier.
 - **Affected selection fails closed** (`scripts/nx-affected.sh`): with no
   derivable merge base it runs everything, because a speed optimisation that
   can silently skip a check is a correctness hole.

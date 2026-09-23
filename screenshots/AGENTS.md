@@ -18,9 +18,11 @@ and CI refuses it the moment its bytes diverge from the committed digest. The
 binary stays the one source, the baseline **is** the drift gate, and a shot that
 has gone stale fails rather than lies.
 
-The same reasoning is why the transcripts carry `$` prompt lines: each is the
-argv the capture actually ran, printed beside the bytes running it produced — not
-prose about the command.
+The same reasoning is why the transcripts carry `$` prompt lines, and why they
+are *rendered from* the argv each scene executes rather than written beside it: a
+prompt typed by hand is a second spelling of the command line that nothing
+reconciles, and it goes stale silently. What a scene prints is the command the
+picture is of, shell-quoted so pasting it runs it.
 
 ## Why these scenes
 
@@ -79,13 +81,15 @@ normalised:
   read ahead of the capture's own flags, so an exported one would steer a scene
   away from the fixture and drift its hash against a baseline captured in a clean
   shell.
-- **Per-run values are normalised**, because this CLI has **no clock-override and
-  no fixed-id switch, and this adoption did not add one**: a flag here is a
+- **Per-run values are normalised**, by `normalize.sh` — the one place they are
+  written, which the stills and the hero both pass their captured text through.
+  This is the answer because the CLI has **no clock-override and no fixed-id
+  switch, and this adoption did not add one**: a flag here is a
   capability-manifest change first (a test walks the clap tree refusing a flag
   with no binding), then a method in both SDK clients and a parity audit. So the
-  correlation `ask` mints and the epoch instants the desk stamps are rewritten to
-  fixed placeholders after the verb has run. Everything else in every scene —
-  positions, counts, ids, orderings — is already a function of fixed content.
+  correlation `ask` mints and the epoch instants the desk stamps are rewritten
+  after the verb has run. Everything else in every scene — positions, counts,
+  ids, orderings — is already a function of fixed content.
 
 The workflow's two further pins are held to their sources by
 `crates/onemessagebus-repo/tests/visual_docs_pins.rs`: its Rust container and
