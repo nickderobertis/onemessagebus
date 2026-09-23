@@ -137,16 +137,13 @@ fi
 case "$scope_status" in
   0) exit 0 ;;                            # nothing relevant: pass silently
   3) : ;;                                 # a relevant path matched: capture below
-  # llmlint: ignore[cli_output_contract] same reasoning as the missing-CLI skip
-  # above: the exit status is the push decision, a screencomp too old to answer
-  # `scope` is not this push's fault, and CI's strict gate still catches the
-  # drift. Forcing the slow capture instead would punish every push for a
-  # version skew.
+  # llmlint: ignore-block[cli_output_contract] same reasoning as the missing-CLI skip above: the exit status is the push decision, a screencomp too old to answer `scope` is not this push's fault, and CI's strict gate still catches the drift. Forcing the slow capture instead would punish every push for a version skew.
   *)
     echo "pre-push: 'screencomp scope' failed (exit $scope_status); skipping the" >&2
     echo "          visual guard. Is screencomp current? CI still gates this." >&2
     exit 0
     ;;
+  # llmlint: ignore-end[cli_output_contract]
 esac
 
 if ! command -v freeze >/dev/null 2>&1; then

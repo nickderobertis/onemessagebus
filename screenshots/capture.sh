@@ -134,8 +134,11 @@ freeze_flags=(
   --wrap 104
 )
 
-rm -rf "$SHOTS_OUT"
-mkdir -p "$SHOTS_OUT" "$docs_dir"
+rm -rf "$SHOTS_OUT" && mkdir -p "$SHOTS_OUT" "$docs_dir" || {
+  echo "screenshots: could not empty and re-create $SHOTS_OUT and $docs_dir (the" >&2
+  echo "             error is above), so there is nowhere to capture into." >&2
+  exit 1
+}
 work="$(mktemp -d)" || {
   echo "screenshots: no scratch directory to stage the fixture in (the error is" >&2
   echo "             above). Free space under \$TMPDIR and re-run." >&2
@@ -348,7 +351,16 @@ if [ -z "$correlation" ]; then
   exit 1
 fi
 reply_argv=(reply questions --correlation "$correlation" --config bus.yaml)
-printf '%s' "$verdict" | run "${reply_argv[@]}" >/dev/null
+printf '%s' "$verdict" | run "${reply_argv[@]}" >/dev/null || {
+  {
+    echo "screenshots: the lead's reply did not reach the question, so the 'ask'"
+    echo "             scene has no answer to show. Its error is above; the ask"
+    echo "             it was bound to said:"
+    sed 's/^/             /' "$work/ask.err"
+  } >&2
+  kill "$asking" 2>/dev/null || true
+  exit 1
+}
 # An `ask` that did not exit 0 answered something other than the reply — a
 # timeout, an abandonment, a refusal — and rendering that as the resolved scene
 # would publish a picture of a failure as the documented happy path.
@@ -416,6 +428,11 @@ render refusal refusal.svg
       "$name" "$toggles" "$hash" "$image" "$comma"
   done
   printf '  ]\n}\n'
-} >"$SHOTS_OUT/captures.json"
+} >"$SHOTS_OUT/captures.json" || {
+  echo "screenshots: rendered every scene but could not write the capture index" >&2
+  echo "             at $SHOTS_OUT/captures.json (the error is above); screencomp" >&2
+  echo "             reads that file and nothing else." >&2
+  exit 1
+}
 
 echo "screenshots: wrote ${#entries[@]} shots to $SHOTS_OUT and docs/screenshots/" >&2

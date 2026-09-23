@@ -74,8 +74,14 @@ trap 'rm -rf "$tmp"' EXIT
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | cut -d' ' -f1
-  else
+  elif command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$1" | cut -d' ' -f1
+  else
+    echo "install-freeze: neither sha256sum nor shasum is on PATH, so the" >&2
+    echo "                download cannot be checked against its pinned digest" >&2
+    echo "                and will not be installed. Install coreutils (Linux) or" >&2
+    echo "                Perl's shasum (macOS) and re-run." >&2
+    exit 1
   fi
 }
 

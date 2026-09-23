@@ -25,6 +25,7 @@
         "{workspaceRoot}/screenshots/*.sh",
         "{workspaceRoot}/screenshots/fixture/frames.json",
         "{workspaceRoot}/crates/onemessagebus-e2e/tests/layouts/desk.json",
+        "{workspaceRoot}/crates/onemessagebus-e2e/tests/e2e/support.rs",
         "{workspaceRoot}/screencomp.toml"
       ]
     },

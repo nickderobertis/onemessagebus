@@ -133,6 +133,46 @@ fn the_stager_writes_one_configuration_both_renderers_can_read() {
 }
 
 #[test]
+fn the_stager_and_the_journeys_helper_configure_one_bus() {
+    // `stage-fixture.sh` writes in bash what `desk_config` writes in Rust, and a
+    // picture taken over a different bus than the journeys drive would document
+    // a bus nothing tests. Neither can import the other, so hold the two
+    // producers to the same declarations.
+    let helper =
+        std::fs::read_to_string(repo_root().join("crates/onemessagebus-e2e/tests/e2e/support.rs"))
+            .expect("the journeys' fixture helper");
+    let stager = std::fs::read_to_string(script("stage-fixture.sh")).expect("the stager");
+
+    for declaration in ["version: 1", "kind: local", "profile: desk", "schemas:"] {
+        assert!(
+            helper.contains(declaration),
+            "the journeys' helper no longer declares `{declaration}`; this gate              reads it from support.rs's desk_config"
+        );
+        assert!(
+            stager.contains(declaration),
+            "screenshots/stage-fixture.sh no longer declares `{declaration}`, so              the pictures are taken over a different bus than the journeys drive"
+        );
+    }
+
+    // The layout document itself, linked at the same pin by both: a picture taken
+    // over `desk@2` would document a layout the journeys never drive.
+    assert!(
+        helper.contains("tests/layouts/desk.json"),
+        "support.rs no longer names the desk layout this gate reads the pin from"
+    );
+    assert!(
+        stager.contains("tests/layouts/desk.json"),
+        "screenshots/stage-fixture.sh no longer links the journeys' desk layout"
+    );
+    for producer in [&helper, &stager] {
+        assert!(
+            producer.contains("@1\""),
+            "one of the two producers links the desk layout at a pin other than @1"
+        );
+    }
+}
+
+#[test]
 fn the_stager_refuses_a_directory_the_configuration_could_not_name() {
     let dir = tempfile::tempdir().expect("a scratch directory");
     for (root, what) in [

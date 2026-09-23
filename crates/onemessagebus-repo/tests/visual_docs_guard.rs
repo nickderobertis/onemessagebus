@@ -580,7 +580,7 @@ fn a_new_branch_with_no_merge_base_captures_rather_than_guessing() {
 }
 
 #[test]
-fn a_range_override_that_names_no_revision_is_refused() {
+fn a_range_override_that_is_not_a_usable_revision_range_is_refused() {
     for range in [
         "--output=/dev/null",
         "refs/heads/never-existed..HEAD",
