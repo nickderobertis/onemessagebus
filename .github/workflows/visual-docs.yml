@@ -1,0 +1,72 @@
+# Terminal screenshots via screencomp's reusable workflow. The capture step is
+# ours (screenshots/capture.sh); screencomp owns the reproducibility gate, the
+# classify check, the HTML gallery, the GitHub Pages deploy and the sticky
+# before/after pull-request comment.
+#
+# A workflow of its own, on purpose. Screenshots are informational, like the
+# advisory audit: no step of this file is reachable from `just check` (the
+# deterministic gate, which stays offline and credential-free), from `just gate`
+# (the complete pre-push bar), or from ci.yml's gate job. The local half of the
+# strict gate is .githooks/pre-push, which blocks a push whose capture drifted.
+#
+# Which CPU arch(es) CI captures is read from [capture].arches in screencomp.toml
+# — one lane per arch, fanned out by the reusable workflow. This repository
+# declares the single `x86_64` lane: the shots are deterministic SVGs over a
+# vendored, pinned font, so their bytes do not depend on the CPU, and a lane
+# nothing here has captured would commit a baseline nobody has seen.
+name: Visual docs
+
+on:
+  pull_request:
+    # `closed` lets screencomp delete this pull request's gh-pages preview once
+    # it closes, so stale /pr-<n>/ galleries do not accumulate on the branch.
+    types: [opened, synchronize, reopened, closed]
+  push:
+    branches: [main]
+  schedule:
+    # Monthly: prune the gh-pages gallery history so committed images do not grow
+    # the branch without bound (keeps the 20 most recent versions).
+    - cron: "41 5 1 * *"
+
+permissions:
+  contents: write       # push the gh-pages gallery
+  pull-requests: write  # post the diff comment
+
+jobs:
+  visual-docs:
+    uses: nickderobertis/screencomp/.github/workflows/visual-docs-reusable.yml@v0.4.8
+    with:
+      screencomp-version: v0.4.8
+      # Strict gate (the safe default): CI FAILS if the capture drifts from the
+      # committed baseline (shots/baseline/<arch>.json). Regenerate it locally
+      # with `just screenshots-bless` — the pre-push guard does it for you — and
+      # commit the refreshed baseline beside docs/screenshots/.
+      fail-on-drift: true
+      # Keep the gh-pages gallery bounded: delete this pull request's preview on
+      # close, and prune history on the monthly schedule above.
+      gh-pages-maintenance: true
+      gh-pages-history-versions: 20
+      # The capture-command runs INSIDE this container (the reusable workflow's
+      # default is a Playwright image for web apps). Ours builds the real
+      # `onemessagebus` binary, so pin the Rust image for the toolchain
+      # rust-toolchain.toml declares; it carries curl/git/tar via buildpack-deps.
+      # The shots are deterministic SVGs (vendored font), so the image only has to
+      # build and render — no Playwright, no pinned-CPU concerns.
+      #
+      # This tag and the RUSTUP_TOOLCHAIN below are copies of rust-toolchain.toml's
+      # channel; crates/onemessagebus-repo/tests/toolchain_pins.rs fails when
+      # either parts from it. RUSTUP_TOOLCHAIN bypasses rust-toolchain.toml so the
+      # build uses the image's own toolchain rather than syncing the five
+      # cross-compilation targets it also declares — the SVG bytes do not depend
+      # on the compiler.
+      container: rust:1.97.1-bookworm
+      # Install the pinned `freeze` from its prebuilt release (the script picks
+      # the asset for the runner's arch and checks it against the digest pinned
+      # in this repository), then capture. The reusable workflow exports
+      # $SHOTS_OUT as shots/current/<arch>; the script writes captures.json and
+      # the SVGs under it.
+      capture-command: |
+        export RUSTUP_TOOLCHAIN=1.97.1
+        FREEZE_INSTALL_DIR=/usr/local/bin bash screenshots/install-freeze.sh
+        # llmlint: ignore[work_goes_through_command_surface] there is no `just` in this container; `just screenshots` wraps exactly this line
+        bash screenshots/capture.sh

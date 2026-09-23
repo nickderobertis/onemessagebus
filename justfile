@@ -399,6 +399,39 @@ msrv:
 session-setup:
     ./scripts/session-setup.sh
 
+# --- Terminal screenshots (informational; never part of `check` or CI's gate) --
+# Deterministic SVGs of the real CLI's output, rendered by `freeze` from a
+# vendored pinned font, gated/galleried/PR-commented by screencomp. What the
+# scenes are and why is screenshots/AGENTS.md. Regenerating is out of the gate,
+# like `deps-check`: CI's Visual-docs workflow owns the comparison, and the
+# pre-push guard regenerates this host's lane baseline locally on drift.
+
+# Install the pinned screenshot renderer (`freeze`) into ~/.local/bin, on demand.
+screenshots-tools:
+    @bash screenshots/install-freeze.sh
+
+# Drives the real binary over the e2e tier's own fixture layout and renders each
+# scene to shots/current/<arch>/ and docs/screenshots/. Needs `freeze` on PATH.
+# Capture the terminal screenshots.
+screenshots:
+    @bash screenshots/capture.sh
+
+# A `subscribe` tail filling as a sibling process sends. Like the stills it drives
+# the real binary over the same fixture, but it is NOT hash-gated — a GIF is not
+# byte-reproducible across rendering libraries — so it is regenerated on demand and
+# committed. Pillow comes from uv, so nothing has to be installed first.
+# Regenerate the animated README hero (docs/screenshots/subscribe.gif).
+screenshots-gif:
+    @uv run --no-project --quiet --with 'pillow==11.3.0' python screenshots/subscribe-gif.py
+
+# There is one lane per arch in [capture].arches (screencomp.toml) and this rewrites
+# THIS host's lane only, via screenshots/host-arch.sh so the name matches what the
+# pre-push guard classifies. Commit shots/baseline/ with docs/screenshots/.
+# Recapture and refresh this host's baseline, after an INTENDED output change.
+screenshots-bless: screenshots
+    @bash screenshots/bless-baseline.sh
+    @echo "baseline refreshed for the $(bash screenshots/host-arch.sh) lane; commit shots/baseline/ + docs/screenshots/"
+
 # Install/refresh the llmlint toolchain (oneharness + llmlint). Idempotent.
 setup-llmlint:
     ./scripts/setup-llmlint.sh

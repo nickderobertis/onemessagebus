@@ -1,0 +1,15 @@
+{
+  "name": "onemessagebus-visual-docs",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "//": "No format-check, lint, typecheck, test, doc or check target, and that is the point: screenshots are informational, so nothing this project owns is reachable from `just check`, `just gate` or ci.yml's gate job (screenshots/AGENTS.md). The one target is `bootstrap`, which activates the committed pre-push guard — the local half of the strict gate — so `just bootstrap` leaves a clean clone guarded.",
+  "projectType": "library",
+  "sourceRoot": "screenshots",
+  "tags": ["scope:docs", "lang:sh", "type:docs"],
+  "implicitDependencies": ["onemessagebus-cli"],
+  "targets": {
+    "bootstrap": {
+      "command": "git config core.hooksPath .githooks",
+      "cache": false
+    }
+  }
+}

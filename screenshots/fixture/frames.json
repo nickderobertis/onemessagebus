@@ -1,0 +1,19 @@
+{
+  "version": "1",
+  "description": "The `checkout` member protocol the `serve` scene answers: one frame in, one response out.",
+  "schemas": [
+    {
+      "id": "checkout.frame.quote@1",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["op", "sku", "units"],
+        "properties": {
+          "op": { "enum": ["quote"] },
+          "sku": { "type": "string" },
+          "units": { "type": "integer", "minimum": 1 }
+        }
+      }
+    }
+  ]
+}
