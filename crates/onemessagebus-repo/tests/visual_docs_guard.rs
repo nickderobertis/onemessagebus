@@ -1,0 +1,349 @@
+//! The committed pre-push visual guard (`.githooks/pre-push`), driven the way
+//! git drives it.
+//!
+//! The guard is the local half of the strict visual-docs gate: it decides
+//! whether a push is screenshot-relevant, re-captures when it is, and blocks the
+//! push when the capture drifted from the committed baseline. Every one of those
+//! decisions is this repository's own shell, so every one of them is exercised
+//! here — over a throwaway repository with a real git history, the real
+//! `screenshots/host-arch.sh` and the real `screenshots/bless-baseline.sh`.
+//!
+//! What is stood in for is the subprocess seam: `screencomp` and `freeze` on
+//! `PATH`, and `screenshots/capture.sh`. Running the real capture would put a
+//! screenshot step inside `just check`, which the adoption keeps it out of
+//! (`screenshots/AGENTS.md`), and would pay two minutes of `cargo build` per
+//! case for output whose byte-identity the committed baseline already gates.
+//! The stand-ins record what they were asked to do, so the journeys assert the
+//! guard's decisions rather than its wording.
+
+#![cfg(unix)]
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+/// A throwaway repository carrying the committed guard, its scripts, a baseline
+/// and a git history — plus stand-ins for the three tools the guard shells out
+/// to, on a `PATH` of its own.
+struct Guarded {
+    dir: tempfile::TempDir,
+    lane: String,
+}
+
+/// This repository's root, from which the committed guard and scripts are taken.
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("the repository root resolves")
+}
+
+fn write(path: &Path, body: &str) {
+    std::fs::create_dir_all(path.parent().expect("a parent")).expect("the directory is made");
+    std::fs::write(path, body).expect("the file is written");
+}
+
+fn executable(path: &Path, body: &str) {
+    use std::os::unix::fs::PermissionsExt as _;
+    write(path, body);
+    let mut mode = std::fs::metadata(path)
+        .expect("the file is there")
+        .permissions();
+    mode.set_mode(0o755);
+    std::fs::set_permissions(path, mode).expect("the file is made executable");
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let run = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_AUTHOR_NAME", "guard")
+        .env("GIT_AUTHOR_EMAIL", "guard@example.invalid")
+        .env("GIT_COMMITTER_NAME", "guard")
+        .env("GIT_COMMITTER_EMAIL", "guard@example.invalid")
+        .output()
+        .expect("git runs");
+    assert!(
+        run.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+impl Guarded {
+    /// Stand up the repository with one commit that changes `changed`, so the
+    /// guard has a real range to diff.
+    fn new(changed: &str) -> Self {
+        let root = repo_root();
+        let dir = tempfile::tempdir().expect("a scratch repository");
+        let at = dir.path();
+
+        for name in [
+            ".githooks/pre-push",
+            "screenshots/host-arch.sh",
+            "screenshots/bless-baseline.sh",
+            "screencomp.toml",
+        ] {
+            let target = at.join(name);
+            std::fs::create_dir_all(target.parent().expect("a parent")).expect("the directory");
+            std::fs::copy(root.join(name), &target).expect("the committed file is copied");
+        }
+
+        let lane = String::from_utf8(
+            Command::new("bash")
+                .arg(at.join("screenshots/host-arch.sh"))
+                .output()
+                .expect("host-arch runs")
+                .stdout,
+        )
+        .expect("a UTF-8 lane")
+        .trim()
+        .to_owned();
+
+        // The capture stand-in: records that it ran and where it was told to
+        // write, and leaves a capture tree for `bless-baseline.sh` to read.
+        executable(
+            &at.join("screenshots/capture.sh"),
+            "#!/usr/bin/env bash\nset -euo pipefail\n\
+             echo \"$SHOTS_OUT\" >>\"$GUARD_LOG.capture\"\n\
+             mkdir -p \"$SHOTS_OUT\"\n\
+             printf '{\"schema\":1,\"shots\":[]}\\n' >\"$SHOTS_OUT/captures.json\"\n",
+        );
+
+        write(
+            &at.join(format!("shots/baseline/{lane}.json")),
+            "{\"schema\":1,\"shots\":[]}\n",
+        );
+        write(
+            &at.join("README.md"),
+            "the tree this push is computed over\n",
+        );
+        write(&at.join(changed), "one\n");
+
+        git(at, &["init", "--quiet", "--initial-branch", "main"]);
+        git(at, &["add", "-A"]);
+        git(at, &["commit", "--quiet", "-m", "base"]);
+        write(&at.join(changed), "two\n");
+        git(at, &["add", "-A"]);
+        git(at, &["commit", "--quiet", "-m", "change"]);
+
+        Self { dir, lane }
+    }
+
+    fn at(&self) -> &Path {
+        self.dir.path()
+    }
+
+    /// The stand-in tools, on a `PATH` of their own. `arches` answers `lanes`,
+    /// `scope` answers relevant when `relevant`, and `classify` answers drift
+    /// when `drift`. `freeze` is present unless `freeze` says otherwise.
+    fn tools(&self, lanes: &str, relevant: bool, drift: bool, freeze: bool) -> PathBuf {
+        let bin = self.at().join("stand-ins");
+        executable(
+            &bin.join("screencomp"),
+            &format!(
+                "#!/usr/bin/env bash\nset -euo pipefail\n\
+                 echo \"$1\" >>\"$GUARD_LOG.screencomp\"\n\
+                 case \"$1\" in\n\
+                 arches) printf '{lanes}' ;;\n\
+                 scope) cat >/dev/null; exit {scope} ;;\n\
+                 classify) exit {classify} ;;\n\
+                 manifest) shift; while [ \"$1\" != --output ]; do shift; done; \
+                   printf 'blessed\\n' >\"$2\" ;;\n\
+                 gallery) shift; while [ \"$1\" != --output ]; do shift; done; \
+                   mkdir -p \"$2\"; printf 'gallery\\n' >\"$2/index.html\" ;;\n\
+                 *) echo \"stand-in screencomp: unexpected $*\" >&2; exit 64 ;;\n\
+                 esac\n",
+                lanes = lanes,
+                scope = if relevant { 3 } else { 0 },
+                classify = if drift { 3 } else { 0 },
+            ),
+        );
+        if freeze {
+            executable(&bin.join("freeze"), "#!/usr/bin/env bash\nexit 0\n");
+        }
+        bin
+    }
+
+    /// Run the guard over this repository's one change, as git runs it.
+    ///
+    /// `PATH` is the stand-ins and the system tools the guard's own shell needs
+    /// and nothing else: inheriting this machine's would let a real `screencomp`
+    /// or `freeze` in `~/.local/bin` answer for a stand-in that is deliberately
+    /// absent, and the journey would then prove nothing.
+    fn push(&self, path: &Path, extra: &[(&str, &str)]) -> Output {
+        let mut command = Command::new("bash");
+        command
+            .arg(".githooks/pre-push")
+            .args(["origin", "https://example.invalid/guarded.git"])
+            .current_dir(self.at())
+            .env("PATH", format!("{}:/usr/bin:/bin", path.display()))
+            .env("GUARD_LOG", self.at().join("guard"))
+            .env("SCREENCOMP_GUARD_RANGE", "HEAD~1..HEAD")
+            .env_remove("CI")
+            .env_remove("SCREENCOMP_GUARD_REQUIRE");
+        for (key, value) in extra {
+            command.env(key, value);
+        }
+        command.output().expect("the guard runs")
+    }
+
+    /// What a stand-in recorded, or nothing when it never ran.
+    fn log(&self, tool: &str) -> String {
+        std::fs::read_to_string(self.at().join(format!("guard.{tool}"))).unwrap_or_default()
+    }
+
+    fn baseline(&self) -> String {
+        std::fs::read_to_string(self.at().join(format!("shots/baseline/{}.json", self.lane)))
+            .expect("the baseline is there")
+    }
+}
+
+fn stderr(run: &Output) -> String {
+    String::from_utf8_lossy(&run.stderr).into_owned()
+}
+
+fn stdout(run: &Output) -> String {
+    String::from_utf8_lossy(&run.stdout).into_owned()
+}
+
+#[test]
+fn a_push_touching_nothing_screenshot_relevant_passes_without_capturing() {
+    let guarded = Guarded::new("docs/unrelated.md");
+    let tools = guarded.tools(&guarded.lane, false, false, true);
+    let run = guarded.push(&tools, &[]);
+
+    assert!(run.status.success(), "{}", stderr(&run));
+    assert_eq!(stdout(&run), "", "a silent pass says nothing");
+    assert_eq!(
+        guarded.log("capture"),
+        "",
+        "it captured on an irrelevant change"
+    );
+}
+
+#[test]
+fn a_relevant_push_captures_and_passes_when_the_capture_has_not_drifted() {
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    let tools = guarded.tools(&guarded.lane, true, false, true);
+    let run = guarded.push(&tools, &[]);
+
+    assert!(run.status.success(), "{}", stderr(&run));
+    assert_eq!(
+        guarded.log("capture").trim(),
+        format!("shots/current/{}", guarded.lane),
+        "the capture wrote somewhere other than this host's lane"
+    );
+    assert!(
+        stdout(&run).contains("ok to push"),
+        "a clean classify did not say so: {}",
+        stdout(&run)
+    );
+    assert_eq!(
+        guarded.baseline(),
+        "{\"schema\":1,\"shots\":[]}\n",
+        "a clean push re-blessed"
+    );
+}
+
+#[test]
+fn drift_re_blesses_this_lane_builds_a_gallery_and_blocks_the_push() {
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    let tools = guarded.tools(&guarded.lane, true, true, true);
+    let run = guarded.push(&tools, &[]);
+
+    assert_eq!(run.status.code(), Some(1), "drift did not block the push");
+    assert_eq!(
+        guarded.baseline(),
+        "blessed\n",
+        "the drifted lane was not re-blessed"
+    );
+    assert_eq!(
+        std::fs::read_to_string(guarded.at().join("shots/review/index.html")).unwrap_or_default(),
+        "gallery\n",
+        "no review gallery was built for the blocked push"
+    );
+    let said = stderr(&run);
+    assert!(said.contains("shots/review/index.html"), "{said}");
+    assert!(said.contains("docs/screenshots"), "{said}");
+}
+
+#[test]
+fn a_relevant_push_refuses_when_the_renderer_is_not_installed() {
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    let tools = guarded.tools(&guarded.lane, true, false, false);
+    let run = guarded.push(&tools, &[]);
+
+    assert_eq!(
+        run.status.code(),
+        Some(1),
+        "a missing renderer did not refuse"
+    );
+    assert!(
+        stderr(&run).contains("just screenshots-tools"),
+        "{}",
+        stderr(&run)
+    );
+    assert_eq!(guarded.log("capture"), "", "it captured without a renderer");
+}
+
+#[test]
+fn a_host_whose_arch_no_lane_declares_is_refused_by_name() {
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    let tools = guarded.tools("s390x\\n", true, false, true);
+    let run = guarded.push(&tools, &[]);
+
+    assert_eq!(
+        run.status.code(),
+        Some(1),
+        "an undeclared lane was not refused"
+    );
+    let said = stderr(&run);
+    assert!(
+        said.contains(&guarded.lane),
+        "the refusal does not name this host: {said}"
+    );
+    assert!(
+        said.contains("s390x"),
+        "the refusal does not name what is declared: {said}"
+    );
+    assert_eq!(
+        guarded.log("capture"),
+        "",
+        "it captured for a lane with no baseline"
+    );
+}
+
+#[test]
+fn without_screencomp_it_warns_loudly_and_only_fails_when_told_to() {
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    let bare = guarded.at().join("no-tools");
+    std::fs::create_dir_all(&bare).expect("an empty bin");
+
+    let warned = guarded.push(&bare, &[]);
+    assert!(
+        warned.status.success(),
+        "a missing screencomp refused by default"
+    );
+    assert!(
+        stderr(&warned).contains("NOT on PATH"),
+        "{}",
+        stderr(&warned)
+    );
+
+    let required = guarded.push(&bare, &[("SCREENCOMP_GUARD_REQUIRE", "1")]);
+    assert_eq!(
+        required.status.code(),
+        Some(1),
+        "SCREENCOMP_GUARD_REQUIRE did not make a missing screencomp fatal"
+    );
+}
+
+#[test]
+fn under_ci_the_guard_stands_down_for_the_workflow() {
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    let tools = guarded.tools(&guarded.lane, true, true, true);
+    let run = guarded.push(&tools, &[("CI", "true")]);
+
+    assert!(run.status.success(), "{}", stderr(&run));
+    assert_eq!(guarded.log("capture"), "", "it captured under CI");
+}

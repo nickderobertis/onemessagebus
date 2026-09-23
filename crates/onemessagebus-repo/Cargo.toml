@@ -22,6 +22,10 @@ path = "src/lib.rs"
 
 [dev-dependencies]
 toml_edit = { workspace = true }
+# The visual guard journey stands up a throwaway repository with a real git
+# history and stand-ins for screencomp, freeze and the capture, and drives the
+# committed hook over it the way git does.
+tempfile = { workspace = true }
 # The canonical release-target reader: `release-targets.toml` at the root is
 # written against the schema `onevcs` defines, and this is the one implementation
 # of it. A dev-dependency of this crate alone — deny.toml bans the crate

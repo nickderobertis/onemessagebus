@@ -1,24 +1,11 @@
 #!/usr/bin/env bash
-# screencomp local pre-push guard (adapted from `screencomp init`).
+# The screencomp visual guard, and the only hook this directory carries: `just
+# gate` is deliberately not wired in here. Re-capture when a [guard].paths file
+# changes and block the push on drift, so the refreshed baseline is committed
+# deliberately and CI stays green. Why, and how this is activated:
+# screenshots/AGENTS.md.
 #
-# This directory carries THIS HOOK AND NOTHING ELSE. `just gate` — this
-# repository's complete pre-push bar — is deliberately not wired in here: what
-# the gate is and when you run it is unchanged by the visual-docs adoption.
-#
-# Local half of the STRICT gate. CI (.github/workflows/visual-docs.yml) fails on
-# unexpected screenshot drift; this hook lets you regenerate and commit the
-# baseline BEFORE pushing so CI stays green. It re-captures only when a
-# screenshot-relevant file changes ([guard].paths in screencomp.toml) and blocks
-# the push on drift.
-#
-# The shots are deterministic SVGs (a vendored, pinned font), so the capture runs
-# NATIVELY here — no Docker, no pinned container — and still produces the bytes CI
-# produces.
-#
-# Activated by `just bootstrap` (the screenshots project's `bootstrap` target
-# sets core.hooksPath), so a clean clone that has been bootstrapped is guarded.
-# By hand:            git config core.hooksPath .githooks
-# Bypass on purpose:  git push --no-verify
+# Bypass one push: git push --no-verify
 set -euo pipefail
 
 # The declared [capture].arches lanes and this host's own lane among them. A host

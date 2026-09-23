@@ -33,7 +33,7 @@
       "type:packaging": ["type:app"],
       "type:parity": ["type:contract", "type:app", "type:packaging"],
       "type:repo": [],
-      "type:docs": ["type:app"],
+      "type:docs": ["type:app", "type:e2e"],
       "type:workspace": ["type:contract", "type:profile", "type:app", "type:e2e", "type:packaging", "type:parity", "type:repo"]
     }
   },

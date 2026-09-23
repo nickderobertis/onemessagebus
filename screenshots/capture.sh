@@ -1,41 +1,10 @@
 #!/usr/bin/env bash
-# Capture the terminal screenshots that screencomp gates, galleries and posts to
-# pull requests (screencomp.toml + .github/workflows/visual-docs.yml).
+# Write the screenshot capture screencomp gates: $SHOTS_OUT/captures.json and one
+# SVG per scene, copied to docs/screenshots/ for the README. What the scenes are,
+# why each is here and what the capture is pinned to: screenshots/AGENTS.md.
 #
-# Every scene drives the REAL release `onemessagebus` binary over a fixture of
-# the kind the e2e journeys stage — a temporary directory, a `bus.yaml` naming a
-# local transport, and the bus's own `desk` layout bundle linked from
-# crates/onemessagebus-e2e/tests/layouts/desk.json — so the captured text is
-# genuine CLI output. No model, no network, no credential: the transport is a
-# directory of files and the codec's frame bundle is reached by a `file://` link.
-#
-# Each scene is rendered to a deterministic SVG by `freeze` using the VENDORED,
-# pinned font (screenshots/fonts/JetBrainsMono-Regular.ttf), so the bytes — and
-# therefore screencomp's digests — are identical on every machine and runner
-# without a pinned container. That byte-determinism is the whole contract: change
-# a verb's output and that scene's SVG (and hash) changes; otherwise it does not.
-#
-# Scenes — see screenshots/AGENTS.md for why each one documents its surface:
-#   queues        a record sent, one claimed, then `status --format text`: the
-#                 per-queue counts line and its indented cursor lines.
-#   ask           the two-process rendezvous: the `correlation:` line printed the
-#                 moment the question is queued, and the answer line it resolves
-#                 to once a sibling `reply` echoes that correlation.
-#   events-merge  two NDJSON streams merged in (ts, stream, seq) order and
-#                 rendered one line per envelope, then narrowed by a filter.
-#   schema        `schema list` over the linked bundle, then a `schema check`
-#                 refusal naming the id and the JSON pointer (exit 1).
-#   serve         a `--codec` session: one frame in, its response out.
-#   refusal       the one-line usage refusal and its exit code (exit 2).
-#
-# Output (screencomp's capture contract):
-#   $SHOTS_OUT/captures.json   index: {schema, shots:[{name,toggles,hash,image}]}
-#   $SHOTS_OUT/<scene>.svg     one SVG per scene
-# $SHOTS_OUT defaults to shots/current/<arch> (the reusable workflow exports it
-# per lane). The SVGs are also copied to docs/screenshots/ (committed) for the
-# README and the gallery.
-#
-# Requires `freeze` on PATH: bash screenshots/install-freeze.sh.
+# Needs `freeze` on PATH (bash screenshots/install-freeze.sh) and builds the
+# release binary it drives.
 set -euo pipefail
 
 # Byte-determinism starts with the environment. The queue verbs read
@@ -127,7 +96,6 @@ trap 'rm -rf "$work"' EXIT
 # "name|toggles|hash|image" record per rendered scene, sorted at the end.
 entries=()
 
-# --- the fixture: a local transport under $work, the desk layout linked --------
 # What `desk_config` stages for the journeys, plus the codec the `serve` scene
 # answers and its frame bundle reached by a `file://` link — so even the link
 # machinery runs with no HTTP.
@@ -219,7 +187,6 @@ emit_with_status() {
   emit "$status"
 }
 
-# --- ask: the correlation, the wait, and the answer a sibling reply resolves ---
 # The question is raised by an `ask` left running with piped stdio — the way
 # tests/e2e/ask.rs holds one open — and answered from a second invocation over
 # the same transport directory, which is what the two-shell transcript shows.
@@ -247,7 +214,19 @@ if [ -z "$correlation" ]; then
   exit 1
 fi
 printf '%s' "$verdict" | run reply questions --correlation "$correlation" --config bus.yaml >/dev/null
-wait "$asking" || true
+# An `ask` that did not exit 0 answered something other than the reply — a
+# timeout, an abandonment, a refusal — and rendering that as the resolved scene
+# would publish a picture of a failure as the documented happy path.
+if ! wait "$asking"; then
+  {
+    echo "screenshots: the ask did not resolve to its reply, so the 'ask' scene"
+    echo "             would show the wrong answer. What it said:"
+    sed 's/^/             /' "$work/ask.err" "$work/ask.out"
+    echo "             Re-run the capture; if it repeats, the reply no longer"
+    echo "             binds to the correlation the ask minted."
+  } >&2
+  exit 1
+fi
 
 say "echo '$question' |" \
   "onemessagebus ask questions --blocking --asker worker-1 --timeout 60 --config bus.yaml"
@@ -260,7 +239,7 @@ emit ""
 emit "$(cat "$work/ask.out")"
 render ask ask.svg
 
-# --- queues: a record sent, one claimed, and what each queue then holds --------
+# `next` claims before `status` reads, so a cursor in that view has moved.
 note='{"kind":"note","message":"the nightly sweep is green","source":"sweep","blocking":false}'
 say "echo '$note' |" \
   "onemessagebus send questions --config bus.yaml"
@@ -271,7 +250,6 @@ say "onemessagebus status --format text --config bus.yaml"
 emit "$(run status --format text --config bus.yaml)"
 render queues queues.svg
 
-# --- events-merge: two streams in one order, then narrowed by a filter --------
 say "onemessagebus events merge checkout.ndjson fulfilment.ndjson --format text"
 emit "$("$bus" events merge "$fixture/checkout.ndjson" "$fixture/fulfilment.ndjson" --format text)"
 emit ""
@@ -281,7 +259,6 @@ emit "$("$bus" events merge "$fixture/checkout.ndjson" "$fixture/fulfilment.ndjs
   --filter '{"include":[{"source":"fulfilment"}]}' --format text)"
 render events-merge events-merge.svg
 
-# --- schema: what the configuration's links registered, and a refusal ---------
 say "onemessagebus schema list --format text --config bus.yaml"
 emit "$(run schema list --format text --config bus.yaml)"
 emit ""
@@ -289,14 +266,12 @@ say "onemessagebus schema check desk.question@1 --file draft.json --config bus.y
 emit_with_status schema check desk.question@1 --file "$fixture/draft-question.json" --config bus.yaml
 render schema schema.svg
 
-# --- serve: one frame in, its response out -----------------------------------
 frame='{"op":"quote","sku":"KB-118","units":2}'
 say "echo '$frame' |" \
   "onemessagebus serve questions --codec checkout --config bus.yaml"
 emit "$(printf '%s' "$frame" | run serve questions --codec checkout --config bus.yaml)"
 render serve serve.svg
 
-# --- refusal: the one-line shape and the exit code it carries -----------------
 say "onemessagebus ask questions --timeout soon --config bus.yaml"
 emit_with_status ask questions --timeout soon --config bus.yaml
 render refusal refusal.svg

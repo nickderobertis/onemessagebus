@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
-"""Render the animated GIF of a `subscribe` tail — the README hero.
+"""Render docs/screenshots/subscribe.gif — the README hero.
 
-Like `screenshots/capture.sh` this drives the **real release `onemessagebus`
-binary** over the e2e tier's own `desk` layout on a temporary local transport, so
-the records, positions and rendering are genuine CLI output: no model, no
-network, no credential.
+Spawns the real `subscribe` over the same fixture the stills use, reads its
+stdout line by line with the instant each line landed, drives a sibling `send`
+alongside it, and replays those lines at their real inter-arrival gaps. Why this
+is the hero and why it is not hash-gated: screenshots/AGENTS.md.
 
-`subscribe` is a true tail — it flushes every record already on the queue one at
-a time, then polls once a second and appends new ones as other processes write
-them — and nothing redraws, which is what makes this simpler than a live view
-that repaints. So rather than screen-recording a PTY (which would need ttyd and
-ffmpeg, and would not be reproducible anyway), this spawns the real `subscribe`,
-**reads its stdout line by line as it arrives with the instant each line landed**,
-drives a sibling `send` process alongside it, and then replays those lines at
-their real inter-arrival gaps. What you watch is the backlog landing in a burst
-and then records arriving one at a time as they are sent.
+llmlint: ignore-file[async_typed_clients_at_boundaries] the point of this renderer
+is that it drives the binary as a user's shell does — `subscribe`'s stdout read
+as it is flushed, with a second process writing to the same queue — so the GIF
+documents the command line rather than an SDK. Reaching for the typed async
+client would photograph a different product; the subprocess seam IS the surface
+under capture, and it is the same seam tests/e2e/ask.rs drives.
 
-The GIF is informational and, unlike the SVG stills, is **not** hash-gated — a
-GIF is not byte-reproducible across rendering libraries — so it is regenerated on
-demand with `just screenshots-gif` and committed. Regenerate it when
-`subscribe`'s rendering changes.
+llmlint: ignore-file[changed_behavior_has_e2e] exercising this renderer means
+running a capture against the real binary, which the visual-docs adoption keeps
+out of `just check`, `just gate` and CI's gate job (screenshots/AGENTS.md); its
+output is committed and reviewed as an image, and the hash-gated half of the
+adoption is what CI enforces.
 """
 
 from __future__ import annotations
@@ -32,17 +30,21 @@ import sys
 import tempfile
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 from PIL import Image, ImageDraw, ImageFont
 
+Colour = tuple[int, int, int]
+
 # GitHub-dark, matching the SVG stills' window (background #0d1117).
-BG = (13, 17, 23)
-BAR = (22, 27, 34)
-FG = (201, 209, 217)
-DIM = (139, 148, 158)
-CYAN = (57, 197, 207)
-DOTS = [(255, 95, 86), (255, 189, 46), (39, 201, 63)]  # traffic-light window dots
+BG: Colour = (13, 17, 23)
+BAR: Colour = (22, 27, 34)
+FG: Colour = (201, 209, 217)
+DIM: Colour = (139, 148, 158)
+CYAN: Colour = (57, 197, 207)
+DOTS: list[Colour] = [(255, 95, 86), (255, 189, 46), (39, 201, 63)]
 
 COLS = 112
 FONT_SIZE = 17
@@ -51,35 +53,64 @@ BAR_H = 36
 MIN_MS = 220        # the backlog flush is faster than a frame; floor it so it reads
 MAX_MS = 1300       # a poll gap longer than this is dead air, not information
 HOLD_MS = 2800      # hold on the finished tail
-
-# The queue the tail watches, and what a sibling process appends to it while it
-# runs. The first three are the backlog `subscribe` flushes on startup; the rest
-# arrive one at a time, and the `complete` record is the one `--until` admits.
-BACKLOG = [
-    ("finding", "the base moved under the change", "proposal", True),
-    ("note", "nightly sweep is green", "sweep", False),
-    ("question", "which base do I fork from?", "proposal", True),
-]
-ARRIVING = [
-    ("note", "worker-2 claimed the retry", "desk", False),
-    ("finding", "the schema bundle pin is stale", "checkin", True),
-    ("note", "worker-2 settled", "desk", False),
-    ("complete", "the desk is clear", "lead", False),
-]
 GAP_SECONDS = 0.9   # between sibling sends, so the tail's poll shows them arriving
 
 
-def record(kind: str, message: str, source: str, blocking: bool) -> str:
-    return (
-        '{"kind":"%s","message":"%s","source":"%s","blocking":%s}'
-        % (kind, message, source, "true" if blocking else "false")
-    )
+class Question(NamedTuple):
+    """One record a sibling process appends to the queue the tail watches."""
+
+    kind: str
+    message: str
+    source: str
+    blocking: bool
+
+    def json(self) -> str:
+        return (
+            '{"kind":"%s","message":"%s","source":"%s","blocking":%s}'
+            % (self.kind, self.message, self.source, "true" if self.blocking else "false")
+        )
+
+
+class Arrival(NamedTuple):
+    """A line the tail printed, and how long after it started it landed."""
+
+    after_seconds: float
+    line: str
+
+
+class Segment(NamedTuple):
+    """A run of text drawn in one colour."""
+
+    text: str
+    colour: Colour
+
+
+@dataclass(frozen=True)
+class Frame:
+    """What the window shows, and how long it shows it."""
+
+    lines: list[list[Segment]]
+    hold_ms: int
+
+
+# The first three are the backlog `subscribe` flushes on startup; the rest arrive
+# one at a time, and the `complete` record is the one `--until` admits.
+BACKLOG: list[Question] = [
+    Question("finding", "the base moved under the change", "proposal", True),
+    Question("note", "nightly sweep is green", "sweep", False),
+    Question("question", "which base do I fork from?", "proposal", True),
+]
+ARRIVING: list[Question] = [
+    Question("note", "worker-2 claimed the retry", "desk", False),
+    Question("finding", "the schema bundle pin is stale", "checkin", True),
+    Question("note", "worker-2 settled", "desk", False),
+    Question("complete", "the desk is clear", "lead", False),
+]
 
 
 def stage(root: Path, repo: Path) -> Path:
-    """Write the configuration the scenes share: a local transport under `root`,
-    the bus's own `desk` layout bundle linked, exactly as `desk_config` stages it
-    for the journeys."""
+    """Write what `desk_config` stages for the journeys: a local transport under
+    `root` with the bus's own `desk` layout bundle linked at `@1`."""
     desk = repo / "crates/onemessagebus-e2e/tests/layouts/desk.json"
     config = root / "bus.yaml"
     config.write_text(
@@ -92,16 +123,22 @@ def stage(root: Path, repo: Path) -> Path:
     return config
 
 
-def tail(bus: str, root: Path, config: Path) -> list[tuple[float, str]]:
+def tail(bus: str, root: Path, config: Path) -> list[Arrival]:
     """Run the real `subscribe` while a sibling sends, and hand back each line it
     printed with the instant it landed."""
+    # The queue verbs read these ahead of the flags below, so an exported one
+    # would steer the tail away from this fixture.
     env = {k: v for k, v in os.environ.items() if not k.startswith("ONEMESSAGEBUS_")}
-    for spec in BACKLOG:
+
+    def send(question: Question) -> None:
         subprocess.run(
             [bus, "send", "questions", "--config", str(config)],
-            input=record(*spec), cwd=root, env=env, text=True,
+            input=question.json(), cwd=root, env=env, text=True,
             capture_output=True, check=True,
         )
+
+    for question in BACKLOG:
+        send(question)
 
     child = subprocess.Popen(
         [bus, "subscribe", "questions", "--until", '{"field":"kind","equals":"complete"}',
@@ -110,73 +147,72 @@ def tail(bus: str, root: Path, config: Path) -> list[tuple[float, str]]:
     )
 
     started = time.monotonic()
-    lines: list[tuple[float, str]] = []
+    arrivals: list[Arrival] = []
 
     def read() -> None:
         assert child.stdout is not None
         for line in child.stdout:
-            lines.append((time.monotonic() - started, line.rstrip("\n")))
+            arrivals.append(Arrival(time.monotonic() - started, line.rstrip("\n")))
 
     reader = threading.Thread(target=read, daemon=True)
     reader.start()
 
-    for spec in ARRIVING:
+    for question in ARRIVING:
         time.sleep(GAP_SECONDS)
-        subprocess.run(
-            [bus, "send", "questions", "--config", str(config)],
-            input=record(*spec), cwd=root, env=env, text=True,
-            capture_output=True, check=True,
-        )
+        send(question)
 
     if child.wait(timeout=60) != 0:
         raise SystemExit("subscribe-gif: the tail did not end on its predicate")
     reader.join(timeout=5)
-    if not lines:
+    if not arrivals:
         raise SystemExit("subscribe-gif: the tail printed nothing to animate")
-    return lines
+    return arrivals
 
 
-# The per-run values the desk stamps, rewritten to the same fixed placeholders the
-# hash-gated stills use, so the two read as one session.
 def normalize(text: str) -> str:
+    """Rewrite the per-run values the desk stamps to the same fixed placeholders
+    the hash-gated stills use, so the two read as one session."""
     text = re.sub(r"c-[0-9a-f]{32}", "c-4f3c1d92a08b47e6b1d5c0a7e93f2b18", text)
     return re.sub(r'"raised_at":\d{13}', '"raised_at":1789300000000', text)
 
 
 def wrap(line: str) -> list[str]:
-    """Fold an over-wide line at the window's column budget, as freeze does for
-    the stills."""
+    """Fold an over-wide line at the window's column budget, as freeze does."""
     return [line[i:i + COLS] for i in range(0, len(line), COLS)] or [""]
 
 
-def frames(command: list[str], lines: list[tuple[float, str]]) -> list[tuple[list, int]]:
+def frames(command: list[str], arrivals: list[Arrival]) -> list[Frame]:
     """One frame per arriving line, held for the gap until the next one really
     arrived."""
-    prompt = [[("$ ", CYAN), (command[0], FG)]]
-    prompt += [[("    " + part, FG)] for part in command[1:]]
+    prompt: list[list[Segment]] = [[Segment("$ ", CYAN), Segment(command[0], FG)]]
+    prompt += [[Segment("    " + part, FG)] for part in command[1:]]
 
-    out: list[tuple[list, int]] = [(list(prompt), 700)]
-    shown: list = list(prompt)
-    for index, (at, line) in enumerate(lines):
-        for part in wrap(normalize(line)):
+    out = [Frame(list(prompt), 700)]
+    shown = list(prompt)
+    for index, arrival in enumerate(arrivals):
+        for part in wrap(normalize(arrival.line)):
             position, _, rest = part.partition(" ")
-            shown = shown + [[(position + " ", DIM), (rest, FG)] if rest else [(part, FG)]]
-        nxt = lines[index + 1][0] if index + 1 < len(lines) else None
-        gap = HOLD_MS if nxt is None else int(max(MIN_MS, min(MAX_MS, (nxt - at) * 1000)))
-        out.append((list(shown), gap))
+            shown = shown + [
+                [Segment(position + " ", DIM), Segment(rest, FG)] if rest
+                else [Segment(part, FG)]
+            ]
+        following = arrivals[index + 1].after_seconds if index + 1 < len(arrivals) else None
+        gap = HOLD_MS if following is None else int(
+            max(MIN_MS, min(MAX_MS, (following - arrival.after_seconds) * 1000))
+        )
+        out.append(Frame(list(shown), gap))
     return out
 
 
-def render(frames_: list[tuple[list, int]], font_path: Path, out: Path) -> None:
+def render(frames_: list[Frame], font_path: Path, out: Path) -> None:
     font = ImageFont.truetype(str(font_path), FONT_SIZE)
-    cw = font.getlength("M")
     ascent, descent = font.getmetrics()
     line_height = ascent + descent + 5
-    rows = max(len(f[0]) for f in frames_)
-    width = int(PAD * 2 + COLS * cw)
+    rows = max(len(frame.lines) for frame in frames_)
+    width = int(PAD * 2 + COLS * font.getlength("M"))
     height = int(BAR_H + PAD + rows * line_height + PAD)
 
-    def draw(lines: list) -> Image.Image:
+    def draw(lines: list[list[Segment]]) -> Image.Image:
         image = Image.new("RGB", (width, height), BG)
         pen = ImageDraw.Draw(image)
         pen.rectangle([0, 0, width, BAR_H], fill=BAR)
@@ -186,16 +222,16 @@ def render(frames_: list[tuple[list, int]], font_path: Path, out: Path) -> None:
         y = BAR_H + PAD
         for segments in lines:
             x = PAD
-            for text, colour in segments:
-                pen.text((x, y), text, font=font, fill=colour)
-                x += font.getlength(text)
+            for segment in segments:
+                pen.text((x, y), segment.text, font=font, fill=segment.colour)
+                x += font.getlength(segment.text)
             y += line_height
         return image
 
-    images = [draw(lines) for lines, _ in frames_]
+    images = [draw(frame.lines) for frame in frames_]
     images[0].save(
         out, save_all=True, append_images=images[1:],
-        duration=[ms for _, ms in frames_], loop=0, optimize=True, disposal=2,
+        duration=[frame.hold_ms for frame in frames_], loop=0, optimize=True, disposal=2,
     )
 
 
@@ -213,7 +249,8 @@ def main() -> int:
             )
         if not Path(bus).is_file():
             print(f"subscribe-gif: no onemessagebus binary at {bus}", file=sys.stderr)
-            print("               Build it: cargo build --release -p onemessagebus-cli", file=sys.stderr)
+            print("               Build it: cargo build --release -p onemessagebus-cli",
+                  file=sys.stderr)
             return 1
     if not font.is_file():
         print(f"subscribe-gif: missing the vendored font at {font}", file=sys.stderr)
@@ -221,8 +258,7 @@ def main() -> int:
 
     root = Path(tempfile.mkdtemp(prefix="onemessagebus-gif-"))
     try:
-        config = stage(root, repo)
-        lines = tail(bus, root, config)
+        arrivals = tail(bus, root, stage(root, repo))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -231,8 +267,8 @@ def main() -> int:
         "--until '{\"field\":\"kind\",\"equals\":\"complete\"}' --config bus.yaml",
     ]
     out.parent.mkdir(parents=True, exist_ok=True)
-    render(frames(command, lines), font, out)
-    print(f"subscribe-gif: wrote {out} ({len(lines)} lines tailed)", file=sys.stderr)
+    render(frames(command, arrivals), font, out)
+    print(f"subscribe-gif: wrote {out} ({len(arrivals)} lines tailed)", file=sys.stderr)
     return 0
 
 
