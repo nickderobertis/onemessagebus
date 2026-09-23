@@ -536,23 +536,24 @@ fn a_screencomp_that_names_no_lane_is_refused_rather_than_read_as_an_empty_set()
 }
 
 #[test]
-fn a_new_branch_with_no_remote_head_to_fork_from_still_sees_its_own_tree() {
+fn a_new_branch_with_no_merge_base_captures_rather_than_guessing() {
     let guarded = Guarded::new("screenshots/capture-inputs.txt");
     // A clone with no `origin/HEAD` — a fresh remote, or one whose default
-    // branch was never fetched — leaves the guard no merge base to diff from.
+    // branch was never fetched — leaves no fork point to diff from. The working
+    // tree is clean and matches the pushed commit, so `git diff <local_sha>`
+    // would report nothing at all: the guard must not read that as "no
+    // screenshot changed".
     git(
         guarded.at(),
         &["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"],
     );
-    // The single-sha fallback diffs that commit against the working tree, so
-    // this is what it has to find.
-    std::fs::write(
-        guarded.at().join("screenshots/capture-inputs.txt"),
-        "three\n",
-    )
-    .expect("the working tree is dirtied");
 
-    let tools = guarded.tools(Stand::declaring(&guarded.lane));
+    let tools = guarded.tools(Stand {
+        // Nothing reaches `scope` on this path; a status that would mean "not
+        // relevant" proves the guard did not consult it.
+        scope_status: 0,
+        ..Stand::declaring(&guarded.lane)
+    });
     let run = guarded.push_over_stdin(
         &tools,
         &format!(
@@ -564,9 +565,35 @@ fn a_new_branch_with_no_remote_head_to_fork_from_still_sees_its_own_tree() {
     assert!(run.status.success(), "{}", stderr(&run));
     assert!(
         !guarded.log("capture").is_empty(),
-        "with no merge base the guard saw nothing at all, so it would let a \
-         screenshot-relevant push through uncaptured"
+        "an underivable push was let through uncaptured"
     );
+    assert!(
+        stderr(&run).contains("no merge base"),
+        "it captured without saying why: {}",
+        stderr(&run)
+    );
+}
+
+#[test]
+fn a_range_override_that_names_no_revision_is_refused() {
+    for range in ["--output=/dev/null", "refs/heads/never-existed..HEAD"] {
+        let guarded = Guarded::new("screenshots/capture-inputs.txt");
+        let tools = guarded.tools(Stand::declaring(&guarded.lane));
+        let run = guarded.push(&tools, &[("SCREENCOMP_GUARD_RANGE", range)]);
+
+        assert_eq!(
+            run.status.code(),
+            Some(1),
+            "{range} was accepted: {}",
+            stderr(&run)
+        );
+        assert!(
+            stderr(&run).contains("SCREENCOMP_GUARD_RANGE"),
+            "the refusal does not name the override: {}",
+            stderr(&run)
+        );
+        assert_eq!(guarded.log("capture"), "", "it captured for {range}");
+    }
 }
 
 #[test]

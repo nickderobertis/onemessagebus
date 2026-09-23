@@ -54,9 +54,26 @@ if ! printf '%s\n' "$LANES" | grep -qxF "$LANE"; then
 fi
 
 # git hands a pre-push hook one line per ref it is about to update, on stdin.
+# `undecidable` records a ref whose changed paths cannot be derived at all.
 ranges=()
+undecidable=""
 if [ -n "${SCREENCOMP_GUARD_RANGE:-}" ]; then
-  ranges+=("$SCREENCOMP_GUARD_RANGE")   # test/override: diff this range directly
+  # A test/override, so it steers `git diff` directly: accept only something git
+  # resolves, and never an option.
+  case "$SCREENCOMP_GUARD_RANGE" in
+  -*)
+    echo "pre-push: SCREENCOMP_GUARD_RANGE must name a revision range, not an" >&2
+    echo "          option: $SCREENCOMP_GUARD_RANGE" >&2
+    exit 1
+    ;;
+  esac
+  if ! git rev-parse --quiet --verify "$SCREENCOMP_GUARD_RANGE^{commit}" >/dev/null 2>&1 \
+    && ! git rev-parse --quiet --verify "${SCREENCOMP_GUARD_RANGE%%..*}^{commit}" >/dev/null 2>&1; then
+    echo "pre-push: SCREENCOMP_GUARD_RANGE names no revision this repository has:" >&2
+    echo "          $SCREENCOMP_GUARD_RANGE" >&2
+    exit 1
+  fi
+  ranges+=("$SCREENCOMP_GUARD_RANGE")
 else
   zero='^0+$'
   while read -r _local_ref local_sha _remote_ref remote_sha; do
@@ -64,24 +81,37 @@ else
     if [[ "$local_sha" =~ $zero ]]; then
       continue                            # branch deletion: nothing to capture
     elif [[ "$remote_sha" =~ $zero ]]; then
+      # A branch the remote has never seen: its fork point is the merge base
+      # with the remote's default branch. With no `origin/HEAD` there is none —
+      # a fresh remote, a clone that never fetched it — and `git diff <sha>`
+      # would compare that commit to the working tree and report nothing, which
+      # reads as "no screenshot changed" for a push that may be full of them.
+      # Fail closed: a relevance check that can silently skip is a correctness
+      # hole, exactly as `scripts/nx-affected.sh` treats the same situation.
       base="$(git merge-base origin/HEAD "$local_sha" 2>/dev/null || true)"
-      [ -n "$base" ] && ranges+=("${base}..${local_sha}") || ranges+=("$local_sha")
+      [ -n "$base" ] && ranges+=("${base}..${local_sha}") || undecidable=1
     else
       ranges+=("${remote_sha}..${local_sha}")
     fi
   done
 fi
-[ "${#ranges[@]}" -eq 0 ] && exit 0
+[ "${#ranges[@]}" -eq 0 ] && [ -z "$undecidable" ] && exit 0
 
-changed="$(for r in "${ranges[@]}"; do git diff --name-only "$r"; done | sort -u)"
+if [ -n "$undecidable" ]; then
+  echo "pre-push: no merge base for a branch the remote has not seen, so what it" >&2
+  echo "          changes cannot be derived — capturing rather than guessing." >&2
+  scope_status=3
+else
+  changed="$(for r in "${ranges[@]}"; do git diff --name-only "$r"; done | sort -u)"
 
-# `scope` exits 3 when a changed path matches [guard].paths, 0 when none do, and
-# any OTHER non-zero on error. Treat ONLY exit 3 as relevant; on an error, warn
-# and skip rather than force a slow capture — CI is the backstop.
-set +e
-printf '%s\n' "$changed" | screencomp scope --changed-from - --exit-code --quiet
-scope_status=$?
-set -e
+  # `scope` exits 3 when a changed path matches [guard].paths, 0 when none do,
+  # and any OTHER non-zero on error. Treat ONLY exit 3 as relevant; on an error,
+  # warn and skip rather than force a slow capture — CI is the backstop.
+  set +e
+  printf '%s\n' "$changed" | screencomp scope --changed-from - --exit-code --quiet
+  scope_status=$?
+  set -e
+fi
 case "$scope_status" in
   0) exit 0 ;;                            # nothing relevant: pass silently
   3) : ;;                                 # a relevant path matched: capture below

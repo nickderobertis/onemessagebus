@@ -138,18 +138,77 @@ normalize() {
     "$1"
 }
 
-# Append a command to the scene buffer as a shell transcript would show it: the
-# first line under a `$ ` prompt, any continuation lines indented beneath it. The
-# prompt lines are the argv this capture ran, verbatim; every line `emit` adds is
-# the binary's own bytes.
+# Every scene's prompt line is DERIVED from the argv that was run, never written
+# beside it: `show` is what both prints and runs, so a transcript cannot come to
+# quote a flag the capture did not pass. It folds an over-wide command the way a
+# person would, with a trailing `\` and a four-space continuation.
 scene=""
-say() {
-  scene+="\$ $1"$'\n'
-  shift
-  local line
-  for line in "$@"; do scene+="    $line"$'\n'; done
-}
 emit() { scene+="$1"$'\n'; }
+
+# One argv word as a shell would need it typed. Deriving the prompt from the argv
+# is only honest if what it prints would run: a `--filter` document is a word to
+# `run` and a brace expansion to a reader who pastes it unquoted.
+shell_quote() {
+  case "$1" in
+  "") printf "''" ;;
+  *[!A-Za-z0-9_@%+=:,./-]*) printf "'%s'" "${1//\'/\'\\\'\'}" ;;
+  *) printf '%s' "$1" ;;
+  esac
+}
+
+# Emit already-quoted words under `prefix`, folding an over-wide command the way
+# a person would: a trailing `\` and a four-space continuation.
+fold_words() {
+  local prefix="$1"
+  shift
+  local budget=$((100 - ${#prefix})) out="" word
+  for word in "$@"; do
+    if [ -n "$out" ] && [ $((${#out} + ${#word} + 1)) -gt "$budget" ]; then
+      emit "$prefix$out \\"
+      prefix="    "
+      budget=96
+      out="$word"
+    else
+      out="${out:+$out }$word"
+    fi
+  done
+  emit "$prefix$out"
+}
+
+# The `$ ` line for `onemessagebus <argv>`, optionally piped a document.
+prompt() {
+  local input="$1"
+  shift
+  local words=("onemessagebus") word
+  for word in "$@"; do words+=("$(shell_quote "$word")"); done
+  if [ -n "$input" ]; then
+    emit "\$ echo $(shell_quote "$input") |"
+    fold_words '    ' "${words[@]}"
+  else
+    fold_words '$ ' "${words[@]}"
+  fi
+}
+
+# Print the command and append what running it said. `$SHOW_INPUT` is piped to it
+# and shown above it; `$SHOW_STATUS` also appends the exit code a shell would
+# report, which is how the refusal scenes show the `0`/`1`/`2` table.
+show() {
+  local input="${SHOW_INPUT:-}" out status
+  prompt "$input" "$@"
+  set +e
+  if [ -n "$input" ]; then
+    out="$(printf '%s' "$input" | run "$@" 2>&1)"
+  else
+    out="$(run "$@" 2>&1)"
+  fi
+  status=$?
+  set -e
+  emit "$out"
+  if [ -n "${SHOW_STATUS:-}" ]; then
+    emit '$ echo $?'
+    emit "$status"
+  fi
+}
 
 # Render the scene buffer to an SVG, hash it, record it, and copy the committed
 # README/gallery copy beside it.
@@ -175,29 +234,21 @@ render() {
   scene=""
 }
 
-# Run a verb that is expected to refuse, and append its output and the exit code
-# a shell would then report — the `0`/`1`/`2` table docs/cli.md states.
-emit_with_status() {
-  local out status
-  set +e
-  out="$(run "$@" 2>&1)"
-  status=$?
-  set -e
-  emit "$out"
-  say 'echo $?'
-  emit "$status"
-}
+# The two stream fixtures and the malformed record, beside the configuration, so
+# every scene's argv names them the short way a reader would type.
+cp "$fixture/checkout.ndjson" "$fixture/fulfilment.ndjson" "$work/"
+cp "$fixture/draft-question.json" "$work/draft.json"
 
 # The question is raised by an `ask` left running with piped stdio — the way
 # tests/e2e/ask.rs holds one open — and answered from a second invocation over
 # the same transport directory, which is what the two-shell transcript shows.
 question='{"kind":"question","message":"which base do I fork from?","source":"proposal"}'
 verdict='{"version":3,"completion":true,"reason":"main; the release branch is closed"}'
+asking_argv=(ask questions --blocking --asker worker-1 --timeout 60 --config bus.yaml)
 (
   cd "$work" \
-    && printf '%s' "$question" \
-      | "$bus" ask questions --blocking --asker worker-1 --timeout 60 --config bus.yaml \
-        >"$work/ask.out" 2>"$work/ask.err"
+    && printf '%s' "$question" | "$bus" "${asking_argv[@]}" \
+      >"$work/ask.out" 2>"$work/ask.err"
 ) &
 asking=$!
 # Wait for the correlation line rather than sleeping a guessed interval: it is
@@ -221,7 +272,8 @@ if [ -z "$correlation" ]; then
   } >&2
   exit 1
 fi
-printf '%s' "$verdict" | run reply questions --correlation "$correlation" --config bus.yaml >/dev/null
+reply_argv=(reply questions --correlation "$correlation" --config bus.yaml)
+printf '%s' "$verdict" | run "${reply_argv[@]}" >/dev/null
 # An `ask` that did not exit 0 answered something other than the reply — a
 # timeout, an abandonment, a refusal — and rendering that as the resolved scene
 # would publish a picture of a failure as the documented happy path.
@@ -236,52 +288,41 @@ if ! wait "$asking"; then
   exit 1
 fi
 
-say "echo '$question' |" \
-  "onemessagebus ask questions --blocking --asker worker-1 --timeout 60 --config bus.yaml"
+prompt "$question" "${asking_argv[@]}"
 emit "$(cat "$work/ask.err")"
 emit ""
 emit "# ...waiting. Meanwhile, in another shell, the lead answers that correlation:"
 emit "#   echo '$verdict' |"
-emit "#     onemessagebus reply questions --correlation $correlation --config bus.yaml"
+shown_reply=()
+for word in "${reply_argv[@]}"; do shown_reply+=("$(shell_quote "$word")"); done
+emit "#     onemessagebus ${shown_reply[*]}"
 emit ""
 emit "$(cat "$work/ask.out")"
 render ask ask.svg
 
 # `next` claims before `status` reads, so a cursor in that view has moved.
 note='{"kind":"note","message":"the nightly sweep is green","source":"sweep","blocking":false}'
-say "echo '$note' |" \
-  "onemessagebus send questions --config bus.yaml"
-emit "$(printf '%s' "$note" | run send questions --config bus.yaml)"
-say "onemessagebus next answers --format text --config bus.yaml"
-emit "$(run next answers --format text --config bus.yaml)"
-say "onemessagebus status --format text --config bus.yaml"
-emit "$(run status --format text --config bus.yaml)"
+SHOW_INPUT="$note" show send questions --config bus.yaml
+show next answers --format text --config bus.yaml
+show status --format text --config bus.yaml
 render queues queues.svg
 
-say "onemessagebus events merge checkout.ndjson fulfilment.ndjson --format text"
-emit "$("$bus" events merge "$fixture/checkout.ndjson" "$fixture/fulfilment.ndjson" --format text)"
+show events merge checkout.ndjson fulfilment.ndjson --format text
 emit ""
-say "onemessagebus events merge checkout.ndjson fulfilment.ndjson --format text \\" \
-  "--filter '{\"include\":[{\"source\":\"fulfilment\"}]}'"
-emit "$("$bus" events merge "$fixture/checkout.ndjson" "$fixture/fulfilment.ndjson" \
-  --filter '{"include":[{"source":"fulfilment"}]}' --format text)"
+show events merge checkout.ndjson fulfilment.ndjson --format text \
+  --filter '{"include":[{"source":"fulfilment"}]}'
 render events-merge events-merge.svg
 
-say "onemessagebus schema list --format text --config bus.yaml"
-emit "$(run schema list --format text --config bus.yaml)"
+show schema list --format text --config bus.yaml
 emit ""
-say "onemessagebus schema check desk.question@1 --file draft.json --config bus.yaml"
-emit_with_status schema check desk.question@1 --file "$fixture/draft-question.json" --config bus.yaml
+SHOW_STATUS=1 show schema check desk.question@1 --file draft.json --config bus.yaml
 render schema schema.svg
 
 frame='{"op":"quote","sku":"KB-118","units":2}'
-say "echo '$frame' |" \
-  "onemessagebus serve questions --codec checkout --config bus.yaml"
-emit "$(printf '%s' "$frame" | run serve questions --codec checkout --config bus.yaml)"
+SHOW_INPUT="$frame" show serve questions --codec checkout --config bus.yaml
 render serve serve.svg
 
-say "onemessagebus ask questions --timeout soon --config bus.yaml"
-emit_with_status ask questions --timeout soon --config bus.yaml
+SHOW_STATUS=1 show ask questions --timeout soon --config bus.yaml
 render refusal refusal.svg
 
 # Write captures.json — shots sorted by identity, schema 1, trailing newline: the

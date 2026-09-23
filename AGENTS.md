@@ -107,7 +107,7 @@ rationale; the mechanics live in the files named. -->
   TypeScript, apart from the Rust journeys with edges to both SDKs),
   `onemessagebus-visual-docs` (the screencomp capture, whose one target is the
   `bootstrap` that activates the pre-push guard — it owns no gate target on
-  purpose, `screenshots/AGENTS.md`),
+  purpose),
   and the root `workspace` project (the
   coverage floor and the supply-chain check). The binary is its own
   `publish = false` crate so the core stays a library with no command-line

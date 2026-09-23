@@ -34,9 +34,11 @@ is the wire; [`docs/contract.md`](docs/contract.md) is the approved contract the
 consumers restate from.
 <!-- llmlint: ignore-end[no_redundant_instruction_pointers] -->
 
+<!-- llmlint: ignore-block[no_redundant_instruction_pointers] this README is the PyPI page of the `onemessagebus-cli` wheel and the repository's front page, read by someone who never opens an AGENTS.md; a reader who wonders whether these pictures are real has nowhere else to look. -->
 Every picture below is a capture of that binary run against a fixture of the
 kind the end-to-end journeys stage, gated on its content hash so it cannot drift
 away from what the tool prints ([`screenshots/AGENTS.md`](screenshots/AGENTS.md)).
+<!-- llmlint: ignore-end[no_redundant_instruction_pointers] -->
 
 ## Queues
 

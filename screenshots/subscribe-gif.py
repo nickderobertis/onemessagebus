@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -118,6 +119,20 @@ def stage(root: Path, repo: Path) -> Path:
     return Path(staged)
 
 
+def tail_argv(config: Path) -> list[str]:
+    """The `subscribe` this GIF is of. One value, because the window's prompt
+    line is rendered from it: a prompt written beside the argv is a second
+    spelling of the command line that nothing reconciles, and the hero would go
+    on showing a flag the run no longer passes."""
+    return [
+        "subscribe", "questions",
+        "--until", '{"field":"kind","equals":"complete"}',
+        "--timeout", "60",
+        "--format", "text",
+        "--config", config.name,
+    ]
+
+
 def tail(bus: str, root: Path, config: Path) -> list[Arrival]:
     """Run the real `subscribe` while a sibling sends, and hand back each line it
     printed with the instant it landed."""
@@ -143,8 +158,7 @@ def tail(bus: str, root: Path, config: Path) -> list[Arrival]:
         send(question)
 
     child = subprocess.Popen(
-        [bus, "subscribe", "questions", "--until", '{"field":"kind","equals":"complete"}',
-         "--timeout", "60", "--format", "text", "--config", str(config)],
+        [bus, *tail_argv(config)],
         cwd=root, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
     )
 
@@ -181,6 +195,22 @@ def normalize(text: str) -> str:
     the hash-gated stills use, so the two read as one session."""
     text = re.sub(r"c-[0-9a-f]{32}", "c-4f3c1d92a08b47e6b1d5c0a7e93f2b18", text)
     return re.sub(r'"raised_at":\d{13}', '"raised_at":1789300000000', text)
+
+
+def prompt(argv: list[str]) -> list[str]:
+    """`onemessagebus <argv>` as a shell would need it typed, folded at the
+    window's column budget with a trailing backslash."""
+    words = ["onemessagebus"] + [shlex.quote(word) for word in argv]
+    lines: list[str] = []
+    line = ""
+    for word in words:
+        if line and len(line) + len(word) + 1 > COLS - 2:
+            lines.append(line + " \\")
+            line = "    " + word
+        else:
+            line = f"{line} {word}" if line else word
+    lines.append(line)
+    return lines
 
 
 def wrap(line: str) -> list[str]:
@@ -265,16 +295,13 @@ def main() -> int:
 
     root = Path(tempfile.mkdtemp(prefix="onemessagebus-gif-"))
     try:
-        arrivals = tail(bus, root, stage(root, repo))
+        config = stage(root, repo)
+        arrivals = tail(bus, root, config)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
-    command = [
-        "onemessagebus subscribe questions --format text \\",
-        "--until '{\"field\":\"kind\",\"equals\":\"complete\"}' --config bus.yaml",
-    ]
     out.parent.mkdir(parents=True, exist_ok=True)
-    render(frames(command, arrivals), font, out)
+    render(frames(prompt(tail_argv(config)), arrivals), font, out)
     print(f"subscribe-gif: wrote {out} ({len(arrivals)} lines tailed)", file=sys.stderr)
     return 0
 
