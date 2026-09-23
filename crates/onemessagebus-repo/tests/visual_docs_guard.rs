@@ -788,3 +788,32 @@ fn bootstrapping_a_clone_leaves_the_committed_guard_active() {
         "the guard directory carries something other than the visual guard"
     );
 }
+
+#[test]
+fn a_push_of_several_refs_captures_when_any_one_of_them_is_relevant() {
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    // `git push --all` hands the hook one line per ref. The relevant commit is
+    // on the second, so a guard that read only the first would let it through.
+    git(
+        guarded.at(),
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    );
+    let tools = guarded.tools(Stand::declaring(&guarded.lane));
+    let run = guarded.push_over_stdin(
+        &tools,
+        "origin",
+        &format!(
+            "refs/heads/quiet {0} refs/heads/quiet {0}\n\
+             refs/heads/shots {1} refs/heads/shots {2}\n",
+            guarded.sha("HEAD"),
+            guarded.sha("HEAD"),
+            guarded.sha("HEAD~1"),
+        ),
+    );
+
+    assert!(run.status.success(), "{}", stderr(&run));
+    assert!(
+        !guarded.log("capture").is_empty(),
+        "a relevant change on the second of two pushed refs was not seen"
+    );
+}
