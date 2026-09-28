@@ -243,9 +243,8 @@ _wheel-test:
 # `onemessagebus-pypi:build` left in dist/wheels, the Node SDK with the launcher
 # and host platform package scripts/npm-build.mjs assembles around a release
 # build. Then each smoke program under sdk-install/ drives what was installed.
-# Cargo's effective target directory — CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR
-# or `.cargo/config.toml`, whichever wins — is resolved once, from Cargo's own
-# metadata, and handed to the Node SDK's package test as ONEMESSAGEBUS_TARGET_DIR.
+# Cargo's effective target directory is resolved once (scripts/cargo-target-dir.mjs)
+# and handed to the Node SDK's package test as ONEMESSAGEBUS_TARGET_DIR.
 _sdk-install-test:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -253,17 +252,8 @@ _sdk-install-test:
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' EXIT
     fail() { echo "onemessagebus-sdk-install-e2e: $1" >&2; exit 1; }
-    ONEMESSAGEBUS_TARGET_DIR="$(cargo metadata --no-deps --format-version 1 | node -e '
-      let dir;
-      try {
-        dir = JSON.parse(require("fs").readFileSync(0, "utf8")).target_directory;
-      } catch {}
-      if (typeof dir !== "string" || !require("path").isAbsolute(dir)) {
-        console.error(`cargo metadata named ${JSON.stringify(dir)} as its target directory`);
-        process.exit(1);
-      }
-      process.stdout.write(dir);')" \
-      || fail "Cargo's target directory did not resolve to an absolute path from \`cargo metadata\` — its output is above"
+    ONEMESSAGEBUS_TARGET_DIR="$(env -u ONEMESSAGEBUS_TARGET_DIR node scripts/cargo-target-dir.mjs)" \
+      || fail "Cargo's target directory did not resolve — its output is above"
     export ONEMESSAGEBUS_TARGET_DIR
     version="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -n1)"
     mkdir -p "$work/wheels" "$work/npm" "$work/tarballs" "$work/app"

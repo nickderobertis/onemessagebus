@@ -10,10 +10,11 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
+import { resolveCargoTargetDir } from "../../scripts/cargo-target-dir.mjs";
 import { npmInvocation, shimInvocation } from "./support/invocation.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -111,18 +112,11 @@ describe("the npm distribution", () => {
   let version;
 
   before(() => {
-    // The metadata names Cargo's effective target directory too, honouring
-    // CARGO_TARGET_DIR and Cargo's configuration alike, so the binary is found
-    // wherever the build below writes it.
-    const metadata = JSON.parse(
+    version = JSON.parse(
       run("cargo", ["metadata", "--no-deps", "--format-version", "1", "--locked"]),
-    );
-    version = metadata.packages.find((pkg) => pkg.name === "onemessagebus-cli").version;
-    const targetDir = metadata.target_directory;
-    assert.ok(
-      typeof targetDir === "string" && isAbsolute(targetDir),
-      `cargo metadata named ${JSON.stringify(targetDir)} as its target directory, not an absolute path`,
-    );
+    ).packages.find((pkg) => pkg.name === "onemessagebus-cli").version;
+    // Wherever Cargo's environment and configuration send the build below.
+    const targetDir = resolveCargoTargetDir({ cwd: REPO_ROOT });
 
     // The real binary the package will carry. Debug rather than release: this
     // proves the packaging, and a release build would cost the gate minutes.

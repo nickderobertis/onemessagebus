@@ -163,7 +163,7 @@ describe("the test support's own guard", () => {
 
     test("a handed directory that is not absolute is refused", () => {
       expect(() => cargoTargetDir({ ...unset, ONEMESSAGEBUS_TARGET_DIR: "target" })).toThrow(
-        "ONEMESSAGEBUS_TARGET_DIR did not name an absolute Cargo target directory",
+        'ONEMESSAGEBUS_TARGET_DIR named "target" as Cargo\'s target directory, not an absolute path',
       );
     });
 

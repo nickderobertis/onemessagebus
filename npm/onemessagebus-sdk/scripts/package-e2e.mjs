@@ -6,13 +6,14 @@
 // does, through its exact `onemessagebus-cli` dependency.
 //
 // Needs `dist/` built (the `test:package` script builds it) and the debug binary
-// (`just nx run onemessagebus-cli:build`) in Cargo's effective target directory:
-// ONEMESSAGEBUS_TARGET_DIR when a recipe resolved it, else `cargo metadata`'s own.
+// (`just nx run onemessagebus-cli:build`) in Cargo's effective target directory
+// (scripts/cargo-target-dir.mjs).
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { cargoTargetDir, TargetDirError } from "../../../scripts/cargo-target-dir.mjs";
 
 const PACKAGE = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ROOT = resolve(PACKAGE, "../..");
@@ -22,38 +23,19 @@ function fail(message, action) {
   process.exit(1);
 }
 
-function targetDir(value, source) {
-  if (typeof value !== "string" || !isAbsolute(value)) {
-    fail(
-      `${source} named ${JSON.stringify(value)} as Cargo's target directory, not an absolute path`,
-      "run this through `just nx run onemessagebus-sdk-install-e2e:test`, or unset ONEMESSAGEBUS_TARGET_DIR so `cargo metadata` names it",
-    );
-  }
-  return value;
-}
-
-/** Where Cargo writes, honouring its environment and configuration alike. */
-function cargoTargetDir() {
-  const handed = process.env.ONEMESSAGEBUS_TARGET_DIR;
-  if (handed) return targetDir(handed, "ONEMESSAGEBUS_TARGET_DIR");
-  let named;
+function binaryPath() {
   try {
-    const metadata = execFileSync("cargo", ["metadata", "--no-deps", "--format-version", "1"], {
-      cwd: ROOT,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    named = JSON.parse(metadata)?.target_directory;
+    return join(cargoTargetDir({ cwd: ROOT }), "debug", "onemessagebus");
   } catch (error) {
+    if (!(error instanceof TargetDirError)) throw error;
     fail(
-      `\`cargo metadata\` did not name Cargo's target directory:\n${error.stderr ?? error.message}`,
-      "put cargo on PATH and fix what it refused above, then rerun",
+      error.message,
+      "run this through `just nx run onemessagebus-sdk-install-e2e:test`, or put cargo on PATH and fix what it refused above, then rerun",
     );
   }
-  return targetDir(named, "`cargo metadata`");
 }
 
-const BINARY = join(cargoTargetDir(), "debug", "onemessagebus");
+const BINARY = binaryPath();
 
 const TARGETS = {
   "linux-x64": "x86_64-unknown-linux-gnu",

@@ -37,16 +37,19 @@ def test_a_handed_directory_that_is_not_absolute_is_refused(
 
 
 def test_the_recipe_and_every_reader_hand_the_directory_on_under_one_name() -> None:
-    """The drift gate over the hand-off: its name is a literal in four languages."""
+    """The drift gate over the hand-off, whose name is a literal in three languages.
+
+    The recipe and scripts/cargo-target-dir.mjs meet end to end in
+    npm/test/cargo-target-dir.test.mjs; what no run crosses is this conftest
+    reading the name the recipe exports, so that is held here.
+    """
     justfile = (ROOT / "justfile").read_text(encoding="utf-8")
     recipe = justfile[justfile.index("\n_sdk-install-test:") :]
     recipe = recipe[: recipe.index("\n\n")]
     assert f"export {HANDOFF}\n" in recipe, "the SDK install recipe hands the directory on"
-    for reader, spelling in [
-        ("npm/onemessagebus-sdk/scripts/package-e2e.mjs", f"process.env.{HANDOFF}"),
-        ("npm/onemessagebus-sdk/test/support.ts", f"env.{HANDOFF}"),
-    ]:
-        assert spelling in (ROOT / reader).read_text(encoding="utf-8"), f"{reader} reads it"
+    assert f"env -u {HANDOFF} node scripts/cargo-target-dir.mjs" in recipe, "and resolves it fresh"
+    script = (ROOT / "scripts" / "cargo-target-dir.mjs").read_text(encoding="utf-8")
+    assert f'export const HANDOFF = "{HANDOFF}";' in script, "the Node resolver reads it"
 
 
 def test_a_cargo_that_refuses_fails_the_run_with_what_it_said(
