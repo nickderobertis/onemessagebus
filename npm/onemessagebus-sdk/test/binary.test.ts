@@ -161,6 +161,12 @@ describe("the test support's own guard", () => {
       expect(cargoTargetDir(env)).toBe(dir);
     });
 
+    test("a handed directory that is not absolute is refused", () => {
+      expect(() => cargoTargetDir({ ...unset, ONEMESSAGEBUS_TARGET_DIR: "target" })).toThrow(
+        "ONEMESSAGEBUS_TARGET_DIR did not name an absolute Cargo target directory",
+      );
+    });
+
     test("a cargo that refuses fails the run with what it said", () => {
       const home = scratch("cargo-home");
       writeFileSync(join(home, "config.toml"), "[build\n");

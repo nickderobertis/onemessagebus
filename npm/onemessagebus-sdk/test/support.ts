@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { Client, type ClientConfig, defineMessage, ResidentTransport } from "../src/index.js";
 
@@ -28,6 +28,9 @@ export function requireBinary(path: string): string {
   return path;
 }
 
+const targetDir = z.string().refine(isAbsolute);
+const refusal = (source: string) => `${source} did not name an absolute Cargo target directory`;
+
 /**
  * Cargo's effective target directory under `env`: ONEMESSAGEBUS_TARGET_DIR when a
  * recipe resolved it, else `cargo metadata`'s own, which honours CARGO_TARGET_DIR
@@ -35,15 +38,16 @@ export function requireBinary(path: string): string {
  */
 export function cargoTargetDir(env: NodeJS.ProcessEnv = process.env): string {
   const handed = env.ONEMESSAGEBUS_TARGET_DIR;
-  if (handed) return handed;
+  if (handed) return targetDir.parse(handed, { error: () => refusal("ONEMESSAGEBUS_TARGET_DIR") });
   const metadata = execFileSync("cargo", ["metadata", "--no-deps", "--format-version", "1"], {
     cwd: ROOT,
     env,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
-  const { target_directory } = JSON.parse(metadata) as { target_directory: string };
-  return target_directory;
+  return z
+    .object({ target_directory: targetDir })
+    .parse(JSON.parse(metadata), { error: () => refusal("`cargo metadata`") }).target_directory;
 }
 
 export const BINARY = requireBinary(join(cargoTargetDir(), "debug", "onemessagebus"));

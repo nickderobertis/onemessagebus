@@ -10,7 +10,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
@@ -118,6 +118,11 @@ describe("the npm distribution", () => {
       run("cargo", ["metadata", "--no-deps", "--format-version", "1", "--locked"]),
     );
     version = metadata.packages.find((pkg) => pkg.name === "onemessagebus-cli").version;
+    const targetDir = metadata.target_directory;
+    assert.ok(
+      typeof targetDir === "string" && isAbsolute(targetDir),
+      `cargo metadata named ${JSON.stringify(targetDir)} as its target directory, not an absolute path`,
+    );
 
     // The real binary the package will carry. Debug rather than release: this
     // proves the packaging, and a release build would cost the gate minutes.
@@ -131,7 +136,7 @@ describe("the npm distribution", () => {
       "--target",
       hostTarget(),
       "--binary",
-      join(metadata.target_directory, "debug", "onemessagebus"),
+      join(targetDir, "debug", "onemessagebus"),
       "--out",
       dist,
     ]).trim();

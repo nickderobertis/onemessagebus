@@ -24,6 +24,16 @@ PACKAGE = Path(__file__).resolve().parents[1]
 ROOT = PACKAGE.parents[1]
 EXECUTABLE = "onemessagebus.exe" if os.name == "nt" else "onemessagebus"
 BUILD = "just nx run onemessagebus-cli:build"
+# The variable a recipe hands its resolved target directory on in; its readers
+# are held to this one name by tests/test_support.py.
+HANDOFF = "ONEMESSAGEBUS_TARGET_DIR"
+
+
+def _target_dir(value: object, source: str) -> Path:
+    """`value` as a target directory, refused unless it is an absolute path."""
+    if not isinstance(value, str) or not os.path.isabs(value):
+        pytest.fail(f"{source} named {value!r} as Cargo's target directory, not an absolute path")
+    return Path(value)
 
 
 def cargo_target_dir() -> Path:
@@ -32,9 +42,9 @@ def cargo_target_dir() -> Path:
     `ONEMESSAGEBUS_TARGET_DIR` when a recipe resolved it, else `cargo metadata`'s
     own, which honours `CARGO_TARGET_DIR` and Cargo's configuration alike.
     """
-    handed = os.environ.get("ONEMESSAGEBUS_TARGET_DIR")
+    handed = os.environ.get(HANDOFF)
     if handed:
-        return Path(handed)
+        return _target_dir(handed, HANDOFF)
     cargo = shutil.which("cargo")
     if cargo is None:
         pytest.fail("cargo is not on PATH; install the pinned toolchain with `just bootstrap`")
@@ -47,8 +57,8 @@ def cargo_target_dir() -> Path:
     )
     if run.returncode != 0:
         pytest.fail(f"`cargo metadata` did not name Cargo's target directory:\n{run.stderr}")
-    metadata = run.stdout
-    return Path(json.loads(metadata)["target_directory"])
+    metadata = json.loads(run.stdout)
+    return _target_dir(metadata.get("target_directory"), "`cargo metadata`")
 
 
 class Greeting(Message, schema="demo.greeting@1"):

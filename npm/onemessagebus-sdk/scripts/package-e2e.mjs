@@ -11,7 +11,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PACKAGE = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -22,22 +22,35 @@ function fail(message, action) {
   process.exit(1);
 }
 
+/** `value` as a target directory, refused unless it is an absolute path. */
+function targetDir(value, source) {
+  if (typeof value !== "string" || !isAbsolute(value)) {
+    fail(
+      `${source} named ${JSON.stringify(value)} as Cargo's target directory, not an absolute path`,
+      "run this through `just nx run onemessagebus-sdk-install-e2e:test`, or unset ONEMESSAGEBUS_TARGET_DIR so `cargo metadata` names it",
+    );
+  }
+  return value;
+}
+
 /** Where Cargo writes, honouring its environment and configuration alike. */
 function cargoTargetDir() {
-  if (process.env.ONEMESSAGEBUS_TARGET_DIR) return process.env.ONEMESSAGEBUS_TARGET_DIR;
+  const handed = process.env.ONEMESSAGEBUS_TARGET_DIR;
+  if (handed) return targetDir(handed, "ONEMESSAGEBUS_TARGET_DIR");
+  let metadata;
   try {
-    const metadata = execFileSync("cargo", ["metadata", "--no-deps", "--format-version", "1"], {
+    metadata = execFileSync("cargo", ["metadata", "--no-deps", "--format-version", "1"], {
       cwd: ROOT,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
-    return JSON.parse(metadata).target_directory;
   } catch (error) {
     fail(
       `\`cargo metadata\` did not name Cargo's target directory:\n${error.stderr ?? error.message}`,
       "put cargo on PATH and fix what it refused above, then rerun",
     );
   }
+  return targetDir(JSON.parse(metadata).target_directory, "`cargo metadata`");
 }
 
 const BINARY = join(cargoTargetDir(), "debug", "onemessagebus");

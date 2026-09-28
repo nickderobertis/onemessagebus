@@ -253,10 +253,14 @@ _sdk-install-test:
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' EXIT
     fail() { echo "onemessagebus-sdk-install-e2e: $1" >&2; exit 1; }
-    ONEMESSAGEBUS_TARGET_DIR="$(cargo metadata --no-deps --format-version 1 \
-      | node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(0, "utf8")).target_directory)')" \
-      && [ -n "$ONEMESSAGEBUS_TARGET_DIR" ] \
-      || fail "cannot resolve Cargo's target directory from \`cargo metadata\` — its output is above"
+    ONEMESSAGEBUS_TARGET_DIR="$(cargo metadata --no-deps --format-version 1 | node -e '
+      const dir = JSON.parse(require("fs").readFileSync(0, "utf8")).target_directory;
+      if (typeof dir !== "string" || !require("path").isAbsolute(dir)) {
+        console.error(`cargo metadata named ${JSON.stringify(dir)} as its target directory`);
+        process.exit(1);
+      }
+      process.stdout.write(dir);')" \
+      || fail "Cargo's target directory did not resolve to an absolute path from \`cargo metadata\` — its output is above"
     export ONEMESSAGEBUS_TARGET_DIR
     version="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -n1)"
     mkdir -p "$work/wheels" "$work/npm" "$work/tarballs" "$work/app"
