@@ -47,6 +47,7 @@ def cargo_target_dir() -> Path:
     cargo = shutil.which("cargo")
     if cargo is None:
         pytest.fail("cargo is not on PATH; install the pinned toolchain with `just bootstrap`")
+    # llmlint: ignore[async_typed_clients_at_boundaries] this asks the pinned local toolchain one question, once per session, before any test starts a transport — where Cargo wrote the binary the fixtures drive. Nothing runs concurrently with it, the answer is one JSON field, and the npm side's scripts/cargo-target-dir.mjs asks the same synchronously; an event loop around it would wrap one blocking step, as in scripts/generate.py's cargo call.
     run = subprocess.run(  # noqa: S603 - argv is cargo as shutil.which resolved it and constant arguments; a bare name trips S607
         [cargo, "metadata", "--no-deps", "--format-version", "1"],
         cwd=ROOT,

@@ -115,7 +115,6 @@ describe("the npm distribution", () => {
     version = JSON.parse(
       run("cargo", ["metadata", "--no-deps", "--format-version", "1", "--locked"]),
     ).packages.find((pkg) => pkg.name === "onemessagebus-cli").version;
-    // Wherever Cargo's environment and configuration send the build below.
     const targetDir = resolveCargoTargetDir({ cwd: REPO_ROOT });
 
     // The real binary the package will carry. Debug rather than release: this
