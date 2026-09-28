@@ -14,6 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
+import { resolveCargoTargetDir } from "../../scripts/cargo-target-dir.mjs";
 import { npmInvocation, shimInvocation } from "./support/invocation.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -114,6 +115,7 @@ describe("the npm distribution", () => {
     version = JSON.parse(
       run("cargo", ["metadata", "--no-deps", "--format-version", "1", "--locked"]),
     ).packages.find((pkg) => pkg.name === "onemessagebus-cli").version;
+    const targetDir = resolveCargoTargetDir({ cwd: REPO_ROOT });
 
     // The real binary the package will carry. Debug rather than release: this
     // proves the packaging, and a release build would cost the gate minutes.
@@ -127,7 +129,7 @@ describe("the npm distribution", () => {
       "--target",
       hostTarget(),
       "--binary",
-      join("target", "debug", "onemessagebus"),
+      join(targetDir, "debug", "onemessagebus"),
       "--out",
       dist,
     ]).trim();

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
+import subprocess
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -19,8 +22,47 @@ from onemessagebus import (
 
 PACKAGE = Path(__file__).resolve().parents[1]
 ROOT = PACKAGE.parents[1]
-BINARY = ROOT / "target" / "debug" / ("onemessagebus.exe" if os.name == "nt" else "onemessagebus")
+EXECUTABLE = "onemessagebus.exe" if os.name == "nt" else "onemessagebus"
 BUILD = "just nx run onemessagebus-cli:build"
+# The variable a recipe hands its resolved target directory on in; its readers
+# are held to this one name by tests/test_support.py.
+HANDOFF = "ONEMESSAGEBUS_TARGET_DIR"
+
+
+def _target_dir(value: object, source: str) -> Path:
+    if not isinstance(value, str) or not os.path.isabs(value):
+        pytest.fail(f"{source} named {value!r} as Cargo's target directory, not an absolute path")
+    return Path(value)
+
+
+def cargo_target_dir() -> Path:
+    """Cargo's effective target directory, where the build left the binary.
+
+    `ONEMESSAGEBUS_TARGET_DIR` when a recipe resolved it, else `cargo metadata`'s
+    own, which honours `CARGO_TARGET_DIR` and Cargo's configuration alike.
+    """
+    handed = os.environ.get(HANDOFF)
+    if handed is not None:
+        return _target_dir(handed, HANDOFF)
+    cargo = shutil.which("cargo")
+    if cargo is None:
+        pytest.fail("cargo is not on PATH; install the pinned toolchain with `just bootstrap`")
+    # llmlint: ignore[async_typed_clients_at_boundaries] one blocking question to the local toolchain during fixture setup, with nothing to run beside it; an event loop would only wrap it.
+    run = subprocess.run(  # noqa: S603 - argv is cargo as shutil.which resolved it and constant arguments; a bare name trips S607
+        [cargo, "metadata", "--no-deps", "--format-version", "1"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if run.returncode != 0:
+        pytest.fail(f"`cargo metadata` did not name Cargo's target directory:\n{run.stderr}")
+    try:
+        metadata = json.loads(run.stdout)
+    except json.JSONDecodeError as error:
+        pytest.fail(f"`cargo metadata` printed no JSON ({error}); run it by hand to see why")
+    named = metadata.get("target_directory") if isinstance(metadata, dict) else None
+    return _target_dir(named, "`cargo metadata`")
 
 
 class Greeting(Message, schema="demo.greeting@1"):
@@ -29,12 +71,18 @@ class Greeting(Message, schema="demo.greeting@1"):
     text: str
 
 
+def built_binary() -> Path:
+    """The debug binary in Cargo's effective target directory; a missing one fails, naming the build."""
+    built = cargo_target_dir() / "debug" / EXECUTABLE
+    if not built.is_file():
+        pytest.fail(f"{built} is not built; build it with `{BUILD}` from the repository root")
+    return built
+
+
 @pytest.fixture(scope="session")
 def binary() -> Path:
-    """The binary built from this checkout; a missing one fails, naming the build."""
-    if not BINARY.is_file():
-        pytest.fail(f"{BINARY} is not built; build it with `{BUILD}` from the repository root")
-    return BINARY
+    """The binary built from this checkout."""
+    return built_binary()
 
 
 @pytest.fixture

@@ -21,7 +21,12 @@
     "test": {
       "command": "node --test npm/e2e/*.test.mjs",
       "dependsOn": [{ "projects": ["onemessagebus-cli"], "target": "build" }],
-      "inputs": ["{projectRoot}/**/*", "^crateSource", "{workspaceRoot}/scripts/npm-build.mjs"]
+      "inputs": [
+        "{projectRoot}/**/*",
+        "^crateSource",
+        "{workspaceRoot}/scripts/npm-build.mjs",
+        "{workspaceRoot}/scripts/cargo-target-dir.mjs"
+      ]
     },
     "doc": { "executor": "nx:noop" },
     "check": {

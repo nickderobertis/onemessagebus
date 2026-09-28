@@ -36,6 +36,7 @@
     "test": {
       "command": "bun run --cwd npm/onemessagebus-sdk test",
       "dependsOn": [{ "projects": ["onemessagebus-cli"], "target": "build" }],
+      "inputs": ["crateSource", "^crateSource", "{workspaceRoot}/scripts/cargo-target-dir.mjs"],
       "cache": false
     },
     "build": {

@@ -3,7 +3,7 @@
 The SDK and the CLI release as one version. A published package has that version
 stamped into `_version.CLI_VERSION` by scripts/pack.py; a development checkout
 still carries the placeholder, and there the pin is the workspace version of the
-Cargo.toml above the package source, which is what `target/debug/onemessagebus`
+Cargo.toml above the package source, which is what the checkout's debug binary
 was built from.
 """
 

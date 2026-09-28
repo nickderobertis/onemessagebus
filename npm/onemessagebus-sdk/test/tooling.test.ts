@@ -212,3 +212,31 @@ describe("the packer", () => {
     );
   }, 120_000);
 });
+
+describe("test:package", () => {
+  test("looks for the debug binary in the directory CARGO_TARGET_DIR names", () => {
+    const dir = scratch("unbuilt-target");
+    const { ONEMESSAGEBUS_TARGET_DIR: _handed, ...env } = process.env;
+    const run = spawnSync("node", ["scripts/package-e2e.mjs"], {
+      cwd: PACKAGE,
+      encoding: "utf8",
+      env: { ...env, CARGO_TARGET_DIR: dir },
+    });
+    expect(run.stderr).toBe(
+      `test:package: ${join(dir, "debug", "onemessagebus")} is not built\n  fix: build it with \`just nx run onemessagebus-cli:build\`, then rerun\n`,
+    );
+    expect(run.status).toBe(1);
+  });
+
+  test("refuses a hand-off that is not an absolute path as refused input", () => {
+    const run = spawnSync("node", ["scripts/package-e2e.mjs"], {
+      cwd: PACKAGE,
+      encoding: "utf8",
+      env: { ...process.env, ONEMESSAGEBUS_TARGET_DIR: "target" },
+    });
+    expect(run.stderr).toBe(
+      'test:package: ONEMESSAGEBUS_TARGET_DIR named "target" as Cargo\'s target directory, not an absolute path\n  fix: run this through `just nx run onemessagebus-sdk-install-e2e:test`, or put cargo on PATH and fix what it refused above, then rerun\n',
+    );
+    expect(run.status).toBe(2);
+  });
+});

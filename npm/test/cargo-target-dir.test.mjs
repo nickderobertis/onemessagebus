@@ -1,0 +1,140 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { after, describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const SCRIPT = join(REPO_ROOT, "scripts", "cargo-target-dir.mjs");
+
+const made = [];
+after(() => {
+  for (const dir of made) rmSync(dir, { recursive: true, force: true });
+});
+function scratch() {
+  const dir = mkdtempSync(join(tmpdir(), "cargo-target-dir-"));
+  made.push(dir);
+  return dir;
+}
+
+/// The process environment without anything that names a target directory, plus `env`.
+function environment(env) {
+  const {
+    CARGO_TARGET_DIR: _target,
+    CARGO_BUILD_TARGET_DIR: _build,
+    ONEMESSAGEBUS_TARGET_DIR: _handed,
+    ...rest
+  } = process.env;
+  return { ...rest, ...env };
+}
+
+function resolveUnder(env) {
+  return spawnSync(process.execPath, [SCRIPT], {
+    cwd: REPO_ROOT,
+    env: environment(env),
+    encoding: "utf8",
+  });
+}
+
+/// A CARGO_HOME whose configuration cargo refuses to parse.
+function brokenCargoHome() {
+  const home = scratch();
+  writeFileSync(join(home, "config.toml"), "[build\n");
+  return home;
+}
+
+describe("cargo-target-dir", () => {
+  for (const variable of ["CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"]) {
+    it(`prints the directory ${variable} names`, () => {
+      const dir = scratch();
+      const run = resolveUnder({ [variable]: dir });
+      assert.equal(run.stderr, "");
+      assert.equal(run.status, 0);
+      assert.equal(run.stdout, dir);
+    });
+  }
+
+  it("prints the clone's own target directory when only .cargo/config.toml names one", () => {
+    const run = resolveUnder({});
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(run.stdout, join(REPO_ROOT, "target"));
+  });
+
+  it("takes a recipe's hand-off as handed, and refuses one that is not absolute", () => {
+    const dir = scratch();
+    const handed = resolveUnder({
+      ONEMESSAGEBUS_TARGET_DIR: dir,
+      CARGO_TARGET_DIR: join(dir, "x"),
+    });
+    assert.equal(handed.status, 0, handed.stderr);
+    assert.equal(handed.stdout, dir);
+
+    const empty = resolveUnder({ ONEMESSAGEBUS_TARGET_DIR: "" });
+    assert.equal(empty.status, 2, "an empty hand-off is refused rather than ignored");
+
+    const relative = resolveUnder({ ONEMESSAGEBUS_TARGET_DIR: "target" });
+    assert.equal(relative.status, 2, "a refused hand-off is refused input");
+    assert.equal(relative.stdout, "");
+    assert.match(
+      relative.stderr,
+      /^cargo-target-dir: ONEMESSAGEBUS_TARGET_DIR named "target" as Cargo's target directory, not an absolute path\n {2}fix: /,
+    );
+  });
+
+  it("refuses with cargo's own words when cargo cannot answer", () => {
+    const home = brokenCargoHome();
+    const run = resolveUnder({ CARGO_HOME: home });
+    assert.equal(run.status, 1);
+    assert.equal(run.stdout, "");
+    assert.match(
+      run.stderr,
+      /^cargo-target-dir: `cargo metadata` did not name Cargo's target directory:\n/,
+    );
+    assert.ok(
+      run.stderr.includes(`could not parse TOML configuration in \`${join(home, "config.toml")}\``),
+      run.stderr,
+    );
+  });
+
+  // Cheap despite driving the recipe: its resolution comes before anything it builds.
+  it("stops the SDK install recipe before it builds anything, naming why", () => {
+    const home = brokenCargoHome();
+    const run = spawnSync("just", ["_sdk-install-test"], {
+      cwd: REPO_ROOT,
+      env: environment({ CARGO_HOME: home }),
+      encoding: "utf8",
+    });
+    assert.equal(run.status, 1, run.stderr);
+    assert.ok(run.stderr.includes("could not parse TOML configuration"), run.stderr);
+    assert.ok(
+      run.stderr.includes(
+        "onemessagebus-sdk-install-e2e: Cargo's target directory did not resolve — its output is above",
+      ),
+      run.stderr,
+    );
+  });
+
+  // Structural, and deliberately so: the SDK install recipe and the launcher's
+  // journey build the CLI before they look for it, so driving either against a
+  // directory other than the clone's own means compiling the CLI cold into it on
+  // every run — minutes each, to catch a path the cases above already resolve
+  // and these lines are held to. Both journeys run in full on every pull request.
+  it("points the journeys that build at the resolved directory", () => {
+    const justfile = readFileSync(join(REPO_ROOT, "justfile"), "utf8");
+    const recipe = justfile.slice(justfile.indexOf("\n_sdk-install-test:"));
+    const body = recipe.slice(0, recipe.indexOf("\n\n"));
+    for (const line of [
+      '--binary "$ONEMESSAGEBUS_TARGET_DIR/release/onemessagebus"',
+      '[ -x "$ONEMESSAGEBUS_TARGET_DIR/debug/onemessagebus" ]',
+    ]) {
+      assert.ok(body.includes(line), `the SDK install recipe must read ${line}`);
+    }
+    assert.doesNotMatch(body, /(^|[\s"'])target\//, "and never a literal target/");
+
+    const launcher = readFileSync(join(REPO_ROOT, "npm", "e2e", "launcher.test.mjs"), "utf8");
+    assert.ok(launcher.includes("const targetDir = resolveCargoTargetDir({ cwd: REPO_ROOT });"));
+    assert.ok(launcher.includes('join(targetDir, "debug", "onemessagebus")'));
+  });
+});
