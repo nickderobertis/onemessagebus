@@ -5,8 +5,9 @@
 // under node with no binary named — so it finds the CLI the way a user's install
 // does, through its exact `onemessagebus-cli` dependency.
 //
-// Needs `dist/` built (the `test:package` script builds it) and
-// target/debug/onemessagebus (`just nx run onemessagebus-cli:build`).
+// Needs `dist/` built (the `test:package` script builds it) and the debug binary
+// (`just nx run onemessagebus-cli:build`) in Cargo's effective target directory:
+// ONEMESSAGEBUS_TARGET_DIR when a recipe resolved it, else `cargo metadata`'s own.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,12 +16,31 @@ import { fileURLToPath } from "node:url";
 
 const PACKAGE = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ROOT = resolve(PACKAGE, "../..");
-const BINARY = join(ROOT, "target/debug/onemessagebus");
 
 function fail(message, action) {
   process.stderr.write(`test:package: ${message}\n  fix: ${action}\n`);
   process.exit(1);
 }
+
+/** Where Cargo writes, honouring its environment and configuration alike. */
+function cargoTargetDir() {
+  if (process.env.ONEMESSAGEBUS_TARGET_DIR) return process.env.ONEMESSAGEBUS_TARGET_DIR;
+  try {
+    const metadata = execFileSync("cargo", ["metadata", "--no-deps", "--format-version", "1"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return JSON.parse(metadata).target_directory;
+  } catch (error) {
+    fail(
+      `\`cargo metadata\` did not name Cargo's target directory:\n${error.stderr ?? error.message}`,
+      "put cargo on PATH and fix what it refused above, then rerun",
+    );
+  }
+}
+
+const BINARY = join(cargoTargetDir(), "debug", "onemessagebus");
 
 const TARGETS = {
   "linux-x64": "x86_64-unknown-linux-gnu",

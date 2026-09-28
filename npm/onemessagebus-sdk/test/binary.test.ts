@@ -15,6 +15,7 @@ import {
 import {
   BINARY,
   caughtAs,
+  cargoTargetDir,
   PACKAGE,
   ROOT,
   removeScratch,
@@ -137,5 +138,33 @@ describe("the test support's own guard", () => {
       `these tests drive the real binary at ${missing}, which is not built; build it with \`just nx run onemessagebus-cli:build\` and rerun`,
     );
     expect(requireBinary(BINARY)).toBe(BINARY);
+  });
+
+  describe("the binary is found wherever Cargo wrote it", () => {
+    const {
+      ONEMESSAGEBUS_TARGET_DIR: _handed,
+      CARGO_TARGET_DIR: _target,
+      CARGO_BUILD_TARGET_DIR: _build,
+      ...unset
+    } = process.env;
+
+    for (const variable of ["CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"]) {
+      test(`through ${variable}, as Cargo's own metadata resolves it`, () => {
+        const dir = scratch("target");
+        expect(cargoTargetDir({ ...unset, [variable]: dir })).toBe(dir);
+      });
+    }
+
+    test("a recipe's resolution is taken as handed", () => {
+      const dir = scratch("handed");
+      const env = { ...unset, ONEMESSAGEBUS_TARGET_DIR: dir, CARGO_TARGET_DIR: join(dir, "x") };
+      expect(cargoTargetDir(env)).toBe(dir);
+    });
+
+    test("a cargo that refuses fails the run with what it said", () => {
+      const home = scratch("cargo-home");
+      writeFileSync(join(home, "config.toml"), "[build\n");
+      expect(() => cargoTargetDir({ ...unset, CARGO_HOME: home })).toThrow(/config/);
+    });
   });
 });

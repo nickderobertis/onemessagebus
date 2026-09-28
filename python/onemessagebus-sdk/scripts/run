@@ -7,7 +7,8 @@
 # when the lock is stale) over the Python .python-version names, with this package
 # installed editable beside its dev group. Its onemessagebus-cli dependency is the
 # workspace's own distribution and is left uninstalled: building it compiles the
-# binary, and the tests drive target/debug/onemessagebus. A real virtualenv rather
+# binary, and the tests drive the debug build in Cargo's effective target directory
+# (tests/conftest.py resolves it through `cargo metadata`). A real virtualenv rather
 # than a uv overlay, because ty reads the site-packages of the environment it finds
 # and follows no overlay. An activated virtualenv of the caller's is ignored.
 set -euo pipefail

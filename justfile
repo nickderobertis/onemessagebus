@@ -243,6 +243,9 @@ _wheel-test:
 # `onemessagebus-pypi:build` left in dist/wheels, the Node SDK with the launcher
 # and host platform package scripts/npm-build.mjs assembles around a release
 # build. Then each smoke program under sdk-install/ drives what was installed.
+# Cargo's effective target directory — CARGO_TARGET_DIR, CARGO_BUILD_TARGET_DIR
+# or `.cargo/config.toml`, whichever wins — is resolved once, from Cargo's own
+# metadata, and handed to the Node SDK's package test as ONEMESSAGEBUS_TARGET_DIR.
 _sdk-install-test:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -250,6 +253,11 @@ _sdk-install-test:
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' EXIT
     fail() { echo "onemessagebus-sdk-install-e2e: $1" >&2; exit 1; }
+    ONEMESSAGEBUS_TARGET_DIR="$(cargo metadata --no-deps --format-version 1 \
+      | node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(0, "utf8")).target_directory)')" \
+      && [ -n "$ONEMESSAGEBUS_TARGET_DIR" ] \
+      || fail "cannot resolve Cargo's target directory from \`cargo metadata\` — its output is above"
+    export ONEMESSAGEBUS_TARGET_DIR
     version="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -n1)"
     mkdir -p "$work/wheels" "$work/npm" "$work/tarballs" "$work/app"
     cp dist/wheels/*.whl "$work/wheels/" 2>/dev/null \
@@ -266,17 +274,17 @@ _sdk-install-test:
       || fail "the installed Python SDK failed its smoke run — its output is above"
     cargo build --release --locked --quiet -p onemessagebus-cli
     target="$(rustc -vV | sed -n 's/^host: //p')"
-    platform="$(node scripts/npm-build.mjs platform --target "$target" --binary target/release/onemessagebus --out "$work/npm")"
+    platform="$(node scripts/npm-build.mjs platform --target "$target" --binary "$ONEMESSAGEBUS_TARGET_DIR/release/onemessagebus" --out "$work/npm")"
     launcher="$(node scripts/npm-build.mjs launcher --out "$work/npm")"
     just node-sdk-dist "$work/tarballs" || fail "the Node SDK did not build — its output is above"
-    # The Node SDK's package test assembles its platform package around
-    # target/debug/onemessagebus, which this project depends on
+    # The Node SDK's package test assembles its platform package around the debug
+    # binary in that target directory, which this project depends on
     # `onemessagebus-cli:build` for — but that target declares no outputs, so a
     # cache hit replays its log and restores no binary, and running this recipe
     # by name skips the dependency altogether. Build through Nx so the graph is
     # what schedules it, then guarantee the artifact the test spawns exists.
     just nx run onemessagebus-cli:build || fail "the debug binary did not build — its output is above"
-    [ -x target/debug/onemessagebus ] || just _crate-build onemessagebus-cli \
+    [ -x "$ONEMESSAGEBUS_TARGET_DIR/debug/onemessagebus" ] || just _crate-build onemessagebus-cli \
       || fail "the debug binary the Node SDK's package test spawns did not build — its output is above"
     bun run --cwd npm/onemessagebus-sdk test:package \
       || fail "the Node SDK's packed tarball did not install and run — its output is above"

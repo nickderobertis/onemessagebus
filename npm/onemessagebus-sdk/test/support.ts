@@ -1,6 +1,7 @@
 // What every journey needs: the real binary, a scratch directory it owns, and a
 // client over each transport.
 import { dlopen, FFIType } from "bun:ffi";
+import { execFileSync } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -27,7 +28,25 @@ export function requireBinary(path: string): string {
   return path;
 }
 
-export const BINARY = requireBinary(resolve(ROOT, "target/debug/onemessagebus"));
+/**
+ * Cargo's effective target directory under `env`: ONEMESSAGEBUS_TARGET_DIR when a
+ * recipe resolved it, else `cargo metadata`'s own, which honours CARGO_TARGET_DIR
+ * and Cargo's configuration alike.
+ */
+export function cargoTargetDir(env: NodeJS.ProcessEnv = process.env): string {
+  const handed = env.ONEMESSAGEBUS_TARGET_DIR;
+  if (handed) return handed;
+  const metadata = execFileSync("cargo", ["metadata", "--no-deps", "--format-version", "1"], {
+    cwd: ROOT,
+    env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const { target_directory } = JSON.parse(metadata) as { target_directory: string };
+  return target_directory;
+}
+
+export const BINARY = requireBinary(join(cargoTargetDir(), "debug", "onemessagebus"));
 
 const made: string[] = [];
 

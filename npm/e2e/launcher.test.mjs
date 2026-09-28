@@ -111,9 +111,13 @@ describe("the npm distribution", () => {
   let version;
 
   before(() => {
-    version = JSON.parse(
+    // The metadata names Cargo's effective target directory too, honouring
+    // CARGO_TARGET_DIR and Cargo's configuration alike, so the binary is found
+    // wherever the build below writes it.
+    const metadata = JSON.parse(
       run("cargo", ["metadata", "--no-deps", "--format-version", "1", "--locked"]),
-    ).packages.find((pkg) => pkg.name === "onemessagebus-cli").version;
+    );
+    version = metadata.packages.find((pkg) => pkg.name === "onemessagebus-cli").version;
 
     // The real binary the package will carry. Debug rather than release: this
     // proves the packaging, and a release build would cost the gate minutes.
@@ -127,7 +131,7 @@ describe("the npm distribution", () => {
       "--target",
       hostTarget(),
       "--binary",
-      join("target", "debug", "onemessagebus"),
+      join(metadata.target_directory, "debug", "onemessagebus"),
       "--out",
       dist,
     ]).trim();

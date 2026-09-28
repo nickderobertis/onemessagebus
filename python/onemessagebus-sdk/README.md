@@ -151,8 +151,10 @@ just typecheck             # ty here, beside every other project's type check
 Each recipe runs the package's pinned environment: the repository's uv workspace,
 synced from the root `uv.lock` into the root `.venv`, with this package installed
 editable and its `onemessagebus-cli` dependency — the workspace's own
-distribution — left unbuilt. The tests drive the checkout's
-`target/debug/onemessagebus`, which `python-sdk-check` builds first. Re-resolving
+distribution — left unbuilt. The tests drive the checkout's debug binary in
+Cargo's effective target directory, resolved through `cargo metadata` so
+`CARGO_TARGET_DIR` and Cargo's configuration both hold, which `python-sdk-check`
+builds first. Re-resolving
 that environment is a deliberate dependency change, made with
 `just python-sdk-lock` and reviewed as one.
 

@@ -13,7 +13,9 @@ generated, and the hand-written code is the transports, the typed errors, the
   a member of the root uv workspace, and its `onemessagebus-cli` resolves to the
   root distribution; `scripts/run` syncs the root `.venv` from `uv.lock` with
   `--locked` and leaves that distribution unbuilt, since building it compiles the
-  binary the tests take from `target/debug`. Re-resolve the lock with
+  binary the tests take from the debug build in Cargo's effective target
+  directory (`cargo metadata`'s, or `ONEMESSAGEBUS_TARGET_DIR` when a recipe
+  resolved it). Re-resolve the lock with
   `just python-sdk-lock`.
 - **Versions are stamped, never written.** `__version__`, `CLI_VERSION` and the
   CLI pin stay at the placeholder; `scripts/pack.py` stamps the workspace version
