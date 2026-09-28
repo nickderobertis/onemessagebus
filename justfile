@@ -254,7 +254,10 @@ _sdk-install-test:
     trap 'rm -rf "$work"' EXIT
     fail() { echo "onemessagebus-sdk-install-e2e: $1" >&2; exit 1; }
     ONEMESSAGEBUS_TARGET_DIR="$(cargo metadata --no-deps --format-version 1 | node -e '
-      const dir = JSON.parse(require("fs").readFileSync(0, "utf8")).target_directory;
+      let dir;
+      try {
+        dir = JSON.parse(require("fs").readFileSync(0, "utf8")).target_directory;
+      } catch {}
       if (typeof dir !== "string" || !require("path").isAbsolute(dir)) {
         console.error(`cargo metadata named ${JSON.stringify(dir)} as its target directory`);
         process.exit(1);

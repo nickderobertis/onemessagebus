@@ -30,7 +30,6 @@ HANDOFF = "ONEMESSAGEBUS_TARGET_DIR"
 
 
 def _target_dir(value: object, source: str) -> Path:
-    """`value` as a target directory, refused unless it is an absolute path."""
     if not isinstance(value, str) or not os.path.isabs(value):
         pytest.fail(f"{source} named {value!r} as Cargo's target directory, not an absolute path")
     return Path(value)
@@ -57,8 +56,12 @@ def cargo_target_dir() -> Path:
     )
     if run.returncode != 0:
         pytest.fail(f"`cargo metadata` did not name Cargo's target directory:\n{run.stderr}")
-    metadata = json.loads(run.stdout)
-    return _target_dir(metadata.get("target_directory"), "`cargo metadata`")
+    try:
+        metadata = json.loads(run.stdout)
+    except json.JSONDecodeError as error:
+        pytest.fail(f"`cargo metadata` printed no JSON ({error}); run it by hand to see why")
+    named = metadata.get("target_directory") if isinstance(metadata, dict) else None
+    return _target_dir(named, "`cargo metadata`")
 
 
 class Greeting(Message, schema="demo.greeting@1"):

@@ -55,5 +55,9 @@ def test_a_cargo_that_refuses_fails_the_run_with_what_it_said(
     monkeypatch.delenv("ONEMESSAGEBUS_TARGET_DIR", raising=False)
     monkeypatch.setenv("CARGO_HOME", str(tmp_path))
     (tmp_path / "config.toml").write_text("[build\n", encoding="utf-8")
-    with pytest.raises(pytest.fail.Exception, match="did not name Cargo's target directory"):
+    with pytest.raises(pytest.fail.Exception) as refused:
         cargo_target_dir()
+    assert "`cargo metadata` did not name Cargo's target directory" in str(refused.value)
+    assert f"could not parse TOML configuration in `{tmp_path / 'config.toml'}`" in str(
+        refused.value
+    )

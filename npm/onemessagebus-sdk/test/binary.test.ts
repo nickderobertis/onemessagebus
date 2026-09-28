@@ -170,7 +170,9 @@ describe("the test support's own guard", () => {
     test("a cargo that refuses fails the run with what it said", () => {
       const home = scratch("cargo-home");
       writeFileSync(join(home, "config.toml"), "[build\n");
-      expect(() => cargoTargetDir({ ...unset, CARGO_HOME: home })).toThrow(/config/);
+      expect(() => cargoTargetDir({ ...unset, CARGO_HOME: home })).toThrow(
+        `could not parse TOML configuration in \`${join(home, "config.toml")}\``,
+      );
     });
   });
 });

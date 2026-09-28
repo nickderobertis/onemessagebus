@@ -22,7 +22,6 @@ function fail(message, action) {
   process.exit(1);
 }
 
-/** `value` as a target directory, refused unless it is an absolute path. */
 function targetDir(value, source) {
   if (typeof value !== "string" || !isAbsolute(value)) {
     fail(
@@ -37,20 +36,21 @@ function targetDir(value, source) {
 function cargoTargetDir() {
   const handed = process.env.ONEMESSAGEBUS_TARGET_DIR;
   if (handed) return targetDir(handed, "ONEMESSAGEBUS_TARGET_DIR");
-  let metadata;
+  let named;
   try {
-    metadata = execFileSync("cargo", ["metadata", "--no-deps", "--format-version", "1"], {
+    const metadata = execFileSync("cargo", ["metadata", "--no-deps", "--format-version", "1"], {
       cwd: ROOT,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
+    named = JSON.parse(metadata)?.target_directory;
   } catch (error) {
     fail(
       `\`cargo metadata\` did not name Cargo's target directory:\n${error.stderr ?? error.message}`,
       "put cargo on PATH and fix what it refused above, then rerun",
     );
   }
-  return targetDir(JSON.parse(metadata).target_directory, "`cargo metadata`");
+  return targetDir(named, "`cargo metadata`");
 }
 
 const BINARY = join(cargoTargetDir(), "debug", "onemessagebus");
