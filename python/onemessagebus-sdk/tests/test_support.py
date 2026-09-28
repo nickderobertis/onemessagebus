@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
 
+from onemessagebus import Client, ClientConfig
 from tests.conftest import EXECUTABLE, HANDOFF, ROOT, built_binary, cargo_target_dir
 
 
@@ -22,7 +22,7 @@ def test_the_target_directory_is_cargos_own_wherever_it_is_configured(
     assert cargo_target_dir() == tmp_path
 
 
-def test_a_suite_run_directly_drives_the_binary_in_the_directory_cargo_names(
+async def test_a_suite_run_directly_drives_the_binary_in_the_directory_cargo_names(
     binary: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / "debug").mkdir()
@@ -30,10 +30,8 @@ def test_a_suite_run_directly_drives_the_binary_in_the_directory_cargo_names(
     monkeypatch.delenv(HANDOFF, raising=False)
     monkeypatch.setenv("CARGO_TARGET_DIR", str(tmp_path))
     assert built_binary() == copy
-    version = subprocess.run(  # noqa: S603 - argv is the binary this test just copied and a constant flag
-        [copy, "--version"], capture_output=True, text=True, check=True
-    )
-    assert version.stdout.startswith("onemessagebus ")
+    async with Client(ClientConfig(binary=built_binary())) as client:
+        assert "local" in await client.transports(format="text")
 
 
 def test_a_directory_with_no_binary_in_it_fails_naming_the_build(
@@ -47,6 +45,14 @@ def test_a_directory_with_no_binary_in_it_fails_naming_the_build(
         f"{tmp_path / 'debug' / EXECUTABLE} is not built; build it with"
         " `just nx run onemessagebus-cli:build` from the repository root"
     )
+
+
+def test_an_empty_hand_off_is_refused_rather_than_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(HANDOFF, "")
+    with pytest.raises(pytest.fail.Exception, match="'' as Cargo's target directory"):
+        cargo_target_dir()
 
 
 def test_a_recipes_resolution_is_taken_as_handed(

@@ -18,9 +18,9 @@ import { cargoTargetDir, TargetDirError } from "../../../scripts/cargo-target-di
 const PACKAGE = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ROOT = resolve(PACKAGE, "../..");
 
-function fail(message, action) {
+function fail(message, action, status = 1) {
   process.stderr.write(`test:package: ${message}\n  fix: ${action}\n`);
-  process.exit(1);
+  process.exit(status);
 }
 
 function binaryPath() {
@@ -31,6 +31,7 @@ function binaryPath() {
     fail(
       error.message,
       "run this through `just nx run onemessagebus-sdk-install-e2e:test`, or put cargo on PATH and fix what it refused above, then rerun",
+      error.status,
     );
   }
 }

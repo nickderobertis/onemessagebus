@@ -1,9 +1,3 @@
-// `scripts/cargo-target-dir.mjs`, run the way the SDK install recipe runs it and
-// over the real cargo: the directory it prints is the one Cargo's environment and
-// configuration name, a hand-off is taken as handed, and a refusal says why.
-// The last case drives the recipe itself to its refusal, which costs nothing
-// because the resolution comes before anything the journey builds.
-
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -77,6 +71,9 @@ describe("cargo-target-dir", () => {
     assert.equal(handed.status, 0, handed.stderr);
     assert.equal(handed.stdout, dir);
 
+    const empty = resolveUnder({ ONEMESSAGEBUS_TARGET_DIR: "" });
+    assert.equal(empty.status, 2, "an empty hand-off is refused rather than ignored");
+
     const relative = resolveUnder({ ONEMESSAGEBUS_TARGET_DIR: "target" });
     assert.equal(relative.status, 2, "a refused hand-off is refused input");
     assert.equal(relative.stdout, "");
@@ -101,6 +98,7 @@ describe("cargo-target-dir", () => {
     );
   });
 
+  // Cheap despite driving the recipe: its resolution comes before anything it builds.
   it("stops the SDK install recipe before it builds anything, naming why", () => {
     const home = brokenCargoHome();
     const run = spawnSync("just", ["_sdk-install-test"], {

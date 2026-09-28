@@ -64,7 +64,7 @@ export function resolveCargoTargetDir({ cwd, env = process.env }) {
 /** The directory a recipe handed on in ONEMESSAGEBUS_TARGET_DIR, else Cargo's own. */
 export function cargoTargetDir({ cwd, env = process.env }) {
   const handed = env[HANDOFF];
-  return handed ? absolute(handed, HANDOFF, 2) : resolveCargoTargetDir({ cwd, env });
+  return handed === undefined ? resolveCargoTargetDir({ cwd, env }) : absolute(handed, HANDOFF, 2);
 }
 
 const invokedAs = process.argv[1];

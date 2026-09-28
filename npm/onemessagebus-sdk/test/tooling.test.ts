@@ -227,4 +227,16 @@ describe("test:package", () => {
     );
     expect(run.status).toBe(1);
   });
+
+  test("refuses a hand-off that is not an absolute path as refused input", () => {
+    const run = spawnSync("node", ["scripts/package-e2e.mjs"], {
+      cwd: PACKAGE,
+      encoding: "utf8",
+      env: { ...process.env, ONEMESSAGEBUS_TARGET_DIR: "target" },
+    });
+    expect(run.stderr).toBe(
+      'test:package: ONEMESSAGEBUS_TARGET_DIR named "target" as Cargo\'s target directory, not an absolute path\n  fix: run this through `just nx run onemessagebus-sdk-install-e2e:test`, or put cargo on PATH and fix what it refused above, then rerun\n',
+    );
+    expect(run.status).toBe(2);
+  });
 });
