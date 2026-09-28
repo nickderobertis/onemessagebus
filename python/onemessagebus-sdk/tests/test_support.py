@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
-from tests.conftest import HANDOFF, ROOT, cargo_target_dir
+from tests.conftest import EXECUTABLE, HANDOFF, ROOT, built_binary, cargo_target_dir
 
 
 @pytest.mark.parametrize("variable", ["CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"])
@@ -18,6 +20,33 @@ def test_the_target_directory_is_cargos_own_wherever_it_is_configured(
     monkeypatch.delenv("CARGO_BUILD_TARGET_DIR", raising=False)
     monkeypatch.setenv(variable, str(tmp_path))
     assert cargo_target_dir() == tmp_path
+
+
+def test_a_suite_run_directly_drives_the_binary_in_the_directory_cargo_names(
+    binary: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "debug").mkdir()
+    copy = shutil.copy2(binary, tmp_path / "debug" / EXECUTABLE)
+    monkeypatch.delenv(HANDOFF, raising=False)
+    monkeypatch.setenv("CARGO_TARGET_DIR", str(tmp_path))
+    assert built_binary() == copy
+    version = subprocess.run(  # noqa: S603 - argv is the binary this test just copied and a constant flag
+        [copy, "--version"], capture_output=True, text=True, check=True
+    )
+    assert version.stdout.startswith("onemessagebus ")
+
+
+def test_a_directory_with_no_binary_in_it_fails_naming_the_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(HANDOFF, raising=False)
+    monkeypatch.setenv("CARGO_TARGET_DIR", str(tmp_path))
+    with pytest.raises(pytest.fail.Exception) as refused:
+        built_binary()
+    assert str(refused.value) == (
+        f"{tmp_path / 'debug' / EXECUTABLE} is not built; build it with"
+        " `just nx run onemessagebus-cli:build` from the repository root"
+    )
 
 
 def test_a_recipes_resolution_is_taken_as_handed(

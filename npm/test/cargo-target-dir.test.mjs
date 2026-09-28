@@ -5,7 +5,7 @@
 // because the resolution comes before anything the journey builds.
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, describe, it } from "node:test";
@@ -78,7 +78,7 @@ describe("cargo-target-dir", () => {
     assert.equal(handed.stdout, dir);
 
     const relative = resolveUnder({ ONEMESSAGEBUS_TARGET_DIR: "target" });
-    assert.equal(relative.status, 1);
+    assert.equal(relative.status, 2, "a refused hand-off is refused input");
     assert.equal(relative.stdout, "");
     assert.match(
       relative.stderr,
@@ -116,5 +116,27 @@ describe("cargo-target-dir", () => {
       ),
       run.stderr,
     );
+  });
+
+  // Structural, and deliberately so: the SDK install recipe and the launcher's
+  // journey build the CLI before they look for it, so driving either against a
+  // directory other than the clone's own means compiling the CLI cold into it on
+  // every run — minutes each, to catch a path the cases above already resolve
+  // and these lines are held to. Both journeys run in full on every pull request.
+  it("points the journeys that build at the resolved directory", () => {
+    const justfile = readFileSync(join(REPO_ROOT, "justfile"), "utf8");
+    const recipe = justfile.slice(justfile.indexOf("\n_sdk-install-test:"));
+    const body = recipe.slice(0, recipe.indexOf("\n\n"));
+    for (const line of [
+      '--binary "$ONEMESSAGEBUS_TARGET_DIR/release/onemessagebus"',
+      '[ -x "$ONEMESSAGEBUS_TARGET_DIR/debug/onemessagebus" ]',
+    ]) {
+      assert.ok(body.includes(line), `the SDK install recipe must read ${line}`);
+    }
+    assert.doesNotMatch(body, /(^|[\s"'])target\//, "and never a literal target/");
+
+    const launcher = readFileSync(join(REPO_ROOT, "npm", "e2e", "launcher.test.mjs"), "utf8");
+    assert.ok(launcher.includes("const targetDir = resolveCargoTargetDir({ cwd: REPO_ROOT });"));
+    assert.ok(launcher.includes('join(targetDir, "debug", "onemessagebus")'));
   });
 });

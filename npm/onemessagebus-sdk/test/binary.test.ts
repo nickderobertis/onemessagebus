@@ -1,8 +1,9 @@
 // Which binary a client runs, and the version pin it holds that binary to.
 import { afterAll, describe, expect, test } from "bun:test";
-import { chmodSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { checkoutVersion, childEnv, describeBinary } from "../src/binary.js";
 import {
   Client,
@@ -148,23 +149,29 @@ describe("the test support's own guard", () => {
       ...unset
     } = process.env;
 
-    for (const variable of ["CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"]) {
-      test(`through ${variable}, as Cargo's own metadata resolves it`, () => {
-        const dir = scratch("target");
-        expect(cargoTargetDir({ ...unset, [variable]: dir })).toBe(dir);
-      });
-    }
+    test("a suite run directly drives the binary in the directory CARGO_TARGET_DIR names", () => {
+      const dir = scratch("target");
+      const copy = join(dir, "debug", "onemessagebus");
+      mkdirSync(dirname(copy));
+      copyFileSync(BINARY, copy);
+      const loaded = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          `const { BINARY } = await import(${JSON.stringify(join(PACKAGE, "test/support.ts"))}); process.stdout.write(BINARY);`,
+        ],
+        { env: { ...unset, CARGO_TARGET_DIR: dir }, encoding: "utf8" },
+      );
+      expect(loaded.stderr).toBe("");
+      expect(loaded.stdout).toBe(copy);
+      const version = spawnSync(loaded.stdout, ["--version"], { encoding: "utf8" });
+      expect(version.stdout).toBe(`onemessagebus ${WORKSPACE_VERSION}\n`);
+    });
 
     test("a recipe's resolution is taken as handed", () => {
       const dir = scratch("handed");
       const env = { ...unset, ONEMESSAGEBUS_TARGET_DIR: dir, CARGO_TARGET_DIR: join(dir, "x") };
       expect(cargoTargetDir(env)).toBe(dir);
-    });
-
-    test("a handed directory that is not absolute is refused", () => {
-      expect(() => cargoTargetDir({ ...unset, ONEMESSAGEBUS_TARGET_DIR: "target" })).toThrow(
-        'ONEMESSAGEBUS_TARGET_DIR named "target" as Cargo\'s target directory, not an absolute path',
-      );
     });
 
     test("a cargo that refuses fails the run with what it said", () => {

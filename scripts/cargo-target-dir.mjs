@@ -20,13 +20,23 @@ import { fileURLToPath } from "node:url";
 
 export const HANDOFF = "ONEMESSAGEBUS_TARGET_DIR";
 
-/** A target directory that could not be resolved; its message names why. */
-export class TargetDirError extends Error {}
+/**
+ * A target directory that could not be resolved; its message names why, and its
+ * `status` is the exit code the script reports it with: 2 for a hand-off it
+ * refused, 1 for a cargo that could not answer.
+ */
+export class TargetDirError extends Error {
+  constructor(message, status = 1) {
+    super(message);
+    this.status = status;
+  }
+}
 
-function absolute(value, source) {
+function absolute(value, source, status) {
   if (typeof value !== "string" || !isAbsolute(value)) {
     throw new TargetDirError(
       `${source} named ${JSON.stringify(value)} as Cargo's target directory, not an absolute path`,
+      status,
     );
   }
   return value;
@@ -48,13 +58,13 @@ export function resolveCargoTargetDir({ cwd, env = process.env }) {
       `\`cargo metadata\` did not name Cargo's target directory:\n${error.stderr || error.message}`,
     );
   }
-  return absolute(named, "`cargo metadata`");
+  return absolute(named, "`cargo metadata`", 1);
 }
 
 /** The directory a recipe handed on in ONEMESSAGEBUS_TARGET_DIR, else Cargo's own. */
 export function cargoTargetDir({ cwd, env = process.env }) {
   const handed = env[HANDOFF];
-  return handed ? absolute(handed, HANDOFF) : resolveCargoTargetDir({ cwd, env });
+  return handed ? absolute(handed, HANDOFF, 2) : resolveCargoTargetDir({ cwd, env });
 }
 
 const invokedAs = process.argv[1];
@@ -66,6 +76,6 @@ if (invokedAs && realpathSync(invokedAs) === realpathSync(fileURLToPath(import.m
     process.stderr.write(
       `cargo-target-dir: ${error.message}\n  fix: put cargo on PATH and fix what it refused, or unset ${HANDOFF}, then rerun\n`,
     );
-    process.exit(1);
+    process.exit(error.status);
   }
 }

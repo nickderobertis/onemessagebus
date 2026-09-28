@@ -71,13 +71,18 @@ class Greeting(Message, schema="demo.greeting@1"):
     text: str
 
 
-@pytest.fixture(scope="session")
-def binary() -> Path:
-    """The binary built from this checkout; a missing one fails, naming the build."""
+def built_binary() -> Path:
+    """The debug binary in Cargo's effective target directory; a missing one fails, naming the build."""
     built = cargo_target_dir() / "debug" / EXECUTABLE
     if not built.is_file():
         pytest.fail(f"{built} is not built; build it with `{BUILD}` from the repository root")
     return built
+
+
+@pytest.fixture(scope="session")
+def binary() -> Path:
+    """The binary built from this checkout."""
+    return built_binary()
 
 
 @pytest.fixture
