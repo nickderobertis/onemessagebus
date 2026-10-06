@@ -37,6 +37,28 @@ if ! command -v screencomp >/dev/null 2>&1; then
   exit 0
 fi
 
+# The declared [capture].arches lanes, read from the one place they live. This is
+# the guard's own input, so a screencomp that failed or answered nothing is a
+# refusal rather than an empty lane set that would refuse this host by the wrong
+# name.
+if ! LANES="$(screencomp arches)" || [ -z "${LANES//[[:space:]]/}" ]; then
+  echo "pre-push: 'screencomp arches' named no capture lane, so there is nothing" >&2
+  echo "          to classify this host against. Check [capture].arches in" >&2
+  echo "          screencomp.toml and that screencomp is current." >&2
+  exit 1
+fi
+
+# A host whose arch no lane declares has no committed baseline and no CI job, so
+# refuse loudly rather than classify against somebody else's lane.
+if ! printf '%s\n' "$LANES" | grep -qxF "$LANE"; then
+  echo "pre-push: this host's architecture ($LANE) has no lane in [capture].arches" >&2
+  echo "          of screencomp.toml, so it has no committed baseline to classify" >&2
+  echo "          against. Declared: $(printf '%s' "$LANES" | tr '\n' ' ')" >&2
+  echo "          Add \"$LANE\" there (CI fans one job out per lane), capture it" >&2
+  echo "          with 'just screenshots-bless', and commit $MANIFEST." >&2
+  exit 1
+fi
+
 # git hands a pre-push hook one line per ref it is about to update, on stdin.
 # `undecidable` records a ref whose changed paths cannot be derived at all.
 ranges=()
@@ -123,30 +145,6 @@ case "$scope_status" in
     ;;
   # llmlint: ignore-end[cli_output_contract]
 esac
-
-# The declared [capture].arches lanes, read from the one place they live. This is
-# the guard's own input, so a screencomp that failed or answered nothing is a
-# refusal rather than an empty lane set that would refuse this host by the wrong
-# name.
-if ! LANES="$(screencomp arches)" || [ -z "${LANES//[[:space:]]/}" ]; then
-  echo "pre-push: 'screencomp arches' named no capture lane, so there is nothing" >&2
-  echo "          to classify this host against. Check [capture].arches in" >&2
-  echo "          screencomp.toml and that screencomp is current." >&2
-  exit 1
-fi
-
-# A host whose arch no lane declares has no committed baseline and no CI job, so
-# refuse loudly rather than classify against somebody else's lane. Only here,
-# once a capture is due: a push that changes nothing screenshot-relevant needs no
-# baseline, so it passes on any host rather than being refused for its arch.
-if ! printf '%s\n' "$LANES" | grep -qxF "$LANE"; then
-  echo "pre-push: this host's architecture ($LANE) has no lane in [capture].arches" >&2
-  echo "          of screencomp.toml, so it has no committed baseline to classify" >&2
-  echo "          against. Declared: $(printf '%s' "$LANES" | tr '\n' ' ')" >&2
-  echo "          Add \"$LANE\" there (CI fans one job out per lane), capture it" >&2
-  echo "          with 'just screenshots-bless', and commit $MANIFEST." >&2
-  exit 1
-fi
 
 if ! command -v freeze >/dev/null 2>&1; then
   echo "pre-push: screenshot-relevant files changed but 'freeze' is not installed" >&2
