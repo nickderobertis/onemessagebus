@@ -467,6 +467,24 @@ fn a_host_whose_arch_no_lane_declares_is_refused_by_name() {
 }
 
 #[test]
+fn a_host_whose_arch_no_lane_declares_still_pushes_what_needs_no_capture() {
+    let guarded = Guarded::new("docs/unrelated.md");
+    let tools = guarded.tools(Stand::declaring("s390x\\n"));
+    let run = guarded.push(&tools, &[]);
+
+    assert!(
+        run.status.success(),
+        "an irrelevant push was refused for the host's arch: {}",
+        stderr(&run)
+    );
+    assert_eq!(
+        guarded.log("capture"),
+        "",
+        "it captured on an irrelevant change"
+    );
+}
+
+#[test]
 fn without_screencomp_it_warns_loudly_and_only_fails_when_told_to() {
     let guarded = Guarded::new("screenshots/capture-inputs.txt");
     let bare = guarded.at().join("no-tools");
