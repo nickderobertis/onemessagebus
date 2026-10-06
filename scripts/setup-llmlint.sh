@@ -30,6 +30,7 @@
 # llmlint: ignore-file[tool_output_is_signal, boundary_inputs_validated] a SessionStart hook must never abort a session, so failures log and continue instead of exiting non-zero; the only external input is a PyPI wheel fetched by uv, which validates it.
 set -uo pipefail
 
+# llmlint: ignore-block[changed_behavior_has_e2e] the session-start half of the llmlint tier: it installs llmlint-cli into the invoking user's home from PyPI and appends to the session's CLAUDE_ENV_FILE, so a test would rewrite the developer's own toolchain, and proving the version floor needs PyPI, which the offline `just check` never reaches (a run is a journey with HOME, UV_TOOL_DIR and UV_TOOL_BIN_DIR isolated in a scratch directory and CLAUDE_ENV_FILE unset); its contract is that it always exits 0, and `llmlint doctor` at its end is the check it runs on what it installed, while `just lint-llm-validate` and `just lint-llm-diff` exercise the installed tier on every gate.
 # Version floor, as a PyPI constraint (the `llmlint-cli` package version tracks the
 # wrapped binary version). `uv tool install --upgrade` installs the newest release
 # satisfying it; oneharness comes along transitively at a compatible version.
@@ -51,7 +52,6 @@ log() { printf 'setup-llmlint: %s\n' "$*" >&2; }
 # Install llmlint from PyPI via uv (the repo's Python package manager). uv is a
 # clean-clone prerequisite; if it is somehow absent, log an actionable pointer and
 # leave any already-installed binary in place rather than aborting startup.
-# llmlint: ignore-block[changed_behavior_has_e2e] the session-start half of the llmlint tier: it installs llmlint-cli into the invoking user's home from PyPI and appends to the session's CLAUDE_ENV_FILE, so a test would rewrite the developer's own toolchain; its contract is that it always exits 0, and `llmlint doctor` at its end is the check it runs on what it installed, while `just lint-llm-validate` and `just lint-llm-diff` exercise the installed tier on every gate.
 ensure_toolchain() {
   if ! command -v uv >/dev/null 2>&1; then
     log "uv not found; cannot install llmlint (install uv: https://docs.astral.sh/uv/)"
