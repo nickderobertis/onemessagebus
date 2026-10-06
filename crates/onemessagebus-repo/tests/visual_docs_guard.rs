@@ -467,6 +467,61 @@ fn a_host_whose_arch_no_lane_declares_is_refused_by_name() {
 }
 
 #[test]
+fn a_push_that_needs_no_capture_passes_whatever_lanes_screencomp_names() {
+    // An undeclared arch, a failed `arches` and an empty one: none of them is
+    // asked about until a capture is due.
+    for stand in [
+        Stand::declaring("s390x\\n"),
+        Stand {
+            arches_status: 1,
+            ..Stand::declaring("")
+        },
+        Stand::declaring("\\n"),
+    ] {
+        let guarded = Guarded::new("docs/unrelated.md");
+        let tools = guarded.tools(stand);
+        let run = guarded.push(&tools, &[]);
+
+        assert!(
+            run.status.success(),
+            "an irrelevant push was refused over its lanes: {}",
+            stderr(&run)
+        );
+        assert!(
+            !guarded.log("screencomp").contains("arches"),
+            "the lanes were read for a push that needs no capture"
+        );
+        assert_eq!(
+            guarded.log("capture"),
+            "",
+            "it captured on an irrelevant change"
+        );
+    }
+
+    // Nor does a scope screencomp cannot answer, nor a branch deletion.
+    let guarded = Guarded::new("screenshots/capture-inputs.txt");
+    let tools = guarded.tools(Stand {
+        arches_status: 1,
+        ..Stand::declaring("")
+    });
+    let run = guarded.push(&tools, &[("SCOPE_FORCE", "2")]);
+    assert!(run.status.success(), "{}", stderr(&run));
+    let run = guarded.push_over_stdin(
+        &tools,
+        "origin",
+        &format!(
+            "(delete) {ABSENT} refs/heads/gone {}\n",
+            guarded.sha("HEAD~1")
+        ),
+    );
+    assert!(run.status.success(), "{}", stderr(&run));
+    assert!(
+        !guarded.log("screencomp").contains("arches"),
+        "the lanes were read for a push that needs no capture"
+    );
+}
+
+#[test]
 fn without_screencomp_it_warns_loudly_and_only_fails_when_told_to() {
     let guarded = Guarded::new("screenshots/capture-inputs.txt");
     let bare = guarded.at().join("no-tools");
