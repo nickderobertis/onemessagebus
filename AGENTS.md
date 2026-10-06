@@ -73,8 +73,9 @@ rationale; the mechanics live in the files named. -->
   (bun, its own `package.json`: biome, tsc, bun test); bash for the wrappers and
   Node for the npm assembler, the parity gate and their tests, as the siblings.
 - **References composed:** `base.md`, `project-graph.md`, `shapes/cli.md`,
-  `shapes/library.md`, `languages/rust.md`, `intersections/rust-cli.md`,
-  `ci.md`, `llmlint.md`, `releasing.md`.
+  `shapes/library.md`, `languages/rust.md`, `languages/python.md`,
+  `languages/typescript.md`, `intersections/rust-cli.md`, `ci.md`,
+  `llmlint.md`, `releasing.md`.
 - **What the composer printed, and what was deferred:** the composer was run
   as `compose_repo_plan.py --shape library --shape cli --language rust
   --language python --language typescript --intersection rust-cli --releasing`
@@ -138,6 +139,11 @@ rationale; the mechanics live in the files named. -->
   `just check` on the release PR; the manager ruled the first rule's wording is
   the push-to-main case, and the conflict is a dero-skills finding. It is recorded
   here because `check-ignores` refuses a directive naming a buildout-only rule.
+- **Deviation from `ci.md`: the affected tier is its own recipe, not a flag on
+  `check`.** `check-affected` runs every test target or none (the coverage floor
+  is over their union), the cross-language journey after that floor, and leaves
+  the SDK install journey to CI's `sdk-install` job; `check` has none of those
+  branches. The justfile comment over `check-affected` carries the detail.
 <!-- llmlint: ignore-end[agents_md_durable_and_terse] the required-artifact scope ends here.
 -->
 
