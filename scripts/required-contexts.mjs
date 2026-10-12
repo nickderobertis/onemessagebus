@@ -170,6 +170,38 @@ function contextsEmittedBy(workflowText, where) {
   }
   const contexts = [];
   for (const [id, job] of Object.entries(jobs)) {
+    if (job?.env?.REQUIRED_CONTEXT === "false") {
+      const carriers = Object.values(jobs).filter(
+        (candidate) => Array.isArray(candidate.needs) && candidate.needs.includes(id),
+      );
+      if (
+        carriers.length !== 3 ||
+        carriers.some(
+          (carrier) =>
+            carrier["runs-on"] !== "ubuntu-latest" ||
+            carrier.if !== "always()" ||
+            carrier["continue-on-error"] !== undefined ||
+            !carrier.steps?.some(
+              (step) =>
+                step.if === undefined &&
+                step["continue-on-error"] === undefined &&
+                String(step.run ?? "").trim() ===
+                  'node .github/macos-result.mjs "$REQUIRED" "$CHANGES" "$GATE" "$PROOF"' &&
+                step.env?.PROOF === `\${{ needs.${id}.result }}` &&
+                step.env?.REQUIRED === `\${{ needs.changes.outputs.macos }}` &&
+                step.env?.CHANGES === `\${{ needs.changes.result }}` &&
+                step.env?.GATE === `\${{ needs.gate.result }}` &&
+                carrier.needs.includes("changes") &&
+                carrier.needs.includes("gate"),
+            ),
+        )
+      )
+        throw new Refusal(
+          `job \`${id}\` lacks three always-running Linux result carriers`,
+          "restore the Mac carriers before excluding its execution context",
+        );
+      continue;
+    }
     const name = job?.name ?? id;
     if (typeof name !== "string" || name.includes("${{")) {
       throw new Refusal(

@@ -1,7 +1,7 @@
 {
   "name": "onemessagebus-workspace",
   "private": true,
-  "description": "Nx project graph for the onemessagebus monorepo. Not published; it carries the orchestrator, the JS formatter, and the TOML and YAML readers the npm tests use, and resolves both JavaScript packages — the launcher and the TypeScript SDK — from this one package-lock.json. Every deliverable's version comes from Cargo.toml's [workspace.package].",
+  "description": "Nx project graph for the onemessagebus monorepo. Not published; it carries the orchestrator, the JS formatter, and the TOML and YAML readers the npm tests use, and resolves the launcher, the TypeScript SDK and the private GitHub workflow tooling from this one package-lock.json. Every deliverable's version comes from Cargo.toml's [workspace.package].",
   "license": "MIT",
   "devDependencies": {
     "@biomejs/biome": "2.5.7",
@@ -11,6 +11,7 @@
   },
   "workspaces": [
     "npm/onemessagebus-cli",
-    "npm/onemessagebus-sdk"
+    "npm/onemessagebus-sdk",
+    ".github"
   ]
 }

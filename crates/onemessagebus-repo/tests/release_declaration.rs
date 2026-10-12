@@ -219,3 +219,34 @@ fn targets(document: &mut DocumentMut) -> &mut toml_edit::ArrayOfTables {
         .as_array_of_tables_mut()
         .expect("the declaration's targets are [[target]] tables")
 }
+
+/// The consolidated Darwin producer still feeds every declared binary carrier;
+/// registry publication waits for its local CLI and SDK assertions.
+#[test]
+fn darwin_release_producer_retains_both_architectures_and_all_carriers() {
+    let workflow = include_str!("../../../.github/workflows/release.yml");
+    let toolchain: DocumentMut = include_str!("../../../rust-toolchain.toml")
+        .parse()
+        .expect("the pinned toolchain is TOML");
+    let targets = toolchain["toolchain"]["targets"].as_array().unwrap();
+    for target in targets.iter().filter_map(toml_edit::Value::as_str) {
+        if !target.ends_with("apple-darwin") {
+            continue;
+        }
+        assert!(workflow.contains(&format!(
+            "bash scripts/release-build.sh {target} staged/{target}"
+        )));
+        for carrier in ["wheels", "npm"] {
+            assert!(workflow.contains(&format!("name: {carrier}-{target}")));
+        }
+        assert!(workflow.contains(&format!(
+            "bash scripts/release-local-install.sh staged/{target}"
+        )));
+    }
+    assert!(workflow.contains("needs: [build-wheels, build-darwin]"));
+    assert!(workflow.contains("needs: [build-npm, build-darwin]"));
+    let builder = include_str!("../../../scripts/release-build.sh");
+    assert!(builder.contains("just _wheel-build \"$target\" \"$out\" true"));
+    assert!(include_str!("../../../justfile").contains("maturin build --release --locked --strip"));
+    assert!(!builder.contains("cargo build"));
+}

@@ -1,0 +1,8 @@
+{
+  "$schema": "../node_modules/@biomejs/biome/configuration_schema.json",
+  "root": false,
+  "extends": ["../biome.json"],
+  "files": {
+    "includes": ["**/*.mjs", "**/*.json", "!node_modules", "!.telemetry", "!package-lock.json"]
+  }
+}

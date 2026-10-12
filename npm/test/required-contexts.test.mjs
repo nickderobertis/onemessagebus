@@ -49,7 +49,7 @@ import { rmSync } from "node:fs";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { parse } from "yaml";
+import { parse, stringify } from "yaml";
 
 import {
   CI_WORKFLOW,
@@ -242,7 +242,12 @@ function pullRequestContext(reaches, matrix) {
   const affected = reaches ? "true" : "false";
   return {
     github: { event_name: "pull_request", head_ref: "feature", ref: "refs/pull/1/merge" },
-    needs: { changes: { outputs: { crate: affected, sdk: affected }, result: "success" } },
+    needs: {
+      changes: {
+        outputs: { crate: affected, sdk: affected, "release-only": "false" },
+        result: "success",
+      },
+    },
     matrix,
     runner: { os: matrix.os },
   };
@@ -255,6 +260,7 @@ function pullRequestContext(reaches, matrix) {
 function matrixLegsByJob(workflow, contexts) {
   const jobs = new Map();
   for (const context of contexts) {
+    if (Object.values(workflow.jobs).some((definition) => definition.name === context)) continue;
     const named = /^(?<job>.+?) \((?<values>.+)\)$/.exec(context);
     if (!named) continue;
     const { job, values } = named.groups;
@@ -298,8 +304,9 @@ describe("the contexts ci.yml emits", () => {
 
   it("names one context per job, and one per leg of a matrix job", () => {
     const expected = Object.entries(workflow.jobs).flatMap(([job, definition]) => {
+      if (definition.env?.REQUIRED_CONTEXT === "false") return [];
       const matrix = definition.strategy?.matrix;
-      if (!matrix) return [job];
+      if (!matrix) return [definition.name ?? job];
       return Object.values(matrix)[0].map((leg) => `${job} (${leg})`);
     });
     assert.deepEqual(CONTEXTS, expected);
@@ -309,7 +316,7 @@ describe("the contexts ci.yml emits", () => {
     // The defect issue #123 found, stated as the two facts that made it: the
     // workflow emits these, and the answer GitHub gave does not require them.
     assert.deepEqual(
-      LEGS.get("sdk-install")?.map((leg) => leg.context),
+      CONTEXTS.filter((context) => context.startsWith("sdk-install (")),
       ["sdk-install (ubuntu-latest)", "sdk-install (macos-latest)"],
     );
     const recorded = new Set(recordedProtection().required_status_checks.contexts);
@@ -369,6 +376,55 @@ describe("the contexts ci.yml emits", () => {
       );
     } finally {
       rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses execution-context exclusions with dishonest result carriers", () => {
+    for (const mutate of [
+      (text) =>
+        text.replace(
+          "    name: cross (macos-latest)",
+          "    name: cross (macos-latest)\n    continue-on-error: true",
+        ),
+      (text) =>
+        text.replace(
+          "      - name: Report the Mac lane result",
+          "      - name: Report the Mac lane result\n        if: false",
+        ),
+      (text) =>
+        text.replace(
+          "      - name: Report the Mac lane result",
+          "      - name: Report the Mac lane result\n        continue-on-error: true",
+        ),
+      (text) => {
+        const definition = parse(text);
+        definition.jobs["cross-macos"]["runs-on"] = "windows-latest";
+        return stringify(definition);
+      },
+      (text) =>
+        text.replace(`          PROOF: \${{ needs.macos-proof.result }}`, "          PROOF: wrong"),
+      (text) =>
+        text.replace(
+          "    needs: [changes, gate, macos-proof]",
+          "    needs: [changes, macos-proof]",
+        ),
+      (text) => text.slice(0, text.indexOf("\n  sdk-install-macos:")),
+
+      (text) => text.replace("    if: always()", "    if: success()"),
+      (text) =>
+        text.replace(
+          'run: node .github/macos-result.mjs "$REQUIRED" "$CHANGES" "$GATE" "$PROOF"',
+          'run: node .github/macos-result.mjs "$REQUIRED" "$CHANGES" "$GATE" "$PROOF" || true',
+        ),
+    ]) {
+      const { path, directory } = workflowWith(mutate);
+      try {
+        const result = requiredContexts(["--list", "--workflow", path]);
+        assertRefused(result, REFUSED_INPUT, "dishonest Mac carrier");
+        assert.match(result.stderr, /lacks three always-running Linux result carriers/);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
     }
   });
 

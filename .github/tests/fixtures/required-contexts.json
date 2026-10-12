@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "origin": "Protection/ruleset inventory in the approved task",
+  "contexts": [
+    "changes",
+    "cross (macos-latest)",
+    "cross (windows-latest)",
+    "deny",
+    "gate",
+    "install (macos-latest)",
+    "install (ubuntu-latest)",
+    "install (windows-latest)",
+    "llmlint",
+    "msrv",
+    "pr-title",
+    "sdk-install (macos-latest)",
+    "sdk-install (ubuntu-latest)",
+    "wheel"
+  ]
+}

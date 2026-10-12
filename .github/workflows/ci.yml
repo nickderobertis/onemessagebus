@@ -5,7 +5,8 @@ name: CI
 # a schedule: every commit on main arrived through a gated pull request, and
 # gating it again would re-sweep a tree the merge already proved. The README's
 # install one-liner, which needs the code on the remote, is proven by
-# install-documented.yml.
+# install-documented.yml on Linux and Windows, and this PR
+# workflow on Mac against its exact head.
 on:
   pull_request:
 
@@ -35,6 +36,8 @@ jobs:
     outputs:
       crate: ${{ steps.affected.outputs.crate }}
       sdk: ${{ steps.affected.outputs.sdk }}
+      macos: ${{ steps.policy.outputs.macos }}
+      release-only: ${{ steps.policy.outputs.release-only }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,6 +50,15 @@ jobs:
       # Install through crates.io, not the GitHub release-download path used by
       # setup-just/install-action. That path can be down without blocking a gate.
       - uses: ./.github/actions/setup-just
+      - name: Classify the PR's actual content
+        id: policy
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          node .github/macos-policy.mjs classify --event "$GITHUB_EVENT_PATH" --base "$BASE" --head "$HEAD" > policy.json
+          echo "macos=$(node -p 'String(JSON.parse(require("fs").readFileSync("policy.json")).macosRequired)')" >> "$GITHUB_OUTPUT"
+          echo "release-only=$(node -p 'String(JSON.parse(require("fs").readFileSync("policy.json")).isReleaseOnly)')" >> "$GITHUB_OUTPUT"
       - name: Which projects the diff reaches
         id: affected
         run: |
@@ -62,6 +74,7 @@ jobs:
   # Linux-only because coverage is measured here; macOS/Windows prove the artifact
   # via the `cross` job below.
   gate:
+    needs: changes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -86,46 +99,23 @@ jobs:
       - name: Bootstrap
         run: just bootstrap
       - name: Quality gate (affected projects)
-        if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-plz-')
+        if: needs.changes.outputs.release-only != 'true'
         run: just check-affected
       - name: Quality gate (every project)
-        if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-plz-')
+        if: needs.changes.outputs.release-only == 'true'
         run: just check
       # A committed lockfile that `just bootstrap`/`just check` had to change is a
       # stale generated file; fail rather than let it drift.
       - name: Committed generated files are up to date
         run: git diff --exit-code -- Cargo.lock package-lock.json
 
-  # Prove the artifact builds and its tests pass on macOS and Windows: what a
-  # platform can change. Formatting and lints are platform-independent and the
-  # gate job already ran them, so they are not repeated; coverage is measured
-  # on Linux alone.
-  #
-  # No job-level condition on the `changes` output, on purpose: main's branch
-  # protection requires each leg's context by name (`cross (macos-latest)`,
-  # `cross (windows-latest)`), and a matrix job skipped at job level reports
-  # only a bare skipped `cross`, so a crate-free change would wait for ever on
-  # contexts that never appear. Every leg is scheduled on every change; when the
-  # diff reaches no crate, the real steps are conditioned off one by one and the
-  # leg succeeds through the single step that says so.
-  #
-  # That no-op leg is scheduled on ubuntu-latest rather than on its matrix
-  # platform: the leg exists only to report its context name, and macOS capacity
-  # is scarce enough that a crate-free pull request has waited over an hour for
-  # a runner to print one line. The context name comes from the matrix, not the
-  # runner, so `cross (macos-latest)` is still what a leg on ubuntu reports. On a
-  # crate change the leg runs on its own platform with every real step. Which
-  # runner GitHub selects, and which steps it schedules, for each value of the
-  # crate output is held by npm/test/required-contexts.test.mjs, which evaluates
-  # the `runs-on` expression and these `if` fields the way GitHub does — the only
-  # proof of the scheduling that can run offline; the steps themselves are
-  # unchanged and run on every crate change.
+  # Windows artifact assertions; Mac assertions run sequentially in macos-proof.
   cross:
     needs: changes
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [windows-latest]
     runs-on: ${{ needs.changes.outputs.crate == 'true' && matrix.os || 'ubuntu-latest' }}
     defaults:
       run:
@@ -218,7 +208,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ needs.changes.outputs.crate == 'true' && matrix.os || 'ubuntu-latest' }}
     defaults:
       run:
@@ -269,25 +259,14 @@ jobs:
       - name: Build, install and smoke-test the wheel
         run: just nx run onemessagebus-pypi-e2e:test
 
-  # Both SDKs installed the way a user installs them — packed at this revision's
-  # version, beside the binary built from it — and driven once through each
-  # transport. The platforms with a unix socket for the resident core; Windows
-  # has none, and the SDKs' resident transport is refused there by name.
-  #
-  # No job-level condition, for the reason `cross` gives: each leg's context is
-  # required by name, and a matrix job skipped at job level reports one bare
-  # `sdk-install` instead, leaving `sdk-install (ubuntu-latest)` and
-  # `sdk-install (macos-latest)` pending for ever. So both legs are scheduled on
-  # every pull request and the skip happens inside the job — on a change that
-  # reaches neither the binary nor an SDK, each leg succeeds through the single
-  # step that says so, on ubuntu-latest whichever leg it is.
+  # The Linux SDK install journey retains its own affected selection.
   # llmlint: ignore-block[live_tier_compiles_and_requires_credential, external_service_suite_stays_out_of_the_affected_tier] the suite this job runs tests artifacts built from this checkout — both SDKs packed at this revision and installed beside the binary built from it — and calls no external service: its only network use is the package registries, read anonymously for the SDKs' third-party dependencies (pydantic, zod), the same provisioning `just bootstrap` does in every job. So there is no credential to demand and no absence that could skip it green, since every step of its one recipe exits non-zero on failure. It gates pull requests deliberately, so both packages' documented install paths are proven on every change that can reach them, and it does so from this job of its own, selected by the changes filter: the affected-tier `check-affected` gate excludes it.
   sdk-install:
     needs: [changes, gate]
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
     runs-on: ${{ (needs.changes.outputs.crate == 'true' || needs.changes.outputs.sdk == 'true') && matrix.os || 'ubuntu-latest' }}
     steps:
       - name: Nothing to prove (the diff reaches neither the binary nor an SDK)
@@ -312,7 +291,7 @@ jobs:
       - name: Pack, install and smoke-test both SDKs
         # A release-plz PR's gate runs `just check`, which already ran this journey
         # on Ubuntu for the same commit; only the macOS leg is new there.
-        if: (needs.changes.outputs.crate == 'true' || needs.changes.outputs.sdk == 'true') && (matrix.os != 'ubuntu-latest' || !startsWith(github.head_ref, 'release-plz-'))
+        if: (needs.changes.outputs.crate == 'true' || needs.changes.outputs.sdk == 'true') && (matrix.os != 'ubuntu-latest' || needs.changes.outputs.release-only != 'true')
         run: just nx run onemessagebus-sdk-install-e2e:test
   # llmlint: ignore-end[live_tier_compiles_and_requires_credential, external_service_suite_stays_out_of_the_affected_tier]
 
@@ -377,3 +356,125 @@ jobs:
             exit 1
           fi
           just lint-llm-diff origin/main
+
+  # Three protected Linux carriers report the real result of this one Mac lane.
+  macos-proof:
+    env:
+      REQUIRED_CONTEXT: "false"
+    needs: [changes, gate]
+    if: needs.changes.outputs.macos == 'true'
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - uses: ./.github/actions/setup-just
+      # The SDK projects bootstrap with bun and uv, and on macOS the
+      # cross-language journey spawns both.
+      - uses: astral-sh/setup-uv@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Bootstrap
+        run: just bootstrap
+      - name: Tests (every crate and the npm packaging)
+        if: needs.changes.outputs.crate == 'true'
+        # llmlint: ignore[no_second_broader_sweep_over_an_already_gated_commit] not the same sweep twice: `gate` runs on ubuntu alone, and this is the only run of the suites on macOS and Windows, which the create-repo CI guidance requires for a cross-platform binary; formatting, lints and coverage are platform-independent and are not repeated here.
+        run: just test-uninstrumented
+
+      - name: Install (this revision)
+        if: needs.changes.outputs.crate == 'true'
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: cargo install --path crates/onemessagebus-cli --locked
+      - name: Smoke-test the installed binary
+        if: needs.changes.outputs.crate == 'true'
+        run: |
+          version="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -n1)"
+          bash scripts/smoke-published.sh \
+            --expect-version "$version" \
+            --label "cargo install onemessagebus-cli $version on $RUNNER_OS/$RUNNER_ARCH"
+
+      - name: Install (the command the README gives users)
+        env:
+          RUSTFLAGS: "-D warnings"
+          PR_REPOSITORY: ${{ github.event.pull_request.head.repo.clone_url }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          documented=$(grep -m1 '^cargo install --git ' README.md || true)
+          if [[ -z $documented ]]; then
+            echo "README.md's Install section no longer gives a 'cargo install --git' one-liner, so there is nothing for this job to prove — restore it or drop this job" >&2
+            exit 1
+          fi
+          # README.md is committed, but it is still file-derived input: accept
+          # only a plain argv of unambiguous characters, then run it as an argv.
+          # Nothing in that file is ever handed to the shell to interpret.
+          if [[ $documented =~ [^A-Za-z0-9._:/@=+[:space:]-] ]]; then
+            echo "README.md's install one-liner carries characters this job will not run: $documented" >&2
+            exit 1
+          fi
+          read -r -a argv <<<"$documented"
+          echo "running README.md's command: ${argv[*]}"
+          for i in "${!argv[@]}"; do
+            if [[ ${argv[$i]} == --git ]]; then argv[i+1]="$PR_REPOSITORY"; fi
+          done
+          "${argv[@]}" --rev "$PR_HEAD" --force
+      - name: Smoke-test the installed binary
+        run: bash scripts/smoke-published.sh --label "cargo install --git on $RUNNER_OS/$RUNNER_ARCH"
+
+      - name: Pack, install and smoke-test both SDKs
+        if: needs.changes.outputs.crate == 'true' || needs.changes.outputs.sdk == 'true'
+        run: just nx run onemessagebus-sdk-install-e2e:test
+
+  cross-macos:
+    name: cross (macos-latest)
+    needs: [changes, gate, macos-proof]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Report the Mac lane result
+        env:
+          REQUIRED: ${{ needs.changes.outputs.macos }}
+          CHANGES: ${{ needs.changes.result }}
+          GATE: ${{ needs.gate.result }}
+          PROOF: ${{ needs.macos-proof.result }}
+        run: node .github/macos-result.mjs "$REQUIRED" "$CHANGES" "$GATE" "$PROOF"
+
+  install-macos:
+    name: install (macos-latest)
+    needs: [changes, gate, macos-proof]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Report the Mac lane result
+        env:
+          REQUIRED: ${{ needs.changes.outputs.macos }}
+          CHANGES: ${{ needs.changes.result }}
+          GATE: ${{ needs.gate.result }}
+          PROOF: ${{ needs.macos-proof.result }}
+        run: node .github/macos-result.mjs "$REQUIRED" "$CHANGES" "$GATE" "$PROOF"
+
+  sdk-install-macos:
+    name: sdk-install (macos-latest)
+    needs: [changes, gate, macos-proof]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Report the Mac lane result
+        env:
+          REQUIRED: ${{ needs.changes.outputs.macos }}
+          CHANGES: ${{ needs.changes.result }}
+          GATE: ${{ needs.gate.result }}
+          PROOF: ${{ needs.macos-proof.result }}
+        run: node .github/macos-result.mjs "$REQUIRED" "$CHANGES" "$GATE" "$PROOF"

@@ -20,7 +20,9 @@
         "{workspaceRoot}/clippy.toml",
         "{workspaceRoot}/rustfmt.toml",
         "{workspaceRoot}/rust-toolchain.toml",
-        "{workspaceRoot}/.github/workflows/visual-docs.yml"
+        "{workspaceRoot}/.github/workflows/visual-docs.yml",
+        "{workspaceRoot}/.github/workflows/release.yml",
+        "{workspaceRoot}/scripts/release-build.sh"
       ]
     },
     "doc": { "command": "just _crate-doc onemessagebus-repo" },

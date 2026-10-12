@@ -24,7 +24,7 @@
       "inputs": ["default", "{workspaceRoot}/biome.json"]
     },
     "test": {
-      "command": "just _sdk-install-test",
+      "command": "just _sdk-install-test && node --test sdk-install/release.test.mjs",
       "dependsOn": [
         { "projects": ["onemessagebus-pypi"], "target": "build" },
         { "projects": ["onemessagebus-cli"], "target": "build" }
@@ -35,6 +35,10 @@
         "^crateSource",
         "{workspaceRoot}/scripts/npm-build.mjs",
         "{workspaceRoot}/scripts/cargo-target-dir.mjs",
+        "{workspaceRoot}/scripts/release-build.sh",
+        "{workspaceRoot}/scripts/release-quiet.sh",
+        "{workspaceRoot}/scripts/release-stage.py",
+        "{workspaceRoot}/scripts/release-local-install.sh",
         "sharedGlobals"
       ],
       "outputs": []

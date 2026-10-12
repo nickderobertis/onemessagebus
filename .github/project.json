@@ -1,0 +1,50 @@
+{
+  "name": "github-workflows",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": ".github",
+  "tags": ["scope:repo", "lang:js", "type:repo"],
+  "targets": {
+    "bootstrap": {
+      "command": "bash .github/bootstrap.sh"
+    },
+    "test": {
+      "command": "node --test .github/tests/*.test.mjs",
+      "cache": false,
+      "dependsOn": ["bootstrap"],
+      "inputs": [
+        "default",
+        "{workspaceRoot}/screencomp.toml",
+        "{workspaceRoot}/scripts/required-contexts.mjs",
+        "{workspaceRoot}/scripts/release-*",
+        "{workspaceRoot}/scripts/npm-build.mjs",
+        "{workspaceRoot}/release-targets.toml"
+      ],
+      "outputs": ["{projectRoot}/.telemetry/macos-policy.json"]
+    },
+    "lint": {
+      "command": "bash .github/lint.sh",
+      "inputs": ["default"],
+      "dependsOn": ["bootstrap"]
+    },
+    "typecheck": {
+      "executor": "nx:noop",
+      "//": "No typed sources: JavaScript syntax parsing runs in lint."
+    },
+    "budgets": {
+      "command": "node .github/check-budgets.mjs",
+      "dependsOn": ["test"],
+      "cache": false
+    },
+    "check": {
+      "executor": "nx:noop",
+      "dependsOn": ["format-check", "lint", "typecheck", "budgets"]
+    },
+    "format": {
+      "command": "node node_modules/@biomejs/biome/bin/biome format --write .github"
+    },
+    "format-check": {
+      "command": "node node_modules/@biomejs/biome/bin/biome format .github"
+    }
+  }
+}

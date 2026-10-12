@@ -1,0 +1,36 @@
+name: Mac diagnostic
+on:
+  workflow_dispatch:
+    inputs:
+      macos:
+        description: Run the Mac diagnostic explicitly
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  diagnostic:
+    if: github.event_name == 'workflow_dispatch' && inputs.macos == true
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: ./.github/actions/setup-just
+      - uses: astral-sh/setup-uv@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Reproduce native packaging and installation
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: |
+          target="$(rustc -vV | sed -n 's/^host: //p')"
+          bash scripts/release-build.sh "$target" "diagnostic/$target"
+          just python-sdk-dist diagnostic/sdks
+          just node-sdk-dist diagnostic/sdks
+          bash scripts/release-local-install.sh "diagnostic/$target" diagnostic/sdks "$(command -v python3)" "$(command -v node)"

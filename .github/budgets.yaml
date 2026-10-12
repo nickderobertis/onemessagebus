@@ -1,0 +1,30 @@
+schema_version: 1
+budgets:
+  # Budget exception (budgets_track_product_owner_outcomes): The brief explicitly requests both jobs/run and Mac-spending runs/change bounds; the manager approved separate budgets for these two scheduling constraints.
+  - id: onemessagebus-macos-jobs-per-run
+    description: >-
+      Maximum macOS runner job instances in a resolved workflow run, including
+      matrices and reusable calls. inner_measure_reason: one run can occupy
+      several shared Mac slots even when the lifecycle run count stays within
+      its bound. Telemetry covers twelve event classes, three diff classes,
+      two ownership classes, all release architectures and publish switches;
+      manual diagnostics are evaluated separately from automatic lifecycles.
+    measure: reported
+    command: [node, macos-budget.mjs, --metric, jobs-per-run, --telemetry, .telemetry/macos-policy.json]
+    unit: jobs
+    direction: max
+    threshold: 1
+    labels: [github-workflows]
+  # Budget exception (budgets_track_product_owner_outcomes): The brief explicitly requests both jobs/run and Mac-spending runs/change bounds; the manager approved separate budgets for these two scheduling constraints.
+  - id: onemessagebus-macos-runs-per-change
+    description: >-
+      Maximum distinct Mac-spending workflow runs over a single-push lifecycle:
+      ordinary PR, base merge, semantic release PR and merge, release tag/build
+      and downstream events. Explicit manual diagnostics are excluded. The
+      telemetry records workflow, event, job and target details.
+    measure: reported
+    command: [node, macos-budget.mjs, --metric, runs-per-change, --telemetry, .telemetry/macos-policy.json]
+    unit: runs
+    direction: max
+    threshold: 2
+    labels: [github-workflows]
