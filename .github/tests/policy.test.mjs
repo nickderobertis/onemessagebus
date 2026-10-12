@@ -1132,3 +1132,23 @@ test("dependency versions cannot disappear without canonical validation", () => 
   }
   git("checkout", "-q", base);
 });
+
+test("actual classifier outputs remain plain under the Nx colored environment", () => {
+  const saved = process.env.FORCE_COLOR;
+  try {
+    process.env.FORCE_COLOR = "1";
+    const event = payload(false, "feature");
+    event.pull_request.title = "ci: colored environment";
+    const output = changesOutputs(graph["ci.yml"].jobs.changes, classify(event, histories.source), {
+      directory: scratch,
+      base,
+      head: histories.source,
+      event,
+    });
+    assert.equal(output.macos, "true");
+    assert.equal(output["release-only"], "false");
+  } finally {
+    if (saved === undefined) delete process.env.FORCE_COLOR;
+    else process.env.FORCE_COLOR = saved;
+  }
+});
