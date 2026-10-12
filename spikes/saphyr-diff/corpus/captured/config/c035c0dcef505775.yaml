@@ -1,0 +1,5 @@
+version: 1
+transport: {kind: local, dir: "/tmp/scratch/bus"}
+profile: intake
+authors:
+  scout: {capabilities: [file]}

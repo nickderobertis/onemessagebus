@@ -1,0 +1,7 @@
+version: 1
+transport: {kind: local, dir: "/tmp/scratch/channel"}
+queues:
+  findings: {}
+  alerts: {}
+validators:
+  []

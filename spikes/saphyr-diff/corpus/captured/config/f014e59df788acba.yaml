@@ -1,0 +1,6 @@
+version: 1
+transport: {kind: memory}
+schemas:
+  - "http://127.0.0.1:8443/frames.json@8"
+  - "https://schemas.example.invalid/frames.json@8.1"
+  - "frames.json@8"

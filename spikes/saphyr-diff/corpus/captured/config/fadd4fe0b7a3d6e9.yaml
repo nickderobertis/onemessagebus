@@ -1,0 +1,6 @@
+version: 1
+transport: {kind: memory}
+queues:
+  prompts: {}
+codecs:
+  example: {asker_env: "CHANNEL-ASKER"}

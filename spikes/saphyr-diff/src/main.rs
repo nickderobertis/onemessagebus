@@ -543,15 +543,27 @@ fn run_tree(report: &mut Report, kind: &'static str, case: &Case) {
     }
 }
 
-fn time<F: FnMut()>(iterations: u32, mut f: F) -> f64 {
-    for _ in 0..iterations / 10 {
+/// Per-run microseconds over `ROUNDS` rounds of `ITERATIONS` runs each (after a
+/// warm-up): the fastest round's mean and the median round's mean. The host is
+/// shared, so the fastest round is the least disturbed estimate.
+const ROUNDS: usize = 9;
+const ITERATIONS: u32 = 1000;
+
+fn time<F: FnMut()>(mut f: F) -> (f64, f64) {
+    for _ in 0..ITERATIONS / 4 {
         f();
     }
-    let start = Instant::now();
-    for _ in 0..iterations {
-        f();
-    }
-    start.elapsed().as_secs_f64() * 1e6 / f64::from(iterations)
+    let mut means: Vec<f64> = (0..ROUNDS)
+        .map(|_| {
+            let start = Instant::now();
+            for _ in 0..ITERATIONS {
+                f();
+            }
+            start.elapsed().as_secs_f64() * 1e6 / f64::from(ITERATIONS)
+        })
+        .collect();
+    means.sort_by(f64::total_cmp);
+    (means[0], means[ROUNDS / 2])
 }
 
 fn timing(cases: &[Case]) -> String {
@@ -562,40 +574,51 @@ fn timing(cases: &[Case]) -> String {
         .max_by_key(|case| case.text.len())
         .expect("a configuration reads");
     let text = largest.text.as_str();
-    let iterations = 5000;
-    let norway_parse = time(iterations, || {
-        let _: Value = serde_norway::from_str(text).expect("reads");
-        let _: Config = serde_norway::from_str(text).expect("reads");
-    });
-    let saphyr_parse = time(iterations, || {
-        let _: Value = serde_saphyr::from_str(text).expect("reads");
-        let _: Config = serde_saphyr::from_str(text).expect("reads");
-    });
-    let norway_value = time(iterations, || {
-        let _: Value = serde_norway::from_str(text).expect("reads");
-    });
-    let saphyr_value = time(iterations, || {
-        let _: Value = serde_saphyr::from_str(text).expect("reads");
-    });
-    let tree_load = time(iterations, || {
-        let _ = tree::load(text);
-    });
-    let whole = time(iterations, || {
-        let _ = Config::parse(text).expect("reads");
-    });
-    format!(
-        "largest real document: {} ({} bytes, {} lines)\n  mean of {iterations} runs, {} build, this host:\n  \
-         serde_norway  Value+Config (the two YAML passes Config::parse makes): {norway_parse:.1} us\n  \
-         serde-saphyr  Value+Config: {saphyr_parse:.1} us\n  \
-         serde_norway  Value only: {norway_value:.1} us\n  \
-         serde-saphyr  Value only: {saphyr_value:.1} us\n  \
-         saphyr 0.2    node tree only (Yaml::load_from_str): {tree_load:.1} us\n  \
-         Config::parse today, end to end (YAML + validation): {whole:.1} us\n",
+    let mut strict = Options::default();
+    strict.strict_booleans = true;
+    let rows: Vec<(&str, (f64, f64))> = vec![
+        ("serde_norway  Value+Config (the two YAML passes Config::parse makes)", time(|| {
+            let _: Value = serde_norway::from_str(text).expect("reads");
+            let _: Config = serde_norway::from_str(text).expect("reads");
+        })),
+        ("serde-saphyr  Value+Config, default Options", time(|| {
+            let _: Value = serde_saphyr::from_str(text).expect("reads");
+            let _: Config = serde_saphyr::from_str(text).expect("reads");
+        })),
+        ("serde-saphyr  Value+Config, strict_booleans", time(|| {
+            let _: Value = serde_saphyr::from_str_with_options(text, strict.clone()).expect("reads");
+            let _: Config = serde_saphyr::from_str_with_options(text, strict.clone()).expect("reads");
+        })),
+        ("serde_norway  Value only", time(|| {
+            let _: Value = serde_norway::from_str(text).expect("reads");
+        })),
+        ("serde-saphyr  Value only", time(|| {
+            let _: Value = serde_saphyr::from_str(text).expect("reads");
+        })),
+        ("serde_norway  Config only", time(|| {
+            let _: Config = serde_norway::from_str(text).expect("reads");
+        })),
+        ("serde-saphyr  Config only", time(|| {
+            let _: Config = serde_saphyr::from_str(text).expect("reads");
+        })),
+        ("saphyr 0.2    node tree only (Yaml::load_from_str)", time(|| {
+            let _ = tree::load(text);
+        })),
+        ("Config::parse today, end to end (YAML + validation)", time(|| {
+            let _ = Config::parse(text).expect("reads");
+        })),
+    ];
+    let mut out = format!(
+        "largest real document: {} ({} bytes, {} lines)\n  {} build; per run, microseconds: fastest round's mean / median round's mean, {ROUNDS} rounds of {ITERATIONS} runs\n",
         largest.label,
         text.len(),
         text.lines().count(),
         if cfg!(debug_assertions) { "DEBUG" } else { "release" }
-    )
+    );
+    for (name, (fastest, median)) in rows {
+        let _ = writeln!(out, "  {name:<72} {fastest:>8.1} / {median:>8.1}");
+    }
+    out
 }
 
 fn main() {

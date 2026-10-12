@@ -1,0 +1,4 @@
+version: 1
+transport: {kind: memory}
+schemas:
+  - "http://example.org/frames.json@8"

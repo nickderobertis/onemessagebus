@@ -1,0 +1,6 @@
+version: 1
+transport: {kind: memory}
+queues:
+  prompts: {}
+codecs:
+  example: {reply_window_seconds: 0}

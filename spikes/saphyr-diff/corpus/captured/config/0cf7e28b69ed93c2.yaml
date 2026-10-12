@@ -1,0 +1,5 @@
+version: 1
+transport: {kind: memory}
+queues:
+  questions: {policy: {hold_pending: true}, answers: answers}
+  answers: {}

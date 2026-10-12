@@ -1,7 +1,0 @@
-version: 1
-transport: {kind: local, dir: "/tmp/.tmpn3GStw/local-queues"}
-profile: desk
-schemas:
-  - "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
-queues:
-  findings: {}

@@ -1,0 +1,5 @@
+version: 1
+transport: {kind: local, dir: runs/r1/channel}
+validators:
+  - {on: answers, when: {carries: actions}, kind: command, command: [python3, -m, review_actions, --envelope],
+     cache: {dir: .validator-passes, bar_fingerprint: [scripts/bar-fingerprint.sh]}}

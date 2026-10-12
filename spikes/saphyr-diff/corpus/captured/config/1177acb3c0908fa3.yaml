@@ -1,0 +1,13 @@
+version: 1
+transport: {kind: local, dir: runs/r1/desk}
+profile: desk
+schemas:
+  - "https://example.org/desk.json@1"
+queues:
+  findings: {policy: {hold_pending: false}}
+authors:
+  lead: {capabilities: [retry, note, unknown]}
+  sentinel:
+    capabilities: [retry, note]
+    refusals:
+      complete: "whether the desk is done is the lead's verdict, not an observation"

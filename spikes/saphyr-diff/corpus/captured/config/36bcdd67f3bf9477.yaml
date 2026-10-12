@@ -1,0 +1,5 @@
+version: 1
+transport: {kind: local, dir: "/tmp/scratch/channel"}
+queues:
+  questions: {policy: {hold_pending: true}, answers: replies}
+  replies: {}

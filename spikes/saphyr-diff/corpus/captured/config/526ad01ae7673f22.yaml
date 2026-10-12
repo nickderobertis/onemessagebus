@@ -1,0 +1,5 @@
+version: 1
+transport: {kind: memory}
+profile: ledger
+queues:
+  greetings: {schema: demo.greeting@1}

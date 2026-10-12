@@ -1,0 +1,31 @@
+version: 1
+transport: {kind: memory}
+queues:
+  prompts: {}
+codecs:
+  example:
+    select: turn.op
+    frames:
+      hello:
+        schema: example.hello@1
+        bindings:
+          - when: {field: mood, equals: ready}
+            do: answer
+            response:
+              exact: '{frame.count}'
+              text: 'hello {frame.name}: {frame.count} {{ok}} {frame.missing}'
+              nested: ['{frame.enabled}', 3]
+          - do: refuse
+            message: 'not ready: {frame.mood}'
+      maybe:
+        schema: example.maybe@1
+        bindings:
+          - when: {field: mood, equals: ready}
+            do: answer
+            response: {ok: true}
+      raise:
+        schema: example.raise@1
+        bindings:
+          - do: raise
+            record: {kind: notice, message: 'raised {frame.count}'}
+            response: {raised: true}

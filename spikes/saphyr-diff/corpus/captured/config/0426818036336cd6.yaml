@@ -1,0 +1,33 @@
+version: 1
+transport: {kind: local, dir: runs/r1/channel}
+codecs:
+  example:
+    queue: prompts
+    reply_window_seconds: 3000
+    session_env: EXAMPLE_SESSION
+    asker_env: EXAMPLE_ASKER
+    about_env: EXAMPLE_ABOUT
+    select: op
+    frames:
+      hello:
+        schema: example.frame.hello@3
+        bindings:
+          - when: {field: mood, equals: lost}
+            do: raise
+            record: {kind: example-lost, blocking: false, source: proposal, message: "lost: {frame.cause}"}
+            fail: "the member lost its turn: {frame.cause}"
+          - when: {field: kind, equals: numeric}
+            do: refuse
+            message: "a numeric frame is not served"
+          - do: ask
+            record: {kind: example-question, source: proposal, message: "rule on: {frame.criterion}"}
+            blocking: false
+            response:
+              value: {from: reply.completion}
+              reason: {from: [reply.reason, reply.message], default: "ruled without a reason"}
+            unanswered: {value: false, reason: "no ruling arrived, so this is scored false"}
+      notice:
+        schema: example.frame.notice@3
+        bindings:
+          - do: answer
+            response: {completion: false, message: noted, reason: taken}

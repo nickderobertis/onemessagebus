@@ -1,6 +1,0 @@
-version: 1
-transport: {kind: local, dir: "/tmp/.tmpT7eaks/bus"}
-queues:
-  findings: {}
-validators:
-  - {on: reviews, kind: command, command: ["/repo/target/debug/deps/e2e-7d2892949a98e5e9","--exact","validators::scripted_validator","scripted-validator-script=/tmp/.tmpT7eaks/script.json"]}

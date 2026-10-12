@@ -1,0 +1,5 @@
+version: 1
+transport: {kind: local, dir: /tmp/scratch}
+profile: ledger
+authors:
+  teller: {capabilities: [post, void]}

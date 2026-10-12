@@ -1,0 +1,9 @@
+version: 1
+transport: {kind: local, dir: /tmp/scratch}
+profile: ledger
+queues:
+  beats:
+    policy: {delivery: at-least-once, ordering: per-queue, supersede_on: {key: kind, when: {field: kind, equals: beat}}, hold_pending: true, blocking_first: true, retention: keep, projection: beats.json}
+    claims: {field: kind, present: true}
+    consumers: [default, auditor]
+  notes: {numbered: true}

@@ -1,0 +1,8 @@
+version: 1
+transport: {kind: local, dir: /tmp/scratch/runs/r1/channel}
+profile: ledger
+queues:
+  findings: {policy: {hold_pending: false}}
+  entries: {consumers: [default, auditor]}
+authors:
+  teller: {capabilities: [post]}

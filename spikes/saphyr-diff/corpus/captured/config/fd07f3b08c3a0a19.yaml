@@ -1,0 +1,5 @@
+version: 1
+transport: {kind: local, dir: /tmp/scratch}
+profile: ledger
+queues:
+  entries: {schema: ledger.entry@1}

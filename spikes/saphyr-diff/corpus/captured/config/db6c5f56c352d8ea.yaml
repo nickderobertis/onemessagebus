@@ -1,4 +1,0 @@
-version: 1
-transport: {kind: local, dir: bus}
-profile: desk
-schemas: ["/tmp/.tmphxVQR7/broken.json"]

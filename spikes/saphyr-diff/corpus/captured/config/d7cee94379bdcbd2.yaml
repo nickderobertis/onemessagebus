@@ -1,0 +1,20 @@
+version: 1
+transport:
+  kind: memory
+queues:
+  prompts: {}
+codecs:
+  example:
+    queue: prompts
+    reply_window_seconds: 5
+    session_env: SERVE_SESSION
+    asker_env: CHANNEL_ASKER
+    about_env: NODE
+    select: op
+    frames:
+      hello:
+        schema: example.hello@1
+        bindings:
+        - do: answer
+          response:
+            ok: true

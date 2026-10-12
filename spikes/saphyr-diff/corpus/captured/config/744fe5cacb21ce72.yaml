@@ -1,0 +1,7 @@
+version: 1
+transport: {kind: local, dir: "/tmp/scratch/channel"}
+queues:
+  findings: {}
+validators:
+  - {on: findings, when: {carries: reply.commands}, kind: command, command: ["/repo/target/debug/deps/validators-e932a2a40ee797fa","--exact","scripted_validator","scripted-validator-script=/tmp/scratch/script.json"], cache: {dir: passes, bar_fingerprint: ["/repo/target/debug/deps/validators-e932a2a40ee797fa","--exact","scripted_validator","scripted-validator-script=/tmp/scratch/script.json"]}}
+  - {on: findings, when: {not: {field: author, present: true}}, kind: command, command: ["/repo/target/debug/deps/validators-e932a2a40ee797fa","--exact","scripted_validator","scripted-validator-script=/tmp/scratch/script.json"]}

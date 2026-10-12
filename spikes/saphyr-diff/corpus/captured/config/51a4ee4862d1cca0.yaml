@@ -1,0 +1,9 @@
+version: 1
+transport: {kind: local, dir: "/tmp/scratch/bus"}
+profile: desk
+schemas:
+  - "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+authors:
+  sentinel:
+    capabilities: [finding]
+    refusals: {retry: 'retry needs fresh evidence', complete: 'the lead decides completion'}

@@ -1,0 +1,2 @@
+version: 1
+transport: {kind: local, dir: x, url: nats://h}

@@ -1,0 +1,7 @@
+version: 1
+transport: {kind: local, dir: "/tmp/scratch/bus"}
+queues:
+  frames: {schema: demo.frame@1}
+schemas:
+  - "file:///tmp/scratch/frames.json@8"
+  - "contradicts.json@1"

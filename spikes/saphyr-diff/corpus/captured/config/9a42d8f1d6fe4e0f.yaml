@@ -1,6 +1,0 @@
-version: 1
-transport: {kind: local, dir: "/tmp/.tmpir2OSo/bus"}
-queues:
-  frames: {schema: demo.frame@1}
-schemas:
-  - "frames.json@8"

@@ -1,0 +1,12 @@
+version: 1
+transport: {kind: memory}
+codecs:
+  example:
+    select: op
+    frames:
+      hello:
+        schema: example.hello@1
+        bindings:
+          - when: {field: mood, equals: {nested: x}}
+            do: answer
+            response: {}

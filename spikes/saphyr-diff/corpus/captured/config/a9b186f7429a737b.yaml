@@ -1,0 +1,7 @@
+version: 1
+transport: {kind: local, dir: "/tmp/scratch/bus"}
+profile: desk
+schemas:
+  - "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+validators:
+  - {on: answers, when: {carries: actions}, kind: command, command: ["/repo/target/debug/deps/e2e-7d2892949a98e5e9","--exact","validators::scripted_validator","scripted-validator-script=/tmp/scratch/script.json"]}

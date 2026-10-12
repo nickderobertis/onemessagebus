@@ -1,0 +1,6 @@
+version: 1
+transport: {kind: memory}
+codecs:
+  example:
+    select: ''
+    frames: {}
