@@ -80,7 +80,8 @@ export function matrix(definition, context) {
   )) {
     const values =
       typeof raw === "string" ? JSON.parse(expression(raw, context).coerceString()) : raw;
-    if (!Array.isArray(values)) throw new Error(`unresolved matrix dimension ${key}`);
+    if (!Array.isArray(values) || !values.length)
+      throw new Error(`empty or unresolved matrix dimension ${key}`);
     legs = legs.flatMap((leg) => values.map((value) => ({ ...leg, [key]: value })));
   }
   legs = legs.filter(

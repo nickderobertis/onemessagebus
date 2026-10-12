@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # One compile; archive, wheel and npm all carry the wheel's exact binary bytes.
 set -euo pipefail
-# Input refusals stay 2; all other unsuccessful tool statuses become 1.
-trap 'status=$?; echo "release-build.sh: command failed at line $LINENO; repair the pinned toolchain or output permissions, then rerun scripts/release-build.sh with the same arguments" >&2; if [[ $status == 2 ]]; then exit 2; else exit 1; fi' ERR
+# Argument/staging refusals are 2; operational tool failures are 1.
+trap 'echo "release-build.sh: command failed at line $LINENO; repair the pinned toolchain or output permissions, then rerun scripts/release-build.sh with the same arguments" >&2; exit 1' ERR
 if [[ $# != 2 || ! $1 =~ ^(x86_64|aarch64)-(apple-darwin|unknown-linux-gnu)$ ]]; then
   echo 'release-build: expected TARGET OUTPUT_DIRECTORY; use a declared Darwin or Linux target' >&2
   exit 2
@@ -10,10 +10,25 @@ fi
 source scripts/release-quiet.sh
 target="$1"
 out="$(mkdir -p "$2" && cd "$2" && pwd)"
+entries="$(ls -A -- "$out")"
+if [[ -n $entries ]]; then
+  echo 'release-build: output must be an empty staging directory; choose a new directory and rerun' >&2
+  exit 2
+fi
+stage_inputs() {
+  local status
+  if python3 scripts/release-stage.py "$@"; then
+    return 0
+  else
+    status=$?
+    if [[ $status == 2 ]]; then exit 2; fi
+    return 1
+  fi
+}
 rustup target add "$target"
 just _wheel-build "$target" "$out" true
-python3 scripts/release-stage.py --target "$target" --directory "$out"
+stage_inputs --target "$target" --directory "$out"
 pkg="$(node scripts/npm-build.mjs platform --target "$target" --binary "$out/onemessagebus" --out "$out/npm")"
 (cd "$pkg" && release_quiet npm pack --pack-destination "$out")
-python3 scripts/release-stage.py --target "$target" --directory "$out" --verify-npm
+stage_inputs --target "$target" --directory "$out" --verify-npm
 echo "staged $target from one compiled binary"

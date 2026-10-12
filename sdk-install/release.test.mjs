@@ -1,7 +1,15 @@
 // Production release builder and installers, publishing disabled.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, readFileSync, cpSync, mkdirSync, copyFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  readFileSync,
+  writeFileSync,
+  cpSync,
+  mkdirSync,
+  copyFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
@@ -96,6 +104,50 @@ print(json.dumps(dict(hashes=[hashlib.sha256(b).hexdigest() for b in [binary,arc
     const python = resolve(root, run("which", ["python3"]).trim());
     const empty = join(work, "empty");
     mkdirSync(empty);
+    const operationalFailure = spawnSync(
+      "bash",
+      [
+        "scripts/release-local-install.sh",
+        stage,
+        sdks,
+        run("which", ["grep"]).trim(),
+        process.execPath,
+      ],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(operationalFailure.status, 1);
+    assert.match(operationalFailure.stderr, /command failed/);
+    const invalidProject = join(work, "invalid-project");
+    mkdirSync(join(invalidProject, "scripts"), { recursive: true });
+    for (const file of [
+      "Cargo.toml",
+      "rust-toolchain.toml",
+      "README.md",
+      "LICENSE",
+      "CHANGELOG.md",
+      "justfile",
+      "scripts/release-build.sh",
+      "scripts/release-stage.py",
+      "scripts/release-quiet.sh",
+    ])
+      copyFileSync(join(root, file), join(invalidProject, file));
+    const project = readFileSync(join(root, "pyproject.toml"), "utf8")
+      .replace('name = "onemessagebus-cli"', 'name = "wrong-cli"')
+      .replace(
+        'manifest-path = "crates/onemessagebus-cli/Cargo.toml"',
+        [
+          "manifest-path = ",
+          JSON.stringify(join(root, "crates/onemessagebus-cli/Cargo.toml")),
+        ].join(""),
+      );
+    writeFileSync(join(invalidProject, "pyproject.toml"), project);
+    const refusedProject = spawnSync(
+      "bash",
+      ["scripts/release-build.sh", target, join(work, "wrong-wheel")],
+      { cwd: invalidProject, encoding: "utf8" },
+    );
+    assert.equal(refusedProject.status, 2, refusedProject.stderr);
+    assert.match(refusedProject.stderr, /wheel filename is not an onemessagebus CLI wheel/);
     for (const args of [
       [],
       [stage, sdks, "/missing-python", process.execPath],
@@ -267,7 +319,6 @@ replacement.replace(p)
     );
     assert.notEqual(failedSmoke.status, 0);
     assert.match(failedSmoke.stderr, /failed|not found|error|cannot/i);
-    // Corrupt a packed carrier and drive the production hash boundary.
     run("python3", [
       "-c",
       `
@@ -290,7 +341,6 @@ replacement.replace(p)
     );
     assert.equal(mismatch.status, 2);
     assert.match(mismatch.stderr, /npm payload differs/);
-    // The standalone stage boundary rejects unsafe targets and lookalike scripts.
     const unsafe = spawnSync(
       "python3",
       ["scripts/release-stage.py", "--target", "../../apple-darwin", "--directory", stage],

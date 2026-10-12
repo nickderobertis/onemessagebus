@@ -397,7 +397,6 @@ test("actual workflow/call graph resolves every event, ownership, diff and publi
                 rows,
               });
             }
-  // Explicit release-only and mixed release PR routes share the same real workflow.
   for (const diff of Object.keys(histories))
     for (const fork of [false, true]) {
       const event = {
@@ -1039,6 +1038,25 @@ test("semantic release versions admit canonical prerelease plus build metadata",
 });
 
 test("matrix expansion rejects empty include-only and preserves exclude/include interactions", () => {
+  assert.throws(() => matrix({ os: [] }, {}), /empty or unresolved matrix dimension/);
+  const ci = structuredClone(graph["ci.yml"]);
+  ci.jobs.cross.strategy.matrix.os = [];
+  const event = payload(false, "feature");
+  assert.throws(
+    () =>
+      resolveRun(
+        "ci.yml",
+        ci,
+        {
+          name: "pull_request",
+          action: "synchronize",
+          payload: event,
+          classificationContext: { directory: scratch, base, head: histories.source, event },
+        },
+        classify(event, histories.source),
+      ),
+    /empty or unresolved matrix dimension/,
+  );
   assert.throws(() => matrix({ include: [] }, {}), /empty include-only/);
   assert.deepEqual(
     matrix(
@@ -1069,4 +1087,48 @@ test("matrix expansion rejects empty include-only and preserves exclude/include 
       /unsupported architecture|no \[capture\]\.arches|Command failed/,
     );
   }
+});
+
+test("dependency versions cannot disappear without canonical validation", () => {
+  for (const kind of ["cargo", "python"]) {
+    git("checkout", "-q", base);
+    const file = kind === "cargo" ? "Cargo.lock" : "python/onemessagebus-sdk/pyproject.toml";
+    mkdirSync(join(scratch, "python/onemessagebus-sdk"), { recursive: true });
+    const content = (pin) =>
+      kind === "cargo"
+        ? [
+            "version=3",
+            "[[package]]",
+            'name="onemessagebus"',
+            'version="0.9.0"',
+            `dependencies=[${JSON.stringify(`onemessagebus-cli ${pin}`)}]`,
+          ].join("\n")
+        : [
+            "[project]",
+            'version="0.9.0"',
+            `dependencies=[${JSON.stringify(`onemessagebus-cli==${pin}`)}]`,
+          ].join("\n");
+    writeFileSync(join(scratch, file), content("0.9.0"));
+    git("add", file);
+    git("commit", "-qm", "test: valid dependency baseline");
+    const comparison = git("rev-parse", "HEAD");
+    for (const pin of ["1.2.3-rc.1+build.5", "01.2.3", "1.2.3-01", "1.2.3-a..b", "1.2.3\n"]) {
+      git("checkout", "-q", comparison);
+      writeFileSync(join(scratch, file), content(pin));
+      git("add", file);
+      git("commit", "-qm", "test: dependency version candidate");
+      const result = classify(payload(), git("rev-parse", "HEAD"), "pull_request", comparison);
+      assert.equal(
+        result.isReleaseOnly,
+        pin === "1.2.3-rc.1+build.5",
+        `${kind}:${JSON.stringify(pin)}`,
+      );
+      assert.equal(
+        result.macosRequired,
+        pin !== "1.2.3-rc.1+build.5",
+        `${kind}:${JSON.stringify(pin)}`,
+      );
+    }
+  }
+  git("checkout", "-q", base);
 });

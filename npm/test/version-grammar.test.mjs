@@ -93,7 +93,7 @@ const REFUSED = [
 describe("the release-version grammar", () => {
   it("holds classifier and staging versions to the canonical registry grammar", () => {
     assert.match(POLICY, /import \{ VERSION \} from "\.\.\/scripts\/npm-build\.mjs"/);
-    assert.match(POLICY, /VERSION\.test/);
+    assert.match(POLICY, /VERSION\.exec/);
     assert.equal(STAGE_SHAPE, VERSION.source);
     assert.match(STAGE, /re\.fullmatch\(VERSION_SHAPE, version\)/);
     const corpus = [...ACCEPTED, ...REFUSED];

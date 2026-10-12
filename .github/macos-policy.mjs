@@ -11,7 +11,8 @@ try {
 } catch {
   configuration = undefined;
 }
-const version = { test: (value) => VERSION.test(value.replace(/\.dev(\d+)$/, "-dev.$1")) };
+const semver = (value) => VERSION.exec(value)?.[0] === value;
+const version = { test: (value) => semver(value.replace(/\.dev(\d+)$/, "-dev.$1")) };
 const own = (name) => /^onemessagebus(?:-.*)?$/.test(name) || name === "@onemessagebus/sdk";
 function git(...args) {
   return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -58,7 +59,10 @@ function normalized(path, text) {
     for (const pkg of value.package)
       if (pkg.dependencies)
         pkg.dependencies = pkg.dependencies.map((d) =>
-          d.replace(/^(onemessagebus(?:-[\w-]+)?) \d+\.\d+\.\d+(?:[-+][\w.-]+)?$/, "$1 <version>"),
+          d.replace(/^(onemessagebus(?:-[\w-]+)?) ([^\s]+)$/, (_, name, pin) => {
+            if (!semver(pin)) throw new Error(["invalid Cargo dependency version:", pin].join(" "));
+            return [name, "<version>"].join(" ");
+          }),
         );
   } else if (path === "package-lock.json") {
     if (value.version) stripVersion(value);
@@ -73,7 +77,11 @@ function normalized(path, text) {
   } else if (path === "python/onemessagebus-sdk/pyproject.toml") {
     stripVersion(value.project);
     value.project.dependencies = value.project.dependencies.map((pin) =>
-      pin.replace(/^(onemessagebus-cli)==\d+\.\d+\.\d+(?:\.dev\d+|[-+][\w.-]+)?$/, "$1==<version>"),
+      pin.replace(/^(onemessagebus-cli)==(.+)$/, (_, name, literal) => {
+        if (!version.test(literal))
+          throw new Error(["invalid Python CLI dependency version:", literal].join(" "));
+        return [name, "<version>"].join("==");
+      }),
     );
   } else if (/^npm\/onemessagebus-(?:cli|sdk)\/package\.json$/.test(path)) {
     stripVersion(value);

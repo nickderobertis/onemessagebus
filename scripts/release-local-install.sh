@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # All inputs are staged files; registries only provision third-party dependencies.
 set -euo pipefail
-# Input refusals stay 2; all other unsuccessful tool statuses become 1.
-trap 'status=$?; echo "release-local-install.sh: command failed at line $LINENO; repair the staged products or selected interpreters, then rerun scripts/release-local-install.sh with the same arguments" >&2; if [[ $status == 2 ]]; then exit 2; else exit 1; fi' ERR
+# Argument refusals are 2; operational tool failures are 1.
+trap 'echo "release-local-install.sh: command failed at line $LINENO; repair the staged products or selected interpreters, then rerun scripts/release-local-install.sh with the same arguments" >&2; exit 1' ERR
 if [[ $# != 4 ]]; then
   echo 'release-local-install: expected STAGE SDK_DIRECTORY PYTHON NODE' >&2
   exit 2
