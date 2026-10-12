@@ -4,7 +4,7 @@ set -euo pipefail
 # Argument refusals are 2; operational tool failures are 1.
 trap 'echo "release-local-install.sh: command failed at line $LINENO; repair the staged products or selected interpreters, then rerun scripts/release-local-install.sh with the same arguments" >&2; exit 1' ERR
 if [[ $# != 4 ]]; then
-  echo 'release-local-install: expected STAGE SDK_DIRECTORY PYTHON NODE' >&2
+  echo 'release-local-install: expected STAGE SDK_DIRECTORY PYTHON NODE; rerun scripts/release-local-install.sh <staged-target-directory> <sdk-distributions-directory> <python-executable> <node-executable>' >&2
   exit 2
 fi
 source scripts/release-quiet.sh
