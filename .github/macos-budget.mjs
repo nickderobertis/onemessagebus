@@ -25,23 +25,21 @@ try {
     !telemetry.lifecycles.length
   )
     throw new Error("invalid telemetry counts or runs; regenerate github-workflows:test");
+  const validMacJob = (job) =>
+    job &&
+    Array.isArray(job.runner) &&
+    job.runner.some((label) => typeof label === "string" && label.startsWith("macos-"));
   for (const run of telemetry.runs)
-    if (
-      !run ||
-      !Array.isArray(run.jobs) ||
-      run.jobs.some(
-        (job) =>
-          !job ||
-          !Array.isArray(job.runner) ||
-          !job.runner.some((label) => typeof label === "string" && label.startsWith("macos-")),
-      )
-    )
+    if (!run || !Array.isArray(run.jobs) || run.jobs.some((job) => !validMacJob(job)))
       throw new Error("invalid Mac job rows; regenerate github-workflows:test");
   for (const lifecycle of telemetry.lifecycles) {
     if (
       !lifecycle ||
       !Array.isArray(lifecycle.runs) ||
-      lifecycle.runs.some((run) => !run || !Array.isArray(run.macJobs)) ||
+      lifecycle.runs.some(
+        (run) =>
+          !run || !Array.isArray(run.macJobs) || run.macJobs.some((job) => !validMacJob(job)),
+      ) ||
       !count(lifecycle.macSpendingRuns) ||
       lifecycle.macSpendingRuns !== lifecycle.runs.filter((run) => run.macJobs.length).length
     )

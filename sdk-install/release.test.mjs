@@ -79,7 +79,7 @@ print(json.dumps(dict(hashes=[hashlib.sha256(b).hexdigest() for b in [binary,arc
         cwd: root,
         encoding: "utf8",
       });
-      assert.notEqual(refused.status, 0);
+      assert.equal(refused.status, args.length ? 1 : 2);
       assert.match(refused.stderr, /expected|failed|No such|not found/);
     }
     const stageScript = join(root, "scripts/release-stage.py");
@@ -97,6 +97,8 @@ print(json.dumps(dict(hashes=[hashlib.sha256(b).hexdigest() for b in [binary,arc
       "many-wheel",
       "bad-filename",
       "bad-platform",
+      "compound-architecture",
+      "compound-family",
       "old-version",
       "duplicate-script",
       "bad-metadata",
@@ -139,13 +141,17 @@ if kind in ['no-npm','many-npm','bad-tar','no-npm-binary']:
  if kind=='bad-tar': package.write_bytes(b'broken archive')
  if kind=='no-npm-binary':
   with tarfile.open(package,'w:gz') as out: pass
-if kind in ['no-wheel','many-wheel','bad-filename','bad-platform','old-version']:
+if kind in ['no-wheel','many-wheel','bad-filename','bad-platform','old-version','compound-architecture','compound-family']:
  wheel=next(p.glob('*.whl'))
  if kind=='no-wheel': wheel.unlink()
  if kind=='many-wheel': (p/'other.whl').write_bytes(wheel.read_bytes())
  if kind=='bad-filename': wheel.rename(p/'other.whl')
  if kind=='bad-platform':
   fields=wheel.name.split('-'); fields[-1]='win_'+fields[-1].split('_')[-2]+'_'+fields[-1].split('_')[-1]; wheel.rename(p/'-'.join(fields))
+ if kind in ['compound-architecture','compound-family']:
+  fields=wheel.name.split('-'); tag=fields[-1].removesuffix('.whl')
+  wrong=tag.rsplit('_',1)[0]+'_arm64' if kind=='compound-architecture' else 'win_'+tag.rsplit('_',1)[1]
+  fields[-1]=wrong+'.'+tag+'.whl'; wheel.rename(p/'-'.join(fields))
  if kind=='old-version':
   fields=wheel.name.split('-'); fields[1]='9999.0.0'; wheel.rename(p/'-'.join(fields))
 if kind in ['duplicate-script','bad-metadata','bad-tag']:

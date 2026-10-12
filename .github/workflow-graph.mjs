@@ -411,12 +411,12 @@ export function resolveRun(file, workflow, event, classification, variables = {}
   }
   return rows.map((row) => ({ ...row, runWorkflow: stack[0] ?? file }));
 }
-export function sourceDigest() {
+export function sourceDigest(directory = root) {
   const hash = createHash("sha256");
   const paths = execFileSync(
     "git",
     ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-    { cwd: root, encoding: "utf8" },
+    { cwd: directory, encoding: "utf8" },
   )
     .split("\0")
     .filter(Boolean);
@@ -425,7 +425,7 @@ export function sourceDigest() {
     if (path.endsWith("budgets.yaml")) continue;
     hash.update(path);
     try {
-      hash.update(readFileSync(resolve(root, path)));
+      hash.update(readFileSync(resolve(directory, path)));
     } catch (error) {
       if (error.code === "ENOENT") hash.update("<deleted>");
       else throw error;

@@ -99,7 +99,7 @@ def stage(args: argparse.Namespace) -> None:
         refuse("wheel version differs from the workspace release version")
     if args.target.endswith("unknown-linux-gnu") and any(not re.match(r"(?:manylinux[0-9]*|linux)_", tag) for tag in platform.split(".")):
         refuse("wheel platform family differs from the requested GNU Linux target")
-    if not platform.endswith(f"_{arch}") or (args.target.endswith("apple-darwin") != platform.startswith("macosx_")):
+    if any(not tag.endswith(f"_{arch}") or (args.target.endswith("apple-darwin") != tag.startswith("macosx_")) for tag in platform.split(".")):
         refuse("wheel platform/architecture differs from the requested target")
     with zipfile.ZipFile(wheel) as archive:
         binary_name = f"onemessagebus_cli-{parts[1]}.data/scripts/onemessagebus"

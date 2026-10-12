@@ -16,7 +16,7 @@ import {
   changesOutputs,
 } from "../workflow-graph.mjs";
 import { mkdirSync } from "node:fs";
-import { parse } from "yaml";
+import { parse, stringify } from "yaml";
 const repository = "nickderobertis/onemessagebus";
 const scratch = mkdtempSync(
   join(process.env.ONEPIPELINE_NODE_SCRATCH_DIR ?? tmpdir(), "macos-policy-"),
@@ -668,6 +668,12 @@ test("malformed or inconsistent count telemetry never becomes a measurement", ()
       value.lifecycles[0].macSpendingRuns += 1;
     },
     (value) => {
+      value.lifecycles[0].runs[0].macJobs = [null];
+    },
+    (value) => {
+      value.lifecycles[0].runs[0].macJobs = [{ runner: ["ubuntu-latest"] }];
+    },
+    (value) => {
       value.runs = null;
     },
   ]) {
@@ -839,3 +845,91 @@ test("classifier and reporter refusal branches use their real CLI boundaries", (
   );
 });
 test.after(() => rmSync(scratch, { recursive: true, force: true }));
+
+test("source digest tracks content and deletion while excluding budget thresholds", () => {
+  const original = sourceDigest(scratch);
+  const file = join(scratch, "Cargo.toml");
+  const content = readFileSync(file);
+  writeFileSync(file, Buffer.concat([content, Buffer.from("\n# mutation\n")]));
+  assert.notEqual(sourceDigest(scratch), original);
+  writeFileSync(file, content);
+  assert.equal(sourceDigest(scratch), original);
+  rmSync(file);
+  assert.notEqual(sourceDigest(scratch), original);
+  writeFileSync(file, content);
+  const budget = join(scratch, "budgets.yaml");
+  writeFileSync(budget, "threshold: 1\n");
+  assert.equal(sourceDigest(scratch), original);
+  writeFileSync(budget, "threshold: 99\n");
+  assert.equal(sourceDigest(scratch), original);
+  rmSync(budget);
+});
+
+test("budget checker enforces recorded measurements and measurement errors", () => {
+  const original = parse(readFileSync(join(root, ".github/budgets.yaml"), "utf8"));
+  const fixture = join(scratch, ".git/check-budgets.yaml");
+  for (const outcome of ["within", "over", "error"]) {
+    const document = structuredClone(original);
+    for (const budget of document.budgets) {
+      budget.command[1] = join(root, ".github/macos-budget.mjs");
+      budget.command[5] = join(root, ".github/.telemetry/macos-policy.json");
+      if (outcome === "over") budget.threshold = 0;
+      if (outcome === "error") budget.command[5] += ".missing";
+    }
+    writeFileSync(fixture, stringify(document));
+    const result = spawnSync(process.execPath, [join(root, ".github/check-budgets.mjs"), fixture], {
+      cwd: root,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, outcome === "within" ? 0 : 1, result.stderr);
+    assert.match(
+      result.stdout,
+      outcome === "within" ? /within/ : outcome === "over" ? /over/ : /error/,
+    );
+  }
+});
+
+test("actual README installation command selects the PR repository and exact head", () => {
+  const ci = parse(readFileSync(join(root, ".github/workflows/ci.yml"), "utf8"));
+  const step = ci.jobs["macos-proof"].steps.find((step) => step.run?.includes("documented=$(grep"));
+  assert.ok(step);
+  const directory = join(scratch, ".git/readme-install");
+  mkdirSync(directory);
+  const command = readFileSync(join(root, "README.md"), "utf8")
+    .split("\n")
+    .find((line) => line.startsWith("cargo install --git "));
+  assert.ok(command);
+  writeFileSync(join(directory, "README.md"), command);
+  const cargo = join(directory, "cargo");
+  writeFileSync(cargo, '#!/bin/bash\nprintf "%s\n" "$@" > "$ARGV_RECORD"\n', { mode: 0o755 });
+  const record = join(directory, "argv");
+  const env = {
+    ...process.env,
+    PATH: `${directory}:${process.env.PATH}`,
+    ARGV_RECORD: record,
+    PR_REPOSITORY: "https://github.com/fork-owner/onemessagebus",
+    PR_HEAD: "0123456789abcdef",
+  };
+  const result = spawnSync("bash", ["-e", "-c", step.run], {
+    cwd: directory,
+    env,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const argv = readFileSync(record, "utf8").trim().split("\n");
+  assert.equal(argv[argv.indexOf("--git") + 1], env.PR_REPOSITORY);
+  assert.equal(argv[argv.indexOf("--rev") + 1], env.PR_HEAD);
+  assert.equal(argv.at(-1), "--force");
+  rmSync(record);
+  for (const content of ["", `${command}; touch unsafe`]) {
+    writeFileSync(join(directory, "README.md"), content);
+    const refused = spawnSync("bash", ["-e", "-c", step.run], {
+      cwd: directory,
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /no longer|characters/);
+    assert.throws(() => readFileSync(record));
+  }
+});
