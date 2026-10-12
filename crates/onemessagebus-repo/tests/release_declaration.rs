@@ -246,6 +246,7 @@ fn darwin_release_producer_retains_both_architectures_and_all_carriers() {
     assert!(workflow.contains("needs: [build-wheels, build-darwin]"));
     assert!(workflow.contains("needs: [build-npm, build-darwin]"));
     let builder = include_str!("../../../scripts/release-build.sh");
-    assert!(builder.contains("maturin build --release --locked --strip true"));
+    assert!(builder.contains("just _wheel-build \"$target\" \"$out\" true"));
+    assert!(include_str!("../../../justfile").contains("maturin build --release --locked --strip"));
     assert!(!builder.contains("cargo build"));
 }

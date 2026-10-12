@@ -20,6 +20,7 @@ except ModuleNotFoundError:
     from pip._vendor.packaging.version import Version
 
 SHA256 = NewType("SHA256", str)
+VERSION_SHAPE = r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 
 
 @dataclass(frozen=True)
@@ -87,7 +88,7 @@ def stage(args: argparse.Namespace) -> None:
         replace(inventory, hashes=replace(inventory.hashes, npm=digest)).write(inventory_path)
         return
     version = tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"]["version"]
-    if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", version):
+    if not isinstance(version, str) or not re.fullmatch(VERSION_SHAPE, version):
         refuse("workspace version is not a release version")
     wheel, = args.directory.glob("*.whl")
     parts = wheel.name.split("-")

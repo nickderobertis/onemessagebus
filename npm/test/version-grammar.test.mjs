@@ -20,6 +20,9 @@ import { fileURLToPath } from "node:url";
 import { VERSION } from "../../scripts/npm-build.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const STAGE = readFileSync(join(REPO_ROOT, "scripts", "release-stage.py"), "utf8");
+const STAGE_SHAPE = STAGE.match(/^VERSION_SHAPE = r"([^"]+)"$/m)?.[1];
+const POLICY = readFileSync(join(REPO_ROOT, ".github", "macos-policy.mjs"), "utf8");
 const PROBE = join(REPO_ROOT, "scripts", "release-probe.sh");
 
 /// The probe's grammar definitions, exactly as the script declares them.
@@ -88,6 +91,27 @@ const REFUSED = [
 ];
 
 describe("the release-version grammar", () => {
+  it("holds classifier and staging versions to the canonical registry grammar", () => {
+    assert.match(POLICY, /import \{ VERSION \} from "\.\.\/scripts\/npm-build\.mjs"/);
+    assert.match(POLICY, /VERSION\.test/);
+    assert.equal(STAGE_SHAPE, VERSION.source);
+    assert.match(STAGE, /re\.fullmatch\(VERSION_SHAPE, version\)/);
+    const corpus = [...ACCEPTED, ...REFUSED];
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        "import re,json,sys; shape=sys.argv[1]; print(json.dumps([bool(re.fullmatch(shape,v)) for v in json.loads(sys.stdin.read())]))",
+        STAGE_SHAPE,
+      ],
+      { input: JSON.stringify(corpus), encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(
+      JSON.parse(result.stdout),
+      corpus.map((value) => VERSION.test(value)),
+    );
+  });
   it("is one expression in npm-build.mjs and release-probe.sh", () => {
     const probe = bash('printf %s "$VERSION_SHAPE"');
     assert.ok(probe.length > 0, "release-probe.sh declares no VERSION_SHAPE");

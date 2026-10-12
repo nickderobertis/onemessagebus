@@ -50,16 +50,13 @@ test("all declared targets retain archives, wheels and npm carriers, and both SD
         staged.steps.some((step) => step.uses === action && step.with.architecture === arch),
       );
   const builder = read("scripts/release-build.sh");
-  assert.equal(builder.split("maturin build ").length - 1, 1);
+  assert.equal(builder.split("just _wheel-build ").length - 1, 1);
   assert.doesNotMatch(builder, /cargo build/);
-  assert.match(builder, /--release --locked --strip true/);
-  const buildPin = builder.match(/maturin==([0-9.]+)/)[1];
-  const wheelPin = read("justfile").match(/_wheel-build:[\s\S]*?maturin==([0-9.]+)/)[1];
-  assert.equal(
-    buildPin,
-    wheelPin,
-    "release builder and canonical wheel recipe use different packagers",
-  );
+  assert.match(builder, /just _wheel-build "\$target" "\$out" true/);
+  const recipe = read("justfile").match(/_wheel-build target=[\s\S]*?(?=\n\n)/)[0];
+  assert.equal(recipe.split("maturin build ").length - 1, 1);
+  assert.match(recipe, /--release --locked --strip/);
+  assert.match(recipe, /maturin==1\.14\.1/);
   const installer = read("scripts/release-local-install.sh");
   assert.ok(installer.includes('PATH="$(dirname "$node"):$PATH"\nexport PATH'));
   for (const proof of ["smoke-published.sh", "sdk-install/smoke.py", "sdk-install/smoke.mjs"])

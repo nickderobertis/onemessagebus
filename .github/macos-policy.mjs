@@ -3,6 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { VERSION } from "../scripts/npm-build.mjs";
 
 let configuration;
 try {
@@ -10,7 +11,7 @@ try {
 } catch {
   configuration = undefined;
 }
-const version = /^\d+\.\d+\.\d+(?:(?:[-+][0-9A-Za-z.-]+)|(?:\.dev\d+))?$/;
+const version = { test: (value) => VERSION.test(value.replace(/\.dev(\d+)$/, "-dev.$1")) };
 const own = (name) => /^onemessagebus(?:-.*)?$/.test(name) || name === "@onemessagebus/sdk";
 function git(...args) {
   return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });

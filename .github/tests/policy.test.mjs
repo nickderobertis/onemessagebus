@@ -265,7 +265,13 @@ test("invalid omission-policy configuration requires Mac coverage", () => {
   const directory = join(scratch, ".git/configuration-case");
   mkdirSync(directory, { recursive: true });
   const script = join(directory, "macos-policy.mjs");
-  writeFileSync(script, readFileSync(join(root, ".github/macos-policy.mjs")));
+  writeFileSync(
+    script,
+    readFileSync(join(root, ".github/macos-policy.mjs"), "utf8").replace(
+      '"../scripts/npm-build.mjs"',
+      JSON.stringify(join(root, "scripts/npm-build.mjs")),
+    ),
+  );
   const event = join(directory, "event.json");
   writeFileSync(event, JSON.stringify(payload()));
   for (const config of [
@@ -329,6 +335,12 @@ test("actual workflow/call graph resolves every event, ownership, diff and publi
                 ref: ["release-tag", "release-published"].includes(label)
                   ? `refs/tags/${releases[diff].tag}`
                   : "refs/heads/main",
+                classificationContext: {
+                  directory: scratch,
+                  base,
+                  head: histories[diff],
+                  event: pr,
+                },
                 payload:
                   name === "pull_request"
                     ? pr
@@ -394,6 +406,12 @@ test("actual workflow/call graph resolves every event, ownership, diff and publi
         action: "synchronize",
         branch: "main",
         payload: payload(fork),
+        classificationContext: {
+          directory: scratch,
+          base,
+          head: histories[diff],
+          event: payload(fork),
+        },
       };
       const policy = classify(event.payload, histories[diff]);
       const rows = resolveRun("ci.yml", graph["ci.yml"], event, policy);
@@ -416,7 +434,18 @@ test("actual workflow/call graph resolves every event, ownership, diff and publi
     }
   for (const pr of [{}, { pull_request: null }]) {
     const policy = classify(pr);
-    const event = { label: "unknown-pr", name: "pull_request", action: "synchronize", payload: pr };
+    const event = {
+      label: "unknown-pr",
+      name: "pull_request",
+      action: "synchronize",
+      payload: pr,
+      classificationContext: {
+        directory: scratch,
+        base,
+        head: histories["version-only"],
+        event: pr,
+      },
+    };
     const rows = resolveRun("ci.yml", graph["ci.yml"], event, policy);
     assert.ok(rows.some(isMac));
     recorded.push({ event: "unknown-pr", classification: policy, rows });
@@ -474,6 +503,12 @@ test("actual workflow/call graph resolves every event, ownership, diff and publi
               payload: payload(),
               ref: "refs/pull/release/merge",
               sha: release.head,
+              classificationContext: {
+                directory: scratch,
+                base: release.base,
+                head: release.head,
+                event: payload(),
+              },
             };
             const releasePolicy = classify(
               releaseEvent.payload,
@@ -881,7 +916,11 @@ test("budget checker enforces recorded measurements and measurement errors", () 
       cwd: root,
       encoding: "utf8",
     });
-    assert.equal(result.status, outcome === "within" ? 0 : 1, result.stderr);
+    assert.equal(
+      result.status,
+      outcome === "within" ? 0 : outcome === "over" ? 1 : 2,
+      result.stderr,
+    );
     assert.match(
       result.stdout,
       outcome === "within" ? /within/ : outcome === "over" ? /over/ : /error/,
@@ -932,4 +971,69 @@ test("actual README installation command selects the PR repository and exact hea
     assert.match(refused.stderr, /no longer|characters/);
     assert.throws(() => readFileSync(record));
   }
+});
+
+test("classifier infers events without GITHUB_EVENT_NAME and refuses unknown PR omissions", () => {
+  const env = { ...process.env };
+  delete env.GITHUB_EVENT_NAME;
+  const eventPath = join(scratch, ".git/inferred-event.json");
+  for (const [payload, required] of [
+    ["{", true],
+    ["null", true],
+    ["{}", true],
+    ['{"pull_request":null}', true],
+    ['{"ref":"refs/heads/main"}', false],
+    ['{"release":{"tag_name":"v0.9.0"}}', false],
+    ['{"workflow_run":{}}', false],
+    ['{"schedule":"0 0 * * *"}', false],
+    ['{"client_payload":{}}', false],
+    ['{"inputs":{}}', false],
+  ]) {
+    writeFileSync(eventPath, payload);
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(root, ".github/macos-policy.mjs"),
+        "classify",
+        "--event",
+        eventPath,
+        "--base",
+        base,
+        "--head",
+        base,
+      ],
+      { cwd: scratch, encoding: "utf8", env },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).macosRequired, required, payload);
+  }
+});
+
+test("actual classifier workflow output cannot substitute an omission", () => {
+  const job = parse(readFileSync(join(root, ".github/workflows/ci.yml"), "utf8")).jobs.changes;
+  job.steps.find((step) => step.id === "policy").run +=
+    '\necho "macos=false" >> "$GITHUB_OUTPUT"\n';
+  const event = payload(false, "feature");
+  assert.throws(
+    () =>
+      changesOutputs(job, classify(event, histories.source), {
+        directory: scratch,
+        base,
+        head: histories.source,
+        event,
+      }),
+    /outputs disagree/,
+  );
+});
+
+test("semantic release versions admit canonical prerelease plus build metadata", () => {
+  git("checkout", "-q", base);
+  writeFileSync(
+    join(scratch, "Cargo.toml"),
+    '[workspace.package]\nversion="0.9.1-rc.1+build.5"\nlicense="MIT"\n',
+  );
+  git("add", "Cargo.toml");
+  git("commit", "-qm", "chore: release prerelease");
+  assert.equal(classify(payload(), git("rev-parse", "HEAD")).isReleaseOnly, true);
+  git("checkout", "-q", base);
 });

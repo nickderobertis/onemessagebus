@@ -18,6 +18,32 @@ test("one real native build supplies identical wheel/archive/npm bytes and insta
     const target = run("rustc", ["-vV"]).match(/^host: (.+)$/m)[1];
     const stage = join(work, target),
       sdks = join(work, "sdks");
+    const occupied = join(work, "occupied");
+    mkdirSync(occupied);
+    const sentinel = join(occupied, "keep");
+    copyFileSync(join(root, "Cargo.toml"), sentinel);
+    for (const directory of [root, occupied]) {
+      const refused = spawnSync("bash", ["scripts/release-build.sh", target, directory], {
+        cwd: root,
+        encoding: "utf8",
+      });
+      assert.equal(refused.status, 2, refused.stderr);
+      assert.match(refused.stderr, /empty staging directory/);
+      assert.ok(readFileSync(join(root, "Cargo.toml")).length);
+      assert.ok(readFileSync(sentinel).length);
+    }
+    const logFailure = spawnSync(
+      "bash",
+      ["-c", "source scripts/release-quiet.sh; release_quiet echo should-not-run"],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, ONEPIPELINE_NODE_SCRATCH_DIR: join(work, "missing-scratch") },
+      },
+    );
+    assert.equal(logFailure.status, 1);
+    assert.match(logFailure.stderr, /select a writable directory and rerun/);
+    assert.doesNotMatch(logFailure.stdout, /should-not-run/);
     run("bash", ["scripts/release-build.sh", target, stage]);
     run("just", ["python-sdk-dist", sdks]);
     run("just", ["node-sdk-dist", sdks]);
@@ -39,11 +65,12 @@ with tarfile.open(p/info['archive']) as t:
 with tarfile.open(next(p.glob('*.tgz'))) as t:
  npm=t.extractfile('package/bin/onemessagebus').read()
  package=json.load(t.extractfile('package/package.json'))
-print(json.dumps(dict(hashes=[hashlib.sha256(b).hexdigest() for b in [binary,archive,npm]],metadata=metadata,tag=tag,contents=contents,package=package)))
+print(json.dumps(dict(hashes=[hashlib.sha256(b).hexdigest() for b in [binary,archive,npm]],metadata=metadata,tag=tag,contents=contents,package=package,checksum=(p/(info['archive']+'.sha256')).read_text(),archiveHash=hashlib.sha256((p/info['archive']).read_bytes()).hexdigest())))
 `,
         stage,
       ]),
     );
+    assert.equal(contract.checksum, `${contract.archiveHash}  ${inventory.archive}\n`);
     assert.deepEqual(contract.hashes, [inventory.sha256, inventory.sha256, inventory.sha256]);
     assert.match(
       contract.metadata,
@@ -152,6 +179,13 @@ if kind in ['no-wheel','many-wheel','bad-filename','bad-platform','old-version',
   fields=wheel.name.split('-'); tag=fields[-1].removesuffix('.whl')
   wrong=tag.rsplit('_',1)[0]+'_arm64' if kind=='compound-architecture' else 'win_'+tag.rsplit('_',1)[1]
   fields[-1]=wrong+'.'+tag+'.whl'; wheel.rename(p/'-'.join(fields))
+  wheel=p/'-'.join(fields); replacement=wheel.with_suffix('.changed')
+  with zipfile.ZipFile(wheel) as source, zipfile.ZipFile(replacement,'w') as out:
+   for member in source.infolist():
+    content=source.read(member.filename)
+    if member.filename.endswith('/WHEEL'): content=content.replace(b'Tag:',('Tag: py3-none-'+wrong+chr(10)+'Tag:').encode(),1)
+    out.writestr(member,content)
+  replacement.replace(wheel)
  if kind=='old-version':
   fields=wheel.name.split('-'); fields[1]='9999.0.0'; wheel.rename(p/'-'.join(fields))
 if kind in ['duplicate-script','bad-metadata','bad-tag']:
@@ -194,6 +228,8 @@ if kind=='missing-manifest': (cwd/'Cargo.toml').unlink()
         ],
         { cwd, encoding: "utf8" },
       );
+      if (kind.startsWith("compound-"))
+        assert.match(refused.stderr, /platform\/architecture|platform family/);
       assert.equal(
         refused.status,
         kind === "missing-manifest" ? 1 : 2,

@@ -8,6 +8,7 @@ import {
   writeFileSync,
   chmodSync,
   rmSync,
+  copyFileSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve, join, delimiter } from "node:path";
@@ -213,7 +214,8 @@ function declaredOutput(job, name, step, source) {
   )
     throw new Error(`unresolved production output contract: ${name}`);
 }
-export function changesOutputs(job, classification) {
+const policyOutputs = new Map();
+export function changesOutputs(job, classification, fixture) {
   declaredOutput(job, "crate", "affected", 'echo "crate=$(just affected-crate)"');
   declaredOutput(job, "sdk", "affected", 'echo "sdk=$(just affected-sdk)"');
   declaredOutput(job, "macos", "policy", 'echo "macos=');
@@ -227,12 +229,73 @@ export function changesOutputs(job, classification) {
     !policy.includes(")).isReleaseOnly")
   )
     throw new Error("unresolved production classifier command");
-  return {
-    crate: "true",
-    sdk: "true",
-    macos: String(classification.macosRequired),
-    "release-only": String(classification.isReleaseOnly),
-  };
+  if (!fixture?.directory || !fixture.base || !fixture.head)
+    throw new Error("missing git history for production classifier step");
+  const key = JSON.stringify([policy, fixture, classification]);
+  if (!policyOutputs.has(key)) {
+    const directory = mkdtempSync(join(fixture.directory, ".git/policy-step-"));
+    const eventPath = join(directory, "event.json"),
+      output = join(directory, "output");
+    const payload = structuredClone(fixture.event);
+    if (payload.pull_request?.head && payload.pull_request?.base) {
+      payload.pull_request.head.sha = fixture.head;
+      payload.pull_request.base.sha = fixture.base;
+    }
+    writeFileSync(eventPath, JSON.stringify(payload));
+    const step = job.steps.find((step) => step.id === "policy");
+    const declaredEnv = Object.fromEntries(
+      Object.entries(step.env ?? {}).map(([key, value]) => [
+        key,
+        render(value, { github: { event: payload } }),
+      ]),
+    );
+    // Unknown PR payloads deliberately test the classifier's unreadable-input refusal.
+    if (
+      payload.pull_request?.head &&
+      payload.pull_request?.base &&
+      (declaredEnv.BASE !== fixture.base || declaredEnv.HEAD !== fixture.head)
+    )
+      throw new Error("production classifier revision bindings disagree with the git history");
+    mkdirSync(join(directory, ".github"));
+    mkdirSync(join(directory, "scripts"));
+    for (const path of [
+      ".github/macos-policy.mjs",
+      ".github/macos-policy.json",
+      "scripts/npm-build.mjs",
+    ])
+      copyFileSync(join(root, path), join(directory, path));
+    try {
+      execFileSync("bash", ["-e", "-o", "pipefail", "-c", policy], {
+        cwd: directory,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GIT_DIR: join(fixture.directory, ".git"),
+          GIT_WORK_TREE: fixture.directory,
+          GITHUB_EVENT_NAME: "pull_request",
+          GITHUB_EVENT_PATH: eventPath,
+          GITHUB_OUTPUT: output,
+          BASE: declaredEnv.BASE || fixture.base,
+          HEAD: declaredEnv.HEAD || fixture.head,
+        },
+      });
+      const produced = Object.fromEntries(
+        readFileSync(output, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => line.split("=")),
+      );
+      if (
+        produced.macos !== String(classification.macosRequired) ||
+        produced["release-only"] !== String(classification.isReleaseOnly)
+      )
+        throw new Error("production classifier step outputs disagree with classification");
+      policyOutputs.set(key, produced);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+  return { crate: "true", sdk: "true", ...policyOutputs.get(key) };
 }
 function guardOutputs(job, variables) {
   const name = Object.hasOwn(job.outputs ?? {}, "publish") ? "publish" : "enabled";
@@ -400,7 +463,8 @@ export function resolveRun(file, workflow, event, classification, variables = {}
         }
       }
       let outputs = {};
-      if (id === "changes" && file === "ci.yml") outputs = changesOutputs(job, classification);
+      if (id === "changes" && file === "ci.yml")
+        outputs = changesOutputs(job, classification, event.classificationContext);
       else if (id === "guard") outputs = guardOutputs(job, variables);
       else if (id === "arches" && file === screencompCall)
         outputs = { matrix: screencompOutput(job, context) };
