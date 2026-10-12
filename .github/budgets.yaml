@@ -1,6 +1,6 @@
 schema_version: 1
 budgets:
-  # llmlint: ignore[budgets_track_product_owner_outcomes] The brief explicitly requests both jobs/run and Mac-spending runs/change bounds; the manager approved separate budgets for these two scheduling constraints.
+  # Budget exception (budgets_track_product_owner_outcomes): The brief explicitly requests both jobs/run and Mac-spending runs/change bounds; the manager approved separate budgets for these two scheduling constraints.
   - id: onemessagebus-macos-jobs-per-run
     description: >-
       Maximum macOS runner job instances in a resolved workflow run, including
@@ -15,7 +15,7 @@ budgets:
     direction: max
     threshold: 1
     labels: [github-workflows]
-  # llmlint: ignore[budgets_track_product_owner_outcomes] The brief explicitly requests both jobs/run and Mac-spending runs/change bounds; the manager approved separate budgets for these two scheduling constraints.
+  # Budget exception (budgets_track_product_owner_outcomes): The brief explicitly requests both jobs/run and Mac-spending runs/change bounds; the manager approved separate budgets for these two scheduling constraints.
   - id: onemessagebus-macos-runs-per-change
     description: >-
       Maximum distinct Mac-spending workflow runs over a single-push lifecycle:

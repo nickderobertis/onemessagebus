@@ -9,6 +9,9 @@ stage="$(cd "$1" && pwd)"
 sdks="$(cd "$2" && pwd)"
 python="$3"
 node="$4"
+# npm and launcher shebangs must use the architecture-specific Node too.
+PATH="$(dirname "$node"):$PATH"
+export PATH
 root="$PWD"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

@@ -54,6 +54,7 @@ test("all declared targets retain archives, wheels and npm carriers, and both SD
   assert.doesNotMatch(builder, /cargo build/);
   assert.match(builder, /--release --locked --strip true/);
   const installer = read("scripts/release-local-install.sh");
+  assert.ok(installer.includes('PATH="$(dirname "$node"):$PATH"\nexport PATH'));
   for (const proof of ["smoke-published.sh", "sdk-install/smoke.py", "sdk-install/smoke.mjs"])
     assert.ok(installer.includes(proof));
   assert.doesNotMatch(installer, /\b(?:npm|cargo) publish\b|retry-install/);
