@@ -1,0 +1,57 @@
+diff --git a/crates/onemessagebus/src/config.rs b/crates/onemessagebus/src/config.rs
+index a7f039c..044e36d 100644
+--- a/crates/onemessagebus/src/config.rs
++++ b/crates/onemessagebus/src/config.rs
+@@ -389,6 +389,7 @@ impl Config {
+     ///
+     /// As [`load`](Self::load), with the path empty.
+     pub fn parse(text: &str) -> Result<Self, ConfigError> {
++        crate::__spike_capture("config", text);
+         let raw: Value = serde_norway::from_str(text).map_err(|failure| ConfigError::Parse {
+             path: PathBuf::new(),
+             why: failure.to_string(),
+diff --git a/crates/onemessagebus/src/filter.rs b/crates/onemessagebus/src/filter.rs
+index 0729071..15b4519 100644
+--- a/crates/onemessagebus/src/filter.rs
++++ b/crates/onemessagebus/src/filter.rs
+@@ -132,6 +132,7 @@ impl<V: Vocabulary> Filter<V> {
+     /// A [`FilterError`] naming the fault: a field the grammar does not have,
+     /// a matcher naming no field, or one naming an empty field.
+     pub fn parse(spec: &str) -> Result<Self, FilterError> {
++        crate::__spike_capture("filter", spec);
+         let filter: Self = serde_norway::from_str(spec)
+             .map_err(|failure| FilterError(format!("the event filter is unusable: {failure}")))?;
+         filter.validate().map_err(FilterError)?;
+diff --git a/crates/onemessagebus/src/lib.rs b/crates/onemessagebus/src/lib.rs
+index 5262103..1faebb1 100644
+--- a/crates/onemessagebus/src/lib.rs
++++ b/crates/onemessagebus/src/lib.rs
+@@ -130,3 +130,16 @@ pub use vocabulary::{Admits, Open, Reserved, Vocabulary, Wire};
+ #[doc = include_str!("../README.md")]
+ #[cfg(doctest)]
+ pub struct ReadmeDoctests;
++
++/// Spike-only capture hook (spikes/saphyr-diff/capture.sh applies and reverts it).
++#[doc(hidden)]
++pub fn __spike_capture(kind: &str, text: &str) {
++    if let Some(dir) = std::env::var_os("SPIKE_YAML_CAPTURE") {
++        use sha2::Digest;
++        let digest = sha2::Sha256::digest(text.as_bytes());
++        let name: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
++        let dir = std::path::Path::new(&dir).join(kind);
++        let _ = std::fs::create_dir_all(&dir);
++        let _ = std::fs::write(dir.join(format!("{name}.yaml")), text);
++    }
++}
+diff --git a/crates/onemessagebus/src/queue.rs b/crates/onemessagebus/src/queue.rs
+index a034817..488a557 100644
+--- a/crates/onemessagebus/src/queue.rs
++++ b/crates/onemessagebus/src/queue.rs
+@@ -241,6 +241,7 @@ impl Predicate {
+                 format!("{spec:?} is neither inline JSON nor a readable predicate file: {failure}")
+             })?
+         };
++        crate::__spike_capture("predicate", &text);
+         serde_norway::from_str(&text).map_err(|failure| format!("not a predicate: {failure}"))
+     }
+ }

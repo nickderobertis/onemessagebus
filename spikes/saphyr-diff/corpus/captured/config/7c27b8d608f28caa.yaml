@@ -1,0 +1,16 @@
+version: 1
+transport: {kind: local, dir: "/tmp/.tmpMoLtvz/bus"}
+profile: desk
+schemas:
+  - "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+codecs:
+  desk:
+    queue: questions
+    select: op
+    frames:
+      raise:
+        schema: desk.outcome@1
+        bindings:
+          - do: raise
+            record: {kind: served, source: codec, blocking: false, message: "raised {frame.id}"}
+            response: {raised: "{frame.id}"}

@@ -8,7 +8,7 @@
 # release-plz release, and scripts/npm-build.mjs and maturin read it from here.
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = ["crates/*", "spikes/saphyr-diff"]
 
 [workspace.package]
 version = "0.9.0"

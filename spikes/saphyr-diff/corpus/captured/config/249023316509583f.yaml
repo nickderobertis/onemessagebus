@@ -1,0 +1,6 @@
+version: 1
+transport: {kind: local, dir: "/tmp/.tmpl05TNz/bus"}
+queues:
+  findings: {}
+validators:
+  - {on: findings, kind: command, command: ["/repo/target/debug/deps/e2e-7d2892949a98e5e9","--exact","validators::scripted_validator","scripted-validator-script=/tmp/.tmpl05TNz/script.json"], cache: {dir: "/tmp/.tmpl05TNz/passes", bar_fingerprint: ["/repo/target/debug/deps/e2e-7d2892949a98e5e9","--exact","validators::scripted_validator","scripted-validator-script=/tmp/.tmpl05TNz/script.json"]}}

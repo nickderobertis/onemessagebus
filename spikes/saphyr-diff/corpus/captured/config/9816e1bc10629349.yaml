@@ -1,0 +1,17 @@
+version: 1
+transport: {kind: local, dir: "/tmp/.tmpRE686a/bus"}
+profile: desk
+schemas:
+  - "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+queues:
+  greetings: {schema: demo.greeting@1}
+codecs:
+  example:
+    queue: questions
+    select: kind
+    frames:
+      hello:
+        schema: onemessagebus.transport-hello@1
+        bindings:
+          - do: answer
+            response: {accepted: true}

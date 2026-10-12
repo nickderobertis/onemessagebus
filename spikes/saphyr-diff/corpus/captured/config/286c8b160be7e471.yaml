@@ -1,0 +1,6 @@
+version: 1
+transport: {kind: local, dir: "/tmp/.tmpWuDbN8/bus"}
+queues:
+  frames: {schema: demo.frame@1}
+schemas:
+  - "https://127.0.0.1:33233/frames.json@8"

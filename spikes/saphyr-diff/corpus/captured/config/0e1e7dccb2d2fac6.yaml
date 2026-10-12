@@ -1,0 +1,5 @@
+version: 1
+transport: {kind: local, dir: "/tmp/.tmpwsZxoD/bus"}
+profile: desk
+schemas:
+  - "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
