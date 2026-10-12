@@ -9,7 +9,13 @@ all-features = true
 
 [advisories]
 yanked = "deny"
-ignore = []
+ignore = [
+    # `unsafe-libyaml` reaches the lockfile only through the dev-dependency chain
+    # `onemessagebus-repo` (dev) -> `onevcs` 0.21.0 -> `serde_yaml_ng` -> `unsafe-libyaml`.
+    # The notice is an unmaintained notice, not a known vulnerability. Remove this
+    # entry once onevcs moves to serde_norway and this repository links that release.
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is unmaintained (no known vulnerability), reached via onemessagebus-repo (dev) -> onevcs 0.21.0 -> serde_yaml_ng; remove once onevcs moves to serde_norway and this repository links that release" },
+]
 
 [licenses]
 # Permissive licenses compatible with this MIT-licensed workspace. Adding a
