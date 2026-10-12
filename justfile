@@ -66,6 +66,7 @@ _ensure-tool tool:
 # project by Nx, then the aggregate coverage floor over every project's run.
 # Deterministic quality gate, every project.
 check: fmt-check lint typecheck test doc coverage
+    @bash scripts/nx run-many -t budgets
     @echo "check: ok"
 
 # The complete pre-push bar: the deterministic gate plus the LLM-judge tier scoped
@@ -93,6 +94,7 @@ check-affected:
     @if [ "$(just affected-crate)" = "true" ]; then bash scripts/nx run workspace:coverage \
         && bash scripts/nx run onemessagebus-cross-language-e2e:test; \
       else bash scripts/nx-affected.sh -t test --exclude=onemessagebus-sdk-install-e2e; fi
+    @bash scripts/nx-affected.sh -t budgets
     @echo "check-affected: ok"
 
 # `true` when this branch's diff can reach a Rust crate project, so CI can skip

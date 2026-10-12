@@ -128,10 +128,6 @@ jobs:
             os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
-          - target: x86_64-apple-darwin
-            os: macos-latest
-          - target: aarch64-apple-darwin
-            os: macos-latest
           - target: x86_64-pc-windows-msvc
             os: windows-latest
     runs-on: ${{ matrix.os }}
@@ -156,11 +152,11 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   # crates.io publishing: runs whenever CARGO_REGISTRY_TOKEN is set. Not gated
-  # on `upload` — a flaky per-platform upload must not block the immutable crate
-  # publish, and vice versa. Kept out of release-plz (publish = false there) so
+  # on upload transport, but the staged Darwin assertions finish before registry
+  # publication. Kept out of release-plz (publish = false there) so
   # versioning/tagging stays decoupled from the registry push.
   publish-crate:
-    needs: guard
+    needs: [guard, build-darwin]
     if: ${{ needs.guard.outputs.publish == 'true' }}
     runs-on: ubuntu-latest
     permissions:
@@ -244,10 +240,6 @@ jobs:
             os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
-          - target: x86_64-apple-darwin
-            os: macos-latest
-          - target: aarch64-apple-darwin
-            os: macos-latest
           - target: x86_64-pc-windows-msvc
             os: windows-latest
     runs-on: ${{ matrix.os }}
@@ -272,7 +264,7 @@ jobs:
   # not Trusted Publishing: this project publishes with repo secrets, so no OIDC
   # identity is registered on PyPI and `id-token: write` would buy nothing.
   publish-pypi:
-    needs: build-wheels
+    needs: [build-wheels, build-darwin]
     if: ${{ vars.PYPI_PUBLISH == 'true' }}
     runs-on: ubuntu-latest
     steps:
@@ -320,7 +312,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -388,10 +380,6 @@ jobs:
             os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
-          - target: x86_64-apple-darwin
-            os: macos-latest
-          - target: aarch64-apple-darwin
-            os: macos-latest
           - target: x86_64-pc-windows-msvc
             os: windows-latest
     runs-on: ${{ matrix.os }}
@@ -429,7 +417,7 @@ jobs:
   # `registry-url` makes setup-node write an .npmrc that authenticates with
   # NODE_AUTH_TOKEN, so `npm publish` is token-authenticated.
   publish-npm:
-    needs: build-npm
+    needs: [build-npm, build-darwin]
     permissions:
       contents: read
     if: ${{ vars.NPM_PUBLISH == 'true' }}
@@ -490,7 +478,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -639,3 +627,102 @@ jobs:
           for tgz in "$GITHUB_WORKSPACE"/node-sdk-artifact/*.tgz; do
             bash scripts/publish-npm.sh "$tgz"
           done
+
+  # Apple Silicon builds both targets once. Rosetta runs the staged x86 products.
+  build-darwin:
+    needs: guard
+    permissions:
+      contents: read
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v6
+      - uses: ./.github/actions/setup-just
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Enable x86 execution
+        run: sudo softwareupdate --install-rosetta --agree-to-license
+      - uses: actions/setup-python@v5
+        id: python-x64
+        with:
+          python-version: "3.12"
+          architecture: x64
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          architecture: x64
+      - name: Keep x86 Node path
+        id: node-x64
+        run: echo "path=$(command -v node)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v5
+        id: python-arm64
+        with:
+          python-version: "3.12"
+          architecture: arm64
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          architecture: arm64
+      - name: Build and stage both Darwin targets
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: |
+          bash scripts/release-build.sh x86_64-apple-darwin staged/x86_64-apple-darwin
+          bash scripts/release-build.sh aarch64-apple-darwin staged/aarch64-apple-darwin
+      - name: Pack SDKs for local install assertions
+        run: |
+          just python-sdk-dist staged/sdks
+          just node-sdk-dist staged/sdks
+      - name: Install and run staged x86 CLI and SDK distributions
+        env:
+          PYTHON: ${{ steps.python-x64.outputs.python-path }}
+          NODE: ${{ steps.node-x64.outputs.path }}
+        run: bash scripts/release-local-install.sh staged/x86_64-apple-darwin staged/sdks "$PYTHON" "$NODE"
+      - name: Install and run staged arm64 CLI and SDK distributions
+        env:
+          PYTHON: ${{ steps.python-arm64.outputs.python-path }}
+        run: bash scripts/release-local-install.sh staged/aarch64-apple-darwin staged/sdks "$PYTHON" "$(command -v node)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-x86_64-apple-darwin
+          path: staged/x86_64-apple-darwin/*.whl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-aarch64-apple-darwin
+          path: staged/aarch64-apple-darwin/*.whl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-x86_64-apple-darwin
+          path: staged/x86_64-apple-darwin/*.tgz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-aarch64-apple-darwin
+          path: staged/aarch64-apple-darwin/*.tgz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darwin-archives
+          path: |
+            staged/**/*.tar.gz
+            staged/**/*.sha256
+            staged/**/binary.json
+
+  upload-darwin:
+    needs: build-darwin
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: darwin-archives
+          path: staged
+      - name: Attach archives and checksums after all Darwin assertions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$GITHUB_REF_NAME" staged/*/*.tar.gz staged/*/*.sha256 --clobber

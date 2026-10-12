@@ -75,7 +75,12 @@ describe("the platform matrix", () => {
     assert.ok(triples.length >= 1, "npm-build.mjs declares no targets");
     for (const job of ["upload", "build-wheels", "build-npm"]) {
       assert.deepEqual(
-        workflowTargets(workflow, job).sort(),
+        [
+          ...workflowTargets(workflow, job),
+          ...[...workflow.matchAll(/bash scripts\/release-build\.sh (\S+) staged\//g)].map(
+            (m) => m[1],
+          ),
+        ].sort(),
         [...triples].sort(),
         `release.yml's \`${job}\` matrix and npm-build.mjs's TARGETS disagree`,
       );

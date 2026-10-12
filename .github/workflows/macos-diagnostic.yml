@@ -1,0 +1,30 @@
+name: Mac diagnostic
+on:
+  workflow_dispatch:
+    inputs:
+      macos:
+        description: Run the Mac diagnostic explicitly
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  diagnostic:
+    if: github.event_name == 'workflow_dispatch' && inputs.macos == true
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: ./.github/actions/setup-just
+      - uses: astral-sh/setup-uv@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - run: just bootstrap
+      - run: just test-uninstrumented
+      - run: just nx run onemessagebus-sdk-install-e2e:test

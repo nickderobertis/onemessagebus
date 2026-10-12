@@ -1,0 +1,7 @@
+{
+  "nickderobertis/screencomp/.github/workflows/visual-docs-reusable.yml@v0.4.8": {
+    "path": ".github/tests/fixtures/screencomp-v0.4.8.yml",
+    "sha256": "68ef284961e7197af18d95ec5e61cf78de141b5ffce9e5ef5825e38bc52aac5e",
+    "source": "https://github.com/nickderobertis/screencomp/blob/v0.4.8/.github/workflows/visual-docs-reusable.yml"
+  }
+}

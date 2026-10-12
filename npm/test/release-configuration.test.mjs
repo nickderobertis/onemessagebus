@@ -26,11 +26,12 @@ describe("the release PR branch prefix", () => {
     assert.ok(prefix, "release-plz.toml declares no pr_branch_prefix");
   });
 
-  it("is what ci.yml gives the full sweep to", () => {
+  it("is what the shared semantic classifier recognizes", () => {
+    const policy = JSON.parse(read(".github", "macos-policy.json"));
+    assert.equal(policy.branchPrefix, prefix);
     const ci = read(".github", "workflows", "ci.yml");
-    const spelled = [...ci.matchAll(/startsWith\(github\.head_ref, '([^']+)'\)/g)].map((m) => m[1]);
-    assert.ok(spelled.length > 0, "ci.yml no longer routes the release PR by its branch prefix");
-    for (const found of spelled) assert.equal(found, prefix);
+    assert.match(ci, /node \.github\/macos-policy\.mjs classify/);
+    assert.match(ci, /needs\.changes\.outputs\.release-only == 'true'/);
   });
 
   it("is what release-plz.yml auto-merges by", () => {
