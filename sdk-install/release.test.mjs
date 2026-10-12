@@ -104,6 +104,60 @@ print(json.dumps(dict(hashes=[hashlib.sha256(b).hexdigest() for b in [binary,arc
     const python = resolve(root, run("which", ["python3"]).trim());
     const empty = join(work, "empty");
     mkdirSync(empty);
+    for (const kind of ["python-sdk", "missing-npm", "npm-cli", "missing-node"]) {
+      const badStage = join(work, kind, "stage"),
+        badSdks = join(work, kind, "sdks");
+      cpSync(stage, badStage, { recursive: true });
+      cpSync(sdks, badSdks, { recursive: true });
+      run("python3", [
+        "-c",
+        `
+import io,tarfile,zipfile,sys
+from pathlib import Path
+stage=Path(sys.argv[1]); sdks=Path(sys.argv[2]); kind=sys.argv[3]
+if kind=='python-sdk':
+ wheel=next(sdks.glob('*.whl')); replacement=wheel.with_suffix('.changed')
+ with zipfile.ZipFile(wheel) as source, zipfile.ZipFile(replacement,'w') as out:
+  for member in source.infolist():
+   content=source.read(member.filename)
+   if member.filename=='onemessagebus/__init__.py': content=b'raise RuntimeError("broken Python SDK fixture")'+bytes([10])
+   out.writestr(member,content)
+ replacement.replace(wheel)
+if kind=='missing-npm':
+ for package in stage.glob('*.tgz'): package.unlink()
+if kind=='npm-cli':
+ package=next(stage.glob('*.tgz')); replacement=package.with_suffix('.changed')
+ with tarfile.open(package) as source, tarfile.open(replacement,'w:gz') as out:
+  for member in source.getmembers():
+   content=source.extractfile(member).read() if member.isfile() else None
+   if member.name=='package/bin/onemessagebus': content=b'#!/bin/sh'+bytes([10])+b'exit 1'+bytes([10]); member.size=len(content)
+   out.addfile(member,io.BytesIO(content) if content is not None else None)
+ replacement.replace(package)
+`,
+        badStage,
+        badSdks,
+        kind,
+      ]);
+      const refused = spawnSync(
+        "bash",
+        [
+          "scripts/release-local-install.sh",
+          badStage,
+          badSdks,
+          python,
+          kind === "missing-node" ? "/missing-node" : process.execPath,
+        ],
+        { cwd: root, encoding: "utf8" },
+      );
+      assert.equal(refused.status, 1, [kind, refused.stderr].join(": "));
+      assert.match(refused.stderr, /command failed/);
+      assert.doesNotMatch(refused.stdout, /staged CLI and SDK installations passed/);
+      if (kind === "python-sdk") assert.match(refused.stderr, /broken Python SDK fixture/);
+      if (kind === "missing-npm") assert.match(refused.stderr, /ENOENT|no such file/i);
+      if (kind === "npm-cli") assert.match(refused.stderr, /staged npm CLI/);
+      if (kind === "missing-node")
+        assert.match(refused.stderr, /missing-node.*No such file|missing-node.*not found/);
+    }
     const operationalFailure = spawnSync(
       "bash",
       [

@@ -406,6 +406,10 @@ export function resolveRun(file, workflow, event, classification, variables = {}
         continue;
       }
       if (job.uses) {
+        if (job.strategy?.matrix !== undefined)
+          throw new Error(
+            "unsupported matrix on reusable workflow call; resolve every call leg before recording telemetry",
+          );
         const nested = called(job.uses);
         const inputs = Object.fromEntries(
           Object.entries(job.with ?? {}).map(([k, v]) => [k, render(v, context)]),

@@ -1152,3 +1152,24 @@ test("actual classifier outputs remain plain under the Nx colored environment", 
     else process.env.FORCE_COLOR = saved;
   }
 });
+
+test("unresolved reusable-call matrices fail explicitly rather than counting one invocation", () => {
+  const workflow = structuredClone(graph["visual-docs.yml"]);
+  const call = Object.values(workflow.jobs).find((job) => job.uses);
+  assert.ok(call);
+  call.strategy = { matrix: { lane: ["first", "second"] } };
+  assert.throws(
+    () =>
+      resolveRun(
+        "visual-docs.yml",
+        workflow,
+        {
+          name: "pull_request",
+          action: "synchronize",
+          payload: payload(),
+        },
+        { macosRequired: true },
+      ),
+    /unsupported matrix on reusable workflow call/,
+  );
+});
