@@ -314,6 +314,11 @@ test("actual workflow/call graph resolves every event, ownership, diff and publi
   });
   assert.equal(actual.status, 0, actual.stderr);
   assert.deepEqual(actual.stdout.trim().split("\n").sort(), required.sort());
+  assert.equal(triggered(graph["ci.yml"], { name: "pull_request", action: "closed" }), false);
+  assert.equal(
+    triggered(graph["visual-docs.yml"], { name: "pull_request", action: "closed" }),
+    true,
+  );
   const lifecycles = [];
   // Actual release-plz automation creates the downstream release PR and published release.
   assert.match(
@@ -356,6 +361,28 @@ test("actual workflow/call graph resolves every event, ownership, diff and publi
               event: releaseEvent.label,
               rows: resolveRun("ci.yml", graph["ci.yml"], releaseEvent, releasePolicy),
             };
+            const closures = [histories[diff], release.head].map((sha) => {
+              const closed = {
+                label: "merge-pr-closed",
+                name: "pull_request",
+                action: "closed",
+                sha,
+                ref: "refs/heads/main",
+                payload: payload(),
+              };
+              return {
+                event: closed.label,
+                trigger: { sha },
+                rows: Object.entries(graph)
+                  .filter(([, workflow]) => triggered(workflow, closed))
+                  .flatMap(([file, workflow]) =>
+                    resolveRun(file, workflow, closed, {
+                      macosRequired: false,
+                      isReleaseOnly: false,
+                    }),
+                  ),
+              };
+            });
             const runs = [
               ordinary,
               select("base-push"),
@@ -366,6 +393,7 @@ test("actual workflow/call graph resolves every event, ownership, diff and publi
               select("downstream"),
               select("repository-dispatch"),
               select("schedule"),
+              ...closures,
             ].flatMap((s) => {
               const files = [...new Set(s.rows.map((r) => r.runWorkflow))];
               return files.map((workflow) => ({

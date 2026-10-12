@@ -108,6 +108,12 @@ export function triggered(workflow, event) {
   if (Array.isArray(on)) return on.includes(event.name);
   if (!on || !(event.name in on)) return false;
   const options = on[event.name];
+  if (
+    event.name === "pull_request" &&
+    !options?.types &&
+    !["opened", "synchronize", "reopened"].includes(event.action)
+  )
+    return false;
   if (options?.types && !options.types.includes(event.action)) return false;
   if (options?.branches && !options.branches.includes(event.branch)) return false;
   if (options?.tags && !options.tags.includes(event.tag)) return false;
