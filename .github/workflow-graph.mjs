@@ -97,8 +97,10 @@ export function matrix(definition, context) {
         Object.fromEntries(entry.pairs().map(({ key, value }) => [key, value.coerceString()])),
       );
   }
-  if (!Object.keys(definition).some((k) => !["include", "exclude"].includes(k)))
-    return include.length ? include : [{}];
+  if (!Object.keys(definition).some((k) => !["include", "exclude"].includes(k))) {
+    if (!include.length) throw new Error("empty include-only matrix cannot resolve a runner");
+    return include;
+  }
   const original = legs.map((leg) => ({ ...leg }));
   for (const item of include) {
     let merged = false;
@@ -191,8 +193,11 @@ with open(os.path.join(os.environ['ONEMESSAGEBUS_WORKFLOW_ROOT'],'screencomp.tom
       .filter((line) => line.startsWith("matrix="));
     if (lines.length !== 1) throw new Error("screencomp producer did not emit one matrix");
     const matrix = lines[0].slice("matrix=".length);
-    if (!Array.isArray(JSON.parse(matrix).include) || !JSON.parse(matrix).include.length)
+    const include = JSON.parse(matrix).include;
+    if (!Array.isArray(include) || !include.length)
       throw new Error("screencomp producer emitted an empty or invalid matrix");
+    if (include.some((row) => !row || !["x86_64", "aarch64", "arm64"].includes(row.arch)))
+      throw new Error("unsupported architecture in screencomp matrix");
     captureMatrices.set(key, matrix);
     return matrix;
   } finally {
@@ -333,7 +338,7 @@ function called(reference) {
     const pinned = JSON.parse(read(".github/reusable-workflows.json"))[reference];
     if (!pinned) throw new Error(`unresolved pinned reusable call: ${reference}`);
     const source = read(pinned.path).replace(
-      /^ {2}# llmlint: ignore\[comments_earn_their_place\] Upstream snapshot text[^\n]*\n/gm,
+      /^ *# llmlint: ignore\[(?:comments_earn_their_place|boundary_inputs_validated)\] Upstream snapshot text[^\n]*\n/gm,
       "",
     );
     if (createHash("sha256").update(source).digest("hex") !== pinned.sha256)

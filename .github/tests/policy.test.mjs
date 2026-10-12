@@ -1037,3 +1037,36 @@ test("semantic release versions admit canonical prerelease plus build metadata",
   assert.equal(classify(payload(), git("rev-parse", "HEAD")).isReleaseOnly, true);
   git("checkout", "-q", base);
 });
+
+test("matrix expansion rejects empty include-only and preserves exclude/include interactions", () => {
+  assert.throws(() => matrix({ include: [] }, {}), /empty include-only/);
+  assert.deepEqual(
+    matrix(
+      {
+        os: ["ubuntu-latest", "windows-latest"],
+        exclude: [{ os: "windows-latest" }],
+        include: [{ os: "windows-latest", target: "windows" }, { extra: "shared" }],
+      },
+      {},
+    ),
+    [
+      { os: "ubuntu-latest", extra: "shared" },
+      { os: "windows-latest", target: "windows" },
+    ],
+  );
+  const snapshot = JSON.parse(readFileSync(join(root, ".github/reusable-workflows.json"), "utf8"));
+  const workflow = parse(readFileSync(join(root, Object.values(snapshot)[0].path), "utf8"));
+  for (const arches of ['["unknown"]', "[1]", "[]"]) {
+    assert.throws(
+      () =>
+        screencompOutput(workflow.jobs.arches, {
+          inputs: {
+            arches,
+            projects: "",
+            "gallery-title": "",
+          },
+        }),
+      /unsupported architecture|no \[capture\]\.arches|Command failed/,
+    );
+  }
+});

@@ -129,6 +129,8 @@ print(json.dumps(dict(hashes=[hashlib.sha256(b).hexdigest() for b in [binary,arc
       "old-version",
       "duplicate-script",
       "bad-metadata",
+      "bad-metadata-version",
+      "additional-tag",
       "bad-tag",
       "invalid-version",
       "missing-manifest",
@@ -149,7 +151,7 @@ print(json.dumps(dict(hashes=[hashlib.sha256(b).hexdigest() for b in [binary,arc
       run("python3", [
         "-c",
         `
-import io,json,tarfile,zipfile,sys
+import io,json,tarfile,zipfile,sys,re
 from pathlib import Path
 p=Path(sys.argv[1]); cwd=Path(sys.argv[2]); kind=sys.argv[3]
 inventory=p/'binary.json'
@@ -188,12 +190,16 @@ if kind in ['no-wheel','many-wheel','bad-filename','bad-platform','old-version',
   replacement.replace(wheel)
  if kind=='old-version':
   fields=wheel.name.split('-'); fields[1]='9999.0.0'; wheel.rename(p/'-'.join(fields))
-if kind in ['duplicate-script','bad-metadata','bad-tag']:
+if kind in ['duplicate-script','bad-metadata','bad-metadata-version','additional-tag','bad-tag']:
  wheel=next(p.glob('*.whl')); replacement=wheel.with_suffix('.changed')
  with zipfile.ZipFile(wheel) as source, zipfile.ZipFile(replacement,'w') as out:
   for member in source.infolist():
    content=source.read(member.filename)
    if kind=='bad-metadata' and member.filename.endswith('/METADATA'): content=content.replace(b'Name: onemessagebus-cli',b'Name: wrong-package')
+   if kind=='bad-metadata-version' and member.filename.endswith('/METADATA'):
+    content=re.sub(rb'(?m)^Version: .*$',b'Version: 9999.0.0',content)
+   if kind=='additional-tag' and member.filename.endswith('/WHEEL'):
+    content=content.replace(b'Tag:',b'Tag: py3-none-win_arm64'+bytes([10])+b'Tag:',1)
    if kind=='bad-tag' and member.filename.endswith('/WHEEL'): content=content.replace(b'Tag: py3-none-',b'Tag: py2-none-')
    out.writestr(member,content)
    if kind=='duplicate-script' and '.data/scripts/onemessagebus' in member.filename: out.writestr(member,content)

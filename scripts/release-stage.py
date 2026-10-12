@@ -109,7 +109,7 @@ def stage(args: argparse.Namespace) -> None:
         info = f"onemessagebus_cli-{parts[1]}.dist-info"
         metadata = BytesParser().parsebytes(archive.read(f"{info}/METADATA"))
         wheel_tags = BytesParser().parsebytes(archive.read(f"{info}/WHEEL")).get_all("Tag", [])
-        if metadata["Name"] != "onemessagebus-cli" or metadata["Version"] != parts[1] or any(f"py3-none-{tag}" not in wheel_tags for tag in platform.split(".")):
+        if metadata["Name"] != "onemessagebus-cli" or metadata["Version"] != parts[1] or set(wheel_tags) != {f"py3-none-{tag}" for tag in platform.split(".")}:
             refuse("wheel metadata identity or tag differs from its filename")
         binary = archive.read(binary_name)
     output = args.directory / "onemessagebus"
