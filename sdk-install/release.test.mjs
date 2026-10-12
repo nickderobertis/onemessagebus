@@ -88,6 +88,36 @@ replacement.replace(p)
     );
     assert.equal(mismatch.status, 2);
     assert.match(mismatch.stderr, /npm payload differs/);
+    // The standalone stage boundary rejects unsafe targets and lookalike scripts.
+    const unsafe = spawnSync(
+      "python3",
+      ["scripts/release-stage.py", "--target", "../../apple-darwin", "--directory", stage],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(unsafe.status, 2);
+    assert.match(unsafe.stderr, /unsupported target/);
+    run("python3", [
+      "-c",
+      `
+import zipfile,sys
+from pathlib import Path
+p=next(Path(sys.argv[1]).glob('*.whl')); replacement=p.with_suffix('.changed')
+with zipfile.ZipFile(p) as source, zipfile.ZipFile(replacement,'w') as out:
+ for member in source.infolist():
+  data=source.read(member.filename)
+  if '.data/scripts/onemessagebus' in member.filename: member.filename+='-other'
+  out.writestr(member,data)
+replacement.replace(p)
+`,
+      stage,
+    ]);
+    const lookalike = spawnSync(
+      "python3",
+      ["scripts/release-stage.py", "--target", target, "--directory", stage],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(lookalike.status, 2);
+    assert.match(lookalike.stderr, /exact onemessagebus script/);
     // Refuse malformed target before producing an artifact.
     const refused = spawnSync(
       "bash",

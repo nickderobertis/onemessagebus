@@ -180,8 +180,11 @@ function contextsEmittedBy(workflowText, where) {
           (carrier) =>
             carrier["runs-on"] !== "ubuntu-latest" ||
             carrier.if !== "always()" ||
+            carrier["continue-on-error"] !== undefined ||
             !carrier.steps?.some(
               (step) =>
+                step.if === undefined &&
+                step["continue-on-error"] === undefined &&
                 String(step.run ?? "").trim() ===
                   'node .github/macos-result.mjs "$REQUIRED" "$CHANGES" "$GATE" "$PROOF"' &&
                 step.env?.PROOF === `\${{ needs.${id}.result }}` &&

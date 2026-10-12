@@ -1,8 +1,17 @@
 // Repository-private resolver. Unknown calls or dynamic outputs are errors.
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
+import {
+  readFileSync,
+  readdirSync,
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  chmodSync,
+  rmSync,
+} from "node:fs";
 import { execFileSync } from "node:child_process";
-import { resolve } from "node:path";
+import { resolve, join, delimiter } from "node:path";
+import { tmpdir } from "node:os";
 import { parse } from "yaml";
 import { Lexer, Parser, Evaluator, data } from "@actions/expressions";
 import { truthy } from "@actions/expressions/result";
@@ -115,36 +124,144 @@ export function triggered(workflow, event) {
   )
     return false;
   if (options?.types && !options.types.includes(event.action)) return false;
+  for (const field of ["branches", "tags", "branches-ignore", "tags-ignore"]) {
+    if (
+      options?.[field] &&
+      (!Array.isArray(options[field]) ||
+        options[field].some(
+          (pattern) => typeof pattern !== "string" || /[!*?[\]{}+]/.test(pattern),
+        ))
+    )
+      throw new Error(`unresolved ${field} glob filter`);
+  }
+  if (options?.["branches-ignore"] || options?.["tags-ignore"])
+    throw new Error("unresolved ignored ref filter");
   if (options?.branches && !options.branches.includes(event.branch)) return false;
   if (options?.tags && !options.tags.includes(event.tag)) return false;
   if (options?.workflows && !options.workflows.includes(event.workflow)) return false;
   if (options?.paths || options?.["paths-ignore"]) throw new Error("unresolved event path filter");
   return true;
 }
-let captureMatrix;
-function screencompOutput() {
-  if (captureMatrix) return captureMatrix;
-  // The external CLI boundary is its committed capture config, never a count fixture.
-  const config = JSON.parse(
-    execFileSync(
-      "python3",
-      ["-c", 'import json,tomllib; print(json.dumps(tomllib.load(open("screencomp.toml","rb"))))'],
-      { cwd: root, encoding: "utf8" },
-    ),
+const captureMatrices = new Map();
+export function screencompOutput(job, context) {
+  const step = job.steps.find((step) => step.id === "read");
+  if (job.outputs?.matrix !== `\${{ steps.read.outputs.matrix }}` || !step?.run)
+    throw new Error("unresolved screencomp matrix producer");
+  const env = Object.fromEntries(
+    Object.entries(step.env ?? {}).map(([key, value]) => [key, String(render(value, context))]),
   );
-  if (!Array.isArray(config.capture?.arches) || !config.capture.arches.length)
-    throw new Error("unresolved screencomp arches");
-  captureMatrix = JSON.stringify({
-    include: config.capture.arches.map((arch) => ({
-      arch,
-      project: "",
-      current: "shots/current",
-      verify: "shots/verify",
-      manifest: "captures.json",
-      gallery_title: "Visual docs",
-    })),
-  });
-  return captureMatrix;
+  const key = JSON.stringify([step.run, env]);
+  if (captureMatrices.has(key)) return captureMatrices.get(key);
+  const work = mkdtempSync(
+    join(process.env.ONEPIPELINE_NODE_SCRATCH_DIR ?? tmpdir(), "screencomp-output-"),
+  );
+  try {
+    mkdirSync(join(work, "bin"));
+    // Only the external screencomp CLI is doubled. Its public config supplies
+    // the arches; the snapshot's actual bash/jq producer handles every input.
+    const shim = join(work, "bin/screencomp");
+    writeFileSync(
+      shim,
+      `#!/usr/bin/env python3
+import json,os,sys,tomllib
+if sys.argv[1:] != ['arches','--format','json']: raise SystemExit('unexpected screencomp command')
+with open(os.path.join(os.environ['ONEMESSAGEBUS_WORKFLOW_ROOT'],'screencomp.toml'),'rb') as source:
+ print(json.dumps(tomllib.load(source)['capture']['arches']))
+`,
+    );
+    chmodSync(shim, 0o755);
+    const output = join(work, "output");
+    writeFileSync(output, "");
+    execFileSync("bash", ["-euo", "pipefail", "-c", step.run], {
+      cwd: root,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ...env,
+        PATH: join(work, "bin") + delimiter + process.env.PATH,
+        GITHUB_OUTPUT: output,
+        ONEMESSAGEBUS_WORKFLOW_ROOT: root,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const lines = readFileSync(output, "utf8")
+      .trim()
+      .split("\n")
+      .filter((line) => line.startsWith("matrix="));
+    if (lines.length !== 1) throw new Error("screencomp producer did not emit one matrix");
+    const matrix = lines[0].slice("matrix=".length);
+    if (!Array.isArray(JSON.parse(matrix).include) || !JSON.parse(matrix).include.length)
+      throw new Error("screencomp producer emitted an empty or invalid matrix");
+    captureMatrices.set(key, matrix);
+    return matrix;
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+function declaredOutput(job, name, step, source) {
+  const producer = job.steps?.find((candidate) => candidate.id === step);
+  if (
+    !producer ||
+    producer.if !== undefined ||
+    producer["continue-on-error"] !== undefined ||
+    job["continue-on-error"] !== undefined
+  )
+    throw new Error(`conditional or masked output producer: ${name}`);
+  if (
+    job.outputs?.[name] !== `\${{ steps.${step}.outputs.${name} }}` ||
+    !job.steps?.find((candidate) => candidate.id === step)?.run?.includes(source)
+  )
+    throw new Error(`unresolved production output contract: ${name}`);
+}
+export function changesOutputs(job, classification) {
+  declaredOutput(job, "crate", "affected", 'echo "crate=$(just affected-crate)"');
+  declaredOutput(job, "sdk", "affected", 'echo "sdk=$(just affected-sdk)"');
+  declaredOutput(job, "macos", "policy", 'echo "macos=');
+  declaredOutput(job, "release-only", "policy", 'echo "release-only=');
+  const policy = job.steps.find((step) => step.id === "policy").run;
+  if (
+    !policy.includes(
+      'node .github/macos-policy.mjs classify --event "$GITHUB_EVENT_PATH" --base "$BASE" --head "$HEAD"',
+    ) ||
+    !policy.includes(")).macosRequired") ||
+    !policy.includes(")).isReleaseOnly")
+  )
+    throw new Error("unresolved production classifier command");
+  return {
+    crate: "true",
+    sdk: "true",
+    macos: String(classification.macosRequired),
+    "release-only": String(classification.isReleaseOnly),
+  };
+}
+function guardOutputs(job, variables) {
+  const name = Object.hasOwn(job.outputs ?? {}, "publish") ? "publish" : "enabled";
+  declaredOutput(job, name, "check", `echo "${name}=true"`);
+  const step = job.steps.find((step) => step.id === "check");
+  if (!step.run.includes(`echo "${name}=false"`))
+    throw new Error("unresolved guard negative output");
+  const work = mkdtempSync(
+    join(process.env.ONEPIPELINE_NODE_SCRATCH_DIR ?? tmpdir(), "guard-output-"),
+  );
+  try {
+    const output = join(work, "output");
+    writeFileSync(output, "");
+    execFileSync("bash", ["-euo", "pipefail", "-c", step.run], {
+      cwd: root,
+      env: {
+        ...process.env,
+        TOKEN: name === "publish" && variables.CARGO_PUBLISH === "false" ? "" : "present",
+        GITHUB_OUTPUT: output,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const lines = readFileSync(output, "utf8").trim().split("\n");
+    if (lines.length !== 1 || !new RegExp(`^${name}=(true|false)$`).test(lines[0]))
+      throw new Error("unresolved actual guard output");
+    return { [name]: lines[0].split("=")[1] };
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
 }
 const screencompCall =
   "nickderobertis/screencomp/.github/workflows/visual-docs-reusable.yml@v0.4.8";
@@ -152,7 +269,10 @@ function called(reference) {
   if (reference === screencompCall) {
     const pinned = JSON.parse(read(".github/reusable-workflows.json"))[reference];
     if (!pinned) throw new Error(`unresolved pinned reusable call: ${reference}`);
-    const source = read(pinned.path);
+    const source = read(pinned.path).replace(
+      /^ {2}# llmlint: ignore\[comments_earn_their_place\] Upstream snapshot text[^\n]*\n/gm,
+      "",
+    );
     if (createHash("sha256").update(source).digest("hex") !== pinned.sha256)
       throw new Error(`reusable snapshot digest mismatch: ${reference}`);
     return parse(source);
@@ -280,16 +400,10 @@ export function resolveRun(file, workflow, event, classification, variables = {}
         }
       }
       let outputs = {};
-      if (id === "changes" && file === "ci.yml")
-        outputs = {
-          crate: "true",
-          sdk: "true",
-          macos: String(classification.macosRequired),
-          "release-only": String(classification.isReleaseOnly),
-        };
-      else if (id === "guard")
-        outputs = { publish: variables.CARGO_PUBLISH ?? "true", enabled: "true" };
-      else if (id === "arches" && file === screencompCall) outputs = { matrix: screencompOutput() };
+      if (id === "changes" && file === "ci.yml") outputs = changesOutputs(job, classification);
+      else if (id === "guard") outputs = guardOutputs(job, variables);
+      else if (id === "arches" && file === screencompCall)
+        outputs = { matrix: screencompOutput(job, context) };
       else if (job.outputs) throw new Error(`unresolved job outputs: ${file}/${id}`);
       results[id] = { result: "success", outputs };
     }

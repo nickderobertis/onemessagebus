@@ -28,8 +28,8 @@
       "dependsOn": ["bootstrap"]
     },
     "typecheck": {
-      "command": "node .github/check-syntax.mjs",
-      "inputs": ["default"]
+      "executor": "nx:noop",
+      "//": "No typed sources: JavaScript syntax parsing runs in lint."
     },
     "budgets": {
       "command": "node .github/check-budgets.mjs",

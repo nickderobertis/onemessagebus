@@ -12,8 +12,11 @@ import {
   sourceDigest,
   matrix,
   triggered,
+  screencompOutput,
+  changesOutputs,
 } from "../workflow-graph.mjs";
 import { mkdirSync } from "node:fs";
+import { parse } from "yaml";
 const repository = "nickderobertis/onemessagebus";
 const scratch = mkdtempSync(
   join(process.env.ONEPIPELINE_NODE_SCRATCH_DIR ?? tmpdir(), "macos-policy-"),
@@ -163,6 +166,129 @@ test("manifest and lock versions require unchanged dependency content", () => {
       },
     );
     assert.equal(JSON.parse(result.stdout).isReleaseOnly, allowed, result.stderr);
+  }
+});
+test("every admitted manifest, lock and generated version surface preserves non-version content", () => {
+  const cases = [
+    [
+      "Cargo.lock",
+      'version=4\n[[package]]\nname="onemessagebus"\nversion="0.9.0"\n[[package]]\nname="onemessagebus-cli"\nversion="0.9.0"\ndependencies=["onemessagebus 0.9.0"]\n[[package]]\nname="external"\nversion="1.0.0"\nsource="registry+https://example.invalid"\n',
+      (text) => text.replaceAll("0.9.0", "0.10.0"),
+      (text) => text.replace('version="1.0.0"', 'version="2.0.0"'),
+    ],
+    [
+      "uv.lock",
+      'version=1\n[[package]]\nname="onemessagebus-cli"\nversion="0.9.0"\nsource={editable="."}\n[[package]]\nname="external"\nversion="1.0.0"\nsource={registry="https://example.invalid"}\n',
+      (text) => text.replaceAll("0.9.0", "0.10.0"),
+      (text) => text.replace("example.invalid", "changed.invalid"),
+    ],
+    [
+      "package-lock.json",
+      JSON.stringify({
+        version: "0.9.0",
+        packages: {
+          "": { version: "0.9.0" },
+          "npm/onemessagebus-cli": { version: "0.9.0" },
+          "npm/onemessagebus-sdk": { version: "0.9.0" },
+          "node_modules/external": { version: "1.0.0" },
+        },
+      }),
+      (text) => text.replaceAll("0.9.0", "0.10.0"),
+      (text) => text.replace("1.0.0", "2.0.0"),
+    ],
+    [
+      "python/onemessagebus-sdk/pyproject.toml",
+      '[project]\nname="onemessagebus"\nversion="0.9.0"\ndependencies=["onemessagebus-cli==0.9.0", "pydantic>=2"]\n',
+      (text) => text.replaceAll("0.9.0", "0.10.0"),
+      (text) => text.replace("pydantic>=2", "pydantic>=3"),
+    ],
+    ...["cli", "sdk"].map((name) => [
+      `npm/onemessagebus-${name}/package.json`,
+      JSON.stringify({
+        name: `onemessagebus-${name}`,
+        version: "0.9.0",
+        dependencies: { external: "1.0.0" },
+      }),
+      (text) => text.replaceAll("0.9.0", "0.10.0"),
+      (text) => text.replace("1.0.0", "2.0.0"),
+    ]),
+    [
+      "npm/onemessagebus-sdk/src/version.ts",
+      'export const SDK_VERSION: string = "0.9.0";\nexport const CLI_VERSION: string = "0.9.0";\nexport const other = 1;\n',
+      (text) => text.replaceAll("0.9.0", "0.10.0"),
+      (text) => text.replace("other = 1", "other = 2"),
+    ],
+    [
+      "python/onemessagebus-sdk/src/onemessagebus/_version.py",
+      '__version__ = "0.9.0"\nCLI_VERSION = "0.9.0"\nother = 1\n',
+      (text) => text.replaceAll("0.9.0", "0.10.0"),
+      (text) => text.replace("other = 1", "other = 2"),
+    ],
+  ];
+  for (const [path, before, bump, nonVersion] of cases) {
+    git("checkout", "-q", "--detach", base);
+    mkdirSync(join(scratch, path, ".."), { recursive: true });
+    writeFileSync(join(scratch, path), before);
+    git("add", ".");
+    git("commit", "-qm", "surface baseline");
+    const start = git("rev-parse", "HEAD");
+    const after = bump(before);
+    writeFileSync(join(scratch, path), after);
+    git("add", ".");
+    git("commit", "-qm", "plain versions");
+    assert.equal(
+      classify(payload(), git("rev-parse", "HEAD"), "pull_request", start).isReleaseOnly,
+      true,
+      path,
+    );
+    writeFileSync(join(scratch, path), nonVersion(after));
+    git("add", ".");
+    git("commit", "-qm", "mixed changes");
+    assert.equal(
+      classify(payload(), git("rev-parse", "HEAD"), "pull_request", start).macosRequired,
+      true,
+      path,
+    );
+    if (path.endsWith("version.ts") || path.endsWith("_version.py")) {
+      writeFileSync(join(scratch, path), after.replaceAll("0.10.0", "invalid"));
+      git("add", ".");
+      git("commit", "-qm", "invalid declarations");
+      assert.equal(
+        classify(payload(), git("rev-parse", "HEAD"), "pull_request", start).macosRequired,
+        true,
+        path,
+      );
+    }
+  }
+});
+test("invalid omission-policy configuration requires Mac coverage", () => {
+  const directory = join(scratch, ".git/configuration-case");
+  mkdirSync(directory, { recursive: true });
+  const script = join(directory, "macos-policy.mjs");
+  writeFileSync(script, readFileSync(join(root, ".github/macos-policy.mjs")));
+  const event = join(directory, "event.json");
+  writeFileSync(event, JSON.stringify(payload()));
+  for (const config of [
+    { repository, branchPrefix: "" },
+    { repository: "", branchPrefix: "release-plz-" },
+    null,
+    "malformed",
+  ]) {
+    writeFileSync(
+      join(directory, "macos-policy.json"),
+      typeof config === "string" ? config : JSON.stringify(config),
+    );
+    const result = spawnSync(
+      process.execPath,
+      [script, "classify", "--event", event, "--base", base, "--head", histories["version-only"]],
+      {
+        cwd: scratch,
+        encoding: "utf8",
+        env: { ...process.env, GITHUB_EVENT_NAME: "pull_request" },
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).macosRequired, true);
   }
 });
 const classes = [
@@ -487,7 +613,11 @@ test("real carriers fail on failed/cancelled/missing work and admit only classif
       gate === "success" &&
       ((required === "true" && proof === "success") ||
         (required === "false" && proof === "skipped"));
-    assert.equal(result.status, valid ? 0 : 1, [required, changes, gate, proof].join("/"));
+    assert.equal(
+      result.status,
+      valid ? 0 : !["true", "false"].includes(required) ? 2 : 1,
+      [required, changes, gate, proof].join("/"),
+    );
     if (valid && required === "false") assert.match(result.stdout, /omitted/);
   }
 });
@@ -519,5 +649,78 @@ test("reporters consume recorded telemetry and reject missing or stale data", ()
     );
     assert.equal(result.status, 2);
   }
+});
+test("malformed or inconsistent count telemetry never becomes a measurement", () => {
+  const telemetry = JSON.parse(
+    readFileSync(join(root, ".github/.telemetry/macos-policy.json"), "utf8"),
+  );
+  const path = join(scratch, ".git/malformed-telemetry.json");
+  for (const mutate of [
+    (value) => {
+      value.jobsPerRun = -1;
+    },
+    (value) => {
+      value.runsPerChange = 0.5;
+    },
+    (value) => {
+      value.jobsPerRun += 1;
+    },
+    (value) => {
+      value.lifecycles[0].macSpendingRuns += 1;
+    },
+    (value) => {
+      value.runs = null;
+    },
+  ]) {
+    const changed = structuredClone(telemetry);
+    mutate(changed);
+    writeFileSync(path, JSON.stringify(changed));
+    const result = spawnSync(
+      process.execPath,
+      [join(root, ".github/macos-budget.mjs"), "--metric", "jobs-per-run", "--telemetry", path],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /invalid|inconsistent/);
+  }
+});
+test("real reusable matrix producer honors overrides and output contracts fail closed", () => {
+  const snapshot = JSON.parse(readFileSync(join(root, ".github/reusable-workflows.json"), "utf8"));
+  const workflow = parse(readFileSync(join(root, Object.values(snapshot)[0].path), "utf8"));
+  const output = JSON.parse(
+    screencompOutput(workflow.jobs.arches, {
+      inputs: {
+        arches: '["x86_64","aarch64"]',
+        projects: '[{"id":"example","current":"shots/example","verify":"shots/verify"}]',
+        "gallery-title": "Example",
+      },
+    }),
+  );
+  assert.deepEqual(
+    output.include.map((row) => row.arch),
+    ["x86_64", "aarch64"],
+  );
+  assert.ok(
+    output.include.every((row) => row.project === "example" && row.current === "shots/example"),
+  );
+  for (const mutate of [
+    (job) => {
+      delete job.outputs.macos;
+    },
+    (job) => {
+      job.steps.find((step) => step.id === "affected").run = "echo no-output";
+    },
+    (job) => {
+      job.steps.find((step) => step.id === "policy").run = "echo no-classifier";
+    },
+  ]) {
+    const job = structuredClone(graph["ci.yml"].jobs.changes);
+    mutate(job);
+    assert.throws(() => changesOutputs(job, { macosRequired: true }), /unresolved/);
+  }
+  assert.throws(
+    () => triggered({ on: { push: { branches: ["main*"] } } }, { name: "push", branch: "main" }),
+    /unresolved.*glob/,
+  );
 });
 test.after(() => rmSync(scratch, { recursive: true, force: true }));

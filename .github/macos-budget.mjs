@@ -15,6 +15,44 @@ try {
   const telemetry = JSON.parse(readFileSync(args[3], "utf8"));
   if (telemetry.schemaVersion !== 1 || telemetry.sourceDigest !== sourceDigest())
     throw new Error("missing or stale telemetry; run github-workflows:test against this tree");
+  const count = (value) => Number.isInteger(value) && value >= 0;
+  if (
+    !count(telemetry.jobsPerRun) ||
+    !count(telemetry.runsPerChange) ||
+    !Array.isArray(telemetry.runs) ||
+    !telemetry.runs.length ||
+    !Array.isArray(telemetry.lifecycles) ||
+    !telemetry.lifecycles.length
+  )
+    throw new Error("invalid telemetry counts or runs; regenerate github-workflows:test");
+  for (const run of telemetry.runs)
+    if (
+      !run ||
+      !Array.isArray(run.jobs) ||
+      run.jobs.some(
+        (job) =>
+          !job ||
+          !Array.isArray(job.runner) ||
+          !job.runner.some((label) => typeof label === "string" && label.startsWith("macos-")),
+      )
+    )
+      throw new Error("invalid Mac job rows; regenerate github-workflows:test");
+  for (const lifecycle of telemetry.lifecycles) {
+    if (
+      !lifecycle ||
+      !Array.isArray(lifecycle.runs) ||
+      lifecycle.runs.some((run) => !run || !Array.isArray(run.macJobs)) ||
+      !count(lifecycle.macSpendingRuns) ||
+      lifecycle.macSpendingRuns !== lifecycle.runs.filter((run) => run.macJobs.length).length
+    )
+      throw new Error("inconsistent lifecycle count; regenerate github-workflows:test");
+  }
+  if (
+    telemetry.jobsPerRun !== Math.max(...telemetry.runs.map((run) => run.jobs.length)) ||
+    telemetry.runsPerChange !==
+      Math.max(...telemetry.lifecycles.map((lifecycle) => lifecycle.macSpendingRuns))
+  )
+    throw new Error("inconsistent telemetry measurements; regenerate github-workflows:test");
   const value = args[1] === "jobs-per-run" ? telemetry.jobsPerRun : telemetry.runsPerChange;
   const detail = JSON.stringify({
     metric: args[1],

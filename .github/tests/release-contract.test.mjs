@@ -42,7 +42,7 @@ test("all declared targets retain archives, wheels and npm carriers, and both SD
   assert.deepEqual(release.jobs["publish-crate"].needs, ["guard", "build-darwin"]);
   assert.equal(release.jobs["upload-darwin"]["runs-on"], "ubuntu-latest");
   assert.equal(release.jobs["upload-darwin"].needs, "build-darwin");
-  assert.match(commands, /softwareupdate|release-local-install/);
+  assert.match(commands, /arch -x86_64 bash scripts\/release-local-install/);
   assert.ok(staged.steps.some((step) => step.run?.includes("softwareupdate --install-rosetta")));
   for (const arch of ["x64", "arm64"])
     for (const action of ["actions/setup-python@v5", "actions/setup-node@v4"])

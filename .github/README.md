@@ -12,8 +12,8 @@ login alone grants no omission. Unknown PR input requires Mac coverage.
 
 `github-workflows:test` resolves the actual YAML and uses the published Actions
 expression evaluator. The external screencomp call is read from its digest-pinned
-source snapshot; its dynamic architecture output comes from this checkout's
-`screencomp.toml`. Unrecognized calls, outputs and runners are errors. New reusable
+source snapshot; its actual bash/jq matrix producer runs over every input,
+with only the external CLI's architecture read supplied from `screencomp.toml`. Unrecognized calls, outputs and runners are errors. New reusable
 calls need an explicit resolution before their scheduling can be measured.
 
 `just nx run github-workflows:budgets` records telemetry through the uncached test

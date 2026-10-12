@@ -1,6 +1,17 @@
 #!/usr/bin/env node
 // GitHub's job outcomes are the boundary: omission is valid only by policy.
-const [required, changes, gate, proof] = process.argv.slice(2);
+const args = process.argv.slice(2);
+if (
+  args.length !== 4 ||
+  !["true", "false"].includes(args[0]) ||
+  args.slice(1).some((value) => !["success", "failure", "cancelled", "skipped", ""].includes(value))
+) {
+  console.error(
+    "macos-result: use REQUIRED(true|false) CHANGES GATE PROOF; job outcomes may be empty when missing",
+  );
+  process.exit(2);
+}
+const [required, changes, gate, proof] = args;
 if (
   !["true", "false"].includes(required) ||
   changes !== "success" ||

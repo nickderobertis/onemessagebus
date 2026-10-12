@@ -682,7 +682,7 @@ jobs:
         env:
           PYTHON: ${{ steps.python-x64.outputs.python-path }}
           NODE: ${{ steps.node-x64.outputs.path }}
-        run: bash scripts/release-local-install.sh staged/x86_64-apple-darwin staged/sdks "$PYTHON" "$NODE"
+        run: arch -x86_64 bash scripts/release-local-install.sh staged/x86_64-apple-darwin staged/sdks "$PYTHON" "$NODE"
       - name: Install and run staged arm64 CLI and SDK distributions
         env:
           PYTHON: ${{ steps.python-arm64.outputs.python-path }}

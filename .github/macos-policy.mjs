@@ -4,7 +4,12 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const configuration = JSON.parse(readFileSync(new URL("./macos-policy.json", import.meta.url)));
+let configuration;
+try {
+  configuration = JSON.parse(readFileSync(new URL("./macos-policy.json", import.meta.url)));
+} catch {
+  configuration = undefined;
+}
 const version = /^\d+\.\d+\.\d+(?:(?:[-+][0-9A-Za-z.-]+)|(?:\.dev\d+))?$/;
 const own = (name) => /^onemessagebus(?:-.*)?$/.test(name) || name === "@onemessagebus/sdk";
 function git(...args) {
@@ -31,15 +36,17 @@ function normalized(path, text) {
     )
   ) {
     const declarations = path.endsWith(".ts")
-      ? /((?:CLI_VERSION|SDK_VERSION): string = ")([^"]+)(";)/g
-      : /((?:CLI_VERSION|__version__) = ")([^"]+)(")/g;
-    let matches = 0;
+      ? /^(export const (?:CLI_VERSION|SDK_VERSION): string = ")([^"]+)(";)$/gm
+      : /^((?:CLI_VERSION|__version__) = ")([^"]+)(")$/gm;
+    const names = new Set();
     const result = text.replace(declarations, (_, prefix, literal, suffix) => {
       if (!version.test(literal)) throw new Error("invalid generated version");
-      matches++;
+      const name = prefix.match(/CLI_VERSION|SDK_VERSION|__version__/)[0];
+      if (names.has(name)) throw new Error("duplicate generated version declaration");
+      names.add(name);
       return `${prefix}<version>${suffix}`;
     });
-    if (matches !== 2) throw new Error("unreadable generated SDK versions");
+    if (names.size !== 2) throw new Error("unreadable generated SDK versions");
     return result;
   }
   const value = parsed(path, text);
@@ -77,6 +84,7 @@ export function classify(event, base, head) {
     ? process.env.GITHUB_EVENT_NAME === "pull_request"
     : event?.pull_request !== undefined ||
       !event ||
+      typeof event !== "object" ||
       !["ref", "release", "workflow_run", "schedule", "client_payload", "inputs"].some(
         (key) => key in event,
       );
@@ -84,6 +92,16 @@ export function classify(event, base, head) {
     return { isReleaseOnly: false, macosRequired: false, reason: "non-PR automatic event" };
   const required = (reason) => ({ isReleaseOnly: false, macosRequired: true, reason });
   try {
+    if (
+      !configuration ||
+      typeof configuration.repository !== "string" ||
+      !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(configuration.repository) ||
+      configuration.repository.includes("..") ||
+      typeof configuration.branchPrefix !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(configuration.branchPrefix) ||
+      configuration.branchPrefix.includes("..")
+    )
+      throw new Error("invalid repository or nonempty release branch prefix in macos-policy.json");
     const pr = event.pull_request;
     if (!pr?.head || !pr.base || !pr.user) return required("unreadable PR identity");
     if (

@@ -49,7 +49,7 @@ import { rmSync } from "node:fs";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { parse } from "yaml";
+import { parse, stringify } from "yaml";
 
 import {
   CI_WORKFLOW,
@@ -381,6 +381,35 @@ describe("the contexts ci.yml emits", () => {
 
   it("refuses execution-context exclusions with dishonest result carriers", () => {
     for (const mutate of [
+      (text) =>
+        text.replace(
+          "    name: cross (macos-latest)",
+          "    name: cross (macos-latest)\n    continue-on-error: true",
+        ),
+      (text) =>
+        text.replace(
+          "      - name: Report the Mac lane result",
+          "      - name: Report the Mac lane result\n        if: false",
+        ),
+      (text) =>
+        text.replace(
+          "      - name: Report the Mac lane result",
+          "      - name: Report the Mac lane result\n        continue-on-error: true",
+        ),
+      (text) => {
+        const definition = parse(text);
+        definition.jobs["cross-macos"]["runs-on"] = "windows-latest";
+        return stringify(definition);
+      },
+      (text) =>
+        text.replace(`          PROOF: \${{ needs.macos-proof.result }}`, "          PROOF: wrong"),
+      (text) =>
+        text.replace(
+          "    needs: [changes, gate, macos-proof]",
+          "    needs: [changes, macos-proof]",
+        ),
+      (text) => text.slice(0, text.indexOf("\n  sdk-install-macos:")),
+
       (text) => text.replace("    if: always()", "    if: success()"),
       (text) =>
         text.replace(

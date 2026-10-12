@@ -237,6 +237,7 @@ jobs:
             exit 1
           }
 
+  # llmlint: ignore[comments_earn_their_place] Upstream snapshot text is retained for digest reconciliation; this divider is provenance, not repository-authored commentary.
   # ---- Arches: resolve the capture arch matrix ------------------------------
   # The single source of truth for which arches to capture is [capture].arches in
   # screencomp.toml. Install the CLI and let it parse the list, so the matrix
@@ -316,6 +317,7 @@ jobs:
             ]}')"
           echo "matrix=$combined" >>"$GITHUB_OUTPUT"
 
+  # llmlint: ignore[comments_earn_their_place] Upstream snapshot text is retained for digest reconciliation; this divider is provenance, not repository-authored commentary.
   # ---- Capture: the ONLY job that runs inside your container ----------------
   # One lane per configured arch, each on a runner of that arch so the pixels
   # match the committed baseline's arch.
@@ -373,6 +375,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # llmlint: ignore[comments_earn_their_place] Upstream snapshot text is retained for digest reconciliation; this divider is provenance, not repository-authored commentary.
   # ---- Report: runs on the HOST runner, where gh/git/screencomp live --------
   # Thin glue: check out the PR branch, install the CLI, pull this arch's capture
   # artifact, then hand the entire downstream half — reproducibility gate,
@@ -469,6 +472,7 @@ jobs:
           pages-token: ${{ secrets.pages-token }}
           github-token: ${{ secrets.push-token || github.token }}
 
+  # llmlint: ignore[comments_earn_their_place] Upstream snapshot text is retained for digest reconciliation; this divider is provenance, not repository-authored commentary.
   # ---- Aggregate comment: ONE combined comment for a many-project monorepo ---
   # Runs only in aggregated mode (comment-mode: aggregated), on a PR, after every
   # report lane has suppressed its own per-project comment. It pulls ALL lanes'
@@ -511,6 +515,7 @@ jobs:
           pages-repository: ${{ inputs.pages-repository }}
           github-token: ${{ secrets.push-token || github.token }}
 
+  # llmlint: ignore[comments_earn_their_place] Upstream snapshot text is retained for digest reconciliation; this divider is provenance, not repository-authored commentary.
   # ---- Cleanup: drop a closed PR's preview from gh-pages ---------------------
   # keep_files:true keeps a main deploy from clobbering live /pr-<n>/ previews,
   # but nothing else removes them — so without this they pile up forever. Runs
@@ -532,6 +537,7 @@ jobs:
           repo: ${{ inputs.pages-repository || github.repository }}
           token: ${{ inputs.pages-repository && secrets.pages-token || secrets.push-token || github.token }}
 
+  # llmlint: ignore[comments_earn_their_place] Upstream snapshot text is retained for digest reconciliation; this divider is provenance, not repository-authored commentary.
   # ---- Prune: bound gh-pages history so old galleries don't accrete ----------
   # Every deploy commits PNG blobs; a changed shot leaves its old blob in history
   # forever. The `gh-pages-maintenance` action keeps the most recent gallery
