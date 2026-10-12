@@ -346,7 +346,6 @@ test("actual workflow/call graph resolves every event, ownership, diff and publi
               const policy = classify(name === "pull_request" ? pr : {}, histories[diff], name);
               const rows = [];
               for (const [file, workflow] of Object.entries(graph)) {
-                // Match the production trigger, including branch/tag and event activity.
                 if (triggered(workflow, event))
                   rows.push(
                     ...resolveRun(file, workflow, event, policy, {
@@ -721,6 +720,122 @@ test("real reusable matrix producer honors overrides and output contracts fail c
   assert.throws(
     () => triggered({ on: { push: { branches: ["main*"] } } }, { name: "push", branch: "main" }),
     /unresolved.*glob/,
+  );
+});
+test("classifier and reporter refusal branches use their real CLI boundaries", () => {
+  const event = join(scratch, ".git/refusal-event.json");
+  writeFileSync(event, JSON.stringify(payload()));
+  const classifier = join(root, ".github/macos-policy.mjs");
+  for (const [comparisonBase, head] of [
+    [base, base],
+    ["-bad", histories.source],
+  ]) {
+    assert.equal(classify(payload(), head, "pull_request", comparisonBase).macosRequired, true);
+  }
+  git("checkout", "-q", "--detach", base);
+  writeFileSync(join(scratch, "Cargo.lock"), "version=4\n");
+  git("add", ".");
+  git("commit", "-qm", "added admitted file");
+  const added = git("rev-parse", "HEAD");
+  assert.equal(classify(payload(), added).macosRequired, true);
+  git("rm", "-q", "Cargo.lock");
+  git("commit", "-qm", "deleted admitted file");
+  assert.equal(
+    classify(payload(), git("rev-parse", "HEAD"), "pull_request", added).macosRequired,
+    true,
+  );
+  for (const argv of [
+    [],
+    ["wrong"],
+    ["classify", "--event", event],
+    ["classify", "--event", event, "--base", base, "--bad", base],
+  ]) {
+    assert.equal(
+      spawnSync(process.execPath, [classifier, ...argv], { cwd: scratch, encoding: "utf8" }).status,
+      2,
+    );
+  }
+  for (const [path, text] of [
+    [
+      "npm/onemessagebus-sdk/src/version.ts",
+      'export const SDK_VERSION: string = "0.9.0";\nexport const CLI_VERSION: string = "0.9.0";\n',
+    ],
+    [
+      "python/onemessagebus-sdk/src/onemessagebus/_version.py",
+      '__version__ = "0.9.0"\nCLI_VERSION = "0.9.0"\n',
+    ],
+  ]) {
+    git("checkout", "-q", "--detach", base);
+    mkdirSync(join(scratch, path, ".."), { recursive: true });
+    writeFileSync(join(scratch, path), text);
+    git("add", ".");
+    git("commit", "-qm", "declaration baseline");
+    const start = git("rev-parse", "HEAD");
+    for (const changed of [
+      `${text.split("\n")[0]}\n`,
+      text.replace("CLI_VERSION", path.endsWith(".ts") ? "SDK_VERSION" : "__version__"),
+    ]) {
+      writeFileSync(join(scratch, path), changed);
+      git("add", ".");
+      git("commit", "-qm", "invalid declarations");
+      assert.equal(
+        classify(payload(), git("rev-parse", "HEAD"), "pull_request", start).macosRequired,
+        true,
+      );
+    }
+  }
+  const reporter = join(root, ".github/macos-budget.mjs");
+  for (const argv of [
+    [],
+    ["--metric", "wrong", "--telemetry", event],
+    ["--bad", "jobs-per-run", "--telemetry", event],
+  ])
+    assert.equal(
+      spawnSync(process.execPath, [reporter, ...argv], { cwd: root, encoding: "utf8" }).status,
+      2,
+    );
+  const original = JSON.parse(
+    readFileSync(join(root, ".github/.telemetry/macos-policy.json"), "utf8"),
+  );
+  const path = join(scratch, ".git/refusal-telemetry.json");
+  for (const mutate of [
+    (value) => {
+      value.schemaVersion = 2;
+    },
+    (value) => {
+      value.runs = [];
+    },
+    (value) => {
+      delete value.lifecycles;
+    },
+    (value) => {
+      value.runs[0].jobs = [null];
+    },
+    (value) => {
+      value.runs[0].jobs = [{ runner: ["ubuntu-latest"] }];
+    },
+    (value) => {
+      value.lifecycles[0].runs = [{ macJobs: null }];
+    },
+  ]) {
+    const changed = structuredClone(original);
+    mutate(changed);
+    writeFileSync(path, JSON.stringify(changed));
+    assert.equal(
+      spawnSync(process.execPath, [reporter, "--metric", "jobs-per-run", "--telemetry", path], {
+        cwd: root,
+        encoding: "utf8",
+      }).status,
+      2,
+    );
+  }
+  writeFileSync(path, "invalid JSON");
+  assert.equal(
+    spawnSync(process.execPath, [reporter, "--metric", "jobs-per-run", "--telemetry", path], {
+      cwd: root,
+      encoding: "utf8",
+    }).status,
+    2,
   );
 });
 test.after(() => rmSync(scratch, { recursive: true, force: true }));

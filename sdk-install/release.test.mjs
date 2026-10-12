@@ -1,7 +1,7 @@
 // Production release builder and installers, publishing disabled.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, cpSync, mkdirSync, copyFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
@@ -58,13 +58,167 @@ print(json.dumps(dict(hashes=[hashlib.sha256(b).hexdigest() for b in [binary,arc
     assert.deepEqual(contract.package.cpu, [process.arch]);
     assert.deepEqual(contract.package.os, [process.platform]);
     assert.deepEqual(Object.values(inventory.hashes), contract.hashes);
-    run("bash", [
+    const installOutput = run("bash", [
       "scripts/release-local-install.sh",
       stage,
       sdks,
       run("which", ["python3"]).trim(),
       process.execPath,
     ]);
+    assert.equal(installOutput.trim(), "staged CLI and SDK installations passed");
+    const python = resolve(root, run("which", ["python3"]).trim());
+    const empty = join(work, "empty");
+    mkdirSync(empty);
+    for (const args of [
+      [],
+      [stage, sdks, "/missing-python", process.execPath],
+      [empty, sdks, python, process.execPath],
+      [join(work, "missing-stage"), sdks, python, process.execPath],
+    ]) {
+      const refused = spawnSync("bash", ["scripts/release-local-install.sh", ...args], {
+        cwd: root,
+        encoding: "utf8",
+      });
+      assert.notEqual(refused.status, 0);
+      assert.match(refused.stderr, /expected|failed|No such|not found/);
+    }
+    const stageScript = join(root, "scripts/release-stage.py");
+    const cases = [
+      "bad-json",
+      "bad-record",
+      "unsafe-record",
+      "bad-hash",
+      "wrong-target",
+      "no-npm",
+      "many-npm",
+      "bad-tar",
+      "no-npm-binary",
+      "no-wheel",
+      "many-wheel",
+      "bad-filename",
+      "bad-platform",
+      "old-version",
+      "duplicate-script",
+      "bad-metadata",
+      "bad-tag",
+      "invalid-version",
+      "missing-manifest",
+    ];
+    for (const kind of cases) {
+      const directory = join(work, kind);
+      cpSync(stage, directory, { recursive: true });
+      const cwd = join(work, `${kind}-root`);
+      mkdirSync(cwd);
+      for (const file of [
+        "Cargo.toml",
+        "rust-toolchain.toml",
+        "README.md",
+        "LICENSE",
+        "CHANGELOG.md",
+      ])
+        copyFileSync(join(root, file), join(cwd, file));
+      run("python3", [
+        "-c",
+        `
+import io,json,tarfile,zipfile,sys
+from pathlib import Path
+p=Path(sys.argv[1]); cwd=Path(sys.argv[2]); kind=sys.argv[3]
+inventory=p/'binary.json'
+if kind=='bad-json': inventory.write_text('{')
+elif kind=='bad-record': inventory.write_text('[]')
+elif kind in ['unsafe-record','bad-hash','wrong-target']:
+ value=json.loads(inventory.read_text())
+ if kind=='unsafe-record': value['archive']='../escape'
+ if kind=='bad-hash': value['hashes']['wheel']='not-a-hash'
+ if kind=='wrong-target': value['target']='aarch64-apple-darwin'
+ inventory.write_text(json.dumps(value))
+if kind in ['no-npm','many-npm','bad-tar','no-npm-binary']:
+ package=next(p.glob('*.tgz'))
+ if kind=='no-npm': package.unlink()
+ if kind=='many-npm': (p/'other.tgz').write_bytes(package.read_bytes())
+ if kind=='bad-tar': package.write_bytes(b'broken archive')
+ if kind=='no-npm-binary':
+  with tarfile.open(package,'w:gz') as out: pass
+if kind in ['no-wheel','many-wheel','bad-filename','bad-platform','old-version']:
+ wheel=next(p.glob('*.whl'))
+ if kind=='no-wheel': wheel.unlink()
+ if kind=='many-wheel': (p/'other.whl').write_bytes(wheel.read_bytes())
+ if kind=='bad-filename': wheel.rename(p/'other.whl')
+ if kind=='bad-platform':
+  fields=wheel.name.split('-'); fields[-1]='win_'+fields[-1].split('_')[-2]+'_'+fields[-1].split('_')[-1]; wheel.rename(p/'-'.join(fields))
+ if kind=='old-version':
+  fields=wheel.name.split('-'); fields[1]='9999.0.0'; wheel.rename(p/'-'.join(fields))
+if kind in ['duplicate-script','bad-metadata','bad-tag']:
+ wheel=next(p.glob('*.whl')); replacement=wheel.with_suffix('.changed')
+ with zipfile.ZipFile(wheel) as source, zipfile.ZipFile(replacement,'w') as out:
+  for member in source.infolist():
+   content=source.read(member.filename)
+   if kind=='bad-metadata' and member.filename.endswith('/METADATA'): content=content.replace(b'Name: onemessagebus-cli',b'Name: wrong-package')
+   if kind=='bad-tag' and member.filename.endswith('/WHEEL'): content=content.replace(b'Tag: py3-none-',b'Tag: py2-none-')
+   out.writestr(member,content)
+   if kind=='duplicate-script' and '.data/scripts/onemessagebus' in member.filename: out.writestr(member,content)
+ replacement.replace(wheel)
+if kind=='invalid-version': (cwd/'Cargo.toml').write_text('[workspace.package]'+chr(10)+'version="../../invalid"'+chr(10))
+if kind=='missing-manifest': (cwd/'Cargo.toml').unlink()
+`,
+        directory,
+        cwd,
+        kind,
+      ]);
+      const verify = [
+        "bad-json",
+        "bad-record",
+        "unsafe-record",
+        "bad-hash",
+        "wrong-target",
+        "no-npm",
+        "many-npm",
+        "bad-tar",
+        "no-npm-binary",
+      ].includes(kind);
+      const refused = spawnSync(
+        python,
+        [
+          stageScript,
+          "--target",
+          target,
+          "--directory",
+          directory,
+          ...(verify ? ["--verify-npm"] : []),
+        ],
+        { cwd, encoding: "utf8" },
+      );
+      assert.equal(
+        refused.status,
+        kind === "missing-manifest" ? 1 : 2,
+        `${kind}: ${refused.stderr}`,
+      );
+      assert.match(refused.stderr, /ACTION: rebuild/);
+    }
+    const broken = join(work, "broken-install");
+    cpSync(stage, broken, { recursive: true });
+    run("python3", [
+      "-c",
+      `
+import zipfile,sys
+from pathlib import Path
+p=next(Path(sys.argv[1]).glob('*.whl')); replacement=p.with_suffix('.changed')
+with zipfile.ZipFile(p) as source, zipfile.ZipFile(replacement,'w') as out:
+ for member in source.infolist():
+  content=source.read(member.filename)
+  if '.data/scripts/onemessagebus' in member.filename: content=b'broken executable'
+  out.writestr(member,content)
+replacement.replace(p)
+`,
+      broken,
+    ]);
+    const failedSmoke = spawnSync(
+      "bash",
+      ["scripts/release-local-install.sh", broken, sdks, python, process.execPath],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.notEqual(failedSmoke.status, 0);
+    assert.match(failedSmoke.stderr, /failed|not found|error|cannot/i);
     // Corrupt a packed carrier and drive the production hash boundary.
     run("python3", [
       "-c",
@@ -118,7 +272,6 @@ replacement.replace(p)
     );
     assert.equal(lookalike.status, 2);
     assert.match(lookalike.stderr, /exact onemessagebus script/);
-    // Refuse malformed target before producing an artifact.
     const refused = spawnSync(
       "bash",
       ["scripts/release-build.sh", "unsupported-target", join(work, "bad")],

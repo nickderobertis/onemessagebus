@@ -36,6 +36,7 @@
         "{workspaceRoot}/scripts/npm-build.mjs",
         "{workspaceRoot}/scripts/cargo-target-dir.mjs",
         "{workspaceRoot}/scripts/release-build.sh",
+        "{workspaceRoot}/scripts/release-quiet.sh",
         "{workspaceRoot}/scripts/release-stage.py",
         "{workspaceRoot}/scripts/release-local-install.sh",
         "sharedGlobals"

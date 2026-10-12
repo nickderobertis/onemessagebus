@@ -22,9 +22,15 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version
-      - uses: taiki-e/install-action@v2
+      - uses: actions/setup-python@v5
         with:
-          tool: nextest
-      - run: just bootstrap
-      - run: just test-uninstrumented
-      - run: just nx run onemessagebus-sdk-install-e2e:test
+          python-version: "3.12"
+      - name: Reproduce native packaging and installation
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: |
+          target="$(rustc -vV | sed -n 's/^host: //p')"
+          bash scripts/release-build.sh "$target" "diagnostic/$target"
+          just python-sdk-dist diagnostic/sdks
+          just node-sdk-dist diagnostic/sdks
+          bash scripts/release-local-install.sh "diagnostic/$target" diagnostic/sdks "$(command -v python3)" "$(command -v node)"

@@ -12,20 +12,28 @@ import zipfile
 from dataclasses import asdict, dataclass, replace
 from email.parser import BytesParser
 from pathlib import Path
+from typing import NewType
+
+try:
+    from packaging.version import Version
+except ModuleNotFoundError:
+    from pip._vendor.packaging.version import Version
+
+SHA256 = NewType("SHA256", str)
 
 
 @dataclass(frozen=True)
 class CarrierHashes:
-    wheel: str
-    archive: str
-    npm: str | None = None
+    wheel: SHA256
+    archive: SHA256
+    npm: SHA256 | None = None
 
 
 @dataclass(frozen=True)
 class BinaryInventory:
     target: str
     version: str
-    sha256: str
+    sha256: SHA256
     wheel: str
     archive: str
     hashes: CarrierHashes
@@ -73,7 +81,7 @@ def stage(args: argparse.Namespace) -> None:
             member = archive.extractfile("package/bin/onemessagebus")
             if member is None:
                 refuse("npm package has no canonical executable")
-            digest = hashlib.sha256(member.read()).hexdigest()
+            digest = SHA256(hashlib.sha256(member.read()).hexdigest())
         if digest != inventory.sha256:
             refuse("npm payload differs from the compiled wheel binary")
         replace(inventory, hashes=replace(inventory.hashes, npm=digest)).write(inventory_path)
@@ -87,6 +95,10 @@ def stage(args: argparse.Namespace) -> None:
         refuse("wheel filename is not an onemessagebus CLI wheel")
     arch = "arm64" if args.target == "aarch64-apple-darwin" else args.target.split("-", 1)[0]
     platform = parts[4].removesuffix(".whl")
+    if Version(parts[1]) != Version(version):
+        refuse("wheel version differs from the workspace release version")
+    if args.target.endswith("unknown-linux-gnu") and any(not re.match(r"(?:manylinux[0-9]*|linux)_", tag) for tag in platform.split(".")):
+        refuse("wheel platform family differs from the requested GNU Linux target")
     if not platform.endswith(f"_{arch}") or (args.target.endswith("apple-darwin") != platform.startswith("macosx_")):
         refuse("wheel platform/architecture differs from the requested target")
     with zipfile.ZipFile(wheel) as archive:
@@ -96,7 +108,7 @@ def stage(args: argparse.Namespace) -> None:
         info = f"onemessagebus_cli-{parts[1]}.dist-info"
         metadata = BytesParser().parsebytes(archive.read(f"{info}/METADATA"))
         wheel_tags = BytesParser().parsebytes(archive.read(f"{info}/WHEEL")).get_all("Tag", [])
-        if metadata["Name"] != "onemessagebus-cli" or metadata["Version"] != parts[1] or f"py3-none-{platform}" not in wheel_tags:
+        if metadata["Name"] != "onemessagebus-cli" or metadata["Version"] != parts[1] or any(f"py3-none-{tag}" not in wheel_tags for tag in platform.split(".")):
             refuse("wheel metadata identity or tag differs from its filename")
         binary = archive.read(binary_name)
     output = args.directory / "onemessagebus"
@@ -109,12 +121,12 @@ def stage(args: argparse.Namespace) -> None:
             archive.add(extra, arcname=extra)
     archive_digest = hashlib.sha256((args.directory / name).read_bytes()).hexdigest()
     (args.directory / f"{name}.sha256").write_text(f"{archive_digest}  {name}\n")
-    wheel_hash = hashlib.sha256(binary).hexdigest()
+    wheel_hash = SHA256(hashlib.sha256(binary).hexdigest())
     with tarfile.open(args.directory / name) as archive:
         carried = archive.extractfile("onemessagebus")
         if carried is None:
             refuse("archive has no canonical executable")
-        archive_hash = hashlib.sha256(carried.read()).hexdigest()
+        archive_hash = SHA256(hashlib.sha256(carried.read()).hexdigest())
     BinaryInventory(args.target, version, wheel_hash, wheel.name, name,
                     CarrierHashes(wheel_hash, archive_hash)).write(inventory_path)
 
