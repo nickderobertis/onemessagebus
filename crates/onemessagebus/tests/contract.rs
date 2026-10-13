@@ -1072,7 +1072,15 @@ fn the_queues_pages_configuration_is_the_contracts() {
             .skip(1)
             .filter_map(|rest| rest.split_once("```").map(|(block, _)| block))
             .find(|block| block.contains("version: 1") && block.contains("authors:"))
-            .map(|block| serde_norway::from_str(block).expect("the documented block is YAML"))
+            .map(|block| {
+                serde_saphyr::from_str_with_options(block, {
+                    let mut options = serde_saphyr::Options::default();
+                    options.strict_booleans = true;
+                    options.with_snippet = false;
+                    options
+                })
+                .expect("the documented block is YAML")
+            })
             .expect("a configuration block with authors")
     };
     let queues = yaml(include_str!("../../../docs/queues.md"));

@@ -789,7 +789,7 @@ fn a_validators_block_is_refused_by_the_key_it_is_wrong_at() {
         &format!("  - {{on: findings, when: {{carries: reply.commands}}, kind: command, command: {command}, cache: {{dir: passes, bar_fingerprint: {command}}}}}\n  - {{on: findings, when: {{not: {{field: author, present: true}}}}, kind: command, command: {command}}}\n"),
     )
     .expect("loads");
-    let written = serde_norway::to_string(&round_trip).expect("writes");
+    let written = serde_saphyr::to_string(&round_trip).expect("writes");
     assert_eq!(Config::parse(&written).expect("reads back"), round_trip);
 }
 

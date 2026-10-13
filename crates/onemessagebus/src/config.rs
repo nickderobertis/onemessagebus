@@ -389,10 +389,16 @@ impl Config {
     ///
     /// As [`load`](Self::load), with the path empty.
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
-        let raw: Value = serde_norway::from_str(text).map_err(|failure| ConfigError::Parse {
-            path: PathBuf::new(),
-            why: failure.to_string(),
-        })?;
+        let mut options = serde_saphyr::Options::default();
+        options.strict_booleans = true;
+        options.with_snippet = false;
+        let raw: Value =
+            serde_saphyr::from_str_with_options(text, options.clone()).map_err(|failure| {
+                ConfigError::Parse {
+                    path: PathBuf::new(),
+                    why: failure.to_string(),
+                }
+            })?;
         validate_codec_keys(&raw).map_err(|why| ConfigError::Parse {
             path: PathBuf::new(),
             why,
@@ -401,10 +407,13 @@ impl Config {
             path: PathBuf::new(),
             why,
         })?;
-        let config: Self = serde_norway::from_str(text).map_err(|failure| ConfigError::Parse {
-            path: PathBuf::new(),
-            why: failure.to_string(),
-        })?;
+        let config: Self =
+            serde_saphyr::from_str_with_options(text, options).map_err(|failure| {
+                ConfigError::Parse {
+                    path: PathBuf::new(),
+                    why: failure.to_string(),
+                }
+            })?;
         if config.version != CONFIG_VERSION {
             return Err(ConfigError::Version {
                 found: config.version,

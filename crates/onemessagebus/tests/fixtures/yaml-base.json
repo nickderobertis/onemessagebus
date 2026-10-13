@@ -1,0 +1,4000 @@
+[
+  {
+    "kind": "config",
+    "label": "captured/config/0426818036336cd6.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: runs/r1/channel}\ncodecs:\n  example:\n    queue: prompts\n    reply_window_seconds: 3000\n    session_env: EXAMPLE_SESSION\n    asker_env: EXAMPLE_ASKER\n    about_env: EXAMPLE_ABOUT\n    select: op\n    frames:\n      hello:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {field: mood, equals: lost}\n            do: raise\n            record: {kind: example-lost, blocking: false, source: proposal, message: \"lost: {frame.cause}\"}\n            fail: \"the member lost its turn: {frame.cause}\"\n          - when: {field: kind, equals: numeric}\n            do: refuse\n            message: \"a numeric frame is not served\"\n          - do: ask\n            record: {kind: example-question, source: proposal, message: \"rule on: {frame.criterion}\"}\n            blocking: false\n            response:\n              value: {from: reply.completion}\n              reason: {from: [reply.reason, reply.message], default: \"ruled without a reason\"}\n            unanswered: {value: false, reason: \"no ruling arrived, so this is scored false\"}\n      notice:\n        schema: example.frame.notice@3\n        bindings:\n          - do: answer\n            response: {completion: false, message: noted, reason: taken}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "runs/r1/channel"
+      },
+      "codecs": {
+        "example": {
+          "queue": "prompts",
+          "reply_window_seconds": 3000,
+          "session_env": "EXAMPLE_SESSION",
+          "asker_env": "EXAMPLE_ASKER",
+          "about_env": "EXAMPLE_ABOUT",
+          "select": "op",
+          "frames": {
+            "hello": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "mood",
+                    "equals": "lost"
+                  },
+                  "do": "raise",
+                  "record": {
+                    "kind": "example-lost",
+                    "blocking": false,
+                    "source": "proposal",
+                    "message": "lost: {frame.cause}"
+                  },
+                  "fail": "the member lost its turn: {frame.cause}"
+                },
+                {
+                  "when": {
+                    "field": "kind",
+                    "equals": "numeric"
+                  },
+                  "do": "refuse",
+                  "message": "a numeric frame is not served"
+                },
+                {
+                  "do": "ask",
+                  "record": {
+                    "kind": "example-question",
+                    "source": "proposal",
+                    "message": "rule on: {frame.criterion}"
+                  },
+                  "blocking": false,
+                  "response": {
+                    "value": {
+                      "from": "reply.completion"
+                    },
+                    "reason": {
+                      "from": [
+                        "reply.reason",
+                        "reply.message"
+                      ],
+                      "default": "ruled without a reason"
+                    }
+                  },
+                  "unanswered": {
+                    "value": false,
+                    "reason": "no ruling arrived, so this is scored false"
+                  }
+                }
+              ]
+            },
+            "notice": {
+              "schema": "example.frame.notice@3",
+              "bindings": [
+                {
+                  "do": "answer",
+                  "response": {
+                    "completion": false,
+                    "message": "noted",
+                    "reason": "taken"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/051189b248935d17.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/from-file\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\nqueues:\n  findings: {policy: {hold_pending: false}}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/from-file"
+      },
+      "profile": "desk",
+      "queues": {
+        "findings": {
+          "policy": {
+            "hold_pending": false
+          }
+        }
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/0544a7542ddc4856.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/channel\"}\nqueues:\n  findings: {}\n  alerts: {}\nvalidators:\n  - {on: findings, kind: command, command: [\"/repo/target/debug/deps/validators-e932a2a40ee797fa\",\"--exact\",\"scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/channel"
+      },
+      "queues": {
+        "alerts": {},
+        "findings": {}
+      },
+      "validators": [
+        {
+          "on": "findings",
+          "kind": "command",
+          "command": [
+            "/repo/target/debug/deps/validators-e932a2a40ee797fa",
+            "--exact",
+            "scripted_validator",
+            "scripted-validator-script=/tmp/scratch/script.json"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/071dd1b8d87eefe0.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/channel\"}\nqueues:\n  findings: {}\n  alerts: {}\nvalidators:\n  - {on: findings, when: {field: author, equals: monitor}, kind: command, command: [\"/repo/target/debug/deps/validators-e932a2a40ee797fa\",\"--exact\",\"scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/channel"
+      },
+      "queues": {
+        "alerts": {},
+        "findings": {}
+      },
+      "validators": [
+        {
+          "on": "findings",
+          "when": {
+            "field": "author",
+            "equals": "monitor"
+          },
+          "kind": "command",
+          "command": [
+            "/repo/target/debug/deps/validators-e932a2a40ee797fa",
+            "--exact",
+            "scripted_validator",
+            "scripted-validator-script=/tmp/scratch/script.json"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/0cf7e28b69ed93c2.yaml",
+    "text": "version: 1\ntransport: {kind: memory}\nqueues:\n  questions: {policy: {hold_pending: true}, answers: answers}\n  answers: {}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "memory"
+      },
+      "queues": {
+        "answers": {},
+        "questions": {
+          "policy": {
+            "hold_pending": true
+          },
+          "answers": "answers"
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/1177acb3c0908fa3.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: runs/r1/desk}\nprofile: desk\nschemas:\n  - \"https://example.org/desk.json@1\"\nqueues:\n  findings: {policy: {hold_pending: false}}\nauthors:\n  lead: {capabilities: [retry, note, unknown]}\n  sentinel:\n    capabilities: [retry, note]\n    refusals:\n      complete: \"whether the desk is done is the lead's verdict, not an observation\"\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "runs/r1/desk"
+      },
+      "profile": "desk",
+      "queues": {
+        "findings": {
+          "policy": {
+            "hold_pending": false
+          }
+        }
+      },
+      "authors": {
+        "lead": {
+          "capabilities": [
+            "retry",
+            "note",
+            "unknown"
+          ]
+        },
+        "sentinel": {
+          "capabilities": [
+            "retry",
+            "note"
+          ],
+          "refusals": {
+            "complete": "whether the desk is done is the lead's verdict, not an observation"
+          }
+        }
+      },
+      "schemas": [
+        "https://example.org/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/132fa9ae995507f3.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/1ba3f3db6e2ceef8.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: /tmp/scratch}\nprofile: ledger\nauthors:\n  teller: {capabilities: [post, void]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch"
+      },
+      "profile": "ledger",
+      "authors": {
+        "teller": {
+          "capabilities": [
+            "post",
+            "void"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/1bae5440f53b99a5.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\n  - \"file:///tmp/scratch/example-frames.json@3\"\ncodecs:\n  example:\n    queue: questions\n    reply_window_seconds: 1\n    session_env: EXAMPLE_SESSION\n    asker_env: EXAMPLE_ASKER\n    about_env: EXAMPLE_ABOUT\n    select: op\n    frames:\n      hello:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {field: mood, equals: lost}\n            do: refuse\n            message: \"lost: {frame.value}\"\n          - do: answer\n            response:\n              value: \"{frame.value}\"\n              text: \"value={frame.value}\"\n              nested: {items: [\"{{\", \"missing={frame.missing}\"], object: {close: \"}}\"}}\n      raise:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {kind: example-raised, blocking: false, source: example, message: \"raised {frame.value}\"}\n            response: {raised: true}\n      fail:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {kind: example-failed, blocking: false, source: example, message: \"failed {frame.value}\"}\n            fail: \"member failed {frame.value}\"\n      refuse:\n        schema: example.frame.hello@3\n        bindings:\n          - do: refuse\n            message: \"refused {frame.value}\"\n      conditional:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {field: mood, equals: ready}\n            do: answer\n            response: {ready: true}\n      ask:\n        schema: example.frame.hello@3\n        bindings:\n          - do: ask\n            record: {kind: example-question, source: example, message: \"rule on {frame.value}\"}\n            response:\n              value: {from: reply.missing}\n              reason: {from: [reply.reason, reply.message], default: \"ruled on {frame.value} without a reason\"}\n              literal: \"{reply.completion}\"\n            unanswered: {value: false, reason: \"no ruling for {frame.value}\"}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "codecs": {
+        "example": {
+          "queue": "questions",
+          "reply_window_seconds": 1,
+          "session_env": "EXAMPLE_SESSION",
+          "asker_env": "EXAMPLE_ASKER",
+          "about_env": "EXAMPLE_ABOUT",
+          "select": "op",
+          "frames": {
+            "ask": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "ask",
+                  "record": {
+                    "kind": "example-question",
+                    "source": "example",
+                    "message": "rule on {frame.value}"
+                  },
+                  "blocking": false,
+                  "response": {
+                    "value": {
+                      "from": "reply.missing"
+                    },
+                    "reason": {
+                      "from": [
+                        "reply.reason",
+                        "reply.message"
+                      ],
+                      "default": "ruled on {frame.value} without a reason"
+                    },
+                    "literal": "{reply.completion}"
+                  },
+                  "unanswered": {
+                    "value": false,
+                    "reason": "no ruling for {frame.value}"
+                  }
+                }
+              ]
+            },
+            "conditional": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "mood",
+                    "equals": "ready"
+                  },
+                  "do": "answer",
+                  "response": {
+                    "ready": true
+                  }
+                }
+              ]
+            },
+            "fail": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "raise",
+                  "record": {
+                    "kind": "example-failed",
+                    "blocking": false,
+                    "source": "example",
+                    "message": "failed {frame.value}"
+                  },
+                  "fail": "member failed {frame.value}"
+                }
+              ]
+            },
+            "hello": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "mood",
+                    "equals": "lost"
+                  },
+                  "do": "refuse",
+                  "message": "lost: {frame.value}"
+                },
+                {
+                  "do": "answer",
+                  "response": {
+                    "value": "{frame.value}",
+                    "text": "value={frame.value}",
+                    "nested": {
+                      "items": [
+                        "{{",
+                        "missing={frame.missing}"
+                      ],
+                      "object": {
+                        "close": "}}"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "raise": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "raise",
+                  "record": {
+                    "kind": "example-raised",
+                    "blocking": false,
+                    "source": "example",
+                    "message": "raised {frame.value}"
+                  },
+                  "response": {
+                    "raised": true
+                  }
+                }
+              ]
+            },
+            "refuse": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "refuse",
+                  "message": "refused {frame.value}"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1",
+        "file:///tmp/scratch/example-frames.json@3"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/22c24e38a5249456.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nqueues:\n  findings: {}\nvalidators:\n  - {on: reviews, kind: command, command: [\"/repo/target/debug/deps/e2e-7d2892949a98e5e9\",\"--exact\",\"validators::scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "queues": {
+        "findings": {}
+      },
+      "validators": [
+        {
+          "on": "reviews",
+          "kind": "command",
+          "command": [
+            "/repo/target/debug/deps/e2e-7d2892949a98e5e9",
+            "--exact",
+            "validators::scripted_validator",
+            "scripted-validator-script=/tmp/scratch/script.json"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/23f379544a3c0bbe.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\nvalidators:\n  - {on: answers, kind: command, command: [\"/repo/target/debug/deps/e2e-7d2892949a98e5e9\",\"--exact\",\"validators::scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"]}\n  - {on: questions, kind: command, command: [\"/repo/target/debug/deps/e2e-7d2892949a98e5e9\",\"--exact\",\"validators::scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "validators": [
+        {
+          "on": "answers",
+          "kind": "command",
+          "command": [
+            "/repo/target/debug/deps/e2e-7d2892949a98e5e9",
+            "--exact",
+            "validators::scripted_validator",
+            "scripted-validator-script=/tmp/scratch/script.json"
+          ]
+        },
+        {
+          "on": "questions",
+          "kind": "command",
+          "command": [
+            "/repo/target/debug/deps/e2e-7d2892949a98e5e9",
+            "--exact",
+            "validators::scripted_validator",
+            "scripted-validator-script=/tmp/scratch/script.json"
+          ]
+        }
+      ],
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/27d7b1827f18774b.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\nqueues:\n  greetings: {schema: demo.greeting@1}\ncodecs:\n  example:\n    queue: questions\n    select: kind\n    frames:\n      hello:\n        schema: onemessagebus.transport-hello@1\n        bindings:\n          - do: answer\n            response: {accepted: true}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "queues": {
+        "greetings": {
+          "schema": "demo.greeting@1"
+        }
+      },
+      "codecs": {
+        "example": {
+          "queue": "questions",
+          "select": "kind",
+          "frames": {
+            "hello": {
+              "schema": "onemessagebus.transport-hello@1",
+              "bindings": [
+                {
+                  "do": "answer",
+                  "response": {
+                    "accepted": true
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/2ee32d370d003533.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\n  - \"file:///tmp/scratch/example-frames.json@3\"\ncodecs:\n  example:\n    queue: answers\n    reply_window_seconds: 1\n    session_env: EXAMPLE_SESSION\n    asker_env: EXAMPLE_ASKER\n    about_env: EXAMPLE_ABOUT\n    select: op\n    frames:\n      hello:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {field: mood, equals: lost}\n            do: refuse\n            message: \"lost: {frame.value}\"\n          - do: answer\n            response:\n              value: \"{frame.value}\"\n              text: \"value={frame.value}\"\n              nested: {items: [\"{{\", \"missing={frame.missing}\"], object: {close: \"}}\"}}\n      raise:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {kind: example-raised, blocking: false, source: example, message: \"raised {frame.value}\"}\n            response: {raised: true}\n      fail:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {kind: example-failed, blocking: false, source: example, message: \"failed {frame.value}\"}\n            fail: \"member failed {frame.value}\"\n      refuse:\n        schema: example.frame.hello@3\n        bindings:\n          - do: refuse\n            message: \"refused {frame.value}\"\n      conditional:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {field: mood, equals: ready}\n            do: answer\n            response: {ready: true}\n      ask:\n        schema: example.frame.hello@3\n        bindings:\n          - do: ask\n            record: {kind: example-question, source: example, message: \"rule on {frame.value}\"}\n            response:\n              value: {from: reply.completion}\n              reason: {from: [reply.reason, reply.message], default: \"ruled on {frame.value} without a reason\"}\n              literal: \"{reply.completion}\"\n            unanswered: {value: false, reason: \"no ruling for {frame.value}\"}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "codecs": {
+        "example": {
+          "queue": "answers",
+          "reply_window_seconds": 1,
+          "session_env": "EXAMPLE_SESSION",
+          "asker_env": "EXAMPLE_ASKER",
+          "about_env": "EXAMPLE_ABOUT",
+          "select": "op",
+          "frames": {
+            "ask": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "ask",
+                  "record": {
+                    "kind": "example-question",
+                    "source": "example",
+                    "message": "rule on {frame.value}"
+                  },
+                  "blocking": false,
+                  "response": {
+                    "value": {
+                      "from": "reply.completion"
+                    },
+                    "reason": {
+                      "from": [
+                        "reply.reason",
+                        "reply.message"
+                      ],
+                      "default": "ruled on {frame.value} without a reason"
+                    },
+                    "literal": "{reply.completion}"
+                  },
+                  "unanswered": {
+                    "value": false,
+                    "reason": "no ruling for {frame.value}"
+                  }
+                }
+              ]
+            },
+            "conditional": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "mood",
+                    "equals": "ready"
+                  },
+                  "do": "answer",
+                  "response": {
+                    "ready": true
+                  }
+                }
+              ]
+            },
+            "fail": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "raise",
+                  "record": {
+                    "kind": "example-failed",
+                    "blocking": false,
+                    "source": "example",
+                    "message": "failed {frame.value}"
+                  },
+                  "fail": "member failed {frame.value}"
+                }
+              ]
+            },
+            "hello": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "mood",
+                    "equals": "lost"
+                  },
+                  "do": "refuse",
+                  "message": "lost: {frame.value}"
+                },
+                {
+                  "do": "answer",
+                  "response": {
+                    "value": "{frame.value}",
+                    "text": "value={frame.value}",
+                    "nested": {
+                      "items": [
+                        "{{",
+                        "missing={frame.missing}"
+                      ],
+                      "object": {
+                        "close": "}}"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "raise": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "raise",
+                  "record": {
+                    "kind": "example-raised",
+                    "blocking": false,
+                    "source": "example",
+                    "message": "raised {frame.value}"
+                  },
+                  "response": {
+                    "raised": true
+                  }
+                }
+              ]
+            },
+            "refuse": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "refuse",
+                  "message": "refused {frame.value}"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1",
+        "file:///tmp/scratch/example-frames.json@3"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/352d907d7afc34db.yaml",
+    "text": "version: 1\ntransport: {kind: memory}\nqueues:\n  prompts: {}\ncodecs:\n  example:\n    queue: prompts\n    reply_window_seconds: 5\n    session_env: SERVE_SESSION\n    asker_env: CHANNEL_ASKER\n    about_env: NODE\n    select: op\n    frames:\n      hello:\n        schema: example.hello@1\n        bindings:\n          - do: answer\n            response: {ok: true}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "memory"
+      },
+      "queues": {
+        "prompts": {}
+      },
+      "codecs": {
+        "example": {
+          "queue": "prompts",
+          "reply_window_seconds": 5,
+          "session_env": "SERVE_SESSION",
+          "asker_env": "CHANNEL_ASKER",
+          "about_env": "NODE",
+          "select": "op",
+          "frames": {
+            "hello": {
+              "schema": "example.hello@1",
+              "bindings": [
+                {
+                  "do": "answer",
+                  "response": {
+                    "ok": true
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/36bcdd67f3bf9477.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/channel\"}\nqueues:\n  questions: {policy: {hold_pending: true}, answers: replies}\n  replies: {}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/channel"
+      },
+      "queues": {
+        "questions": {
+          "policy": {
+            "hold_pending": true
+          },
+          "answers": "replies"
+        },
+        "replies": {}
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/3797a6cd85633bb5.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: /tmp/scratch}\nprofile: ledger\nqueues:\n  greetings: {schema: demo.greeting@1}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch"
+      },
+      "profile": "ledger",
+      "queues": {
+        "greetings": {
+          "schema": "demo.greeting@1"
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/37c076e7117fef7e.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: /tmp/scratch}\nprofile: ledger\nauthors:\n  sentinel: {capabilities: [sign]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch"
+      },
+      "profile": "ledger",
+      "authors": {
+        "sentinel": {
+          "capabilities": [
+            "sign"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/3a81cf31ab3bf238.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: /tmp/scratch}\nprofile: ledger\nauthors:\n  sentinel: {capabilities: [post], refusals: {post: no}}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch"
+      },
+      "profile": "ledger",
+      "authors": {
+        "sentinel": {
+          "capabilities": [
+            "post"
+          ],
+          "refusals": {
+            "post": "no"
+          }
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/3b5180eaa0d7cde4.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: /tmp/scratch}\nprofile: ledger\nauthors:\n  teller: {capabilities: [post], refusals: {audit: 'reserved for review'}}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch"
+      },
+      "profile": "ledger",
+      "authors": {
+        "teller": {
+          "capabilities": [
+            "post"
+          ],
+          "refusals": {
+            "audit": "reserved for review"
+          }
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/3c0a59344e8c8580.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/channel\"}\nqueues:\n  findings: {}\n  alerts: {}\nvalidators:\n  - {on: findings, when: {carries: commands}, kind: command, command: [\"/repo/target/debug/deps/validators-e932a2a40ee797fa\",\"--exact\",\"scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/channel"
+      },
+      "queues": {
+        "alerts": {},
+        "findings": {}
+      },
+      "validators": [
+        {
+          "on": "findings",
+          "when": {
+            "carries": "commands"
+          },
+          "kind": "command",
+          "command": [
+            "/repo/target/debug/deps/validators-e932a2a40ee797fa",
+            "--exact",
+            "scripted_validator",
+            "scripted-validator-script=/tmp/scratch/script.json"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/3d163c518afcfcf4.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: /tmp/scratch}\nprofile: bank\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch"
+      },
+      "profile": "bank"
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/454971a8479378b7.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/other/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\nqueues:\n  findings: {}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/other/bus"
+      },
+      "profile": "desk",
+      "queues": {
+        "findings": {}
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/4962d280a2456f07.yaml",
+    "text": "version: 1\ntransport: {kind: memory}\ncodecs:\n  example:\n    select: op\n    frames:\n      hello:\n        schema: example.hello@1\n        bindings:\n          - do: answer\n            response: {ok: true}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "memory"
+      },
+      "codecs": {
+        "example": {
+          "select": "op",
+          "frames": {
+            "hello": {
+              "schema": "example.hello@1",
+              "bindings": [
+                {
+                  "do": "answer",
+                  "response": {
+                    "ok": true
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/51a4ee4862d1cca0.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\nauthors:\n  sentinel:\n    capabilities: [finding]\n    refusals: {retry: 'retry needs fresh evidence', complete: 'the lead decides completion'}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "authors": {
+        "sentinel": {
+          "capabilities": [
+            "finding"
+          ],
+          "refusals": {
+            "complete": "the lead decides completion",
+            "retry": "retry needs fresh evidence"
+          }
+        }
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/526ad01ae7673f22.yaml",
+    "text": "version: 1\ntransport: {kind: memory}\nprofile: ledger\nqueues:\n  greetings: {schema: demo.greeting@1}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "memory"
+      },
+      "profile": "ledger",
+      "queues": {
+        "greetings": {
+          "schema": "demo.greeting@1"
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/5664c9e08dc3f6e3.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/channel\"}\nqueues:\n  questions: {policy: {hold_pending: true, blocking_first: true}, answers: replies}\n  replies: {}\n  notes: {}\n  unanswered: {policy: {hold_pending: true}}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/channel"
+      },
+      "queues": {
+        "notes": {},
+        "questions": {
+          "policy": {
+            "hold_pending": true,
+            "blocking_first": true
+          },
+          "answers": "replies"
+        },
+        "replies": {},
+        "unanswered": {
+          "policy": {
+            "hold_pending": true
+          }
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/5d79afcf141aff6c.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nqueues:\n  frames: {schema: demo.frame@1}\nschemas:\n  - \"https://127.0.0.1:8443/frames.json@8\"\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "queues": {
+        "frames": {
+          "schema": "demo.frame@1"
+        }
+      },
+      "schemas": [
+        "https://127.0.0.1:8443/frames.json@8"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/6658e09b46f580c5.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nqueues:\n  frames: {schema: demo.frame@1}\nschemas:\n  - \"http://127.0.0.1:8443/frames.json@8\"\n  - \"http://127.0.0.1:8443/frames.json@3\"\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "queues": {
+        "frames": {
+          "schema": "demo.frame@1"
+        }
+      },
+      "schemas": [
+        "http://127.0.0.1:8443/frames.json@8",
+        "http://127.0.0.1:8443/frames.json@3"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/69f8431a01088339.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\n  - \"file:///tmp/scratch/example-frames.json@3\"\ncodecs:\n  example:\n    queue: questions\n    reply_window_seconds: 1\n    session_env: EXAMPLE_SESSION\n    asker_env: EXAMPLE_ASKER\n    about_env: EXAMPLE_ABOUT\n    select: op\n    frames:\n      hello:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {field: mood, equals: lost}\n            do: refuse\n            message: \"lost: {frame.value}\"\n          - do: answer\n            response:\n              value: \"{frame.value}\"\n              text: \"value={frame.value}\"\n              nested: {items: [\"{{\", \"missing={frame.missing}\"], object: {close: \"}}\"}}\n      raise:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {kind: example-raised, blocking: false, message: \"raised {frame.value}\"}\n            response: {raised: true}\n      fail:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {kind: example-failed, blocking: false, source: example, message: \"failed {frame.value}\"}\n            fail: \"member failed {frame.value}\"\n      refuse:\n        schema: example.frame.hello@3\n        bindings:\n          - do: refuse\n            message: \"refused {frame.value}\"\n      conditional:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {field: mood, equals: ready}\n            do: answer\n            response: {ready: true}\n      ask:\n        schema: example.frame.hello@3\n        bindings:\n          - do: ask\n            record: {kind: example-question, source: example, message: \"rule on {frame.value}\"}\n            response:\n              value: {from: reply.completion}\n              reason: {from: [reply.reason, reply.message], default: \"ruled on {frame.value} without a reason\"}\n              literal: \"{reply.completion}\"\n            unanswered: {value: false, reason: \"no ruling for {frame.value}\"}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "codecs": {
+        "example": {
+          "queue": "questions",
+          "reply_window_seconds": 1,
+          "session_env": "EXAMPLE_SESSION",
+          "asker_env": "EXAMPLE_ASKER",
+          "about_env": "EXAMPLE_ABOUT",
+          "select": "op",
+          "frames": {
+            "ask": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "ask",
+                  "record": {
+                    "kind": "example-question",
+                    "source": "example",
+                    "message": "rule on {frame.value}"
+                  },
+                  "blocking": false,
+                  "response": {
+                    "value": {
+                      "from": "reply.completion"
+                    },
+                    "reason": {
+                      "from": [
+                        "reply.reason",
+                        "reply.message"
+                      ],
+                      "default": "ruled on {frame.value} without a reason"
+                    },
+                    "literal": "{reply.completion}"
+                  },
+                  "unanswered": {
+                    "value": false,
+                    "reason": "no ruling for {frame.value}"
+                  }
+                }
+              ]
+            },
+            "conditional": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "mood",
+                    "equals": "ready"
+                  },
+                  "do": "answer",
+                  "response": {
+                    "ready": true
+                  }
+                }
+              ]
+            },
+            "fail": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "raise",
+                  "record": {
+                    "kind": "example-failed",
+                    "blocking": false,
+                    "source": "example",
+                    "message": "failed {frame.value}"
+                  },
+                  "fail": "member failed {frame.value}"
+                }
+              ]
+            },
+            "hello": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "mood",
+                    "equals": "lost"
+                  },
+                  "do": "refuse",
+                  "message": "lost: {frame.value}"
+                },
+                {
+                  "do": "answer",
+                  "response": {
+                    "value": "{frame.value}",
+                    "text": "value={frame.value}",
+                    "nested": {
+                      "items": [
+                        "{{",
+                        "missing={frame.missing}"
+                      ],
+                      "object": {
+                        "close": "}}"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "raise": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "raise",
+                  "record": {
+                    "kind": "example-raised",
+                    "blocking": false,
+                    "message": "raised {frame.value}"
+                  },
+                  "response": {
+                    "raised": true
+                  }
+                }
+              ]
+            },
+            "refuse": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "refuse",
+                  "message": "refused {frame.value}"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1",
+        "file:///tmp/scratch/example-frames.json@3"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/6d546a698b553899.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: help-desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "help-desk",
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/744fe5cacb21ce72.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/channel\"}\nqueues:\n  findings: {}\nvalidators:\n  - {on: findings, when: {carries: reply.commands}, kind: command, command: [\"/repo/target/debug/deps/validators-e932a2a40ee797fa\",\"--exact\",\"scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"], cache: {dir: passes, bar_fingerprint: [\"/repo/target/debug/deps/validators-e932a2a40ee797fa\",\"--exact\",\"scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"]}}\n  - {on: findings, when: {not: {field: author, present: true}}, kind: command, command: [\"/repo/target/debug/deps/validators-e932a2a40ee797fa\",\"--exact\",\"scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/channel"
+      },
+      "queues": {
+        "findings": {}
+      },
+      "validators": [
+        {
+          "on": "findings",
+          "when": {
+            "carries": "reply.commands"
+          },
+          "kind": "command",
+          "command": [
+            "/repo/target/debug/deps/validators-e932a2a40ee797fa",
+            "--exact",
+            "scripted_validator",
+            "scripted-validator-script=/tmp/scratch/script.json"
+          ],
+          "cache": {
+            "dir": "passes",
+            "bar_fingerprint": [
+              "/repo/target/debug/deps/validators-e932a2a40ee797fa",
+              "--exact",
+              "scripted_validator",
+              "scripted-validator-script=/tmp/scratch/script.json"
+            ]
+          }
+        },
+        {
+          "on": "findings",
+          "when": {
+            "not": {
+              "field": "author",
+              "present": true
+            }
+          },
+          "kind": "command",
+          "command": [
+            "/repo/target/debug/deps/validators-e932a2a40ee797fa",
+            "--exact",
+            "scripted_validator",
+            "scripted-validator-script=/tmp/scratch/script.json"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/7796d1718200f3b6.yaml",
+    "text": "version: 1\ntransport: {kind: memory, dir: x}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "memory",
+        "dir": "x"
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/7b2043eae6f67fbe.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: runs/r1/channel}\nvalidators:\n  - {on: answers, when: {carries: actions}, kind: command, command: [python3, -m, review_actions, --envelope],\n     cache: {dir: .validator-passes, bar_fingerprint: [scripts/bar-fingerprint.sh]}}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "runs/r1/channel"
+      },
+      "validators": [
+        {
+          "on": "answers",
+          "when": {
+            "carries": "actions"
+          },
+          "kind": "command",
+          "command": [
+            "python3",
+            "-m",
+            "review_actions",
+            "--envelope"
+          ],
+          "cache": {
+            "dir": ".validator-passes",
+            "bar_fingerprint": [
+              "scripts/bar-fingerprint.sh"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/7dcc7c361d93b3a4.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\ncodecs:\n  desk:\n    queue: questions\n    select: op\n    frames:\n      raise:\n        schema: desk.outcome@1\n        bindings:\n          - do: raise\n            record: {kind: served, source: codec, blocking: false, message: \"raised {frame.id}\"}\n            response: {raised: \"{frame.id}\"}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "codecs": {
+        "desk": {
+          "queue": "questions",
+          "select": "op",
+          "frames": {
+            "raise": {
+              "schema": "desk.outcome@1",
+              "bindings": [
+                {
+                  "do": "raise",
+                  "record": {
+                    "kind": "served",
+                    "source": "codec",
+                    "blocking": false,
+                    "message": "raised {frame.id}"
+                  },
+                  "response": {
+                    "raised": "{frame.id}"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/8599ece8a726e076.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\n  - \"file:///tmp/scratch/example-frames.json@3\"\ncodecs:\n  example:\n    queue: questions\n    reply_window_seconds: 1\n    session_env: EXAMPLE_SESSION\n    asker_env: EXAMPLE_ASKER\n    about_env: EXAMPLE_ABOUT\n    select: op\n    frames:\n      hello:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {field: mood, equals: lost}\n            do: refuse\n            message: \"lost: {frame.value}\"\n          - do: answer\n            response:\n              value: \"{frame.value}\"\n              text: \"value={frame.value}\"\n              nested: {items: [\"{{\", \"missing={frame.missing}\"], object: {close: \"}}\"}}\n      raise:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {kind: example-raised, blocking: false, source: example, message: \"raised {frame.value}\"}\n            response: {raised: true}\n      fail:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {kind: example-failed, blocking: false, source: example, message: \"failed {frame.value}\"}\n            fail: \"member failed {frame.value}\"\n      refuse:\n        schema: example.frame.hello@3\n        bindings:\n          - do: refuse\n            message: \"refused {frame.value}\"\n      conditional:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {field: mood, equals: ready}\n            do: answer\n            response: {ready: true}\n      ask:\n        schema: example.frame.hello@3\n        bindings:\n          - do: ask\n            record: {kind: example-question, source: example, message: \"rule on {frame.value}\"}\n            response:\n              value: {from: reply.completion}\n              reason: {from: [reply.reason, reply.message], default: \"ruled on {frame.value} without a reason\"}\n              literal: \"{reply.completion}\"\n            unanswered: {value: false, reason: \"no ruling for {frame.value}\"}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "codecs": {
+        "example": {
+          "queue": "questions",
+          "reply_window_seconds": 1,
+          "session_env": "EXAMPLE_SESSION",
+          "asker_env": "EXAMPLE_ASKER",
+          "about_env": "EXAMPLE_ABOUT",
+          "select": "op",
+          "frames": {
+            "ask": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "ask",
+                  "record": {
+                    "kind": "example-question",
+                    "source": "example",
+                    "message": "rule on {frame.value}"
+                  },
+                  "blocking": false,
+                  "response": {
+                    "value": {
+                      "from": "reply.completion"
+                    },
+                    "reason": {
+                      "from": [
+                        "reply.reason",
+                        "reply.message"
+                      ],
+                      "default": "ruled on {frame.value} without a reason"
+                    },
+                    "literal": "{reply.completion}"
+                  },
+                  "unanswered": {
+                    "value": false,
+                    "reason": "no ruling for {frame.value}"
+                  }
+                }
+              ]
+            },
+            "conditional": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "mood",
+                    "equals": "ready"
+                  },
+                  "do": "answer",
+                  "response": {
+                    "ready": true
+                  }
+                }
+              ]
+            },
+            "fail": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "raise",
+                  "record": {
+                    "kind": "example-failed",
+                    "blocking": false,
+                    "source": "example",
+                    "message": "failed {frame.value}"
+                  },
+                  "fail": "member failed {frame.value}"
+                }
+              ]
+            },
+            "hello": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "mood",
+                    "equals": "lost"
+                  },
+                  "do": "refuse",
+                  "message": "lost: {frame.value}"
+                },
+                {
+                  "do": "answer",
+                  "response": {
+                    "value": "{frame.value}",
+                    "text": "value={frame.value}",
+                    "nested": {
+                      "items": [
+                        "{{",
+                        "missing={frame.missing}"
+                      ],
+                      "object": {
+                        "close": "}}"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "raise": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "raise",
+                  "record": {
+                    "kind": "example-raised",
+                    "blocking": false,
+                    "source": "example",
+                    "message": "raised {frame.value}"
+                  },
+                  "response": {
+                    "raised": true
+                  }
+                }
+              ]
+            },
+            "refuse": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "refuse",
+                  "message": "refused {frame.value}"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1",
+        "file:///tmp/scratch/example-frames.json@3"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/8ac4daaf8caf42f0.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nqueues:\n  frames: {schema: demo.frame@1}\nschemas:\n  - \"http://127.0.0.1:8443/frames.json\"\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "queues": {
+        "frames": {
+          "schema": "demo.frame@1"
+        }
+      },
+      "schemas": [
+        "http://127.0.0.1:8443/frames.json"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/8d073534751b08dc.yaml",
+    "text": "version: 1\ntransport: {kind: dirfiles, dir: \"/tmp/scratch/plugin-queues\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\nqueues:\n  findings: {}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "dirfiles",
+        "dir": "/tmp/scratch/plugin-queues"
+      },
+      "profile": "desk",
+      "queues": {
+        "findings": {}
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/90b717ca9fe82131.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\nauthors:\n  bot: {capabilities: [note, complete]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "authors": {
+        "bot": {
+          "capabilities": [
+            "note",
+            "complete"
+          ]
+        }
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/913e7d28e42c3592.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: runs/r1/desk}\nprofile: desk\nschemas:\n  - \"https://example.org/desk.json@1\"\nqueues:\n  findings: {policy: {hold_pending: false}}\nauthors:\n  lead: {capabilities: [retry, note]}\n  sentinel:\n    capabilities: [retry, note]\n    refusals:\n      complete: \"whether the desk is done is the lead's verdict, not an observation\"\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "runs/r1/desk"
+      },
+      "profile": "desk",
+      "queues": {
+        "findings": {
+          "policy": {
+            "hold_pending": false
+          }
+        }
+      },
+      "authors": {
+        "lead": {
+          "capabilities": [
+            "retry",
+            "note"
+          ]
+        },
+        "sentinel": {
+          "capabilities": [
+            "retry",
+            "note"
+          ],
+          "refusals": {
+            "complete": "whether the desk is done is the lead's verdict, not an observation"
+          }
+        }
+      },
+      "schemas": [
+        "https://example.org/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/91e264c121e3da5b.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: bus}\nprofile: desk\nschemas: [\"/tmp/scratch/broken.json\"]\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "bus"
+      },
+      "profile": "desk",
+      "schemas": [
+        "/tmp/scratch/broken.json"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/94c5a20461577fae.yaml",
+    "text": "version: 1\ntransport: {kind: memory}\nqueues:\n  notes: {}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "memory"
+      },
+      "queues": {
+        "notes": {}
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/97696f66e7e4d03b.yaml",
+    "text": "version: 1\ntransport: {kind: nats}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "nats"
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/9e019868a2a7c8b5.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nqueues:\n  frames: {schema: demo.frame@1}\nschemas:\n  - \"http://127.0.0.1:8443/frames.json@8\"\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "queues": {
+        "frames": {
+          "schema": "demo.frame@1"
+        }
+      },
+      "schemas": [
+        "http://127.0.0.1:8443/frames.json@8"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/a10e24b6a7c803ce.yaml",
+    "text": "version: 1\ntransport: {kind: memory}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "memory"
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/a583e0d095616de5.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\nauthors:\n  lead: {capabilities: [launch]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "authors": {
+        "lead": {
+          "capabilities": [
+            "launch"
+          ]
+        }
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/a7a4b7eaf848f6f5.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: intake\nauthors:\n  helper: {capabilities: [file, close]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "intake",
+      "authors": {
+        "helper": {
+          "capabilities": [
+            "file",
+            "close"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/a9b186f7429a737b.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\nvalidators:\n  - {on: answers, when: {carries: actions}, kind: command, command: [\"/repo/target/debug/deps/e2e-7d2892949a98e5e9\",\"--exact\",\"validators::scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "validators": [
+        {
+          "on": "answers",
+          "when": {
+            "carries": "actions"
+          },
+          "kind": "command",
+          "command": [
+            "/repo/target/debug/deps/e2e-7d2892949a98e5e9",
+            "--exact",
+            "validators::scripted_validator",
+            "scripted-validator-script=/tmp/scratch/script.json"
+          ]
+        }
+      ],
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/a9b2477a108176b2.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/channel\"}\nprofile: splitter\nvalidators:\n  - {on: alerts, kind: command, command: [\"/repo/target/debug/deps/validators-e932a2a40ee797fa\",\"--exact\",\"scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/channel"
+      },
+      "profile": "splitter",
+      "validators": [
+        {
+          "on": "alerts",
+          "kind": "command",
+          "command": [
+            "/repo/target/debug/deps/validators-e932a2a40ee797fa",
+            "--exact",
+            "scripted_validator",
+            "scripted-validator-script=/tmp/scratch/script.json"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/aa2a69cee154c49f.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/channel\"}\nqueues:\n  findings: {}\nvalidators:\n  - {on: findings, kind: command, command: [\"/repo/target/debug/deps/validators-e932a2a40ee797fa\",\"--exact\",\"scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"]}\n  - {on: reviews, kind: command, command: [\"/repo/target/debug/deps/validators-e932a2a40ee797fa\",\"--exact\",\"scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/channel"
+      },
+      "queues": {
+        "findings": {}
+      },
+      "validators": [
+        {
+          "on": "findings",
+          "kind": "command",
+          "command": [
+            "/repo/target/debug/deps/validators-e932a2a40ee797fa",
+            "--exact",
+            "scripted_validator",
+            "scripted-validator-script=/tmp/scratch/script.json"
+          ]
+        },
+        {
+          "on": "reviews",
+          "kind": "command",
+          "command": [
+            "/repo/target/debug/deps/validators-e932a2a40ee797fa",
+            "--exact",
+            "scripted_validator",
+            "scripted-validator-script=/tmp/scratch/script.json"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/ab848f75e99f47e1.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/channel\"}\nqueues:\n  findings: {}\n  alerts: {}\nvalidators:\n  - {on: findings, kind: command, command: [\"/repo/target/debug/deps/validators-e932a2a40ee797fa\",\"--exact\",\"scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"], cache: {dir: \"/tmp/scratch/passes\", bar_fingerprint: [\"/repo/target/debug/deps/validators-e932a2a40ee797fa\",\"--exact\",\"scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"]}}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/channel"
+      },
+      "queues": {
+        "alerts": {},
+        "findings": {}
+      },
+      "validators": [
+        {
+          "on": "findings",
+          "kind": "command",
+          "command": [
+            "/repo/target/debug/deps/validators-e932a2a40ee797fa",
+            "--exact",
+            "scripted_validator",
+            "scripted-validator-script=/tmp/scratch/script.json"
+          ],
+          "cache": {
+            "dir": "/tmp/scratch/passes",
+            "bar_fingerprint": [
+              "/repo/target/debug/deps/validators-e932a2a40ee797fa",
+              "--exact",
+              "scripted_validator",
+              "scripted-validator-script=/tmp/scratch/script.json"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/ad8bd7f385401ecb.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: /tmp/scratch}\nprofile: holding\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch"
+      },
+      "profile": "holding"
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/b5ae17ac16c79bf5.yaml",
+    "text": "version: 1\ntransport: {kind: memory}\nqueues:\n  prompts: {}\ncodecs:\n  example:\n    select: turn.op\n    frames:\n      hello:\n        schema: example.hello@1\n        bindings:\n          - when: {field: mood, equals: ready}\n            do: answer\n            response:\n              exact: '{frame.count}'\n              text: 'hello {frame.name}: {frame.count} {{ok}} {frame.missing}'\n              nested: ['{frame.enabled}', 3]\n          - do: refuse\n            message: 'not ready: {frame.mood}'\n      maybe:\n        schema: example.maybe@1\n        bindings:\n          - when: {field: mood, equals: ready}\n            do: answer\n            response: {ok: true}\n      raise:\n        schema: example.raise@1\n        bindings:\n          - do: raise\n            record: {kind: notice, message: 'raised {frame.count}'}\n            response: {raised: true}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "memory"
+      },
+      "queues": {
+        "prompts": {}
+      },
+      "codecs": {
+        "example": {
+          "select": "turn.op",
+          "frames": {
+            "hello": {
+              "schema": "example.hello@1",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "mood",
+                    "equals": "ready"
+                  },
+                  "do": "answer",
+                  "response": {
+                    "exact": "{frame.count}",
+                    "text": "hello {frame.name}: {frame.count} {{ok}} {frame.missing}",
+                    "nested": [
+                      "{frame.enabled}",
+                      3
+                    ]
+                  }
+                },
+                {
+                  "do": "refuse",
+                  "message": "not ready: {frame.mood}"
+                }
+              ]
+            },
+            "maybe": {
+              "schema": "example.maybe@1",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "mood",
+                    "equals": "ready"
+                  },
+                  "do": "answer",
+                  "response": {
+                    "ok": true
+                  }
+                }
+              ]
+            },
+            "raise": {
+              "schema": "example.raise@1",
+              "bindings": [
+                {
+                  "do": "raise",
+                  "record": {
+                    "kind": "notice",
+                    "message": "raised {frame.count}"
+                  },
+                  "response": {
+                    "raised": true
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/b88ad6eb3a7ea6f3.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nqueues:\n  frames: {schema: demo.frame@1}\nschemas:\n  - \"https://127.0.0.1:8443/frames.json\"\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "queues": {
+        "frames": {
+          "schema": "demo.frame@1"
+        }
+      },
+      "schemas": [
+        "https://127.0.0.1:8443/frames.json"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/c035c0dcef505775.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: intake\nauthors:\n  scout: {capabilities: [file]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "intake",
+      "authors": {
+        "scout": {
+          "capabilities": [
+            "file"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/c0d9f65131414b4b.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: /tmp/scratch}\nprofile: ledger\nqueues:\n  entries: {answers: replies}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch"
+      },
+      "profile": "ledger",
+      "queues": {
+        "entries": {
+          "answers": "replies"
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/c1ea8a9172f6e436.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nqueues:\n  findings: {}\nvalidators:\n  - {on: findings, kind: command, command: [\"/repo/target/debug/deps/e2e-7d2892949a98e5e9\",\"--exact\",\"validators::scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"], cache: {dir: \"/tmp/scratch/passes\", bar_fingerprint: [\"/repo/target/debug/deps/e2e-7d2892949a98e5e9\",\"--exact\",\"validators::scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"]}}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "queues": {
+        "findings": {}
+      },
+      "validators": [
+        {
+          "on": "findings",
+          "kind": "command",
+          "command": [
+            "/repo/target/debug/deps/e2e-7d2892949a98e5e9",
+            "--exact",
+            "validators::scripted_validator",
+            "scripted-validator-script=/tmp/scratch/script.json"
+          ],
+          "cache": {
+            "dir": "/tmp/scratch/passes",
+            "bar_fingerprint": [
+              "/repo/target/debug/deps/e2e-7d2892949a98e5e9",
+              "--exact",
+              "validators::scripted_validator",
+              "scripted-validator-script=/tmp/scratch/script.json"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/c2bcf3b72c44fac7.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: /tmp/scratch}\nprofile: ledger\nqueues:\n  beats:\n    policy: {delivery: at-least-once, ordering: per-queue, supersede_on: {key: kind, when: {field: kind, equals: beat}}, hold_pending: true, blocking_first: true, retention: keep, projection: beats.json}\n    claims: {field: kind, present: true}\n    consumers: [default, auditor]\n  notes: {numbered: true}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch"
+      },
+      "profile": "ledger",
+      "queues": {
+        "beats": {
+          "policy": {
+            "delivery": "at-least-once",
+            "ordering": "per-queue",
+            "supersede_on": {
+              "key": "kind",
+              "when": {
+                "field": "kind",
+                "equals": "beat"
+              }
+            },
+            "hold_pending": true,
+            "blocking_first": true,
+            "retention": "keep",
+            "projection": "beats.json"
+          },
+          "claims": {
+            "field": "kind",
+            "present": true
+          },
+          "consumers": [
+            "default",
+            "auditor"
+          ]
+        },
+        "notes": {
+          "numbered": true
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/c4ccfefe51abe0a9.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/started/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/started/bus"
+      },
+      "profile": "desk",
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/c91ee3d5dc0530c2.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\n  - \"file:///tmp/scratch/example-frames.json@3\"\ncodecs:\n  example:\n    queue: questions\n    reply_window_seconds: 1\n    session_env: EXAMPLE_SESSION\n    asker_env: EXAMPLE_ASKER\n    about_env: EXAMPLE_ABOUT\n    select: turn.op\n    frames:\n      hello:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {field: turn.mood, equals: lost}\n            do: refuse\n            message: \"lost: {frame.value}\"\n          - do: answer\n            response:\n              value: \"{frame.value}\"\n              text: \"value={frame.value}\"\n              nested: {items: [\"{{\", \"missing={frame.missing}\"], object: {close: \"}}\"}}\n      raise:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {kind: example-raised, blocking: false, source: example, message: \"raised {frame.value}\"}\n            response: {raised: true}\n      fail:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {kind: example-failed, blocking: false, source: example, message: \"failed {frame.value}\"}\n            fail: \"member failed {frame.value}\"\n      refuse:\n        schema: example.frame.hello@3\n        bindings:\n          - do: refuse\n            message: \"refused {frame.value}\"\n      conditional:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {field: turn.mood, equals: ready}\n            do: answer\n            response: {ready: true}\n      ask:\n        schema: example.frame.hello@3\n        bindings:\n          - do: ask\n            record: {kind: example-question, source: example, message: \"rule on {frame.value}\"}\n            response:\n              value: {from: reply.completion}\n              reason: {from: [reply.reason, reply.message], default: \"ruled on {frame.value} without a reason\"}\n              literal: \"{reply.completion}\"\n            unanswered: {value: false, reason: \"no ruling for {frame.value}\"}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "codecs": {
+        "example": {
+          "queue": "questions",
+          "reply_window_seconds": 1,
+          "session_env": "EXAMPLE_SESSION",
+          "asker_env": "EXAMPLE_ASKER",
+          "about_env": "EXAMPLE_ABOUT",
+          "select": "turn.op",
+          "frames": {
+            "ask": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "ask",
+                  "record": {
+                    "kind": "example-question",
+                    "source": "example",
+                    "message": "rule on {frame.value}"
+                  },
+                  "blocking": false,
+                  "response": {
+                    "value": {
+                      "from": "reply.completion"
+                    },
+                    "reason": {
+                      "from": [
+                        "reply.reason",
+                        "reply.message"
+                      ],
+                      "default": "ruled on {frame.value} without a reason"
+                    },
+                    "literal": "{reply.completion}"
+                  },
+                  "unanswered": {
+                    "value": false,
+                    "reason": "no ruling for {frame.value}"
+                  }
+                }
+              ]
+            },
+            "conditional": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "turn.mood",
+                    "equals": "ready"
+                  },
+                  "do": "answer",
+                  "response": {
+                    "ready": true
+                  }
+                }
+              ]
+            },
+            "fail": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "raise",
+                  "record": {
+                    "kind": "example-failed",
+                    "blocking": false,
+                    "source": "example",
+                    "message": "failed {frame.value}"
+                  },
+                  "fail": "member failed {frame.value}"
+                }
+              ]
+            },
+            "hello": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "turn.mood",
+                    "equals": "lost"
+                  },
+                  "do": "refuse",
+                  "message": "lost: {frame.value}"
+                },
+                {
+                  "do": "answer",
+                  "response": {
+                    "value": "{frame.value}",
+                    "text": "value={frame.value}",
+                    "nested": {
+                      "items": [
+                        "{{",
+                        "missing={frame.missing}"
+                      ],
+                      "object": {
+                        "close": "}}"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "raise": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "raise",
+                  "record": {
+                    "kind": "example-raised",
+                    "blocking": false,
+                    "source": "example",
+                    "message": "raised {frame.value}"
+                  },
+                  "response": {
+                    "raised": true
+                  }
+                }
+              ]
+            },
+            "refuse": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "refuse",
+                  "message": "refused {frame.value}"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1",
+        "file:///tmp/scratch/example-frames.json@3"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/c96ceba196316185.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\nauthors:\n  lead: {capabilities: [retry, unknown]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "authors": {
+        "lead": {
+          "capabilities": [
+            "retry",
+            "unknown"
+          ]
+        }
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/cdff7cd67008be7b.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nqueues:\n  frames: {schema: demo.frame@1}\nschemas:\n  - \"file:///tmp/scratch/frames.json@8\"\n  - \"contradicts.json@1\"\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "queues": {
+        "frames": {
+          "schema": "demo.frame@1"
+        }
+      },
+      "schemas": [
+        "file:///tmp/scratch/frames.json@8",
+        "contradicts.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/cf542c9272b551bf.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\nauthors:\n  lead: {capabilities: [note, finding]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "authors": {
+        "lead": {
+          "capabilities": [
+            "note",
+            "finding"
+          ]
+        }
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/d11c5fdfc6e32d37.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: /tmp/scratch/runs/r1/channel}\nprofile: ledger\nqueues:\n  findings: {policy: {hold_pending: false}}\n  entries: {consumers: [default, auditor]}\nauthors:\n  teller: {capabilities: [post]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/runs/r1/channel"
+      },
+      "profile": "ledger",
+      "queues": {
+        "entries": {
+          "consumers": [
+            "default",
+            "auditor"
+          ]
+        },
+        "findings": {
+          "policy": {
+            "hold_pending": false
+          }
+        }
+      },
+      "authors": {
+        "teller": {
+          "capabilities": [
+            "post"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/d7cee94379bdcbd2.yaml",
+    "text": "version: 1\ntransport:\n  kind: memory\nqueues:\n  prompts: {}\ncodecs:\n  example:\n    queue: prompts\n    reply_window_seconds: 5\n    session_env: SERVE_SESSION\n    asker_env: CHANNEL_ASKER\n    about_env: NODE\n    select: op\n    frames:\n      hello:\n        schema: example.hello@1\n        bindings:\n        - do: answer\n          response:\n            ok: true\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "memory"
+      },
+      "queues": {
+        "prompts": {}
+      },
+      "codecs": {
+        "example": {
+          "queue": "prompts",
+          "reply_window_seconds": 5,
+          "session_env": "SERVE_SESSION",
+          "asker_env": "CHANNEL_ASKER",
+          "about_env": "NODE",
+          "select": "op",
+          "frames": {
+            "hello": {
+              "schema": "example.hello@1",
+              "bindings": [
+                {
+                  "do": "answer",
+                  "response": {
+                    "ok": true
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/d7d015b54dcc5aa0.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\nauthors:\n  sentinel: {capabilities: [finding]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "authors": {
+        "sentinel": {
+          "capabilities": [
+            "finding"
+          ]
+        }
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/d814b20b2832cb38.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/named/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\nqueues:\n  findings: {}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/named/bus"
+      },
+      "profile": "desk",
+      "queues": {
+        "findings": {}
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/e146b4be64987fd6.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\n  - \"file:///tmp/scratch/example-frames.json@3\"\ncodecs:\n  example:\n    queue: questions\n    reply_window_seconds: 1\n    session_env: EXAMPLE_SESSION\n    asker_env: EXAMPLE_ASKER\n    about_env: EXAMPLE_ABOUT\n    select: op\n    frames:\n      hello:\n        schema: example.frame.missing@3\n        bindings:\n          - when: {field: mood, equals: lost}\n            do: refuse\n            message: \"lost: {frame.value}\"\n          - do: answer\n            response:\n              value: \"{frame.value}\"\n              text: \"value={frame.value}\"\n              nested: {items: [\"{{\", \"missing={frame.missing}\"], object: {close: \"}}\"}}\n      raise:\n        schema: example.frame.missing@3\n        bindings:\n          - do: raise\n            record: {kind: example-raised, blocking: false, source: example, message: \"raised {frame.value}\"}\n            response: {raised: true}\n      fail:\n        schema: example.frame.missing@3\n        bindings:\n          - do: raise\n            record: {kind: example-failed, blocking: false, source: example, message: \"failed {frame.value}\"}\n            fail: \"member failed {frame.value}\"\n      refuse:\n        schema: example.frame.missing@3\n        bindings:\n          - do: refuse\n            message: \"refused {frame.value}\"\n      conditional:\n        schema: example.frame.missing@3\n        bindings:\n          - when: {field: mood, equals: ready}\n            do: answer\n            response: {ready: true}\n      ask:\n        schema: example.frame.missing@3\n        bindings:\n          - do: ask\n            record: {kind: example-question, source: example, message: \"rule on {frame.value}\"}\n            response:\n              value: {from: reply.completion}\n              reason: {from: [reply.reason, reply.message], default: \"ruled on {frame.value} without a reason\"}\n              literal: \"{reply.completion}\"\n            unanswered: {value: false, reason: \"no ruling for {frame.value}\"}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "codecs": {
+        "example": {
+          "queue": "questions",
+          "reply_window_seconds": 1,
+          "session_env": "EXAMPLE_SESSION",
+          "asker_env": "EXAMPLE_ASKER",
+          "about_env": "EXAMPLE_ABOUT",
+          "select": "op",
+          "frames": {
+            "ask": {
+              "schema": "example.frame.missing@3",
+              "bindings": [
+                {
+                  "do": "ask",
+                  "record": {
+                    "kind": "example-question",
+                    "source": "example",
+                    "message": "rule on {frame.value}"
+                  },
+                  "blocking": false,
+                  "response": {
+                    "value": {
+                      "from": "reply.completion"
+                    },
+                    "reason": {
+                      "from": [
+                        "reply.reason",
+                        "reply.message"
+                      ],
+                      "default": "ruled on {frame.value} without a reason"
+                    },
+                    "literal": "{reply.completion}"
+                  },
+                  "unanswered": {
+                    "value": false,
+                    "reason": "no ruling for {frame.value}"
+                  }
+                }
+              ]
+            },
+            "conditional": {
+              "schema": "example.frame.missing@3",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "mood",
+                    "equals": "ready"
+                  },
+                  "do": "answer",
+                  "response": {
+                    "ready": true
+                  }
+                }
+              ]
+            },
+            "fail": {
+              "schema": "example.frame.missing@3",
+              "bindings": [
+                {
+                  "do": "raise",
+                  "record": {
+                    "kind": "example-failed",
+                    "blocking": false,
+                    "source": "example",
+                    "message": "failed {frame.value}"
+                  },
+                  "fail": "member failed {frame.value}"
+                }
+              ]
+            },
+            "hello": {
+              "schema": "example.frame.missing@3",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "mood",
+                    "equals": "lost"
+                  },
+                  "do": "refuse",
+                  "message": "lost: {frame.value}"
+                },
+                {
+                  "do": "answer",
+                  "response": {
+                    "value": "{frame.value}",
+                    "text": "value={frame.value}",
+                    "nested": {
+                      "items": [
+                        "{{",
+                        "missing={frame.missing}"
+                      ],
+                      "object": {
+                        "close": "}}"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "raise": {
+              "schema": "example.frame.missing@3",
+              "bindings": [
+                {
+                  "do": "raise",
+                  "record": {
+                    "kind": "example-raised",
+                    "blocking": false,
+                    "source": "example",
+                    "message": "raised {frame.value}"
+                  },
+                  "response": {
+                    "raised": true
+                  }
+                }
+              ]
+            },
+            "refuse": {
+              "schema": "example.frame.missing@3",
+              "bindings": [
+                {
+                  "do": "refuse",
+                  "message": "refused {frame.value}"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1",
+        "file:///tmp/scratch/example-frames.json@3"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/e1c9733ddbea4935.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: /tmp/scratch}\nprofile: ledger\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch"
+      },
+      "profile": "ledger"
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/e25b7f0d17588800.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nqueues:\n  frames: {schema: demo.frame@1}\nschemas:\n  - \"frames.json@8\"\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "queues": {
+        "frames": {
+          "schema": "demo.frame@1"
+        }
+      },
+      "schemas": [
+        "frames.json@8"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/e31064019c410350.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nqueues:\n  findings: {}\nvalidators:\n  - {on: findings, kind: command, command: [\"/repo/target/debug/deps/e2e-7d2892949a98e5e9\",\"--exact\",\"validators::scripted_validator\",\"scripted-validator-script=/tmp/scratch/script.json\"]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "queues": {
+        "findings": {}
+      },
+      "validators": [
+        {
+          "on": "findings",
+          "kind": "command",
+          "command": [
+            "/repo/target/debug/deps/e2e-7d2892949a98e5e9",
+            "--exact",
+            "validators::scripted_validator",
+            "scripted-validator-script=/tmp/scratch/script.json"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/e5a2f7d606c81be4.yaml",
+    "text": "version: 1\ntransport: {kind: memory, dir: somewhere}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "memory",
+        "dir": "somewhere"
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/e67a5f3b47aa4615.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: /tmp/scratch}\nprofile: ledger\nauthors:\n  sentinel: {capabilities: [], refusals: {sign: no}}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch"
+      },
+      "profile": "ledger",
+      "authors": {
+        "sentinel": {
+          "capabilities": [],
+          "refusals": {
+            "sign": "no"
+          }
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/eb1dbd442782b196.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\n  - \"file:///tmp/scratch/example-frames.json@3\"\ncodecs:\n  example:\n    queue: questions\n    reply_window_seconds: 1\n    session_env: EXAMPLE_SESSION\n    asker_env: EXAMPLE_ASKER\n    about_env: EXAMPLE_ABOUT\n    select: op\n    frames:\n      hello:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {field: mood, equals: lost}\n            do: refuse\n            message: \"lost: {frame.value}\"\n          - do: answer\n            response:\n              value: \"{frame.value}\"\n              text: \"value={frame.value}\"\n              nested: {items: [\"{{\", \"missing={frame.missing}\"], object: {close: \"}}\"}}\n      raise:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {kind: example-raised, blocking: false, source: example, message: \"raised {frame.value}\"}\n            response: {raised: true}\n      fail:\n        schema: example.frame.hello@3\n        bindings:\n          - do: raise\n            record: {kind: example-failed, blocking: false, source: example, message: \"failed {frame.value}\"}\n            fail: \"member failed {frame.value}\"\n      refuse:\n        schema: example.frame.hello@3\n        bindings:\n          - do: refuse\n            message: \"refused {frame.value}\"\n      conditional:\n        schema: example.frame.hello@3\n        bindings:\n          - when: {field: mood, equals: ready}\n            do: answer\n            response: {ready: true}\n      ask:\n        schema: example.frame.hello@3\n        bindings:\n          - do: ask\n            record: {kind: example-question, source: example, message: \"rule on {frame.value}\"}\n            response:\n              value: {from: reply.completion}\n              reason: {from: [reply.reason, reply.message], default: \"ruled on {frame.value} without a reason\"}\n              literal: \"{reply.completion}\"\n              nested: [{from: reply.completion}, \"frame {frame.value}\"]\n            unanswered: {value: false, reason: \"no ruling for {frame.value}\"}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "desk",
+      "codecs": {
+        "example": {
+          "queue": "questions",
+          "reply_window_seconds": 1,
+          "session_env": "EXAMPLE_SESSION",
+          "asker_env": "EXAMPLE_ASKER",
+          "about_env": "EXAMPLE_ABOUT",
+          "select": "op",
+          "frames": {
+            "ask": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "ask",
+                  "record": {
+                    "kind": "example-question",
+                    "source": "example",
+                    "message": "rule on {frame.value}"
+                  },
+                  "blocking": false,
+                  "response": {
+                    "value": {
+                      "from": "reply.completion"
+                    },
+                    "reason": {
+                      "from": [
+                        "reply.reason",
+                        "reply.message"
+                      ],
+                      "default": "ruled on {frame.value} without a reason"
+                    },
+                    "literal": "{reply.completion}",
+                    "nested": [
+                      {
+                        "from": "reply.completion"
+                      },
+                      "frame {frame.value}"
+                    ]
+                  },
+                  "unanswered": {
+                    "value": false,
+                    "reason": "no ruling for {frame.value}"
+                  }
+                }
+              ]
+            },
+            "conditional": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "mood",
+                    "equals": "ready"
+                  },
+                  "do": "answer",
+                  "response": {
+                    "ready": true
+                  }
+                }
+              ]
+            },
+            "fail": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "raise",
+                  "record": {
+                    "kind": "example-failed",
+                    "blocking": false,
+                    "source": "example",
+                    "message": "failed {frame.value}"
+                  },
+                  "fail": "member failed {frame.value}"
+                }
+              ]
+            },
+            "hello": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "mood",
+                    "equals": "lost"
+                  },
+                  "do": "refuse",
+                  "message": "lost: {frame.value}"
+                },
+                {
+                  "do": "answer",
+                  "response": {
+                    "value": "{frame.value}",
+                    "text": "value={frame.value}",
+                    "nested": {
+                      "items": [
+                        "{{",
+                        "missing={frame.missing}"
+                      ],
+                      "object": {
+                        "close": "}}"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "raise": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "raise",
+                  "record": {
+                    "kind": "example-raised",
+                    "blocking": false,
+                    "source": "example",
+                    "message": "raised {frame.value}"
+                  },
+                  "response": {
+                    "raised": true
+                  }
+                }
+              ]
+            },
+            "refuse": {
+              "schema": "example.frame.hello@3",
+              "bindings": [
+                {
+                  "do": "refuse",
+                  "message": "refused {frame.value}"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1",
+        "file:///tmp/scratch/example-frames.json@3"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/ec4575cb93154fa0.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: x, url: nats://h}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "x",
+        "url": "nats://h"
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/ec8a5d245282f184.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: intake\nauthors:\n  owner: {capabilities: [file]}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "intake",
+      "authors": {
+        "owner": {
+          "capabilities": [
+            "file"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/ef5549aeb0ef59c7.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/local-queues\"}\nprofile: desk\nschemas:\n  - \"/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1\"\nqueues:\n  findings: {}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/local-queues"
+      },
+      "profile": "desk",
+      "queues": {
+        "findings": {}
+      },
+      "schemas": [
+        "/repo/crates/onemessagebus-e2e/tests/layouts/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/f014e59df788acba.yaml",
+    "text": "version: 1\ntransport: {kind: memory}\nschemas:\n  - \"http://127.0.0.1:8443/frames.json@8\"\n  - \"https://schemas.example.invalid/frames.json@8.1\"\n  - \"frames.json@8\"\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "memory"
+      },
+      "schemas": [
+        "http://127.0.0.1:8443/frames.json@8",
+        "https://schemas.example.invalid/frames.json@8.1",
+        "frames.json@8"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/f6a06fff9b28ba82.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nqueues:\n  frames: {schema: demo.frame@1}\nschemas:\n  - \"file:///tmp/scratch/frames.json@8\"\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "queues": {
+        "frames": {
+          "schema": "demo.frame@1"
+        }
+      },
+      "schemas": [
+        "file:///tmp/scratch/frames.json@8"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/f6bf96fe4d7f59b6.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/channel\"}\nqueues:\n  findings: {}\n  alerts: {}\nvalidators:\n  []\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/channel"
+      },
+      "queues": {
+        "alerts": {},
+        "findings": {}
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/fcfd6e865ebb1487.yaml",
+    "text": "version: 1\ntransport:\n  kind: local\n  dir: /tmp/scratch/channel\nqueues:\n  findings: {}\nvalidators:\n- on: findings\n  when:\n    carries: reply.commands\n  kind: command\n  command:\n  - /repo/target/debug/deps/validators-e932a2a40ee797fa\n  - --exact\n  - scripted_validator\n  - scripted-validator-script=/tmp/scratch/script.json\n  cache:\n    dir: passes\n    bar_fingerprint:\n    - /repo/target/debug/deps/validators-e932a2a40ee797fa\n    - --exact\n    - scripted_validator\n    - scripted-validator-script=/tmp/scratch/script.json\n- on: findings\n  when:\n    not:\n      field: author\n      present: true\n  kind: command\n  command:\n  - /repo/target/debug/deps/validators-e932a2a40ee797fa\n  - --exact\n  - scripted_validator\n  - scripted-validator-script=/tmp/scratch/script.json\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/channel"
+      },
+      "queues": {
+        "findings": {}
+      },
+      "validators": [
+        {
+          "on": "findings",
+          "when": {
+            "carries": "reply.commands"
+          },
+          "kind": "command",
+          "command": [
+            "/repo/target/debug/deps/validators-e932a2a40ee797fa",
+            "--exact",
+            "scripted_validator",
+            "scripted-validator-script=/tmp/scratch/script.json"
+          ],
+          "cache": {
+            "dir": "passes",
+            "bar_fingerprint": [
+              "/repo/target/debug/deps/validators-e932a2a40ee797fa",
+              "--exact",
+              "scripted_validator",
+              "scripted-validator-script=/tmp/scratch/script.json"
+            ]
+          }
+        },
+        {
+          "on": "findings",
+          "when": {
+            "not": {
+              "field": "author",
+              "present": true
+            }
+          },
+          "kind": "command",
+          "command": [
+            "/repo/target/debug/deps/validators-e932a2a40ee797fa",
+            "--exact",
+            "scripted_validator",
+            "scripted-validator-script=/tmp/scratch/script.json"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/fd07f3b08c3a0a19.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: /tmp/scratch}\nprofile: ledger\nqueues:\n  entries: {schema: ledger.entry@1}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch"
+      },
+      "profile": "ledger",
+      "queues": {
+        "entries": {
+          "schema": "ledger.entry@1"
+        }
+      }
+    }
+  },
+  {
+    "kind": "config",
+    "label": "captured/config/fd31f2df0856e1fd.yaml",
+    "text": "version: 1\ntransport: {kind: local, dir: \"/tmp/scratch/bus\"}\nprofile: intake\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "/tmp/scratch/bus"
+      },
+      "profile": "intake"
+    }
+  },
+  {
+    "kind": "filter",
+    "label": "captured/filter/4623de341cfb3803.yaml",
+    "text": "include:\n  - source: billing\n    kind: \"invoice-*\"\n",
+    "expected": {
+      "include": [
+        {
+          "source": "billing",
+          "kind": "invoice-*"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "filter",
+    "label": "captured/filter/4f4aa8dd99249605.yaml",
+    "text": "{\"include\":[{\"tenant\":\"acme\"}]}",
+    "expected": {
+      "include": [
+        {
+          "tenant": "acme"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "filter",
+    "label": "captured/filter/5fdd57e514e336d5.yaml",
+    "text": "{\"include\": [{\"region\": \"eu\"}]}",
+    "expected": {
+      "include": [
+        {
+          "region": "eu"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "filter",
+    "label": "captured/filter/8b3580d5cf7e701d.yaml",
+    "text": "{\"include\": [{\"tenant\": \"acme\"}]}",
+    "expected": {
+      "include": [
+        {
+          "tenant": "acme"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "filter",
+    "label": "captured/filter/ac472d228447db19.yaml",
+    "text": "{\"include\":[{\"source\":\"billing\",\"kind\":\"invoice-*\"}]}",
+    "expected": {
+      "include": [
+        {
+          "source": "billing",
+          "kind": "invoice-*"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "filter",
+    "label": "captured/filter/c9fbda325223e063.yaml",
+    "text": "{\"include\": [{\"order\": \"o-2\"}]}",
+    "expected": {
+      "include": [
+        {
+          "order": "o-2"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "filter",
+    "label": "captured/filter/d1cd96a63287bc17.yaml",
+    "text": "{\"include\": [{\"order\": \"o-1\"}]}",
+    "expected": {
+      "include": [
+        {
+          "order": "o-1"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "filter",
+    "label": "captured/filter/ec7917da9afdc88c.yaml",
+    "text": "{\"include\":[{\"tenant\":\"globex\"}],\"exclude\":[{\"kind\":\"heartbeat\"}]}",
+    "expected": {
+      "include": [
+        {
+          "tenant": "globex"
+        }
+      ],
+      "exclude": [
+        {
+          "kind": "heartbeat"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/0318414281f54010.yaml",
+    "text": "{\"all\": [{\"field\": \"flag\", \"equals\": false}, {\"any\": [{\"field\": \"n\", \"equals\": 0}]}]}",
+    "expected": {
+      "all": [
+        {
+          "field": "flag",
+          "equals": false
+        },
+        {
+          "any": [
+            {
+              "field": "n",
+              "equals": 0
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/034fd87e232c9b48.yaml",
+    "text": "{\"field\": \"missing\", \"non_empty\": true}",
+    "expected": {
+      "field": "missing",
+      "non_empty": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/31905ad324c5d24d.yaml",
+    "text": "{\"field\":\"text\",\"equals\":\"bye\"}",
+    "expected": {
+      "field": "text",
+      "equals": "bye"
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/3bdc506b8ab51e17.yaml",
+    "text": "{\"field\": \"none\", \"equals\": null}",
+    "expected": {
+      "field": "none",
+      "equals": null
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/3c1002d18edf131e.yaml",
+    "text": "{\"field\": \"none\", \"present\": false}",
+    "expected": {
+      "field": "none",
+      "present": false
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/4ef1fb8665c6de75.yaml",
+    "text": "{\"field\": \"a\", \"non_empty\": true}",
+    "expected": {
+      "field": "a",
+      "non_empty": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/5b95d2430bd2bc7b.yaml",
+    "text": "{\"field\": \"flag\", \"non_empty\": true}",
+    "expected": {
+      "field": "flag",
+      "non_empty": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/6af440f889eb0b89.yaml",
+    "text": "{\"field\":\"reply.message\",\"equals\":\"late\"}",
+    "expected": {
+      "field": "reply.message",
+      "equals": "late"
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/6c154cb311e2dd5a.yaml",
+    "text": "{\"field\": \"empty\", \"non_empty\": true}",
+    "expected": {
+      "field": "empty",
+      "non_empty": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/6d24fbc9b73154b8.yaml",
+    "text": "any:\n  - field: a.b\n    equals: x\n",
+    "expected": {
+      "any": [
+        {
+          "field": "a.b",
+          "equals": "x"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/6f41ff931342f77e.yaml",
+    "text": "{\"field\": \"empty\", \"non_empty\": false}",
+    "expected": {
+      "field": "empty",
+      "non_empty": false
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/70dab0b8dc160851.yaml",
+    "text": "{\"field\": \"n\", \"non_empty\": true}",
+    "expected": {
+      "field": "n",
+      "non_empty": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/72f58794c2e58dcc.yaml",
+    "text": "{\"field\": \"a.b\", \"equals\": \"x\"}",
+    "expected": {
+      "field": "a.b",
+      "equals": "x"
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/760df2ebf13fdc08.yaml",
+    "text": "{\"field\":\"text\",\"equals\":\"hello\"}",
+    "expected": {
+      "field": "text",
+      "equals": "hello"
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/9113eab752a4bb40.yaml",
+    "text": "{\"field\": \"none\", \"non_empty\": true}",
+    "expected": {
+      "field": "none",
+      "non_empty": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/9e9ffbce96deb843.yaml",
+    "text": "{\"any\": []}",
+    "expected": {
+      "any": []
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/a160fd8ef7640aeb.yaml",
+    "text": "{\"field\":\"x\",\"present\":true}",
+    "expected": {
+      "field": "x",
+      "present": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/a4700bc963176733.yaml",
+    "text": "{\"all\": []}",
+    "expected": {
+      "all": []
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/a8bb60e23cee0a25.yaml",
+    "text": "{\"field\": \"reply.message\", \"equals\": \"go on\"}",
+    "expected": {
+      "field": "reply.message",
+      "equals": "go on"
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/abbc77d964e04e7b.yaml",
+    "text": "{\"field\":\"event\",\"equals\":\"answered\"}",
+    "expected": {
+      "field": "event",
+      "equals": "answered"
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/ac80977e5650897b.yaml",
+    "text": "{\"field\":\"text\",\"equals\":\"never\"}",
+    "expected": {
+      "field": "text",
+      "equals": "never"
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/bcff4e06b085f918.yaml",
+    "text": "{\"field\": \"list\", \"non_empty\": true}",
+    "expected": {
+      "field": "list",
+      "non_empty": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/c4fec17fbb08c64c.yaml",
+    "text": "{\"field\": \"a\", \"present\": true}",
+    "expected": {
+      "field": "a",
+      "present": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/c632b2434d9604d1.yaml",
+    "text": "{\"not\": {\"any\": [{\"field\": \"flag\", \"equals\": true}]}}",
+    "expected": {
+      "not": {
+        "any": [
+          {
+            "field": "flag",
+            "equals": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/cc9f0643a87c8b2f.yaml",
+    "text": "{\"field\": \"event\", \"equals\": \"answered\"}",
+    "expected": {
+      "field": "event",
+      "equals": "answered"
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/cefebdf3eaa110ce.yaml",
+    "text": "{\"field\": \"map\", \"non_empty\": true}",
+    "expected": {
+      "field": "map",
+      "non_empty": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/d5d8ec97ff757964.yaml",
+    "text": "{\"field\":\"event\",\"equals\":\"abandoned\"}",
+    "expected": {
+      "field": "event",
+      "equals": "abandoned"
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/d5f7e64a501fe2d8.yaml",
+    "text": "{\"not\":{\"all\":[{\"field\":\"a\",\"non_empty\":true},{\"any\":[{\"field\":\"n\",\"present\":true}]}]}}",
+    "expected": {
+      "not": {
+        "all": [
+          {
+            "field": "a",
+            "non_empty": true
+          },
+          {
+            "any": [
+              {
+                "field": "n",
+                "present": true
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/d639f5b92c457214.yaml",
+    "text": "{\"field\": \"a.c\", \"equals\": null}",
+    "expected": {
+      "field": "a.c",
+      "equals": null
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "captured/predicate/e6977c1dd65ec619.yaml",
+    "text": "{\"field\":\"never\",\"present\":true}",
+    "expected": {
+      "field": "never",
+      "present": true
+    }
+  },
+  {
+    "kind": "config",
+    "label": "docs/queues.md block 0",
+    "text": "version: 1\ntransport: {kind: local, dir: runs/r1/channel}\nschemas:\n  - \"https://example.org/desk.json@1\"   # a bundle whose `layouts` declares `desk`\nprofile: desk\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "runs/r1/channel"
+      },
+      "profile": "desk",
+      "schemas": [
+        "https://example.org/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "docs/queues.md block 1",
+    "text": "version: 1\ntransport: {kind: local, dir: runs/r1/desk}    # kind: local | memory | a registered or plugin kind\nprofile: desk                                  # a layout the program links, or a linked bundle declares; optional\nqueues:                                        # additions, or overrides of a layout's queue by name\n  findings: {policy: {hold_pending: false}}\nauthors:                                       # a layout's author may be narrowed; other names declare authors\n  lead: {capabilities: [retry, note]}\n  sentinel:\n    capabilities: [retry, note]\n    refusals: {complete: \"whether the desk is done is the lead's verdict, not an observation\"}\nschemas:                                       # schema bundles linked by URL or path, pinned; docs/schema-links.md\n  - \"https://example.org/desk.json@1\"\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "runs/r1/desk"
+      },
+      "profile": "desk",
+      "queues": {
+        "findings": {
+          "policy": {
+            "hold_pending": false
+          }
+        }
+      },
+      "authors": {
+        "lead": {
+          "capabilities": [
+            "retry",
+            "note"
+          ]
+        },
+        "sentinel": {
+          "capabilities": [
+            "retry",
+            "note"
+          ],
+          "refusals": {
+            "complete": "whether the desk is done is the lead's verdict, not an observation"
+          }
+        }
+      },
+      "schemas": [
+        "https://example.org/desk.json@1"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "docs/schema-links.md block 0",
+    "text": "version: 1\ntransport: {kind: local, dir: runs/r1/channel}\nschemas:\n  - \"https://example.org/frames.json@8\"\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local",
+        "dir": "runs/r1/channel"
+      },
+      "schemas": [
+        "https://example.org/frames.json@8"
+      ]
+    }
+  },
+  {
+    "kind": "config",
+    "label": "ai-orchestrator@219568e3c890/config/onemessagebus.yaml",
+    "text": "# This host's messaging policy for the planner channel: the one place it lives.\n#\n# Read by every verb that touches a run's channel — `just channel-reply`, the ask shim\n# `ORCHESTRATOR_ASK_MANAGER` names, the observer's judge side in graphs/dag-scope.yaml —\n# and by the engine itself, which every launch hands it with `--bus-config`, so the\n# validators, the authors and the monitor binding below are the same ones whichever of\n# them is speaking. The keys are the installed `onemessagebus` release's schema\n# (config/onemessagebus.version; its docs/queues.md, docs/validators.md, docs/codecs.md,\n# docs/schema-links.md and docs/contract.md); the values are this host's.\n# tests/test_onemessagebus_config.py loads the file through the release and holds each\n# value below to the statement it comes from.\n#\n# Supervision policy is this host's, and it is configuration: the texts a monitor is told,\n# the two surface kinds this host raises, what a lost turn is called and which harness\n# identity it is reported under are all data here, beside the persona whose behaviour they\n# describe (personas/orchestrator.yaml). Nothing here derives a fact from a frame, a\n# transcript or a harness identity — onejudge reports every one of them as a field of the\n# frame it writes, and the binding names the field.\nversion: 1\n# The run's channel directory is supplied per invocation with `--transport-dir`, never\n# here: the engine refuses a `transport.dir` in a launch's bus configuration, because the\n# transport is the run root's own.\ntransport: {kind: local}\n# The engine's channel layout, which the engine owns and publishes as a document — the\n# first link below — rather than one the bus compiles in.\nprofile: planner-channel\n# The published bundles this file resolves, each pinned to the version it declares (the\n# bus's docs/schema-links.md, Contract L). Two links. The first is the planner-channel\n# layout the engine publishes (onepipeline's docs/contract.md, \"The planner-channel\n# layout is published as a document\"), at the release tag config/onepipeline.version\n# adopts, so this host's bus reads and writes the channel directory the dispatching\n# engine does; `@1` admits the `1.0.0` that bundle declares. The second is onejudge's\n# command-provider frames the codec below serves, published at the release tag\n# config/onejudge.version adopts — spelled `onejudge-v<release>` since 0.18.0 — and\n# pinned to the protocol version that release speaks — `@8` admits every bundle\n# declaring `8`, `8.x` or `8.x.y` and refuses `9` by name.\n# A pinned remote link resolves through the schema cache, which scripts/session-setup.sh\n# warms with `onemessagebus schemas fetch`, so a serving session never waits on the\n# network when the cache holds the bundle; a bundle whose declared version the pin does\n# not admit is a hard error naming the link, never a silent fallback.\n# tests/test_onemessagebus_config.py holds each tag to its pin file, the frames link's\n# `@` pin to the protocol the installed onejudge speaks, against a bundle derived from\n# that release, and the resolved layout to the four queues the engine writes.\nschemas:\n  - \"https://raw.githubusercontent.com/nickderobertis/onepipeline/v0.69.0/schemas/planner-channel.json@1\"\n  - \"https://raw.githubusercontent.com/nickderobertis/onejudge/onejudge-v0.19.0/schemas/judge-seat-frames.json@8\"\nauthors:\n  # The channel's authors, as the bus's Contract A has a configuration declare them: the\n  # planner is the one author the linked planner-channel layout declares, granted every\n  # op, and every other author is declared here with its grants. The monitor is this host's observer author\n  # (graphs/dag-scope.yaml's `monitor` member, personas/orchestrator.yaml), and no library\n  # names it, so its grants and the reasons it is refused the rest are this host's to say.\n  #\n  # `capabilities` is the allowlist AGENTS.md states — the ops that correct and re-run\n  # work. `refusals` gives every other op the reason a refusal reads back with, in the\n  # channel's own words (`'<op>' is not an op the monitor may issue: <reason>. Surface it to\n  # the planner instead`), verbatim from the profile the bus built in before it stopped\n  # naming the monitor, so a refusal the monitor meets reads exactly as it did.\n  monitor:\n    capabilities: [retry, requeue, cancel, finding, add]\n    refusals:\n      complete: \"whether the run is finished is the planner's verdict, not an observation\"\n      attest: \"a human action is attested by the person who took it, never by a watcher\"\n      drop: \"removing work from the graph is a decomposition decision the planner owns\"\n      reparent: \"rewiring dependencies is a decomposition decision the planner owns\"\n      amend: \"what a node is judged against is a decomposition decision the planner owns\"\n      note: \"a note may bind a criterion the node's judge decides against, which is the planner's decision rather than an observation\"\n      settle: \"settling a node from evidence declares an outcome this run never observed, which is the planner's decision rather than an observation\"\nvalidators:\n  # Task prose in an envelope is criteria. Every reply carrying commands is held to the\n  # criteria bar — the deterministic tier, then the judged one — before anything is\n  # appended; `orchestrator/envelope_review.py` is that bar's one entry point, reached\n  # through `scripts/envelope-review.sh` for the identity environment its judged turn\n  # needs. Only a pass is cached, keyed on the envelope's bytes and the bar's\n  # fingerprint, so moving either tier of the bar invalidates every recorded pass. Both\n  # paths are relative to the working directory, which is the repository root for a\n  # recipe and for the launch a run's own replies are validated under.\n  - on: replies\n    when: {carries: commands}\n    kind: command\n    command: [scripts/envelope-review.sh]\n    cache:\n      dir: .cache/envelope-passes\n      bar_fingerprint: [uv, run, python, -m, orchestrator.envelope_review, --bar-fingerprint]\ncodecs:\n  # The monitor's judge side: `onemessagebus serve surfaces --codec monitor` over this\n  # file, as graphs/dag-scope.yaml spawns it, interpreting onejudge's command-provider\n  # frames under the binding grammar the bus's docs/codecs.md states (Contract B). Each\n  # frame onejudge writes is validated against the linked bundle above, then answered by\n  # the first binding whose `when` holds; a frame with no entry here — `respond`, `user`,\n  # `assess` — or no holding binding is refused, exit 2. No `run_env`: the engine refuses\n  # one in a launch's bus configuration.\n  monitor:\n    queue: surfaces\n    # Who asks: the engine's own asker variable, `ONEPIPELINE_CHANNEL_ASKER`, so a later\n    # session of the same asker takes back what an earlier one left outstanding.\n    asker_env: ONEPIPELINE_CHANNEL_ASKER\n    # The bound on one serving session, in seconds, read off this variable when it is set.\n    # The name is this host's own — the engine retired the `channel serve` that bounded a\n    # session by a variable of its own — and nothing in a launch sets it, because onejudge\n    # closes the frame stream after each frame and a session whose stream closes ends for\n    # that reason whatever its bound. tests/test_onemessagebus_config.py drives both endings.\n    session_env: ORCHESTRATOR_MONITOR_SESSION_SECONDS\n    # Fifty minutes, the window this host measured a manager needs: long enough that a\n    # manager who stepped away still answers, short enough that a wedged question is not\n    # immortal. docs/orchestration.md keeps the measurement.\n    reply_window_seconds: 3000\n    select: op\n    frames:\n      supervisor:\n        schema: agent.onejudge-frame.supervisor@8\n        bindings:\n          # A turn the agent side lost, as onejudge reports it (its docs/protocol.md,\n          # Contract O): `turn.outcome` is `lost`, `turn.cause` the classified cause and\n          # `turn.harness` the composed id of the harness identity that ran. It is raised\n          # once, non-blocking, naming both fields and nothing of any transcript, and the\n          # member is failed rather than handed a verdict it would act on — exit 1 is how\n          # the member ends, and oneagentgraph records the death.\n          - when: {field: turn.outcome, equals: lost}\n            do: raise\n            record:\n              kind: monitor-failed\n              blocking: false\n              source: proposal\n              message: \"monitor turn failed: {frame.turn.cause} on {frame.turn.harness}. It said nothing, so there is nothing to answer.\"\n            fail: \"the monitor's turn was lost: {frame.turn.cause} on {frame.turn.harness}; a `monitor-failed` surface says so\"\n          # Any other turn was taken: the member is answered with a non-completion that\n          # keeps it watching and raises nothing. Prose reaches nobody — a report reaches\n          # the planner only as a `finding` op — and the next turn opens after the graph's\n          # hold (the `schedule` on graphs/dag-scope.yaml's `monitor` member), never now.\n          - do: answer\n            response:\n              completion: false\n              message: \"Your turn was taken and no planner surface was raised for it: prose reaches nobody. A report reaches the planner only as a `finding` op in a reply envelope, which arrives once and carries the node it is about. Your next turn opens after the graph's hold, and reads the detailed stream from the cursor your last read ended with, not the last few lines.\"\n              reason: \"the monitor took its turn; a report reaches the planner as a finding\"\n      judge:\n        schema: agent.onejudge-frame.judge@8\n        bindings:\n          # A planner rules with a `completion` boolean, which is no score on a scale.\n          - when: {field: kind, equals: numeric}\n            do: refuse\n            message: \"a `numeric` score is not one this binding gives: a planner rules with a `completion` boolean, which is no score on a scale; it scores `boolean` criteria alone\"\n          # The member's completion bar, put to the planner as one non-blocking question and\n          # scored from the ruling: `completion` is the value, and the ruling's reason — or\n          # its message — is the reason. A ruling that is not one, a reply window that\n          # elapses and a question abandoned all score `false`, never a pass.\n          - do: ask\n            record:\n              kind: monitor-completion\n              source: proposal\n              message: \"The monitor's conversation has ended and onejudge is scoring that conversation against the monitor's own completion bar. You are this member's judge side, so the score is yours: did this watch meet the bar quoted below? Reply `completion: true` if it did, `false` if it did not. THE RUN IS NOT BLOCKED ON THIS and nothing waits for you: the question is non-blocking, no answer is read as `false`, and the run settles either way.\\n\\n{frame.criterion}\"\n            blocking: false\n            response:\n              value: {from: reply.completion}\n              reason: {from: [reply.reason, reply.message], default: \"the planner ruled without saying why\"}\n            unanswered: {value: false, reason: \"no ruling on this member's completion bar arrived — nobody ruled within the reply window, or the question was abandoned — so it is scored unsatisfied\"}\n",
+    "expected": {
+      "version": 1,
+      "transport": {
+        "kind": "local"
+      },
+      "profile": "planner-channel",
+      "authors": {
+        "monitor": {
+          "capabilities": [
+            "retry",
+            "requeue",
+            "cancel",
+            "finding",
+            "add"
+          ],
+          "refusals": {
+            "amend": "what a node is judged against is a decomposition decision the planner owns",
+            "attest": "a human action is attested by the person who took it, never by a watcher",
+            "complete": "whether the run is finished is the planner's verdict, not an observation",
+            "drop": "removing work from the graph is a decomposition decision the planner owns",
+            "note": "a note may bind a criterion the node's judge decides against, which is the planner's decision rather than an observation",
+            "reparent": "rewiring dependencies is a decomposition decision the planner owns",
+            "settle": "settling a node from evidence declares an outcome this run never observed, which is the planner's decision rather than an observation"
+          }
+        }
+      },
+      "validators": [
+        {
+          "on": "replies",
+          "when": {
+            "carries": "commands"
+          },
+          "kind": "command",
+          "command": [
+            "scripts/envelope-review.sh"
+          ],
+          "cache": {
+            "dir": ".cache/envelope-passes",
+            "bar_fingerprint": [
+              "uv",
+              "run",
+              "python",
+              "-m",
+              "orchestrator.envelope_review",
+              "--bar-fingerprint"
+            ]
+          }
+        }
+      ],
+      "codecs": {
+        "monitor": {
+          "queue": "surfaces",
+          "reply_window_seconds": 3000,
+          "session_env": "ORCHESTRATOR_MONITOR_SESSION_SECONDS",
+          "asker_env": "ONEPIPELINE_CHANNEL_ASKER",
+          "select": "op",
+          "frames": {
+            "judge": {
+              "schema": "agent.onejudge-frame.judge@8",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "kind",
+                    "equals": "numeric"
+                  },
+                  "do": "refuse",
+                  "message": "a `numeric` score is not one this binding gives: a planner rules with a `completion` boolean, which is no score on a scale; it scores `boolean` criteria alone"
+                },
+                {
+                  "do": "ask",
+                  "record": {
+                    "kind": "monitor-completion",
+                    "source": "proposal",
+                    "message": "The monitor's conversation has ended and onejudge is scoring that conversation against the monitor's own completion bar. You are this member's judge side, so the score is yours: did this watch meet the bar quoted below? Reply `completion: true` if it did, `false` if it did not. THE RUN IS NOT BLOCKED ON THIS and nothing waits for you: the question is non-blocking, no answer is read as `false`, and the run settles either way.\n\n{frame.criterion}"
+                  },
+                  "blocking": false,
+                  "response": {
+                    "value": {
+                      "from": "reply.completion"
+                    },
+                    "reason": {
+                      "from": [
+                        "reply.reason",
+                        "reply.message"
+                      ],
+                      "default": "the planner ruled without saying why"
+                    }
+                  },
+                  "unanswered": {
+                    "value": false,
+                    "reason": "no ruling on this member's completion bar arrived — nobody ruled within the reply window, or the question was abandoned — so it is scored unsatisfied"
+                  }
+                }
+              ]
+            },
+            "supervisor": {
+              "schema": "agent.onejudge-frame.supervisor@8",
+              "bindings": [
+                {
+                  "when": {
+                    "field": "turn.outcome",
+                    "equals": "lost"
+                  },
+                  "do": "raise",
+                  "record": {
+                    "kind": "monitor-failed",
+                    "blocking": false,
+                    "source": "proposal",
+                    "message": "monitor turn failed: {frame.turn.cause} on {frame.turn.harness}. It said nothing, so there is nothing to answer."
+                  },
+                  "fail": "the monitor's turn was lost: {frame.turn.cause} on {frame.turn.harness}; a `monitor-failed` surface says so"
+                },
+                {
+                  "do": "answer",
+                  "response": {
+                    "completion": false,
+                    "message": "Your turn was taken and no planner surface was raised for it: prose reaches nobody. A report reaches the planner only as a `finding` op in a reply envelope, which arrives once and carries the node it is about. Your next turn opens after the graph's hold, and reads the detailed stream from the cursor your last read ended with, not the last few lines.",
+                    "reason": "the monitor took its turn; a report reaches the planner as a finding"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "schemas": [
+        "https://raw.githubusercontent.com/nickderobertis/onepipeline/v0.69.0/schemas/planner-channel.json@1",
+        "https://raw.githubusercontent.com/nickderobertis/onejudge/onejudge-v0.19.0/schemas/judge-seat-frames.json@8"
+      ]
+    }
+  },
+  {
+    "kind": "filter",
+    "label": "TypeScript captured/filter/5fdd57e514e336d5.yaml",
+    "text": "{\"include\":[{\"region\":\"eu\"}]}",
+    "expected": {
+      "include": [
+        {
+          "region": "eu"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "filter",
+    "label": "Python captured/filter/ac472d228447db19.yaml",
+    "text": "{\"include\": [{\"source\": \"billing\", \"kind\": \"invoice-*\"}]}",
+    "expected": {
+      "include": [
+        {
+          "source": "billing",
+          "kind": "invoice-*"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "filter",
+    "label": "TypeScript captured/filter/c9fbda325223e063.yaml",
+    "text": "{\"include\":[{\"order\":\"o-2\"}]}",
+    "expected": {
+      "include": [
+        {
+          "order": "o-2"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "filter",
+    "label": "TypeScript captured/filter/d1cd96a63287bc17.yaml",
+    "text": "{\"include\":[{\"order\":\"o-1\"}]}",
+    "expected": {
+      "include": [
+        {
+          "order": "o-1"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "filter",
+    "label": "Python captured/filter/ec7917da9afdc88c.yaml",
+    "text": "{\"include\": [{\"tenant\": \"globex\"}], \"exclude\": [{\"kind\": \"heartbeat\"}]}",
+    "expected": {
+      "include": [
+        {
+          "tenant": "globex"
+        }
+      ],
+      "exclude": [
+        {
+          "kind": "heartbeat"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/0318414281f54010.yaml",
+    "text": "{\"all\":[{\"field\":\"flag\",\"equals\":false},{\"any\":[{\"field\":\"n\",\"equals\":0}]}]}",
+    "expected": {
+      "all": [
+        {
+          "field": "flag",
+          "equals": false
+        },
+        {
+          "any": [
+            {
+              "field": "n",
+              "equals": 0
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/034fd87e232c9b48.yaml",
+    "text": "{\"field\":\"missing\",\"non_empty\":true}",
+    "expected": {
+      "field": "missing",
+      "non_empty": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "Python captured/predicate/31905ad324c5d24d.yaml",
+    "text": "{\"field\": \"text\", \"equals\": \"bye\"}",
+    "expected": {
+      "field": "text",
+      "equals": "bye"
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/3bdc506b8ab51e17.yaml",
+    "text": "{\"field\":\"none\",\"equals\":null}",
+    "expected": {
+      "field": "none",
+      "equals": null
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/3c1002d18edf131e.yaml",
+    "text": "{\"field\":\"none\",\"present\":false}",
+    "expected": {
+      "field": "none",
+      "present": false
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/4ef1fb8665c6de75.yaml",
+    "text": "{\"field\":\"a\",\"non_empty\":true}",
+    "expected": {
+      "field": "a",
+      "non_empty": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/5b95d2430bd2bc7b.yaml",
+    "text": "{\"field\":\"flag\",\"non_empty\":true}",
+    "expected": {
+      "field": "flag",
+      "non_empty": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "Python captured/predicate/6af440f889eb0b89.yaml",
+    "text": "{\"field\": \"reply.message\", \"equals\": \"late\"}",
+    "expected": {
+      "field": "reply.message",
+      "equals": "late"
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/6c154cb311e2dd5a.yaml",
+    "text": "{\"field\":\"empty\",\"non_empty\":true}",
+    "expected": {
+      "field": "empty",
+      "non_empty": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/6f41ff931342f77e.yaml",
+    "text": "{\"field\":\"empty\",\"non_empty\":false}",
+    "expected": {
+      "field": "empty",
+      "non_empty": false
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/70dab0b8dc160851.yaml",
+    "text": "{\"field\":\"n\",\"non_empty\":true}",
+    "expected": {
+      "field": "n",
+      "non_empty": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/72f58794c2e58dcc.yaml",
+    "text": "{\"field\":\"a.b\",\"equals\":\"x\"}",
+    "expected": {
+      "field": "a.b",
+      "equals": "x"
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "Python captured/predicate/760df2ebf13fdc08.yaml",
+    "text": "{\"field\": \"text\", \"equals\": \"hello\"}",
+    "expected": {
+      "field": "text",
+      "equals": "hello"
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/9113eab752a4bb40.yaml",
+    "text": "{\"field\":\"none\",\"non_empty\":true}",
+    "expected": {
+      "field": "none",
+      "non_empty": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/9e9ffbce96deb843.yaml",
+    "text": "{\"any\":[]}",
+    "expected": {
+      "any": []
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "Python captured/predicate/a160fd8ef7640aeb.yaml",
+    "text": "{\"field\": \"x\", \"present\": true}",
+    "expected": {
+      "field": "x",
+      "present": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/a4700bc963176733.yaml",
+    "text": "{\"all\":[]}",
+    "expected": {
+      "all": []
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/a8bb60e23cee0a25.yaml",
+    "text": "{\"field\":\"reply.message\",\"equals\":\"go on\"}",
+    "expected": {
+      "field": "reply.message",
+      "equals": "go on"
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "Python captured/predicate/ac80977e5650897b.yaml",
+    "text": "{\"field\": \"text\", \"equals\": \"never\"}",
+    "expected": {
+      "field": "text",
+      "equals": "never"
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/bcff4e06b085f918.yaml",
+    "text": "{\"field\":\"list\",\"non_empty\":true}",
+    "expected": {
+      "field": "list",
+      "non_empty": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/c4fec17fbb08c64c.yaml",
+    "text": "{\"field\":\"a\",\"present\":true}",
+    "expected": {
+      "field": "a",
+      "present": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/c632b2434d9604d1.yaml",
+    "text": "{\"not\":{\"any\":[{\"field\":\"flag\",\"equals\":true}]}}",
+    "expected": {
+      "not": {
+        "any": [
+          {
+            "field": "flag",
+            "equals": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/cefebdf3eaa110ce.yaml",
+    "text": "{\"field\":\"map\",\"non_empty\":true}",
+    "expected": {
+      "field": "map",
+      "non_empty": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "Python captured/predicate/d5d8ec97ff757964.yaml",
+    "text": "{\"field\": \"event\", \"equals\": \"abandoned\"}",
+    "expected": {
+      "field": "event",
+      "equals": "abandoned"
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "Python captured/predicate/d5f7e64a501fe2d8.yaml",
+    "text": "{\"not\": {\"all\": [{\"field\": \"a\", \"non_empty\": true}, {\"any\": [{\"field\": \"n\", \"present\": true}]}]}}",
+    "expected": {
+      "not": {
+        "all": [
+          {
+            "field": "a",
+            "non_empty": true
+          },
+          {
+            "any": [
+              {
+                "field": "n",
+                "present": true
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript captured/predicate/d639f5b92c457214.yaml",
+    "text": "{\"field\":\"a.c\",\"equals\":null}",
+    "expected": {
+      "field": "a.c",
+      "equals": null
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "Python captured/predicate/e6977c1dd65ec619.yaml",
+    "text": "{\"field\": \"never\", \"present\": true}",
+    "expected": {
+      "field": "never",
+      "present": true
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript YAML captured/predicate/6d24fbc9b73154b8.yaml",
+    "text": "{\"any\":[{\"field\":\"a.b\",\"equals\":\"x\"}]}",
+    "expected": {
+      "any": [
+        {
+          "field": "a.b",
+          "equals": "x"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "Python YAML captured/predicate/6d24fbc9b73154b8.yaml",
+    "text": "{\"any\": [{\"field\": \"a.b\", \"equals\": \"x\"}]}",
+    "expected": {
+      "any": [
+        {
+          "field": "a.b",
+          "equals": "x"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "filter",
+    "label": "docs/contract.md fixture filter",
+    "text": "{\"include\": [{\"kind\": \"invoice-*\"}, {\"tenant\": \"acme\", \"region\": \"eu\"}],\n \"exclude\": [{\"kind\": \"heartbeat\"}, {\"source\": \"ledger\", \"tenant\": \"internal\"}]}\n",
+    "expected": {
+      "include": [
+        {
+          "kind": "invoice-*"
+        },
+        {
+          "tenant": "acme",
+          "region": "eu"
+        }
+      ],
+      "exclude": [
+        {
+          "kind": "heartbeat"
+        },
+        {
+          "source": "ledger",
+          "tenant": "internal"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "TypeScript Unicode predicate",
+    "text": "{\"field\":\"text\",\"equals\":\"café ☕\"}",
+    "expected": {
+      "field": "text",
+      "equals": "café ☕"
+    }
+  },
+  {
+    "kind": "predicate",
+    "label": "Python Unicode predicate",
+    "text": "{\"field\": \"text\", \"equals\": \"caf\\u00e9 \\u2615\"}",
+    "expected": {
+      "field": "text",
+      "equals": "café ☕"
+    }
+  },
+  {
+    "kind": "filter",
+    "label": "TypeScript Unicode filter",
+    "text": "{\"include\":[{\"kind\":\"résumé-*\"}]}",
+    "expected": {
+      "include": [
+        {
+          "kind": "résumé-*"
+        }
+      ]
+    }
+  },
+  {
+    "kind": "filter",
+    "label": "Python Unicode filter",
+    "text": "{\"include\": [{\"kind\": \"r\\u00e9sum\\u00e9-*\"}]}",
+    "expected": {
+      "include": [
+        {
+          "kind": "résumé-*"
+        }
+      ]
+    }
+  }
+]

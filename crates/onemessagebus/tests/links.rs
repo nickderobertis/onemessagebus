@@ -400,7 +400,10 @@ fn load_parses_links_resolving_nothing_and_refuses_a_malformed_one_by_name() {
     assert!(matches!(failure, ConfigError::Parse { .. }), "{failure}");
     let message = failure.to_string();
     assert!(
-        message.contains("schemas") && message.contains("http://example.org/frames.json@8"),
+        message.contains(path.to_str().expect("path"))
+            && message.contains("http://example.org/frames.json@8")
+            && message.contains("http:// is taken only for a loopback host")
+            && message.contains("line 4, column"),
         "{message}"
     );
     let bare = Config::parse("version: 1\ntransport: {kind: memory}\n").expect("no links");
