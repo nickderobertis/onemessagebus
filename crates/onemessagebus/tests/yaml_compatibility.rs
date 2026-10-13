@@ -24,6 +24,10 @@ fn real_configurations_load_with_the_base_meaning() {
     let directory = tempfile::tempdir().expect("scratch directory");
     let path = directory.path().join("onemessagebus.yaml");
     for case in cases().into_iter().filter(|case| case.kind == "config") {
+        // The Linux capture's file:///tmp/ schema URLs name Unix-only absolute paths.
+        if !cfg!(unix) && case.text.contains("file:///tmp/") {
+            continue;
+        }
         std::fs::write(&path, &case.text).expect("write real configuration");
         let actual = Config::load(&path).unwrap_or_else(|error| panic!("{}: {error}", case.label));
         let mut expected: Config = serde_json::from_value(case.expected).expect("base Config");
