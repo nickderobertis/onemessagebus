@@ -9,13 +9,7 @@ all-features = true
 
 [advisories]
 yanked = "deny"
-ignore = [
-    # `unsafe-libyaml` reaches the lockfile only through the dev-dependency chain
-    # `onemessagebus-repo` (dev) -> `onevcs` 0.21.0 -> `serde_yaml_ng` -> `unsafe-libyaml`.
-    # The notice is an unmaintained notice, not a known vulnerability. Remove this
-    # entry once onevcs moves to serde_norway and this repository links that release.
-    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is unmaintained (no known vulnerability), reached via onemessagebus-repo (dev) -> onevcs 0.21.0 -> serde_yaml_ng; remove once onevcs moves to serde_norway and this repository links that release" },
-]
+ignore = []
 
 [licenses]
 # Permissive licenses compatible with this MIT-licensed workspace. Adding a
@@ -60,6 +54,16 @@ deny = [
     { crate = "onepipeline", reason = "the bus is a leaf: the stack adopts it, never the reverse" },
     { crate = "oneharness", reason = "the bus is a leaf: the stack adopts it, never the reverse" },
     { crate = "oneharness-core", reason = "the bus is a leaf: the stack adopts it, never the reverse" },
+    # The fleet's YAML contract: every repository reads YAML through serde-saphyr,
+    # so a libyaml translation re-entering the graph, directly or through a crate
+    # that links one, turns this check red.
+    { crate = "serde_yaml", reason = "RUSTSEC-2024-0449: a libyaml translation (unsafe-libyaml is unmaintained); the fleet reads YAML through serde-saphyr" },
+    { crate = "serde_yaml_ng", reason = "RUSTSEC-2024-0449: a libyaml translation (unsafe-libyaml is unmaintained); the fleet reads YAML through serde-saphyr" },
+    { crate = "serde_norway", reason = "RUSTSEC-2024-0449: a libyaml translation (unsafe-libyaml is unmaintained); the fleet reads YAML through serde-saphyr" },
+    { crate = "serde_yml", reason = "RUSTSEC-2024-0449: a libyaml translation (unsafe-libyaml is unmaintained); the fleet reads YAML through serde-saphyr" },
+    { crate = "unsafe-libyaml", reason = "RUSTSEC-2024-0449: a libyaml translation (unsafe-libyaml is unmaintained); the fleet reads YAML through serde-saphyr" },
+    { crate = "unsafe-libyaml-norway", reason = "RUSTSEC-2024-0449: a libyaml translation (unsafe-libyaml is unmaintained); the fleet reads YAML through serde-saphyr" },
+    { crate = "libyml", reason = "RUSTSEC-2024-0449: a libyaml translation (unsafe-libyaml is unmaintained); the fleet reads YAML through serde-saphyr" },
 ]
 skip = []
 skip-tree = []
