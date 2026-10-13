@@ -75,7 +75,7 @@ describe("the project boundaries", () => {
 
   it("restates exactly the workspace dependencies Cargo reports for each crate", () => {
     const metadata = JSON.parse(
-      execFileSync("cargo", ["metadata", "--format-version", "1", "--locked"], {
+      execFileSync("cargo", ["metadata", "--format-version", "1", "--locked", "--no-deps"], {
         cwd: REPO_ROOT,
         encoding: "utf8",
       }),
