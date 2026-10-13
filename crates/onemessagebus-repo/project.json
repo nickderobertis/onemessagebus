@@ -1,7 +1,7 @@
 {
   "name": "onemessagebus-repo",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
-  "//": "`test`'s inputs name every root file these tests read, because Nx cannot see through an `include_str!`. The `visual_docs_guard` and `visual_docs_scripts` binaries sit in this crate but are run by `onemessagebus-visual-docs`, which owns the scripts they drive; the nextest filters in the justfile are what split them, as they split the cross-language journey out of the e2e crate.",
+  "//": "`test`'s inputs name every root file these tests read, because Nx cannot see through an `include_str!`. The `visual_docs_scripts` binary sits in this crate but is run by `onemessagebus-visual-docs`, which owns the scripts it drives; the nextest filters in the justfile are what split the runs, as they split the cross-language journey out of the e2e crate.",
   "projectType": "library",
   "sourceRoot": "crates/onemessagebus-repo/tests",
   "tags": ["scope:repo", "lang:rust", "type:repo"],

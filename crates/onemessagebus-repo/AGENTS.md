@@ -7,7 +7,7 @@ wrapper `deny.toml` lets name `onevcs`. It depends on no workspace crate; keep i
 that way, which is why its `test` target's `inputs` name the root files these tests
 read — Nx cannot see through an `include_str!`.
 
-`tests/visual_docs_guard.rs` and `tests/visual_docs_scripts.rs` sit here because a
-Rust integration test must sit in a crate, but they belong to
-`onemessagebus-visual-docs`, which runs them and declares the code they reach into.
+`tests/visual_docs_scripts.rs` sits here because a
+Rust integration test must sit in a crate, but it belongs to
+`onemessagebus-visual-docs`, which runs it and declares the code it reaches into.
 Nextest filters in the justfile are what split the two runs apart.

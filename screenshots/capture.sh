@@ -11,8 +11,7 @@
 # (screenshots/AGENTS.md) — an end-to-end test here would put one back. What it
 # produces is gated instead by the committed digest baseline, which CI refuses
 # the moment a byte moves; the scripts around it are driven for real by
-# crates/onemessagebus-repo/tests/visual_docs_scripts.rs, and the guard that
-# calls it by tests/visual_docs_guard.rs.
+# crates/onemessagebus-repo/tests/visual_docs_scripts.rs.
 set -euo pipefail
 
 # Byte-determinism starts with the environment. The queue verbs read
@@ -36,12 +35,12 @@ unset _var
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-# This host's capture lane (shots/current/<arch>), named the same way the
-# pre-push guard and `just screenshots-bless` name it. CI overrides SHOTS_OUT.
+# This host's capture lane (shots/current/<arch>), named the same way
+# `just screenshots-bless` names it. CI overrides SHOTS_OUT.
 #
 # SHOTS_OUT comes from outside and the capture starts by emptying it, so bound it
 # first: a path inside this checkout, named without walking out of it. Everything
-# that sets it — the guard, the reusable workflow, this default — already does.
+# that sets it — the reusable workflow and this default — already does.
 arch="$(bash "$repo_root/screenshots/host-arch.sh")"
 SHOTS_OUT="${SHOTS_OUT:-shots/current/$arch}"
 case "$SHOTS_OUT" in

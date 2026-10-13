@@ -54,21 +54,18 @@ moves both.
 ## Lanes
 
 One lane, `x86_64`. A lane is a promise that somebody has captured a baseline on
-that arch, so declare one only together with a bless from such a host: the guard is
-local, and refuses an arch no lane declares rather than classifying against
-another's.
+that arch, so declare one only together with a bless from such a host.
 
 ## The hero is not hash-gated
 
 A GIF is not byte-reproducible across rendering libraries, so it is regenerated on
 demand and committed. Regenerate it when `subscribe`'s rendering changes.
 
-## The guard, and why it is active
+## Verification
 
-A committed hook that nothing activates runs nothing, so `just bootstrap` sets
-`core.hooksPath`. **That directory carries the visual guard and nothing else**:
-wiring `just gate` into a push is a change to everyone's development loop that this
-adoption deliberately did not make.
+CI owns screenshot comparison. Bootstrap installs no Git hook; pushes do not
+capture, classify, refresh baselines or rewrite the gallery. Manual capture and
+baseline review remain available through the screenshot recipes.
 
 ## When the output changes
 

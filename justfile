@@ -1,7 +1,7 @@
 # Canonical command surface for onemessagebus.
 #
 # `just bootstrap` works from a clean clone; `just check` is the deterministic
-# quality gate and `just gate` is the complete pre-push bar (`check` plus the
+# quality gate and `just gate` is the complete quality bar (`check` plus the
 # diff-scoped llmlint tier). Recipes are quiet on success and specific on failure.
 #
 # The repo-wide verbs delegate to Nx, which fans the uniformly-named target out
@@ -69,10 +69,10 @@ check: fmt-check lint typecheck test doc coverage
     @bash scripts/nx run-many -t budgets
     @echo "check: ok"
 
-# The complete pre-push bar: the deterministic gate plus the LLM-judge tier scoped
+# The complete quality bar: the deterministic gate plus the LLM-judge tier scoped
 # to this branch's diff. `check` stays offline and credential-free; this is the one
 # that needs a harness.
-# Full pre-push gate: `check` plus the diff-scoped llmlint tier.
+# Full quality gate: `check` plus the diff-scoped llmlint tier.
 gate base="origin/main": check (lint-llm-diff base)
     @echo "gate: ok"
 
@@ -188,12 +188,12 @@ _crate-test crate:
     @cargo test --doc -p {{crate}} --locked --quiet \
       || { echo "{{crate}}: doctests failed — fix the sample named above, or the README it is compiled from" >&2; exit 1; }
 
-# `onemessagebus-repo` holds root configuration to root sources; the two journeys
-# over the visual guard and its scripts live in the same crate but belong to
+# `onemessagebus-repo` holds root configuration to root sources; the journeys
+# over the screenshot scripts live in the same crate but belong to
 # `onemessagebus-visual-docs`, which owns the code they drive (screenshots/AGENTS.md).
 # Nextest filters decide which run where, the way `_e2e-test` splits the
 # cross-language journey out of the e2e crate.
-visual-docs-binaries := "binary(visual_docs_guard) + binary(visual_docs_scripts)"
+visual-docs-binaries := "binary(visual_docs_scripts)"
 
 # The repository-configuration tests, without the visual-docs journeys.
 _repo-test:
@@ -202,8 +202,8 @@ _repo-test:
     @cargo test --doc -p onemessagebus-repo --locked --quiet \
       || { echo "onemessagebus-repo: doctests failed — fix the sample named above" >&2; exit 1; }
 
-# The visual guard and the scripts around it, driven the way git and a maintainer
-# drive them, with screencomp, freeze and the capture stood in for at the
+# The screenshot scripts, driven the way a maintainer drives them,
+# with screencomp and freeze stood in for at the
 # subprocess seam. Renders no screenshot, so it is a gate target where a capture
 # is not.
 _visual-docs-test:
@@ -429,14 +429,14 @@ session-setup:
     ./scripts/session-setup.sh
 
 # The screenshot recipes are informational and deliberately out of `check` and
-# CI's gate, like `deps-check`: the Visual-docs workflow owns the comparison and
-# the pre-push guard owns the local half (screenshots/AGENTS.md).
+# CI's gate, like `deps-check`: the Visual-docs workflow owns the comparison
+# (screenshots/AGENTS.md).
 
 # Every file the visual-docs project owns, parsed by the interpreter that runs
 # it. Deterministic, offline and instant: it renders nothing, so it is a gate
 # target where a capture is not.
 _visual-docs-lint:
-    @for f in screenshots/*.sh .githooks/pre-push; do \
+    @for f in screenshots/*.sh; do \
       bash -n "$f" || { echo "$f: does not parse — fix the syntax error above" >&2; exit 1; }; \
     done
     @command -v python3 >/dev/null || { echo "python3 not found: needed to parse screenshots/subscribe-gif.py; install a Python 3" >&2; exit 1; }
@@ -463,8 +463,8 @@ screenshots-gif:
     @uv run --no-project --quiet --with 'pillow==11.3.0' python screenshots/subscribe-gif.py
 
 # There is one lane per arch in [capture].arches (screencomp.toml) and this rewrites
-# THIS host's lane only, via screenshots/host-arch.sh so the name matches what the
-# pre-push guard classifies. Commit shots/baseline/ with docs/screenshots/.
+# THIS host's lane only, via screenshots/host-arch.sh so the name matches what
+# CI comparison uses. Commit shots/baseline/ with docs/screenshots/.
 # Recapture and refresh this host's baseline, after an INTENDED output change.
 screenshots-bless: screenshots
     @bash screenshots/bless-baseline.sh
