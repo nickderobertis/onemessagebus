@@ -132,7 +132,10 @@ impl<V: Vocabulary> Filter<V> {
     /// A [`FilterError`] naming the fault: a field the grammar does not have,
     /// a matcher naming no field, or one naming an empty field.
     pub fn parse(spec: &str) -> Result<Self, FilterError> {
-        let filter: Self = serde_norway::from_str(spec)
+        let mut options = serde_saphyr::Options::default();
+        options.strict_booleans = true;
+        options.with_snippet = false;
+        let filter: Self = serde_saphyr::from_str_with_options(spec, options)
             .map_err(|failure| FilterError(format!("the event filter is unusable: {failure}")))?;
         filter.validate().map_err(FilterError)?;
         Ok(filter)
@@ -154,6 +157,7 @@ impl<V: Vocabulary> Filter<V> {
             FilterError(format!("cannot read the event filter {spec}: {failure}"))
         })?;
         Self::parse(&document)
+            .map_err(|failure| FilterError(format!("event filter {spec}: {failure}")))
     }
 
     /// Whether an envelope passes: no `exclude` matcher holds, and either

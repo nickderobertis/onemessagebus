@@ -423,7 +423,7 @@ fn a_codecs_block_loads_by_name_and_is_refused_by_the_key_it_is_wrong_at() {
     let settings = &config.codecs[&name];
     assert_eq!(settings.queue, Some(queue("prompts")));
     assert_eq!(settings.reply_window_seconds.map(u64::from), Some(5));
-    let written = serde_norway::to_string(&config).expect("writes");
+    let written = serde_saphyr::to_string(&config).expect("writes");
     assert_eq!(Config::parse(&written).expect("reads back"), config);
 
     for (codecs, names) in [

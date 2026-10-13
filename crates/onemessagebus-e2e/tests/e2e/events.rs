@@ -180,7 +180,11 @@ fn events_merge_refuses_a_malformed_filter_naming_list_index_and_matcher() {
     assert_eq!(unknown.code, 2);
     assert!(unknown.stdout.is_empty());
     // Named by the field, with the lists a filter does take.
-    for said in ["unknown field `only`", "expected `include` or `exclude`"] {
+    for said in [
+        "unknown field `only`",
+        "expected one of include, exclude",
+        "line 1, column",
+    ] {
         assert!(unknown.stderr.contains(said), "{}", unknown.stderr);
     }
 

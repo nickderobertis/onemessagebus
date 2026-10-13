@@ -1,0 +1,156 @@
+# This host's messaging policy for the planner channel: the one place it lives.
+#
+# Read by every verb that touches a run's channel — `just channel-reply`, the ask shim
+# `ORCHESTRATOR_ASK_MANAGER` names, the observer's judge side in graphs/dag-scope.yaml —
+# and by the engine itself, which every launch hands it with `--bus-config`, so the
+# validators, the authors and the monitor binding below are the same ones whichever of
+# them is speaking. The keys are the installed `onemessagebus` release's schema
+# (config/onemessagebus.version; its docs/queues.md, docs/validators.md, docs/codecs.md,
+# docs/schema-links.md and docs/contract.md); the values are this host's.
+# tests/test_onemessagebus_config.py loads the file through the release and holds each
+# value below to the statement it comes from.
+#
+# Supervision policy is this host's, and it is configuration: the texts a monitor is told,
+# the two surface kinds this host raises, what a lost turn is called and which harness
+# identity it is reported under are all data here, beside the persona whose behaviour they
+# describe (personas/orchestrator.yaml). Nothing here derives a fact from a frame, a
+# transcript or a harness identity — onejudge reports every one of them as a field of the
+# frame it writes, and the binding names the field.
+version: 1
+# The run's channel directory is supplied per invocation with `--transport-dir`, never
+# here: the engine refuses a `transport.dir` in a launch's bus configuration, because the
+# transport is the run root's own.
+transport: {kind: local}
+# The engine's channel layout, which the engine owns and publishes as a document — the
+# first link below — rather than one the bus compiles in.
+profile: planner-channel
+# The published bundles this file resolves, each pinned to the version it declares (the
+# bus's docs/schema-links.md, Contract L). Two links. The first is the planner-channel
+# layout the engine publishes (onepipeline's docs/contract.md, "The planner-channel
+# layout is published as a document"), at the release tag config/onepipeline.version
+# adopts, so this host's bus reads and writes the channel directory the dispatching
+# engine does; `@1` admits the `1.0.0` that bundle declares. The second is onejudge's
+# command-provider frames the codec below serves, published at the release tag
+# config/onejudge.version adopts — spelled `onejudge-v<release>` since 0.18.0 — and
+# pinned to the protocol version that release speaks — `@8` admits every bundle
+# declaring `8`, `8.x` or `8.x.y` and refuses `9` by name.
+# A pinned remote link resolves through the schema cache, which scripts/session-setup.sh
+# warms with `onemessagebus schemas fetch`, so a serving session never waits on the
+# network when the cache holds the bundle; a bundle whose declared version the pin does
+# not admit is a hard error naming the link, never a silent fallback.
+# tests/test_onemessagebus_config.py holds each tag to its pin file, the frames link's
+# `@` pin to the protocol the installed onejudge speaks, against a bundle derived from
+# that release, and the resolved layout to the four queues the engine writes.
+schemas:
+  - "https://raw.githubusercontent.com/nickderobertis/onepipeline/v0.69.0/schemas/planner-channel.json@1"
+  - "https://raw.githubusercontent.com/nickderobertis/onejudge/onejudge-v0.19.0/schemas/judge-seat-frames.json@8"
+authors:
+  # The channel's authors, as the bus's Contract A has a configuration declare them: the
+  # planner is the one author the linked planner-channel layout declares, granted every
+  # op, and every other author is declared here with its grants. The monitor is this host's observer author
+  # (graphs/dag-scope.yaml's `monitor` member, personas/orchestrator.yaml), and no library
+  # names it, so its grants and the reasons it is refused the rest are this host's to say.
+  #
+  # `capabilities` is the allowlist AGENTS.md states — the ops that correct and re-run
+  # work. `refusals` gives every other op the reason a refusal reads back with, in the
+  # channel's own words (`'<op>' is not an op the monitor may issue: <reason>. Surface it to
+  # the planner instead`), verbatim from the profile the bus built in before it stopped
+  # naming the monitor, so a refusal the monitor meets reads exactly as it did.
+  monitor:
+    capabilities: [retry, requeue, cancel, finding, add]
+    refusals:
+      complete: "whether the run is finished is the planner's verdict, not an observation"
+      attest: "a human action is attested by the person who took it, never by a watcher"
+      drop: "removing work from the graph is a decomposition decision the planner owns"
+      reparent: "rewiring dependencies is a decomposition decision the planner owns"
+      amend: "what a node is judged against is a decomposition decision the planner owns"
+      note: "a note may bind a criterion the node's judge decides against, which is the planner's decision rather than an observation"
+      settle: "settling a node from evidence declares an outcome this run never observed, which is the planner's decision rather than an observation"
+validators:
+  # Task prose in an envelope is criteria. Every reply carrying commands is held to the
+  # criteria bar — the deterministic tier, then the judged one — before anything is
+  # appended; `orchestrator/envelope_review.py` is that bar's one entry point, reached
+  # through `scripts/envelope-review.sh` for the identity environment its judged turn
+  # needs. Only a pass is cached, keyed on the envelope's bytes and the bar's
+  # fingerprint, so moving either tier of the bar invalidates every recorded pass. Both
+  # paths are relative to the working directory, which is the repository root for a
+  # recipe and for the launch a run's own replies are validated under.
+  - on: replies
+    when: {carries: commands}
+    kind: command
+    command: [scripts/envelope-review.sh]
+    cache:
+      dir: .cache/envelope-passes
+      bar_fingerprint: [uv, run, python, -m, orchestrator.envelope_review, --bar-fingerprint]
+codecs:
+  # The monitor's judge side: `onemessagebus serve surfaces --codec monitor` over this
+  # file, as graphs/dag-scope.yaml spawns it, interpreting onejudge's command-provider
+  # frames under the binding grammar the bus's docs/codecs.md states (Contract B). Each
+  # frame onejudge writes is validated against the linked bundle above, then answered by
+  # the first binding whose `when` holds; a frame with no entry here — `respond`, `user`,
+  # `assess` — or no holding binding is refused, exit 2. No `run_env`: the engine refuses
+  # one in a launch's bus configuration.
+  monitor:
+    queue: surfaces
+    # Who asks: the engine's own asker variable, `ONEPIPELINE_CHANNEL_ASKER`, so a later
+    # session of the same asker takes back what an earlier one left outstanding.
+    asker_env: ONEPIPELINE_CHANNEL_ASKER
+    # The bound on one serving session, in seconds, read off this variable when it is set.
+    # The name is this host's own — the engine retired the `channel serve` that bounded a
+    # session by a variable of its own — and nothing in a launch sets it, because onejudge
+    # closes the frame stream after each frame and a session whose stream closes ends for
+    # that reason whatever its bound. tests/test_onemessagebus_config.py drives both endings.
+    session_env: ORCHESTRATOR_MONITOR_SESSION_SECONDS
+    # Fifty minutes, the window this host measured a manager needs: long enough that a
+    # manager who stepped away still answers, short enough that a wedged question is not
+    # immortal. docs/orchestration.md keeps the measurement.
+    reply_window_seconds: 3000
+    select: op
+    frames:
+      supervisor:
+        schema: agent.onejudge-frame.supervisor@8
+        bindings:
+          # A turn the agent side lost, as onejudge reports it (its docs/protocol.md,
+          # Contract O): `turn.outcome` is `lost`, `turn.cause` the classified cause and
+          # `turn.harness` the composed id of the harness identity that ran. It is raised
+          # once, non-blocking, naming both fields and nothing of any transcript, and the
+          # member is failed rather than handed a verdict it would act on — exit 1 is how
+          # the member ends, and oneagentgraph records the death.
+          - when: {field: turn.outcome, equals: lost}
+            do: raise
+            record:
+              kind: monitor-failed
+              blocking: false
+              source: proposal
+              message: "monitor turn failed: {frame.turn.cause} on {frame.turn.harness}. It said nothing, so there is nothing to answer."
+            fail: "the monitor's turn was lost: {frame.turn.cause} on {frame.turn.harness}; a `monitor-failed` surface says so"
+          # Any other turn was taken: the member is answered with a non-completion that
+          # keeps it watching and raises nothing. Prose reaches nobody — a report reaches
+          # the planner only as a `finding` op — and the next turn opens after the graph's
+          # hold (the `schedule` on graphs/dag-scope.yaml's `monitor` member), never now.
+          - do: answer
+            response:
+              completion: false
+              message: "Your turn was taken and no planner surface was raised for it: prose reaches nobody. A report reaches the planner only as a `finding` op in a reply envelope, which arrives once and carries the node it is about. Your next turn opens after the graph's hold, and reads the detailed stream from the cursor your last read ended with, not the last few lines."
+              reason: "the monitor took its turn; a report reaches the planner as a finding"
+      judge:
+        schema: agent.onejudge-frame.judge@8
+        bindings:
+          # A planner rules with a `completion` boolean, which is no score on a scale.
+          - when: {field: kind, equals: numeric}
+            do: refuse
+            message: "a `numeric` score is not one this binding gives: a planner rules with a `completion` boolean, which is no score on a scale; it scores `boolean` criteria alone"
+          # The member's completion bar, put to the planner as one non-blocking question and
+          # scored from the ruling: `completion` is the value, and the ruling's reason — or
+          # its message — is the reason. A ruling that is not one, a reply window that
+          # elapses and a question abandoned all score `false`, never a pass.
+          - do: ask
+            record:
+              kind: monitor-completion
+              source: proposal
+              message: "The monitor's conversation has ended and onejudge is scoring that conversation against the monitor's own completion bar. You are this member's judge side, so the score is yours: did this watch meet the bar quoted below? Reply `completion: true` if it did, `false` if it did not. THE RUN IS NOT BLOCKED ON THIS and nothing waits for you: the question is non-blocking, no answer is read as `false`, and the run settles either way.\n\n{frame.criterion}"
+            blocking: false
+            response:
+              value: {from: reply.completion}
+              reason: {from: [reply.reason, reply.message], default: "the planner ruled without saying why"}
+            unanswered: {value: false, reason: "no ruling on this member's completion bar arrived — nobody ruled within the reply window, or the question was abandoned — so it is scored unsatisfied"}

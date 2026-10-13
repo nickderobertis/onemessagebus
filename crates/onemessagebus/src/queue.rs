@@ -233,6 +233,9 @@ impl Predicate {
     ///
     /// A spec that is neither, or a document that is not one predicate, named.
     pub fn read(spec: &str) -> Result<Self, String> {
+        let mut options = serde_saphyr::Options::default();
+        options.strict_booleans = true;
+        options.with_snippet = false;
         let trimmed = spec.trim_start();
         let text = if trimmed.starts_with('{') {
             spec.to_owned()
@@ -241,7 +244,13 @@ impl Predicate {
                 format!("{spec:?} is neither inline JSON nor a readable predicate file: {failure}")
             })?
         };
-        serde_norway::from_str(&text).map_err(|failure| format!("not a predicate: {failure}"))
+        serde_saphyr::from_str_with_options(&text, options).map_err(|failure| {
+            if trimmed.starts_with('{') {
+                format!("not a predicate: {failure}")
+            } else {
+                format!("{spec}: not a predicate: {failure}")
+            }
+        })
     }
 }
 
