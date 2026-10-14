@@ -104,6 +104,12 @@ jobs:
       - name: Quality gate (every project)
         if: needs.changes.outputs.release-only == 'true'
         run: just check
+      # The host-labelled budgets, after the sweep and on the release PR alone:
+      # the pool-maintenance measurement builds the workspace twice, which no
+      # per-change tier pays for.
+      - name: Host budgets (every project)
+        if: needs.changes.outputs.release-only == 'true'
+        run: just budgets-host
       # A committed lockfile that `just bootstrap`/`just check` had to change is a
       # stale generated file; fail rather than let it drift.
       - name: Committed generated files are up to date

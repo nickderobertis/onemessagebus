@@ -21,7 +21,8 @@
       "{workspaceRoot}/docs/contract.md",
       "sharedGlobals"
     ],
-    "wholeWorkspace": ["{workspaceRoot}/**/*"]
+    "wholeWorkspace": ["{workspaceRoot}/**/*"],
+    "production": ["default"]
   },
   "boundaries": {
     "//": "Which project types may depend on which, by tag. Enforced by npm/test/project-boundaries.test.mjs over every project's implicitDependencies, which that test also holds to the Cargo dependency graph — so an edge is true rather than declared, and one drawn back from the contract to a consumer fails the gate.",
@@ -53,6 +54,16 @@
     "check": {
       "cache": false,
       "dependsOn": ["format-check", "lint", "typecheck", "test", "doc"]
-    }
+    },
+    "budgets": {
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/**/*",
+        "^production",
+        { "dependentTasksOutputFiles": "**/telemetry/*.json" },
+        { "externalDependencies": ["@onebudgetspec/cli"] }
+      ]
+    },
+    "budgets-host": { "cache": false }
   }
 }

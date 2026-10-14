@@ -5,6 +5,7 @@
   "license": "MIT",
   "devDependencies": {
     "@biomejs/biome": "2.5.7",
+    "@onebudgetspec/cli": "0.1.4",
     "nx": "^23.1.1",
     "smol-toml": "1.6.1",
     "yaml": "2.9.0"

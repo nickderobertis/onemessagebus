@@ -415,6 +415,34 @@ _deps-check:
     @# would leave a failing gate with no actionable detail.
     @cargo machete
 
+# The pruner's one pinned release. Unlike the test runners `_ensure-tool`
+# installs, it decides what a warm-pool slot keeps, so bootstrap installs exactly
+# this release and replaces any other on PATH.
+cargo-prune-superseded-version := "0.1.1"
+
+# The `pool-maintenance` project's `bootstrap` target: quiet when the pinned
+# release is already the one on PATH.
+_pool-maintenance-bootstrap:
+    @[ "$(cargo-prune-superseded --version 2>/dev/null)" = "cargo-prune-superseded {{cargo-prune-superseded-version}}" ] \
+      || cargo install --locked --quiet cargo-prune-superseded --version {{cargo-prune-superseded-version}} \
+      || { echo "cannot install cargo-prune-superseded {{cargo-prune-superseded-version}} — fix the cargo error above and re-run 'just bootstrap'" >&2; exit 1; }
+
+# What onevcs runs in this repository's idle warm-pool slots (onevcs.toml), and
+# what pool-maintenance/measure.sh times. `target` is the one directory this
+# clone's cargo builds write to: `.cargo/config.toml` sets it, for every crate in
+# the clone. Each unit's newest build is kept, so a rebuild stays warm.
+# Prune superseded cargo builds older than 2 days from this clone's target dir.
+pool-maintenance:
+    @command -v cargo-prune-superseded >/dev/null || { echo "cargo-prune-superseded not installed — run 'just bootstrap'" >&2; exit 1; }
+    @cargo-prune-superseded --keep-within 2d target
+
+# Out of `check` and `check-affected` on purpose: a host-labelled budget reads
+# this host's clock, and the pool-maintenance measurement builds the workspace
+# twice. CI's gate runs it on the release PR only, after the full sweep.
+# Every project's host-labelled budgets.
+budgets-host:
+    @bash scripts/nx run-many -t budgets-host
+
 # Reads the floor from Cargo.toml's `rust-version`; that toolchain must be
 # installed (`rustup toolchain install <version>`). Warnings are errors here too.
 # Build under the declared MSRV.
