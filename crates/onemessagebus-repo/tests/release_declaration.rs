@@ -236,8 +236,16 @@ fn darwin_release_producer_builds_apple_silicon_alone_and_all_carriers() {
         .filter(|target| target.ends_with("apple-darwin"))
         .collect();
     assert_eq!(darwin, ["aarch64-apple-darwin"]);
-    for absent in ["x86_64-apple-darwin", "darwin-x64", "install-rosetta", "arch -x86_64"] {
-        assert!(!workflow.contains(absent), "release.yml still names {absent}");
+    for absent in [
+        "x86_64-apple-darwin",
+        "darwin-x64",
+        "install-rosetta",
+        "arch -x86_64",
+    ] {
+        assert!(
+            !workflow.contains(absent),
+            "release.yml still names {absent}"
+        );
     }
     assert!(!include_str!("../../../release-targets.toml").contains("darwin-x64"));
     for target in darwin {
