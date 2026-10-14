@@ -25,7 +25,6 @@ const { spawnSync } = require("node:child_process");
 const PACKAGES = {
   "linux-x64": "onemessagebus-cli-linux-x64",
   "linux-arm64": "onemessagebus-cli-linux-arm64",
-  "darwin-x64": "onemessagebus-cli-darwin-x64",
   "darwin-arm64": "onemessagebus-cli-darwin-arm64",
   "win32-x64": "onemessagebus-cli-win32-x64",
 };
@@ -41,8 +40,22 @@ function fail(message) {
   process.exit(1);
 }
 
+// Platforms a release once carried and no longer builds: refused by name, so an
+// install there says it is unsupported rather than reporting a missing package.
+const DISCONTINUED = {
+  "darwin-x64":
+    "Intel macOS (darwin-x64) is no longer supported: releases ship prebuilt " +
+    "binaries for Apple Silicon macOS (darwin-arm64) only.",
+};
+
 function binaryPath() {
   const key = `${process.platform}-${process.arch}`;
+  if (DISCONTINUED[key]) {
+    fail(
+      `${DISCONTINUED[key]} Build from source instead: ` +
+        "'cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebus-cli --locked'.",
+    );
+  }
   const pkg = PACKAGES[key];
   // llmlint: ignore-block[changed_behavior_has_e2e] reaching this branch means running
   // where no prebuilt package exists, and a test could only get there by lying to node

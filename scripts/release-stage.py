@@ -70,7 +70,9 @@ def refuse(message: str, status: int = 2) -> None:
 
 def stage(args: argparse.Namespace) -> None:
     declared = tomllib.loads(Path("rust-toolchain.toml").read_text())["toolchain"]["targets"]
-    if not re.fullmatch(r"(?:x86_64|aarch64)-(?:apple-darwin|unknown-linux-gnu)", args.target) or args.target not in declared or not args.target.endswith(("apple-darwin", "unknown-linux-gnu")):
+    if args.target == "x86_64-apple-darwin":
+        refuse("Intel macOS (x86_64-apple-darwin) is no longer released; stage aarch64-apple-darwin for macOS")
+    if not re.fullmatch(r"aarch64-apple-darwin|(?:x86_64|aarch64)-unknown-linux-gnu", args.target) or args.target not in declared or not args.target.endswith(("apple-darwin", "unknown-linux-gnu")):
         refuse(f"unsupported target {args.target!r}; choose a declared Darwin or GNU Linux target")
     inventory_path = args.directory / "binary.json"
     if args.verify_npm:

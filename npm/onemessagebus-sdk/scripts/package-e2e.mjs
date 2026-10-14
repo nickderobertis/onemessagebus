@@ -41,14 +41,13 @@ const BINARY = binaryPath();
 const TARGETS = {
   "linux-x64": "x86_64-unknown-linux-gnu",
   "linux-arm64": "aarch64-unknown-linux-gnu",
-  "darwin-x64": "x86_64-apple-darwin",
   "darwin-arm64": "aarch64-apple-darwin",
 };
 const target = TARGETS[`${process.platform}-${process.arch}`];
 if (!target) {
   fail(
     `no platform package is assembled for ${process.platform}-${process.arch}`,
-    "run this on linux or macOS",
+    "run this on linux or Apple Silicon macOS; Intel macOS is no longer released",
   );
 }
 if (!existsSync(BINARY)) {

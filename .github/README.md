@@ -22,10 +22,11 @@ and reject a stale source-tree digest; thresholds are excluded from the digest
 and read only by onebudgetspec. Manual diagnostics default off and are excluded
 from automatic lifecycle totals.
 
-The Darwin builder invokes maturin once for each target, retaining the release
+The Darwin builder invokes maturin once, for `aarch64-apple-darwin` (the one
+released macOS target; Intel macOS is no longer built), retaining the release
 profile's stripping. Its wheel binary feeds both archive and npm payloads, with
-all three hashes recorded in `binary.json`. The same job installs staged CLI and
-SDK distributions under arm64 and x86 interpreters, with Rosetta enabled, before
-any Darwin upload or registry publication. The host-native SDK packaging journey
+all three hashes recorded in `binary.json`. The same job installs the staged CLI
+and SDK distributions under native arm64 interpreters before any Darwin upload
+or registry publication. The host-native SDK packaging journey
 runs these production builders/installers without publishing; declared Darwin
 commands are contract evidence until a Mac runner executes them.

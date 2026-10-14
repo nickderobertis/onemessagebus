@@ -8,7 +8,7 @@
 // verify-npm job covers that against the real npm.
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -26,7 +26,6 @@ function hostTarget() {
   const targets = {
     "linux-x64": "x86_64-unknown-linux-gnu",
     "linux-arm64": "aarch64-unknown-linux-gnu",
-    "darwin-x64": "x86_64-apple-darwin",
     "darwin-arm64": "aarch64-apple-darwin",
     "win32-x64": "x86_64-pc-windows-msvc",
   };
@@ -84,11 +83,11 @@ function installInto(project, packages) {
 
 /// Invoke the launcher the install put in the project's `.bin`, in the form this
 /// platform can start, returning its exit code, stdout, and stderr.
-function launch(project, args) {
+function launch(project, args, env = process.env) {
   const bin = join(project, "node_modules", ".bin", "onemessagebus");
   const form = shimInvocation(bin, args, process.platform);
   try {
-    const stdout = run(form.command, form.args, { ...form.options, cwd: project });
+    const stdout = run(form.command, form.args, { ...form.options, cwd: project, env });
     return { code: 0, stdout, stderr: "" };
   } catch (error) {
     // No exit status means the launcher never ran; that is a broken journey,
@@ -189,5 +188,29 @@ describe("the npm distribution", () => {
     assert.match(failed.stderr, /platform package onemessagebus-cli-/);
     assert.match(failed.stderr, /Reinstall with optional/);
     assert.match(failed.stderr, /pip install onemessagebus-cli/);
+  });
+
+  it("refuses Intel macOS by name instead of looking for a package no release builds", () => {
+    const project = mkdtempSync(join(work, "app-"));
+    installInto(project, [launcherTgz]);
+    // No Intel Mac runs this suite, so the installed launcher's Node is told it
+    // is on one: a preload sets the host identity the launcher reads, and
+    // nothing else. Everything after it — the npm shim, the launcher, its
+    // refusal — is what an Intel Mac user would run.
+    const preload = join(project, "intel-mac.cjs");
+    writeFileSync(
+      preload,
+      'for (const [key, value] of [["platform", "darwin"], ["arch", "x64"]])\n' +
+        "  Object.defineProperty(process, key, { value });\n",
+    );
+    const refused = launch(project, ["--version"], {
+      ...process.env,
+      NODE_OPTIONS: `--require ${JSON.stringify(preload)}`,
+    });
+    assert.equal(refused.code, 1, refused.stderr);
+    assert.match(refused.stderr, /Intel macOS \(darwin-x64\) is no longer supported/);
+    assert.match(refused.stderr, /cargo install --git/);
+    assert.doesNotMatch(refused.stderr, /platform package|onemessagebus-cli-darwin-x64/);
+    assert.equal(refused.stdout, "");
   });
 });

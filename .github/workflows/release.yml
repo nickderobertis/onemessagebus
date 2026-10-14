@@ -299,10 +299,9 @@ jobs:
   # goes to scripts/smoke-published.sh — the same script ci.yml runs against the
   # build under test, so what a release asserts cannot drift from what ships.
   #
-  # Four legs for five targets: `pip install` resolves a *different wheel* per
-  # platform AND architecture. `macos-latest` is arm64; `macos-15-intel` is the
-  # leg that installs the x86_64 Darwin wheel. The one target with no leg is
-  # aarch64 Linux, which the matrices above still build.
+  # Linux x64 and Windows x64 legs: the Darwin arm64 wheel is installed and run
+  # before publication by `build-darwin`, and aarch64 Linux is built by the
+  # matrices above.
   verify-pypi:
     name: verify-pypi (${{ matrix.os }})
     needs: publish-pypi
@@ -628,7 +627,8 @@ jobs:
             bash scripts/publish-npm.sh "$tgz"
           done
 
-  # Apple Silicon builds both targets once. Rosetta runs the staged x86 products.
+  # Apple Silicon is the one released macOS target, built, packed and proved
+  # natively here. Intel macOS is no longer released.
   build-darwin:
     needs: guard
     permissions:
@@ -645,20 +645,6 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version
-      - name: Enable x86 execution
-        run: sudo softwareupdate --install-rosetta --agree-to-license
-      - uses: actions/setup-python@v5
-        id: python-x64
-        with:
-          python-version: "3.12"
-          architecture: x64
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          architecture: x64
-      - name: Keep x86 Node path
-        id: node-x64
-        run: echo "path=$(command -v node)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-python@v5
         id: python-arm64
         with:
@@ -668,37 +654,22 @@ jobs:
         with:
           node-version: "22"
           architecture: arm64
-      - name: Build and stage both Darwin targets
+      - name: Build and stage the arm64 Darwin target
         env:
           RUSTFLAGS: "-D warnings"
-        run: |
-          bash scripts/release-build.sh x86_64-apple-darwin staged/x86_64-apple-darwin
-          bash scripts/release-build.sh aarch64-apple-darwin staged/aarch64-apple-darwin
+        run: bash scripts/release-build.sh aarch64-apple-darwin staged/aarch64-apple-darwin
       - name: Pack SDKs for local install assertions
         run: |
           just python-sdk-dist staged/sdks
           just node-sdk-dist staged/sdks
-      - name: Install and run staged x86 CLI and SDK distributions
-        env:
-          PYTHON: ${{ steps.python-x64.outputs.python-path }}
-          NODE: ${{ steps.node-x64.outputs.path }}
-        run: arch -x86_64 bash scripts/release-local-install.sh staged/x86_64-apple-darwin staged/sdks "$PYTHON" "$NODE"
       - name: Install and run staged arm64 CLI and SDK distributions
         env:
           PYTHON: ${{ steps.python-arm64.outputs.python-path }}
         run: bash scripts/release-local-install.sh staged/aarch64-apple-darwin staged/sdks "$PYTHON" "$(command -v node)"
       - uses: actions/upload-artifact@v4
         with:
-          name: wheels-x86_64-apple-darwin
-          path: staged/x86_64-apple-darwin/*.whl
-      - uses: actions/upload-artifact@v4
-        with:
           name: wheels-aarch64-apple-darwin
           path: staged/aarch64-apple-darwin/*.whl
-      - uses: actions/upload-artifact@v4
-        with:
-          name: npm-x86_64-apple-darwin
-          path: staged/x86_64-apple-darwin/*.tgz
       - uses: actions/upload-artifact@v4
         with:
           name: npm-aarch64-apple-darwin

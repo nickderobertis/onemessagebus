@@ -3,7 +3,11 @@
 set -euo pipefail
 # Argument/staging refusals are 2; operational tool failures are 1.
 trap 'echo "release-build.sh: command failed at line $LINENO; repair the pinned toolchain or output permissions, then rerun scripts/release-build.sh with the same arguments" >&2; exit 1' ERR
-if [[ $# != 2 || ! $1 =~ ^(x86_64|aarch64)-(apple-darwin|unknown-linux-gnu)$ ]]; then
+if [[ $# == 2 && $1 == x86_64-apple-darwin ]]; then
+  echo 'release-build: Intel macOS (x86_64-apple-darwin) is no longer released; build aarch64-apple-darwin for macOS' >&2
+  exit 2
+fi
+if [[ $# != 2 || ! $1 =~ ^(aarch64-apple-darwin|(x86_64|aarch64)-unknown-linux-gnu)$ ]]; then
   echo 'release-build: expected TARGET OUTPUT_DIRECTORY; use a declared Darwin or Linux target' >&2
   exit 2
 fi

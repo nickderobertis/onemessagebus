@@ -40,7 +40,6 @@ manifest = "npm/onemessagebus-cli/package.json"
 covers = [
   "npm:onemessagebus-cli-linux-x64",
   "npm:onemessagebus-cli-linux-arm64",
-  "npm:onemessagebus-cli-darwin-x64",
   "npm:onemessagebus-cli-darwin-arm64",
   "npm:onemessagebus-cli-win32-x64",
 ]
