@@ -181,6 +181,7 @@ if kind=='npm-cli':
       "CHANGELOG.md",
       "justfile",
       "scripts/release-build.sh",
+      "scripts/release-package.sh",
       "scripts/release-stage.py",
       "scripts/release-quiet.sh",
     ])

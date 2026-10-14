@@ -14,11 +14,17 @@ Five places name that platform matrix and must move together:
    before a release, and the launcher is a member of the root npm workspace,
 3. `scripts/npm-build.mjs`'s `TARGETS` table,
 4. the `upload`, `build-wheels` and `build-npm` matrices in
-   `.github/workflows/release.yml`,
+   `.github/workflows/release.yml`, plus `build-darwin`'s `release-build.sh`
+   targets,
 5. `rust-toolchain.toml`'s `targets`, the standard libraries rustup installs
    so every one of those triples builds from the pinned toolchain.
 
 `test/platform-matrix.test.mjs` holds the five to each other.
+
+A platform a release stops building leaves all five, and moves to the
+launcher's `DISCONTINUED` map so an install there is refused by name, not sent
+looking for a package no release ships. Intel macOS (`darwin-x64`) is the one
+there today; `test/launcher-platform.test.mjs` holds each answer.
 
 The committed `package.json` carries `0.0.0-managed`, not a real version. The
 version has exactly one source — `Cargo.toml`'s `[workspace.package]`, written

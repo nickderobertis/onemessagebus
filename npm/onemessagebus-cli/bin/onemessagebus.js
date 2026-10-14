@@ -25,7 +25,6 @@ const { spawnSync } = require("node:child_process");
 const PACKAGES = {
   "linux-x64": "onemessagebus-cli-linux-x64",
   "linux-arm64": "onemessagebus-cli-linux-arm64",
-  "darwin-x64": "onemessagebus-cli-darwin-x64",
   "darwin-arm64": "onemessagebus-cli-darwin-arm64",
   "win32-x64": "onemessagebus-cli-win32-x64",
 };
@@ -41,21 +40,34 @@ function fail(message) {
   process.exit(1);
 }
 
-function binaryPath() {
-  const key = `${process.platform}-${process.arch}`;
-  const pkg = PACKAGES[key];
-  // llmlint: ignore-block[changed_behavior_has_e2e] reaching this branch means running
-  // where no prebuilt package exists, and a test could only get there by lying to node
-  // about process.platform — which would prove the lie. The sibling branches are driven
-  // for real by npm/e2e/launcher.test.mjs, and npm's own os/cpu fields keep a user from
-  // installing a platform package this map does not name.
-  if (!pkg) {
-    fail(
-      `unsupported platform ${key}. Prebuilt binaries exist for: ` +
+// Platforms a release once carried and no longer builds: refused by name, so an
+// install there says it is unsupported rather than reporting a missing package.
+const DISCONTINUED = {
+  "darwin-x64":
+    "Intel macOS (darwin-x64) is no longer supported: releases ship prebuilt " +
+    "binaries for Apple Silicon macOS (darwin-arm64) only. Build from source " +
+    "instead: 'cargo install --git https://github.com/nickderobertis/onemessagebus onemessagebus-cli --locked'.",
+};
+
+/// What the launcher does on `platform`/`arch`: the platform package carrying the
+/// binary, or the refusal to print. They are arguments rather than `process` read
+/// here, so npm/test/launcher-platform.test.mjs holds every answer on any host.
+function platformPackage(platform, arch) {
+  const key = `${platform}-${arch}`;
+  if (DISCONTINUED[key]) return { refusal: DISCONTINUED[key] };
+  if (!PACKAGES[key]) {
+    return {
+      refusal:
+        `unsupported platform ${key}. Prebuilt binaries exist for: ` +
         `${Object.keys(PACKAGES).join(", ")}. ${OTHER_INSTALLS}`,
-    );
+    };
   }
-  // llmlint: ignore-end[changed_behavior_has_e2e]
+  return { package: PACKAGES[key] };
+}
+
+function binaryPath() {
+  const { package: pkg, refusal } = platformPackage(process.platform, process.arch);
+  if (refusal) fail(refusal);
 
   const binName = process.platform === "win32" ? "onemessagebus.exe" : "onemessagebus";
   try {
@@ -75,16 +87,29 @@ function binaryPath() {
   }
 }
 
-const result = spawnSync(binaryPath(), process.argv.slice(2), { stdio: "inherit" });
+/**
+ * @internal Not part of the package's API — it declares no `main` or `exports`,
+ * and only the `onemessagebus` command is supported. Exported solely so
+ * npm/test/launcher-platform.test.mjs can call it; it may change in any release.
+ */
+module.exports = { platformPackage };
 
-if (result.error) {
-  fail(`failed to launch the onemessagebus binary: ${result.error.message}`);
-}
+// Run only as the installed command; the test requiring this file for
+// platformPackage launches nothing.
+if (require.main === module) launch();
 
-// Re-raise a terminating signal so callers observe the true cause; otherwise
-// propagate the child's exit code verbatim — the contract assigns meaning to 1
-// and 2, and a caller reads them.
-if (result.signal) {
-  process.kill(process.pid, result.signal);
+function launch() {
+  const result = spawnSync(binaryPath(), process.argv.slice(2), { stdio: "inherit" });
+
+  if (result.error) {
+    fail(`failed to launch the onemessagebus binary: ${result.error.message}`);
+  }
+
+  // Re-raise a terminating signal so callers observe the true cause; otherwise
+  // propagate the child's exit code verbatim — the contract assigns meaning to 1
+  // and 2, and a caller reads them.
+  if (result.signal) {
+    process.kill(process.pid, result.signal);
+  }
+  process.exit(result.status === null ? 1 : result.status);
 }
-process.exit(result.status === null ? 1 : result.status);

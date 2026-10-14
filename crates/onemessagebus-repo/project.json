@@ -22,7 +22,8 @@
         "{workspaceRoot}/rust-toolchain.toml",
         "{workspaceRoot}/.github/workflows/visual-docs.yml",
         "{workspaceRoot}/.github/workflows/release.yml",
-        "{workspaceRoot}/scripts/release-build.sh"
+        "{workspaceRoot}/scripts/release-build.sh",
+        "{workspaceRoot}/scripts/release-package.sh"
       ]
     },
     "doc": { "command": "just _crate-doc onemessagebus-repo" },

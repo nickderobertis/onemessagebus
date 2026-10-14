@@ -220,19 +220,35 @@ fn targets(document: &mut DocumentMut) -> &mut toml_edit::ArrayOfTables {
         .expect("the declaration's targets are [[target]] tables")
 }
 
-/// The consolidated Darwin producer still feeds every declared binary carrier;
-/// registry publication waits for its local CLI and SDK assertions.
+/// The consolidated Darwin producer feeds every declared binary carrier for the
+/// one released macOS target, Apple Silicon; registry publication waits for its
+/// local CLI and SDK assertions. Intel macOS is declared and built nowhere.
 #[test]
-fn darwin_release_producer_retains_both_architectures_and_all_carriers() {
+fn darwin_release_producer_builds_apple_silicon_alone_and_all_carriers() {
     let workflow = include_str!("../../../.github/workflows/release.yml");
     let toolchain: DocumentMut = include_str!("../../../rust-toolchain.toml")
         .parse()
         .expect("the pinned toolchain is TOML");
     let targets = toolchain["toolchain"]["targets"].as_array().unwrap();
-    for target in targets.iter().filter_map(toml_edit::Value::as_str) {
-        if !target.ends_with("apple-darwin") {
-            continue;
-        }
+    let darwin: Vec<&str> = targets
+        .iter()
+        .filter_map(toml_edit::Value::as_str)
+        .filter(|target| target.ends_with("apple-darwin"))
+        .collect();
+    assert_eq!(darwin, ["aarch64-apple-darwin"]);
+    for absent in [
+        "x86_64-apple-darwin",
+        "darwin-x64",
+        "install-rosetta",
+        "arch -x86_64",
+    ] {
+        assert!(
+            !workflow.contains(absent),
+            "release.yml still names {absent}"
+        );
+    }
+    assert!(!include_str!("../../../release-targets.toml").contains("darwin-x64"));
+    for target in darwin {
         assert!(workflow.contains(&format!(
             "bash scripts/release-build.sh {target} staged/{target}"
         )));
