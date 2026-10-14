@@ -224,8 +224,7 @@ you:
   or either SDK's manifest.
 - **What this repository publishes is declared in `release-targets.toml`, and
   answered by `scripts/release-probe.sh`.** Five targets — the core crate, the
-  wheel, the npm launcher (covering its four platform packages; Intel macOS is
-  no longer released, and the launcher refuses it by name), and the two
+  wheel, the npm launcher (covering its platform packages), and the two
   SDKs (`pypi:onemessagebus`, and `npm:@onemessagebus/sdk`, the one scoped name,
   which needs the `@onemessagebus` npm organization to exist before it can
   publish) — at schema version 3. `crates/onemessagebus-repo/tests/release_declaration.rs` holds the
