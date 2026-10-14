@@ -1,0 +1,20 @@
+{
+  "name": "pool-maintenance",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "//": "The declared pool maintenance's budget domain: its budgets.yaml and the measurement only that budget runs. The measurement builds the workspace twice, so its only budget target is `budgets-host`, which `check`, `check-affected` and the root budgets never select; `just budgets-host` runs it on the release PR. `bootstrap` installs the pinned pruner the `pool-maintenance` recipe runs.",
+  "projectType": "library",
+  "sourceRoot": "pool-maintenance",
+  "tags": ["scope:repo", "lang:sh", "type:repo"],
+  "targets": {
+    "bootstrap": {
+      "command": "just _pool-maintenance-bootstrap"
+    },
+    "lint": {
+      "command": "bash -n pool-maintenance/measure.sh",
+      "inputs": ["default"]
+    },
+    "budgets-host": {
+      "command": "node node_modules/@onebudgetspec/cli/bin/onebudgetspec.js check pool-maintenance/budgets.yaml --label host"
+    }
+  }
+}
