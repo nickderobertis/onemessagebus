@@ -373,9 +373,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # macos-latest carries no Go, so actionlint arrives prebuilt here, at the
+      # version .github/bootstrap.sh would otherwise build with `go install`.
       - uses: taiki-e/install-action@v2
         with:
-          tool: nextest
+          tool: nextest,actionlint@1.7.12
       - uses: ./.github/actions/setup-just
       # The SDK projects bootstrap with bun and uv, and on macOS the
       # cross-language journey spawns both.
