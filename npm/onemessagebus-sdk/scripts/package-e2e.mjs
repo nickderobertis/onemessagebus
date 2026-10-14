@@ -47,7 +47,7 @@ const target = TARGETS[`${process.platform}-${process.arch}`];
 if (!target) {
   fail(
     `no platform package is assembled for ${process.platform}-${process.arch}`,
-    "run this on linux or Apple Silicon macOS; Intel macOS is no longer released",
+    "run this on linux or macOS",
   );
 }
 if (!existsSync(BINARY)) {

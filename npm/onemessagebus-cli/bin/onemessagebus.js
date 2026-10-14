@@ -87,9 +87,14 @@ function binaryPath() {
   }
 }
 
+/**
+ * @internal Not part of the package's API — it declares no `main` or `exports`,
+ * and only the `onemessagebus` command is supported. Exported solely so
+ * npm/test/launcher-platform.test.mjs can call it; it may change in any release.
+ */
 module.exports = { platformPackage };
 
-// Run only as the installed command; a test that requires this file for
+// Run only as the installed command; the test requiring this file for
 // platformPackage launches nothing.
 if (require.main === module) launch();
 
