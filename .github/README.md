@@ -24,8 +24,11 @@ from automatic lifecycle totals.
 
 The Darwin builder invokes maturin once, for `aarch64-apple-darwin` (the one
 released macOS target; Intel macOS is no longer built), retaining the release
-profile's stripping. Its wheel binary feeds both archive and npm payloads, with
-all three hashes recorded in `binary.json`. The same job installs the staged CLI
+profile's stripping. Everything after that compile is `scripts/release-package.sh`:
+its wheel binary feeds both archive and npm payloads, with all three hashes
+recorded in `binary.json`. `.github/tests/darwin-release.test.mjs` runs that same
+script on an arm64 fixture wheel, as artifact-contract evidence; no Darwin
+binary runs on Linux. The same job installs the staged CLI
 and SDK distributions under native arm64 interpreters before any Darwin upload
 or registry publication. The host-native SDK packaging journey
 runs these production builders/installers without publishing; declared Darwin

@@ -3,13 +3,17 @@
 //
 // build-darwin compiles on an Apple Silicon runner, which no Linux gate can do,
 // so a fixture wheel stands in for maturin's output: maturin's file name, tag
-// and metadata around a Mach-O arm64 header. Everything after the compile is the
-// real interface the workflow runs — scripts/release-stage.py, the platform
-// packager in scripts/npm-build.mjs, `npm pack`, the npm verification pass — and
-// the workflow's own upload globs, `gh release upload` command and npm publish
-// step are resolved and run against what it staged. Only the forge (`gh`) and the
-// registry (`npm view` / `npm publish`) are doubled, and publication never
-// leaves this machine.
+// and metadata around a Mach-O arm64 header. Nothing Darwin executes here: this
+// is evidence at the artifact contract, not native execution.
+//
+// Everything after the compile runs through scripts/release-package.sh, the one
+// entry point release-build.sh calls once maturin has built the wheel: staging,
+// the npm platform package, `npm pack` and the npm verification pass. Then:
+// - build-darwin's actions/upload-artifact steps are not executed; their `path`
+//   globs are resolved against the stage to name what each would upload;
+// - upload-darwin's `gh release upload` and publish-npm's publish step are
+//   executed as written, with only the forge (`gh`) and the registry
+//   (`npm view` / `npm publish`) doubled, so nothing leaves this machine.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
@@ -89,6 +93,19 @@ function transportDoubles(directory, record) {
   for (const tool of ["gh", "npm"]) chmodSync(join(directory, tool), 0o755);
 }
 
+/// The arm64 inventory release-package.sh records in `stage`: staging, packing
+/// and npm verification each attest the one compiled binary's hash.
+function assertInventory(stage) {
+  const inventory = JSON.parse(readFileSync(join(stage, "binary.json"), "utf8"));
+  assert.equal(inventory.target, "aarch64-apple-darwin");
+  assert.deepEqual(inventory.hashes, {
+    wheel: inventory.sha256,
+    archive: inventory.sha256,
+    npm: inventory.sha256,
+  });
+  return inventory;
+}
+
 /// The step of `job` whose `run` contains `marker`.
 const step = (job, marker) => release.jobs[job].steps.find((s) => s.run?.includes(marker));
 
@@ -109,29 +126,10 @@ describe("the macOS release artifacts", () => {
       const stage = join(runner, "staged", target);
       mkdirSync(stage, { recursive: true });
       compiledWheel(stage);
-      // release-build.sh's steps after its one compile, in its order.
-      run("python3", ["scripts/release-stage.py", "--target", target, "--directory", stage]);
-      const pkg = run("node", [
-        "scripts/npm-build.mjs",
-        "platform",
-        "--target",
-        target,
-        "--binary",
-        join(stage, "onemessagebus"),
-        "--out",
-        join(stage, "npm"),
-      ]).trim();
-      run("npm", ["pack", "--pack-destination", stage], { cwd: pkg });
-      run("python3", [
-        "scripts/release-stage.py",
-        "--target",
-        target,
-        "--directory",
-        stage,
-        "--verify-npm",
-      ]);
+      run("bash", ["scripts/release-package.sh", target, stage]);
     }
-    // Each artifact build-darwin uploads, resolved from its own path globs.
+    // What each of build-darwin's upload-artifact steps would upload, resolved
+    // from its `path` globs; the upload action itself does not run.
     artifacts = Object.fromEntries(
       darwin.steps
         .filter((s) => s.uses === "actions/upload-artifact@v4")
@@ -156,7 +154,16 @@ describe("the macOS release artifacts", () => {
     assert.doesNotMatch(commands, /arch -x86_64|rosetta|x86_64-apple-darwin/i);
   });
 
-  it("uploads exactly the arm64 wheel, npm package, archive and checksum", () => {
+  it("packages through the same entry point release-build.sh runs after its compile", () => {
+    const builder = readFileSync(join(root, "scripts/release-build.sh"), "utf8");
+    const compile = builder.indexOf('just _wheel-build "$target" "$out" true\n');
+    const packaging = builder.indexOf('package "$target" "$out"\n');
+    assert.ok(compile !== -1 && packaging > compile, "release-build.sh packages after compiling");
+    assert.match(builder, /bash scripts\/release-package\.sh "\$@"/);
+    assert.doesNotMatch(builder, /release-stage\.py|npm-build\.mjs|npm pack/);
+  });
+
+  it("resolves build-darwin's upload globs to exactly the arm64 wheel, npm package, archive and checksum", () => {
     const stage = "staged/aarch64-apple-darwin";
     const archive = `onemessagebus-v${version}-aarch64-apple-darwin.tar.gz`;
     assert.deepEqual(artifacts, {
@@ -168,8 +175,7 @@ describe("the macOS release artifacts", () => {
         `${stage}/binary.json`,
       ].sort(),
     });
-    const inventory = JSON.parse(readFileSync(join(runner, stage, "binary.json"), "utf8"));
-    assert.equal(inventory.target, "aarch64-apple-darwin");
+    const inventory = assertInventory(join(runner, stage));
     assert.equal(inventory.archive, archive);
     // Every carrier holds the one arm64 Mach-O the wheel compiled.
     const carried = JSON.parse(
@@ -270,7 +276,48 @@ print(json.dumps(dict(headers=[b[:8].hex() for b in (wheel_binary, archive, npm)
     );
   });
 
+  it("rejects what a packaging entry point missing its npm verification would stage", () => {
+    // A copy of the checkout whose release-package.sh drops one required step.
+    // The other steps still succeed, so only this contract's inventory check
+    // stands between that regression and a release.
+    const checkout = join(work, "missing-verification");
+    for (const path of [
+      "Cargo.toml",
+      "rust-toolchain.toml",
+      "README.md",
+      "LICENSE",
+      "CHANGELOG.md",
+      "scripts/release-stage.py",
+      "scripts/release-quiet.sh",
+      "scripts/npm-build.mjs",
+      "npm/onemessagebus-cli",
+    ])
+      cpSync(join(root, path), join(checkout, path), { recursive: true });
+    const helper = readFileSync(join(root, "scripts/release-package.sh"), "utf8");
+    const verification = 'stage_inputs --target "$target" --directory "$out" --verify-npm\n';
+    assert.ok(helper.includes(verification));
+    writeFileSync(join(checkout, "scripts/release-package.sh"), helper.replace(verification, ""));
+    const stage = join(checkout, "stage");
+    mkdirSync(stage);
+    compiledWheel(stage);
+    run("bash", ["scripts/release-package.sh", "aarch64-apple-darwin", stage], { cwd: checkout });
+    assert.throws(() => assertInventory(stage), /npm/);
+  });
+
   it("refuses the Intel macOS target at every packaging step instead of building it", () => {
+    // The shared packaging entry point, handed a compiled wheel, stages nothing.
+    const fixture = join(work, "intel-fixture");
+    mkdirSync(fixture);
+    compiledWheel(fixture);
+    const before = readdirSync(fixture);
+    const packaged = spawnSync(
+      "bash",
+      ["scripts/release-package.sh", "x86_64-apple-darwin", fixture],
+      { cwd: root, encoding: "utf8" },
+    );
+    assert.equal(packaged.status, 2, packaged.stderr);
+    assert.match(packaged.stderr, /Intel macOS \(x86_64-apple-darwin\) is no longer released/);
+    assert.deepEqual(readdirSync(fixture), before);
     const stage = join(work, "intel");
     mkdirSync(stage);
     const build = spawnSync("bash", ["scripts/release-build.sh", "x86_64-apple-darwin", stage], {
