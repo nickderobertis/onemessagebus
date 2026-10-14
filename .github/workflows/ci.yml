@@ -373,21 +373,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      # macos-latest carries no Go, so actionlint arrives prebuilt here, at the
-      # version read from the `go install` line in .github/bootstrap.sh — the
-      # one place it is pinned — and an unreadable pin fails the job.
-      - name: Read the actionlint pin from .github/bootstrap.sh
-        id: actionlint
-        run: |
-          version="$(sed -n 's|.*/cmd/actionlint@v\([0-9][0-9.]*\)$|\1|p' .github/bootstrap.sh)"
-          if [ -z "$version" ]; then
-            echo "::error::no actionlint@vX.Y.Z pin found in .github/bootstrap.sh" >&2
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@v2
         with:
-          tool: nextest,actionlint@${{ steps.actionlint.outputs.version }}
+          tool: nextest
       - uses: ./.github/actions/setup-just
       # The SDK projects bootstrap with bun and uv, and on macOS the
       # cross-language journey spawns both.
