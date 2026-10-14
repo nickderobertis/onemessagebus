@@ -117,6 +117,9 @@ $lost"
 
 if [ -n "${ONEBUDGETSPEC_RESULT:-}" ]; then
   [ -s "$ONEBUDGETSPEC_RESULT" ] || fail "the timed pass recorded no result in $ONEBUDGETSPEC_RESULT — see $evidence/timed-pass.txt"
+  # The value is the pruner's and stays untouched; only the detail gains the
+  # backlog pass. Single-quoted on purpose: its `${}` are JavaScript's.
+  # shellcheck disable=SC2016
   node -e '
     const fs = require("node:fs");
     const [path, seconds] = process.argv.slice(1);
