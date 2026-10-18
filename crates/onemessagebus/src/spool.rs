@@ -85,10 +85,10 @@ struct Declaration {
 #[derive(Serialize, Deserialize)]
 struct Admission {
     schema_version: u32,
-    /// The identity of the `spool.json` file this was written beside: see
-    /// [`identity`]. Every declaration is a new file renamed into place, so a
-    /// receiver rebinding the spool leaves one this no longer names.
-    declaration: String,
+    /// The identity of the `spool.json` file this was written beside. Every
+    /// declaration is a new file renamed into place, so a receiver rebinding
+    /// the spool leaves one this no longer names.
+    declaration: Identity,
 }
 
 /// The courier's acknowledgement that the inbox has queued a message.
@@ -204,7 +204,7 @@ impl Spool {
             &dir.join(ADMISSION),
             &Admission {
                 schema_version: SPOOL_SCHEMA_VERSION,
-                declaration: identity(&declaration).ok_or_else(|| BackendError::Io {
+                declaration: Identity::of(&declaration).ok_or_else(|| BackendError::Io {
                     action: "read the identity of",
                     path: declaration.clone(),
                     why: "it is gone as soon as it was written".to_owned(),
@@ -505,8 +505,11 @@ impl Exchange {
             return false;
         }
         let claimed = self.file(CLAIMED);
-        if !matches!(claim(&claimed), Ok(true)) {
-            return false;
+        match claim(&claimed) {
+            Contest::Won => {}
+            // Taken, or — the file system refusing — not claimable, which a
+            // sender never reports as withdrawn.
+            Contest::Lost | Contest::Refused => return false,
         }
         // The receiver answers before it lets its claim go, so a claim made
         // after that — or made when the answer was already there — finds the
@@ -633,7 +636,7 @@ fn advertises(dir: &Path) -> Admits {
         return Admits::OnRename;
     };
     if held(&dir.join(ADMISSION_LOCK))
-        && identity(&dir.join(DECLARATION)).as_ref() == Some(&admission.declaration)
+        && Identity::of(&dir.join(DECLARATION)).as_ref() == Some(&admission.declaration)
     {
         Admits::OnAcknowledgement
     } else {
@@ -641,20 +644,62 @@ fn advertises(dir: &Path) -> Admits {
     }
 }
 
-/// The identity of the file at `path`, which no other file shares while it
-/// exists: its device and inode.
-#[cfg(unix)]
-fn identity(path: &Path) -> Option<String> {
-    use std::os::unix::fs::MetadataExt;
-    let metadata = fs::metadata(path).ok()?;
-    Some(format!("unix:{}:{}", metadata.dev(), metadata.ino()))
+/// A file's identity, written `unix:<device>:<inode>` or `unidentified`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+enum Identity {
+    /// Its device and inode, which no other file shares while it exists.
+    Unix { device: u64, inode: u64 },
+    /// The standard library gives a file no identity on this platform, so
+    /// every file reads the same, and the advertisement's lock alone decides.
+    Unidentified,
 }
 
-/// The same for every file: the standard library gives a file no identity
-/// here, so the advertisement's lock alone decides.
-#[cfg(not(unix))]
-fn identity(path: &Path) -> Option<String> {
-    fs::metadata(path).ok().map(|_| "unidentified".to_owned())
+impl Identity {
+    /// The identity of the file at `path`, or `None` when nothing is there.
+    #[cfg(unix)]
+    fn of(path: &Path) -> Option<Self> {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = fs::metadata(path).ok()?;
+        Some(Self::Unix {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+
+    #[cfg(not(unix))]
+    fn of(path: &Path) -> Option<Self> {
+        fs::metadata(path).ok().map(|_| Self::Unidentified)
+    }
+}
+
+impl From<Identity> for String {
+    fn from(identity: Identity) -> Self {
+        match identity {
+            Identity::Unix { device, inode } => format!("unix:{device}:{inode}"),
+            Identity::Unidentified => "unidentified".to_owned(),
+        }
+    }
+}
+
+impl TryFrom<String> for Identity {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, String> {
+        if text == "unidentified" {
+            return Ok(Self::Unidentified);
+        }
+        let unix = text
+            .strip_prefix("unix:")
+            .and_then(|rest| rest.split_once(':'))
+            .and_then(|(device, inode)| Some((device.parse().ok()?, inode.parse().ok()?)));
+        match unix {
+            Some((device, inode)) => Ok(Self::Unix { device, inode }),
+            None => Err(format!(
+                "{text:?} is not a file identity: `unix:<device>:<inode>` or `unidentified`"
+            )),
+        }
+    }
 }
 
 /// What admission means to a spool's receiver.
@@ -679,15 +724,24 @@ impl MessageId {
     }
 }
 
-/// Create the claim at `path`: `Ok(true)` when this side made it and has the
-/// message, `Ok(false)` when the other side made it first, and the file
-/// system's refusal otherwise — which decides nothing, so neither side has the
-/// message until a claim can be made.
-fn claim(path: &Path) -> std::io::Result<bool> {
+/// How one side's attempt on a message's claim went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Contest {
+    /// This side created the claim, and has the message.
+    Won,
+    /// The other side created it first.
+    Lost,
+    /// The file system would not create it, which decides nothing: neither
+    /// side has the message until a claim can be made.
+    Refused,
+}
+
+/// Try to create the claim at `path`.
+fn claim(path: &Path) -> Contest {
     match OpenOptions::new().write(true).create_new(true).open(path) {
-        Ok(_) => Ok(true),
-        Err(failure) if failure.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
-        Err(failure) => Err(failure),
+        Ok(_) => Contest::Won,
+        Err(failure) if failure.kind() == std::io::ErrorKind::AlreadyExists => Contest::Lost,
+        Err(_) => Contest::Refused,
     }
 }
 
@@ -810,13 +864,17 @@ impl Hold {
 
     /// Write what became of the message, if its sender is still waiting for
     /// it: claimed first, so a sender that withdrew it is never answered, and
-    /// let go of only once the answer is written.
+    /// let go of only once the answer is written. One that cannot be claimed is
+    /// dropped unanswered, so its sender is told it was lost.
     fn settle(&self, body: &AnswerBody) {
-        // A claim the file system refuses decides nothing; the answer is
-        // written regardless, and a sender's withdrawal finds it.
-        if !self.held.load(Ordering::SeqCst) && matches!(claim(&self.file(CLAIMED)), Ok(false)) {
-            discard(&self.dir, &self.id);
-            return;
+        if !self.held.load(Ordering::SeqCst) {
+            match claim(&self.file(CLAIMED)) {
+                Contest::Won => {}
+                Contest::Lost | Contest::Refused => {
+                    discard(&self.dir, &self.id);
+                    return;
+                }
+            }
         }
         let taken = self.file(TAKEN);
         if taken.exists() {
@@ -851,15 +909,15 @@ impl Gate for Hold {
             return Claimed::Taken;
         }
         match claim(&self.file(CLAIMED)) {
-            Ok(true) => {
+            Contest::Won => {
                 self.held.store(true, Ordering::SeqCst);
                 Claimed::Taken
             }
-            Ok(false) => {
+            Contest::Lost => {
                 discard(&self.dir, &self.id);
                 Claimed::Withdrawn
             }
-            Err(_) => Claimed::Undecided,
+            Contest::Refused => Claimed::Undecided,
         }
     }
 

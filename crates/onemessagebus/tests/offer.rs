@@ -1127,6 +1127,11 @@ fn an_advertisement_this_build_cannot_read_advertises_nothing() {
         later["schema_version"] = json!(SPOOL_SCHEMA_VERSION + 1);
         std::fs::write(address.join("admission.json"), later.to_string()).expect("written");
     });
+    assert_rewritten_advertisement_refused(|address| {
+        let mut unnamed = advertisement(address);
+        unnamed["declaration"] = json!("the declaration over there");
+        std::fs::write(address.join("admission.json"), unnamed.to_string()).expect("written");
+    });
 }
 
 #[test]
@@ -1306,6 +1311,75 @@ fn a_withdrawal_after_the_answer_is_written_is_refused_and_the_answer_read() {
         .expect_err("an answered message is not withdrawn");
     assert_eq!(offer.wait(), Ok(filled("stock-room")));
     assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
+/// Offer `sku` into the receiver at `address`, stopped, and stand in the way
+/// of its acknowledgement — a directory where the courier writes it — before
+/// the receiver resumes: the courier queues the message and cannot say so.
+#[cfg(unix)]
+fn offer_unacknowledged(
+    receiver: &Receiver,
+    address: &Path,
+    sku: &'static str,
+    wait: Duration,
+) -> (
+    std::thread::JoinHandle<Result<Offer<Receipt>, Undelivered>>,
+    PathBuf,
+) {
+    receiver.signal("-STOP");
+    let offering = {
+        let address = address.to_path_buf();
+        std::thread::spawn(move || {
+            Spool::connect_within::<Order, Receipt>(&address, wait).offer(order(sku))
+        })
+    };
+    let offered = loop {
+        if let Some(name) = files_in(address)
+            .into_iter()
+            .find(|name| name.ends_with(".offer.json"))
+        {
+            break name;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let acknowledgement = address.join(offered.replace(".offer.json", ".admitted.json"));
+    std::fs::create_dir(&acknowledgement).expect("in the acknowledgement's way");
+    receiver.signal("-CONT");
+    (offering, acknowledgement)
+}
+
+#[cfg(unix)]
+#[test]
+fn an_acknowledgement_the_courier_cannot_write_leaves_the_message_withdrawn_or_taken() {
+    // Nothing takes it: when the wait passes it is withdrawn, the failure is
+    // named, and the queued message is never taken.
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let (offering, acknowledgement) =
+        offer_unacknowledged(&receiver, &address, "unsaid", Duration::from_millis(500));
+    match offering.join().expect("the offer finishes").map(drop) {
+        Err(Undelivered::Backend(failure)) => assert!(
+            failure
+                .to_string()
+                .contains(&acknowledgement.display().to_string()),
+            "{failure}"
+        ),
+        other => panic!("an acknowledgement never written was reported as {other:?}"),
+    }
+    assert_eq!(receiver.take(SETTLE), None);
+    assert_eq!(receiver.answered(), "answered []");
+
+    // Taken before the wait passes: admitted by the take, and answered.
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let (offering, _) = offer_unacknowledged(&receiver, &address, "taken", Duration::from_secs(30));
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("taken"));
+    let offer = offering
+        .join()
+        .expect("the offer finishes")
+        .expect("admitted by the take");
+    assert_eq!(receiver.say("answer taken stock-room"), "ok");
+    assert_eq!(offer.wait(), Ok(filled("stock-room")));
 }
 
 #[test]
