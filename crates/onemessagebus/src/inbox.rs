@@ -274,6 +274,17 @@ impl<D> Reply<D> {
     }
 }
 
+/// How a gate's claim on a message went, as the receiver takes it.
+pub(crate) enum Claimed {
+    /// The receiver has it.
+    Taken,
+    /// Its sender withdrew it first: it is nobody's to take, and is dropped.
+    Withdrawn,
+    /// Nothing could decide it now: it stays in its place, untaken, and the
+    /// next take tries again.
+    Undecided,
+}
+
 /// What decides, for a message carried in from elsewhere, whether the receiver
 /// or its sender has it: the in-process queue's lock settles a message sent in
 /// this process, and a gate settles one whose sender can withdraw it from
@@ -281,9 +292,8 @@ impl<D> Reply<D> {
 pub(crate) trait Gate: Send {
     /// Say the message is queued: run as it joins the queue, before any take.
     fn admitted(&mut self);
-    /// Claim the message for the receiver as it is taken: `false` when its
-    /// sender withdrew it first, which leaves the message to be dropped.
-    fn claim(&mut self) -> bool;
+    /// Claim the message for the receiver as it is taken.
+    fn claim(&mut self) -> Claimed;
     /// Give a claimed message back, so its sender can withdraw it again.
     fn release(&mut self);
 }
@@ -567,11 +577,20 @@ impl<M: Message + Send + 'static, D: Disposition> Inbox<M, D> {
                 reply,
                 mut gate,
             } = state.queue.pop_front()?;
-            if let Some(gate) = gate.as_mut() {
-                if !gate.claim() {
-                    // Its sender withdrew it first: it is nobody's to take.
+            match gate.as_mut().map(|gate| gate.claim()) {
+                None | Some(Claimed::Taken) => {}
+                Some(Claimed::Withdrawn) => {
                     reply.forget();
                     continue;
+                }
+                Some(Claimed::Undecided) => {
+                    state.queue.push_front(Queued {
+                        id,
+                        message,
+                        reply,
+                        gate,
+                    });
+                    return None;
                 }
             }
             state.taken.insert(id, Taken { reply, gate });

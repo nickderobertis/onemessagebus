@@ -92,8 +92,6 @@ fn message_files(dir: &Path) -> Vec<String> {
         .collect()
 }
 
-// The receiver in a process of its own.
-
 /// The environment variable that makes this binary's `receiver_child` a
 /// receiver bound to the spool it names.
 const RECEIVER_SPOOL: &str = "ONEMESSAGEBUS_OFFER_RECEIVER_SPOOL";
@@ -280,8 +278,6 @@ fn spool_dir() -> (tempfile::TempDir, PathBuf) {
     (dir, address)
 }
 
-// Admission and the answer.
-
 #[test]
 fn an_in_process_offer_returns_admitted_and_waits_for_the_receivers_answer() {
     let (sender, inbox) = Sender::<Order, Receipt>::channel();
@@ -427,8 +423,6 @@ fn a_spool_offer_a_courier_renamed_but_never_queued_is_not_admitted_and_is_withd
     );
 }
 
-// Withdrawal.
-
 #[test]
 fn an_in_process_withdrawal_before_a_take_keeps_it_from_the_receiver_and_after_one_is_refused() {
     let (sender, inbox) = Sender::<Order, Receipt>::channel();
@@ -483,8 +477,6 @@ fn a_spool_withdrawal_before_a_take_keeps_it_from_the_receiver_and_after_one_is_
     assert!(address.join("closed.json").exists());
 }
 
-// Deadlines.
-
 #[test]
 fn an_in_process_deadline_expires_an_untaken_message_and_outlives_a_taken_one() {
     let (sender, inbox) = Sender::<Order, Receipt>::channel();
@@ -525,8 +517,6 @@ fn a_spool_deadline_expires_an_untaken_message_and_outlives_a_taken_one() {
     assert_eq!(receiver.say("answer slow late"), "ok");
     assert_eq!(waiting.join().expect("waits"), Ok(filled("late")));
 }
-
-// A receiver that goes away.
 
 #[test]
 fn an_in_process_offer_whose_receiver_closes_or_drops_its_claim_is_undelivered() {
@@ -609,8 +599,6 @@ fn a_spool_offer_whose_receiver_process_ends_or_drops_its_claim_is_undelivered()
     );
     assert_eq!(message_files(&address), Vec::<String>::new());
 }
-
-// Release.
 
 #[test]
 fn an_in_process_release_hands_the_message_back_untaken_in_its_place() {
@@ -734,8 +722,6 @@ fn a_spool_release_hands_the_message_back_untaken_in_its_place() {
     assert_eq!(message_files(&address), Vec::<String>::new());
 }
 
-// Take racing withdraw.
-
 const RACES: usize = 200;
 
 /// Which side of race `race` waits before it moves, and for how long: a sweep
@@ -858,8 +844,6 @@ fn a_spool_take_and_withdraw_racing_for_one_message_settle_it_exactly_one_way() 
     );
     assert_eq!(message_files(&address), Vec::<String>::new());
 }
-
-// A receiver that cannot withdraw after admission.
 
 /// A receiver of a build before admission was acknowledged, bound to `dir`: it
 /// holds the lock, declares the schema in the old shape, and moves each offer
@@ -1064,7 +1048,7 @@ fn an_acknowledgement_this_build_cannot_read_is_reported_and_the_message_withdra
     let offering = {
         let address = address.clone();
         std::thread::spawn(move || {
-            Spool::connect::<Order, Receipt>(&address)
+            Spool::connect_within::<Order, Receipt>(&address, Duration::from_millis(500))
                 .offer(order("garbled"))
                 .map(drop)
         })
@@ -1095,6 +1079,44 @@ fn an_acknowledgement_this_build_cannot_read_is_reported_and_the_message_withdra
     }
     receiver.signal("-CONT");
     assert_eq!(receiver.take(SETTLE), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_claim_the_file_system_refuses_gives_the_message_to_neither_side_until_one_can_be_made() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let sender = Spool::connect::<Order, Receipt>(&address);
+    let offer = sender.offer(order("stuck")).expect("admitted");
+    let mode = |mode| {
+        std::fs::set_permissions(&address, std::fs::Permissions::from_mode(mode))
+            .expect("the spool's mode is set");
+    };
+    // A spool nobody can create a file in: neither side can make a claim.
+    mode(0o555);
+    let probe = address.join("probe");
+    if std::fs::write(&probe, "").is_ok() {
+        // Permissions bind nobody running as root; there is nothing to show.
+        let _ = std::fs::remove_file(&probe);
+        mode(0o755);
+        eprintln!("skipped: a read-only directory refuses nothing to this user");
+        return;
+    }
+    let offer = offer
+        .withdraw()
+        .expect_err("a withdrawal that cannot be claimed is not claimed");
+    assert_eq!(
+        receiver.take(SETTLE),
+        None,
+        "a take that cannot be claimed took the message"
+    );
+    // Once a claim can be made, the message is where it was, and is taken.
+    mode(0o755);
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("stuck"));
+    assert_eq!(receiver.say("answer stuck at-last"), "ok");
+    assert_eq!(offer.wait(), Ok(filled("at-last")));
+    assert_eq!(message_files(&address), Vec::<String>::new());
 }
 
 #[test]
@@ -1132,8 +1154,6 @@ fn a_receiver_unbinding_takes_its_advertisement_with_it() {
     drop(spool);
     assert!(!address.join("admission.json").exists());
 }
-
-// A backend of a consumer's own.
 
 /// A backend that answers at once and says nothing of admission.
 struct Counter;

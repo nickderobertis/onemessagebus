@@ -29,8 +29,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::inbox::{
-    BackendError, Closed, Disposition, Gate, Inbox, InboxBackend, Offer, Pending, Reply, Sender,
-    Shared, Unanswered, Undelivered,
+    BackendError, Claimed, Closed, Disposition, Gate, Inbox, InboxBackend, Offer, Pending, Reply,
+    Sender, Shared, Unanswered, Undelivered,
 };
 use crate::schema::{Message, SchemaId};
 
@@ -359,7 +359,7 @@ fn spool_dir(address: &Path) -> Result<(), BackendError> {
 /// One message a sender offered into a spool, admitted to its receiver.
 struct Exchange {
     dir: PathBuf,
-    id: String,
+    id: MessageId,
     /// What admission means to the receiver that took the message: read once
     /// the courier has it.
     admits: Admits,
@@ -399,6 +399,9 @@ impl Exchange {
         )?;
         let started = Instant::now();
         let mut advertised = None;
+        // An acknowledgement this build cannot read acknowledges nothing; it is
+        // what a withdrawal at the end of the wait reports, by name.
+        let mut unreadable = None;
         loop {
             if let Some(answered) = exchange.read_answer()? {
                 exchange.answered = Some(answered);
@@ -432,14 +435,7 @@ impl Exchange {
                 match read_document::<Admitted>(dir, &exchange.file(ADMITTED)) {
                     Ok(Some(_)) => return Ok(exchange),
                     Ok(None) => {}
-                    Err(unreadable) => {
-                        // Not an acknowledgement this build reads: withdrawn
-                        // and reported by name, or — taken first — admitted.
-                        if exchange.withdraw() {
-                            return Err(Undelivered::Backend(unreadable));
-                        }
-                        return Ok(exchange);
-                    }
+                    Err(failure) => unreadable = Some(failure),
                 }
                 if !exchange.file(TAKEN).exists() || !receiver_bound(dir) {
                     exchange.answered = Some(exchange.ended()?);
@@ -447,7 +443,7 @@ impl Exchange {
                 }
                 if elapsed {
                     if exchange.withdraw() {
-                        return Err(Undelivered::Backend(lost()));
+                        return Err(Undelivered::Backend(unreadable.unwrap_or_else(lost)));
                     }
                     // The receiver took it — or answered it — before it said
                     // it was queued: admitted either way.
@@ -459,7 +455,7 @@ impl Exchange {
     }
 
     fn file(&self, suffix: &str) -> PathBuf {
-        self.dir.join(format!("{}{suffix}", self.id))
+        self.id.file(&self.dir, suffix)
     }
 
     fn read_answer(&self) -> Result<Option<(Value, PathBuf)>, Undelivered> {
@@ -495,7 +491,7 @@ impl Exchange {
             return false;
         }
         let claimed = self.file(CLAIMED);
-        if !claim(&claimed) {
+        if !matches!(claim(&claimed), Ok(true)) {
             return false;
         }
         // The receiver answers before it lets its claim go, so a claim made
@@ -646,31 +642,40 @@ fn modified_ns(path: &Path) -> Option<u64> {
     u64::try_from(modified.duration_since(UNIX_EPOCH).ok()?.as_nanos()).ok()
 }
 
-/// Create the claim at `path`: `true` when this side made it and has the
-/// message. A claim the other side made first, or one the file system refuses
-/// to make, is not this side's: a receiver drops the message rather than take
-/// it unclaimed, and a sender reads it as taken rather than claim a withdrawal
-/// it cannot guarantee — so a refusing file system loses the message, and its
-/// sender is told so, rather than letting both sides have it.
-fn claim(path: &Path) -> bool {
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .is_ok()
+/// One message's id in a spool: what every file of it is named by.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct MessageId(String);
+
+impl MessageId {
+    /// The message's file in `dir` with `suffix`: `<id><suffix>`.
+    fn file(&self, dir: &Path, suffix: &str) -> PathBuf {
+        dir.join(format!("{}{suffix}", self.0))
+    }
+}
+
+/// Create the claim at `path`: `Ok(true)` when this side made it and has the
+/// message, `Ok(false)` when the other side made it first, and the file
+/// system's refusal otherwise — which decides nothing, so neither side has the
+/// message until a claim can be made.
+fn claim(path: &Path) -> std::io::Result<bool> {
+    match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(_) => Ok(true),
+        Err(failure) if failure.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(failure) => Err(failure),
+    }
 }
 
 /// Remove what is left of message `id` once its sender withdrew it.
-fn discard(dir: &Path, id: &str) {
+fn discard(dir: &Path, id: &MessageId) {
     for suffix in [TAKEN, ADMITTED, CLAIMED] {
-        let _ = fs::remove_file(dir.join(format!("{id}{suffix}")));
+        let _ = fs::remove_file(id.file(dir, suffix));
     }
 }
 
 /// Take back offer `id`, if the courier has not taken it first.
-fn withdraw(dir: &Path, id: &str) -> bool {
-    let withdrawn = dir.join(format!("{id}{WITHDRAWN}"));
-    if fs::rename(dir.join(format!("{id}{OFFER}")), &withdrawn).is_err() {
+fn withdraw(dir: &Path, id: &MessageId) -> bool {
+    let withdrawn = id.file(dir, WITHDRAWN);
+    if fs::rename(id.file(dir, OFFER), &withdrawn).is_err() {
         return false;
     }
     let _ = fs::remove_file(withdrawn);
@@ -697,31 +702,31 @@ where
 
 /// The ids of every offer waiting, in the order of the instants they were
 /// minted at.
-fn offered(dir: &Path) -> Vec<String> {
+fn offered(dir: &Path) -> Vec<MessageId> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();
     };
-    let mut ids: Vec<String> = entries
+    let mut ids: Vec<MessageId> = entries
         .flatten()
         .filter_map(|entry| {
             entry
                 .file_name()
                 .to_str()
                 .and_then(|name| name.strip_suffix(OFFER))
-                .map(str::to_owned)
+                .map(|id| MessageId(id.to_owned()))
         })
         .collect();
     ids.sort();
     ids
 }
 
-fn take_offer<M, D>(dir: &Path, id: &str, shared: &Arc<Shared<M, D>>)
+fn take_offer<M, D>(dir: &Path, id: &MessageId, shared: &Arc<Shared<M, D>>)
 where
     M: Message + Send + 'static,
     D: Disposition,
 {
-    let taken = dir.join(format!("{id}{TAKEN}"));
-    if fs::rename(dir.join(format!("{id}{OFFER}")), &taken).is_err() {
+    let taken = id.file(dir, TAKEN);
+    if fs::rename(id.file(dir, OFFER), &taken).is_err() {
         // Withdrawn by its sender first.
         return;
     }
@@ -729,7 +734,7 @@ where
     // the take — or the answer — that follows finds the message withdrawn.
     let hold = Hold {
         dir: dir.to_path_buf(),
-        id: id.to_owned(),
+        id: id.clone(),
         held: Arc::new(AtomicBool::new(false)),
     };
     let message = match read_offer::<M>(dir, &taken) {
@@ -763,21 +768,23 @@ where
 #[derive(Clone)]
 struct Hold {
     dir: PathBuf,
-    id: String,
+    id: MessageId,
     /// Whether the receiver holds the message's claim.
     held: Arc<AtomicBool>,
 }
 
 impl Hold {
     fn file(&self, suffix: &str) -> PathBuf {
-        self.dir.join(format!("{}{suffix}", self.id))
+        self.id.file(&self.dir, suffix)
     }
 
     /// Write what became of the message, if its sender is still waiting for
     /// it: claimed first, so a sender that withdrew it is never answered, and
     /// let go of only once the answer is written.
     fn settle(&self, body: &AnswerBody) {
-        if !self.held.load(Ordering::SeqCst) && !claim(&self.file(CLAIMED)) {
+        // A claim the file system refuses decides nothing; the answer is
+        // written regardless, and a sender's withdrawal finds it.
+        if !self.held.load(Ordering::SeqCst) && matches!(claim(&self.file(CLAIMED)), Ok(false)) {
             discard(&self.dir, &self.id);
             return;
         }
@@ -807,13 +814,18 @@ impl Gate for Hold {
         );
     }
 
-    fn claim(&mut self) -> bool {
-        if !claim(&self.file(CLAIMED)) {
-            discard(&self.dir, &self.id);
-            return false;
+    fn claim(&mut self) -> Claimed {
+        match claim(&self.file(CLAIMED)) {
+            Ok(true) => {
+                self.held.store(true, Ordering::SeqCst);
+                Claimed::Taken
+            }
+            Ok(false) => {
+                discard(&self.dir, &self.id);
+                Claimed::Withdrawn
+            }
+            Err(_) => Claimed::Undecided,
         }
-        self.held.store(true, Ordering::SeqCst);
-        true
     }
 
     fn release(&mut self) {
@@ -860,12 +872,7 @@ fn close_spool(dir: &Path, closed: &Closed) {
         },
     );
     for id in offered(dir) {
-        if fs::rename(
-            dir.join(format!("{id}{OFFER}")),
-            dir.join(format!("{id}{TAKEN}")),
-        )
-        .is_ok()
-        {
+        if fs::rename(id.file(dir, OFFER), id.file(dir, TAKEN)).is_ok() {
             Hold {
                 dir: dir.to_path_buf(),
                 id,
@@ -927,14 +934,14 @@ fn remove_if_present(path: &Path) -> Result<(), BackendError> {
 /// in the order of their minting instants — the order they were made, unless
 /// the system clock steps back; the process id separates two processes minting
 /// in one instant, and the counter two threads of one process.
-fn mint() -> String {
+fn mint() -> MessageId {
     static MINTED: AtomicU64 = AtomicU64::new(0);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_nanos());
-    format!(
+    MessageId(format!(
         "{now:039}-{}-{:020}",
         std::process::id(),
         MINTED.fetch_add(1, Ordering::Relaxed)
-    )
+    ))
 }
