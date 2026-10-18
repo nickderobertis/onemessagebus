@@ -130,17 +130,23 @@ static long long shift(void) {
     if (!file) {
         return 0;
     }
-    char text[32] = {0};
+    /* One byte more than any whole number of seconds needs, so a longer file
+       is seen to be one rather than read in part. */
+    char text[33] = {0};
     size_t read = fread(text, 1, sizeof text - 1, file);
+    int longer = read == sizeof text - 1;
     fclose(file);
     text[read] = '\0';
     char *end = NULL;
     errno = 0;
     long long seconds = strtoll(text, &end, 10);
-    while (end && (*end == '\n' || *end == ' ')) {
+    /* Converted first, so a file of whitespace alone is no number. */
+    int converted = errno == 0 && end != text;
+    while (converted && (*end == '\n' || *end == ' ')) {
         end++;
     }
-    if (errno != 0 || end == text || !end || *end != '\0') {
+    /* Ending at the bytes read, so an embedded NUL hides nothing after it. */
+    if (longer || !converted || end != text + read) {
         fprintf(stderr, "clock_shim: %s holds %s, not a whole number of seconds\n", named, text);
         abort();
     }
