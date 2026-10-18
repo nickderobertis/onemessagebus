@@ -210,6 +210,24 @@ pub enum BackendError {
         /// What the system said.
         why: String,
     },
+    /// The spool's bounded wait passed with the message's claim held by its
+    /// receiver, which had neither acknowledged admitting it nor answered it:
+    /// neither admitted nor withdrawn, and its sender cannot learn which it
+    /// comes to.
+    #[error(
+        "the message offered to the spool at {} was neither admitted nor withdrawn within {}: its receiver holds {}, its claim, without having acknowledged admitting it or answered it",
+        spool.display(),
+        wait_text(*waited),
+        claim.display()
+    )]
+    Unsettled {
+        /// The spool.
+        spool: PathBuf,
+        /// The claim its receiver holds.
+        claim: PathBuf,
+        /// The bounded wait that passed.
+        waited: Duration,
+    },
 }
 
 impl BackendError {

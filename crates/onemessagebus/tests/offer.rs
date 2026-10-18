@@ -2177,6 +2177,50 @@ fn a_wait_that_passes_while_the_file_system_refuses_a_claim_stops_at_its_bound_n
 
 #[cfg(unix)]
 #[test]
+fn a_wait_that_passes_with_the_receivers_claim_but_no_acknowledgement_stops_at_its_bound() {
+    let (_dir, address) = spool_dir();
+    let receiver = Receiver::bind(&address);
+    receiver.signal("-STOP");
+    let wait = Duration::from_millis(300);
+    let offering = offering_within(&address, "unsettled", wait);
+    // Stand in for a receiver stopped between claiming the message and saying
+    // anything of it: renamed to taken, claimed, never acknowledged or answered.
+    let offered = waiting_offer(&address);
+    let id = offered.trim_end_matches(".offer.json").to_owned();
+    std::fs::write(address.join(format!("{id}.claimed")), "").expect("claimed by the stand-in");
+    std::fs::rename(
+        address.join(&offered),
+        address.join(format!("{id}.taken.json")),
+    )
+    .expect("taken by the stand-in");
+    let (offered, took) = offering.join().expect("the offer finishes");
+    assert!(
+        took >= wait && took <= wait + POLL,
+        "returned {took:?} into a bound of {wait:?}"
+    );
+    let claim = address.join(format!("{id}.claimed"));
+    let failure = offered.expect_err("a message never acknowledged is not admitted");
+    assert_eq!(
+        failure,
+        Undelivered::Backend(BackendError::Unsettled {
+            spool: address.clone(),
+            claim: claim.clone(),
+            waited: wait,
+        })
+    );
+    let said = failure.to_string();
+    assert!(
+        said.contains("neither admitted nor withdrawn")
+            && said.contains(&claim.display().to_string()),
+        "{said}"
+    );
+    // Claimed nothing either way: the receiver's claim is left where it was.
+    assert!(claim.is_file(), "the receiver's claim was removed");
+    receiver.signal("-CONT");
+}
+
+#[cfg(unix)]
+#[test]
 fn an_offer_whose_withdrawal_before_pickup_is_refused_stops_at_its_bound_and_may_be_admitted_later()
 {
     let (_dir, address) = spool_dir();

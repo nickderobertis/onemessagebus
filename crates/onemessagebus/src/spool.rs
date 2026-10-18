@@ -506,9 +506,20 @@ impl Exchange {
                             return Ok(exchange);
                         }
                         // Claimed beside no acknowledgement: a receiver that
-                        // could not write it, refusing the message, whose
-                        // answer the next look reads.
-                        Withdrawal::Kept => {}
+                        // could not write it, refusing the message. Its answer
+                        // is read if it is there now; otherwise the bound is
+                        // kept, claiming neither admission nor withdrawal.
+                        Withdrawal::Kept => {
+                            if let Some(answered) = exchange.read_answer()? {
+                                exchange.answered = Some(answered);
+                                return Ok(exchange);
+                            }
+                            return Err(Undelivered::Backend(BackendError::Unsettled {
+                                spool: dir.to_path_buf(),
+                                claim: exchange.file(CLAIMED),
+                                waited: wait,
+                            }));
+                        }
                         // Not claimable at all, which decides nothing: the
                         // bound is kept all the same, and the receiver may
                         // still admit the message once a claim can be made.

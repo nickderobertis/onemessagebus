@@ -127,7 +127,11 @@ A directory a receiver's process binds, for a sender in another process.
   with `BackendError::Unclaimable`, naming the refused claim and the bound,
   apart from the `Elapsed` of a withdrawn message. That outcome alone leaves it
   possible that the receiver admits the message later, once the file system
-  lets it; nothing waits for its answer.
+  lets it; nothing waits for its answer. Where the receiver holds
+  `<id>.claimed` at the bound with neither `<id>.admitted.json` nor an answer
+  written — a receiver stopped as it refused the message — it stops there with
+  `BackendError::Unsettled`, naming that claim: the message is reported neither
+  admitted nor withdrawn, and nothing reads what the receiver later writes.
 - **Admission and withdrawal after it.** A receiver of this build writes
   `admission.json` beside `spool.json` as it binds, holds `admission.lock`
   locked for as long as it is bound, and removes the advertisement as it
@@ -223,7 +227,8 @@ A directory a receiver's process binds, for a sender in another process.
   but is not an answer (naming the file), when the wait passes with the message
   never taken (naming the wait), when the wait passes with a claim its
   withdrawal needs refused (naming the claim, and the message possibly admitted
-  later), when the receiver took it and no longer holds
+  later), when the wait passes with the receiver holding the message's claim
+  unacknowledged and unanswered (naming the claim), when the receiver took it and no longer holds
   the spool's lock with no answer written (naming the file), or when the
   receiver could not read the offer (in the receiver's words).
 - A receiver that **closes** records the close in the spool, so a sender
