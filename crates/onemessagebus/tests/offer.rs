@@ -879,6 +879,83 @@ fn a_spool_release_past_the_deadline_of_a_suspended_sender_expires_the_message_b
     assert_eq!(message_files(&address), Vec::<String>::new());
 }
 
+/// The one message's published deadline in the spool at `address`, once its
+/// waiting sender has published it.
+fn published_deadline(address: &Path) -> PathBuf {
+    let started = Instant::now();
+    loop {
+        if let Some(name) = message_files(address)
+            .into_iter()
+            .find(|name| name.ends_with(".deadline.json"))
+        {
+            return address.join(name);
+        }
+        assert!(
+            started.elapsed() < TAKE,
+            "a waiting sender publishes its deadline"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn a_spool_deadline_published_ahead_of_a_clock_set_back_is_published_again_as_it_passes() {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let sender = Spool::connect::<Order, Receipt>(&address);
+    let offer = sender.offer(order("late")).expect("admitted");
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("late"));
+    let waiting =
+        std::thread::spawn(move || offer.wait_until(Instant::now() + Duration::from_millis(300)));
+    // The system clock is set back after the deadline was published: on it,
+    // the published deadline is now years off.
+    let deadline = published_deadline(&address);
+    std::fs::write(
+        &deadline,
+        json!({"schema_version": SPOOL_SCHEMA_VERSION, "deadline": u64::MAX}).to_string(),
+    )
+    .expect("the deadline is pushed out");
+    // Past the sender's own deadline, it publishes it again as passed.
+    std::thread::sleep(Duration::from_millis(600));
+    assert_eq!(receiver.say("release-and-take late"), "none");
+    assert_eq!(waiting.join().expect("waits"), Err(Unanswered::Expired));
+    assert_eq!(receiver.take(SETTLE), None);
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
+#[test]
+fn a_deadline_the_receiver_cannot_read_is_none_and_its_senders_withdrawal_still_decides() {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let mut sender = Receiver::start("sender_child", SENDER_SPOOL, &address);
+    assert_eq!(sender.reply(), "admitted");
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("late"));
+    sender.tell("wait 300");
+    let deadline = published_deadline(&address);
+    sender.signal("-STOP");
+    // A deadline written by a build this one cannot read.
+    std::fs::write(
+        &deadline,
+        json!({"schema_version": SPOOL_SCHEMA_VERSION + 1, "deadline": 0}).to_string(),
+    )
+    .expect("the deadline is rewritten");
+    std::thread::sleep(Duration::from_millis(600));
+    // Not read as passed: the release queues it again, untaken.
+    assert_eq!(receiver.say("release late"), "ok");
+    assert!(
+        !message_files(&address)
+            .iter()
+            .any(|name| name.ends_with(".expired")),
+        "an unreadable deadline was read as passed"
+    );
+    sender.signal("-CONT");
+    // The resumed sender, past its own deadline, withdraws it.
+    assert_eq!(sender.reply(), "expired");
+    assert_eq!(receiver.take(SETTLE), None);
+    assert_eq!(receiver.answered(), "answered []");
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
 const RACES: usize = 200;
 
 /// Which side of race `race` waits before it moves, and for how long: a sweep
