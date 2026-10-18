@@ -167,9 +167,9 @@ A directory a receiver's process binds, for a sender in another process.
   once its courier has renamed the offer, as before. A sender then reads every
   admitted message as taken and never claims a withdrawal that receiver would
   not honour. A sender trusts an advertisement only while the receiver that
-  wrote it is alive and bound, only beside the declaration it was written
-  with, and only where the two share a monotonic clock. The first two checks
-  read no clock:
+  wrote it is alive and bound, and only beside the declaration it was written
+  with; it withdraws after admission only where the two also share a monotonic
+  clock. The first two checks read no clock:
   - **Its lock is held.** The system releases `admission.lock` when its
     receiver's process ends, however it ends, and an older receiver never
     takes it. So one that rebinds after a newer one was killed, leaving its
@@ -188,9 +188,18 @@ A directory a receiver's process binds, for a sender in another process.
     the time namespace whose offset the clock carries. A sender trusts the
     advertisement only when that is its own clock, because only then does a
     deadline it publishes mean the same moment to the receiver. Where it cannot
-    verify that, the receiver is read as not advertising: `withdraw` on an
+    verify that, it loses withdrawal and expiry after admission and nothing
+    else: it still waits for `<id>.admitted.json`, so `offer` returns only once
+    the receiver's inbox has queued the message, or withdraws it when the
+    bounded wait passes; but it publishes no deadline, `withdraw` on an
     admitted message answers taken, and `wait_until` never reports an admitted
-    message `Expired` but waits for its answer. That covers a receiver on
+    message `Expired` but waits for its answer. A withdrawal when the bounded
+    wait passes claims `<id>.claimed` and keeps it only while
+    `<id>.admitted.json` is absent, which the inbox writes under its lock before
+    any take; finding it there, the sender gives the claim back and reads the
+    message as taken. A take that lost to that claim in the moment before it
+    was given back drops the message, and its sender is told it was lost:
+    never answered, never expired, never withdrawn. That covers a receiver on
     another boot or in another time namespace, one whose `admission.json`
     records no clock or one this build cannot read, either side unable to read
     `/proc/sys/kernel/random/boot_id` or failing to read `/proc/self/ns/time`

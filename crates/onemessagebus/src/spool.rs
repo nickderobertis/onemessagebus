@@ -102,9 +102,10 @@ struct Admission {
     /// the spool leaves one this no longer names.
     declaration: Identity,
     /// The monotonic clock the receiver reads a published deadline on. A
-    /// sender that cannot verify it shares that clock reads the receiver as
-    /// not advertising, so no expiry it reports rests on a clock the two do
-    /// not share. Absent where the receiver identifies none.
+    /// sender that cannot verify it shares that clock still waits for the
+    /// acknowledgement, and reads every admitted message as taken, so no
+    /// expiry it reports rests on a clock the two do not share. Absent where
+    /// the receiver identifies none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     clock: Option<ClockIdentity>,
 }
@@ -488,7 +489,7 @@ impl Exchange {
                     return Ok(exchange);
                 }
                 if elapsed {
-                    if exchange.withdraw() {
+                    if exchange.withdraw_unadmitted() {
                         return Err(Undelivered::Backend(unreadable.unwrap_or_else(lost)));
                     }
                     // The receiver took it — or answered it — before it said
@@ -532,7 +533,7 @@ impl Exchange {
     /// Take the admitted message back, if the receiver has not taken it: by
     /// creating its claim before the receiver's take can.
     fn withdraw(&mut self) -> bool {
-        if self.admits == Admits::OnRename || self.answered.is_some() {
+        if self.admits != Admits::OnAcknowledgement || self.answered.is_some() {
             return false;
         }
         let claimed = self.file(CLAIMED);
@@ -546,6 +547,29 @@ impl Exchange {
         // after that — or made when the answer was already there — finds the
         // answer: the message was taken, and is answered.
         if self.file(ANSWER).exists() {
+            let _ = fs::remove_file(claimed);
+            return false;
+        }
+        true
+    }
+
+    /// Take back a message whose admission was never acknowledged, when the
+    /// bounded wait passes. Past admission only a receiver on a clock this
+    /// sender verified it shares is withdrawn from; any other's inbox queues
+    /// the message and writes `<id>.admitted.json` under one lock, before any
+    /// take, so a claim made while that file is absent came before the message
+    /// could be taken. One made after it is given back, and the message read
+    /// as taken.
+    fn withdraw_unadmitted(&mut self) -> bool {
+        if self.admits != Admits::AcknowledgedThenTaken {
+            return self.withdraw();
+        }
+        let claimed = self.file(CLAIMED);
+        match claim(&claimed) {
+            Contest::Won => {}
+            Contest::Lost | Contest::Refused => return false,
+        }
+        if self.file(ADMITTED).exists() || self.file(ANSWER).exists() {
             let _ = fs::remove_file(claimed);
             return false;
         }
@@ -686,34 +710,36 @@ fn open_lock(path: &Path) -> Result<File, BackendError> {
         .map_err(|failure| BackendError::io("open", path, &failure))
 }
 
-/// What admission means to the receiver bound to `dir`: acknowledged, with a
-/// withdrawal after it, only while the receiver that wrote `admission.json` is
-/// alive and bound — it holds `admission.lock` — and the `spool.json` there now
-/// is the file it was written beside — and only where the sender verifies
-/// that the two read one monotonic clock (`admission.json`'s `clock`), the one
-/// a published deadline is read on. Neither of the first two depends on a
-/// clock. An older
-/// receiver never takes the lock, so one rebinding after a killed newer one
-/// finds it free; and it renames a new declaration into place, so for the
-/// moment a dying receiver's locks take to be let go of, the identity differs.
+/// What admission means to the receiver bound to `dir`: acknowledged only
+/// while the receiver that wrote `admission.json` is alive and bound — it
+/// holds `admission.lock` — and the `spool.json` there now is the file it was
+/// written beside, neither of which depends on a clock; and withdrawn from
+/// after it only where the sender also verifies that the two read one
+/// monotonic clock (`admission.json`'s `clock`), the one a published deadline
+/// is read on. An older receiver never takes the lock, so one rebinding after a
+/// killed newer one finds it free; and it renames a new declaration into place,
+/// so for the moment a dying receiver's locks take to be let go of, the
+/// identity differs.
 fn advertises(dir: &Path) -> Admits {
     let Ok(Some(admission)) = read_document::<Admission>(dir, &dir.join(ADMISSION)) else {
         return Admits::OnRename;
     };
+    if !held(&dir.join(ADMISSION_LOCK))
+        || Identity::of(&dir.join(DECLARATION)).as_ref() != Some(&admission.declaration)
+    {
+        return Admits::OnRename;
+    }
     // A receiver whose clock this sender cannot verify it shares could not
-    // read a deadline the way this sender took it, so it is read as advertising
-    // nothing: no withdrawal or expiry after admission is claimed against it.
+    // read a deadline the way this sender took it, so no withdrawal or expiry
+    // after admission is claimed against it; its admission is still waited for.
     let shares_a_clock = matches!(
         (SharedClock::here(), &admission.clock),
         (Some(here), Some(theirs)) if here.is(theirs)
     );
-    if shares_a_clock
-        && held(&dir.join(ADMISSION_LOCK))
-        && Identity::of(&dir.join(DECLARATION)).as_ref() == Some(&admission.declaration)
-    {
+    if shares_a_clock {
         Admits::OnAcknowledgement
     } else {
-        Admits::OnRename
+        Admits::AcknowledgedThenTaken
     }
 }
 
@@ -784,6 +810,10 @@ enum Admits {
     /// A receiver that does: the message is admitted once the receiver says its
     /// inbox has queued it, and can be withdrawn until a take claims it.
     OnAcknowledgement,
+    /// A receiver that does, on a clock this sender cannot verify it shares:
+    /// the message is admitted once the receiver says its inbox has queued it,
+    /// and is its receiver's from then on.
+    AcknowledgedThenTaken,
 }
 
 /// Whether a sender in `wait_until` has published its deadline.

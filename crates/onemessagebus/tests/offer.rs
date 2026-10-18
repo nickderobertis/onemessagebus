@@ -93,6 +93,21 @@ fn message_files(dir: &Path) -> Vec<String> {
         .collect()
 }
 
+/// Held shared by every child process this binary starts, as it starts it, and
+/// exclusively by a journey that rebinds a spool in this process: a child
+/// forked while a lock file is open holds a copy of it until it runs its
+/// program, so a rebind in that moment is refused by a lock nobody means to
+/// hold.
+static FORKING: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+/// Run `start`, which starts a child process, while no in-process rebind runs.
+fn forking<T>(start: impl FnOnce() -> T) -> T {
+    let _forking = FORKING
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    start()
+}
+
 /// The environment variable that makes this binary's `receiver_child` a
 /// receiver bound to the spool it names.
 const RECEIVER_SPOOL: &str = "ONEMESSAGEBUS_OFFER_RECEIVER_SPOOL";
@@ -246,20 +261,22 @@ impl Receiver {
     ) -> Self {
         let mut command = Command::new(std::env::current_exe().expect("this test binary"));
         configure(&mut command);
-        let mut child = command
-            .args([
-                child,
-                "--exact",
-                "--nocapture",
-                "--ignored",
-                "--test-threads=1",
-            ])
-            .env(variable, address)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("the child process starts");
+        let mut child = forking(|| {
+            command
+                .args([
+                    child,
+                    "--exact",
+                    "--nocapture",
+                    "--ignored",
+                    "--test-threads=1",
+                ])
+                .env(variable, address)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+        })
+        .expect("the child process starts");
         let commands = Some(child.stdin.take().expect("its stdin"));
         let replies = BufReader::new(child.stdout.take().expect("its stdout"));
         Self {
@@ -314,10 +331,12 @@ impl Receiver {
     /// Send the receiver's process `signal`, by the pid of the handle that
     /// started it.
     fn signal(&self, signal: &str) {
-        let status = Command::new("kill")
-            .args([signal, &self.child.id().to_string()])
-            .status()
-            .expect("kill runs");
+        let status = forking(|| {
+            Command::new("kill")
+                .args([signal, &self.child.id().to_string()])
+                .status()
+        })
+        .expect("kill runs");
         assert!(status.success(), "kill {signal} failed");
     }
 
@@ -950,13 +969,15 @@ fn published_deadline(address: &Path) -> PathBuf {
 fn clock_shim(dir: &Path) -> PathBuf {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/clock_shim.c");
     let library = dir.join("clock_shim.so");
-    let status = Command::new(std::env::var_os("CC").unwrap_or_else(|| "cc".into()))
-        .args(["-shared", "-fPIC", "-o"])
-        .arg(&library)
-        .arg(&source)
-        .arg("-ldl")
-        .status()
-        .expect("a C compiler builds the clock shim; set CC to one");
+    let status = forking(|| {
+        Command::new(std::env::var_os("CC").unwrap_or_else(|| "cc".into()))
+            .args(["-shared", "-fPIC", "-o"])
+            .arg(&library)
+            .arg(&source)
+            .arg("-ldl")
+            .status()
+    })
+    .expect("a C compiler builds the clock shim; set CC to one");
     assert!(status.success(), "the clock shim does not build");
     library
 }
@@ -1246,6 +1267,96 @@ fn a_receiver_on_a_clock_its_sender_cannot_verify_never_has_an_admitted_message_
             "{named}"
         );
     }
+}
+
+/// The name of the one offer waiting in the spool at `address`, once there is
+/// one.
+#[cfg(unix)]
+fn waiting_offer(address: &Path) -> String {
+    loop {
+        if let Some(name) = files_in(address)
+            .into_iter()
+            .find(|name| name.ends_with(".offer.json"))
+        {
+            return name;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_receiver_on_a_clock_its_sender_cannot_verify_still_admits_a_message_before_its_offer_returns()
+{
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let mut rewritten = advertisement(&address);
+    rewritten["clock"] = json!(FOREIGN_CLOCK);
+    std::fs::write(address.join("admission.json"), rewritten.to_string()).expect("written");
+
+    // Renamed to taken by a stand-in for a courier stopped between its two
+    // steps, and never queued: not admitted, so the offer does not return, and
+    // when its wait passes the message is withdrawn.
+    receiver.signal("-STOP");
+    let wait = Duration::from_millis(1500);
+    let offering = {
+        let address = address.clone();
+        std::thread::spawn(move || {
+            Spool::connect_within::<Order, Receipt>(&address, wait)
+                .offer(order("renamed"))
+                .map(drop)
+        })
+    };
+    let offered = waiting_offer(&address);
+    let taken = offered.replace(".offer.json", ".taken.json");
+    std::fs::rename(address.join(&offered), address.join(&taken)).expect("taken by the stand-in");
+    std::thread::sleep(SETTLE);
+    assert!(
+        !offering.is_finished(),
+        "an offer returned before the receiver's inbox admitted it"
+    );
+    assert_eq!(
+        offering.join().expect("the offer finishes"),
+        Err(Undelivered::Backend(BackendError::Elapsed {
+            spool: address.clone(),
+            waited: wait,
+        }))
+    );
+    receiver.signal("-CONT");
+    assert_eq!(receiver.take(SETTLE), None);
+
+    // Queued once the courier resumes: the offer returns only then, with the
+    // inbox's acknowledgement written, and the message is its receiver's.
+    receiver.signal("-STOP");
+    let offering = {
+        let address = address.clone();
+        std::thread::spawn(move || Spool::connect::<Order, Receipt>(&address).offer(order("held")))
+    };
+    waiting_offer(&address);
+    std::thread::sleep(SETTLE);
+    assert!(
+        !offering.is_finished(),
+        "an offer returned before the receiver's inbox admitted it"
+    );
+    receiver.signal("-CONT");
+    let offer = offering
+        .join()
+        .expect("the offer finishes")
+        .expect("admitted");
+    assert!(
+        message_files(&address)
+            .iter()
+            .any(|name| name.ends_with(".admitted.json")),
+        "the offer returned without the inbox's acknowledgement: {:?}",
+        message_files(&address)
+    );
+    let Err(offer) = offer.withdraw() else {
+        panic!("a withdrawal it could not verify was claimed");
+    };
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("held"));
+    assert_eq!(receiver.say("answer held stock-room"), "ok");
+    assert_eq!(offer.wait(), Ok(filled("stock-room")));
+    assert_eq!(receiver.answered(), "answered [held]");
 }
 
 #[test]
@@ -1618,6 +1729,10 @@ fn an_advertisement_beside_a_rewritten_declaration_is_not_trusted_while_its_lock
 )]
 fn a_senders_look_at_the_advertisements_lock_never_refuses_or_misleads_a_binding_receiver() {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    // Every bind here is in this process, so no child starts meanwhile.
+    let _rebinding = FORKING
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (_dir, address) = spool_dir();
     std::fs::create_dir_all(&address).expect("made");
     let stop = Arc::new(AtomicBool::new(false));
