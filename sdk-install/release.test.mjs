@@ -9,6 +9,7 @@ import {
   cpSync,
   mkdirSync,
   copyFileSync,
+  symlinkSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -16,6 +17,27 @@ import { test } from "node:test";
 const root = resolve(import.meta.dirname, "..");
 const run = (command, args) =>
   execFileSync(command, args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+// The compound-architecture fixture's wrong tag: the source tag with its
+// architecture swapped for one it is not, whichever host built the wheel.
+const wrongArchitecture = `
+def wrong_architecture(tag):
+ head,arch=re.fullmatch(r'(.+)_(x86_64|aarch64|arm64)',tag).groups()
+ return head+('_x86_64' if arch in ('aarch64','arm64') else '_arm64')
+`;
+test("the compound-architecture wrong tag differs from an x86_64 or ARM64 source tag", () => {
+  const sources = ["manylinux_2_17_x86_64", "macosx_11_0_arm64", "manylinux_2_17_aarch64"];
+  const wrong = run("python3", [
+    "-c",
+    `import re,sys${wrongArchitecture}print(' '.join(wrong_architecture(tag) for tag in sys.argv[1:]))`,
+    ...sources,
+  ])
+    .trim()
+    .split(" ");
+  assert.deepEqual(wrong, ["manylinux_2_17_arm64", "macosx_11_0_x86_64", "manylinux_2_17_x86_64"]);
+  const architecture = (tag) => tag.match(/_(x86_64|aarch64|arm64)$/)[1];
+  for (const [index, source] of sources.entries())
+    assert.notEqual(architecture(wrong[index]), architecture(source), source);
+});
 test("one real native build supplies identical wheel/archive/npm bytes and installed CLI/SDKs", {
   timeout: 600000,
 }, () => {
@@ -104,7 +126,22 @@ print(json.dumps(dict(hashes=[hashlib.sha256(b).hexdigest() for b in [binary,arc
     const python = resolve(root, run("which", ["python3"]).trim());
     const empty = join(work, "empty");
     mkdirSync(empty);
-    for (const kind of ["python-sdk", "missing-npm", "npm-cli", "missing-node"]) {
+    // A diagnostic names the line that failed, so a later step's refusal cannot stand in.
+    const installer = readFileSync(join(root, "scripts/release-local-install.sh"), "utf8").split(
+      "\n",
+    );
+    const failedAt = (needle) =>
+      new RegExp(
+        `command failed at line ${installer.findIndex((line) => line.includes(needle)) + 1};`,
+      );
+    for (const kind of [
+      "python-sdk",
+      "npm-pack",
+      "missing-npm",
+      "npm-cli",
+      "node-sdk",
+      "missing-node",
+    ]) {
       const badStage = join(work, kind, "stage"),
         badSdks = join(work, kind, "sdks");
       cpSync(stage, badStage, { recursive: true });
@@ -133,26 +170,50 @@ if kind=='npm-cli':
    if member.name=='package/bin/onemessagebus': content=b'#!/bin/sh'+bytes([10])+b'exit 1'+bytes([10]); member.size=len(content)
    out.addfile(member,io.BytesIO(content) if content is not None else None)
  replacement.replace(package)
+if kind=='node-sdk':
+ package=next(sdks.glob('*.tgz')); replacement=package.with_suffix('.changed')
+ with tarfile.open(package) as source, tarfile.open(replacement,'w:gz') as out:
+  for member in source.getmembers():
+   content=source.extractfile(member).read() if member.isfile() else None
+   if member.name=='package/dist/index.js': content=b'throw new Error("broken Node SDK fixture");'+bytes([10])+content; member.size=len(content)
+   out.addfile(member,io.BytesIO(content) if content is not None else None)
+ replacement.replace(package)
 `,
         badStage,
         badSdks,
         kind,
       ]);
+      // The selected Node's directory leads PATH, so an npm beside it is the npm run.
+      let node = kind === "missing-node" ? "/missing-node" : process.execPath;
+      if (kind === "npm-pack") {
+        const bin = join(work, kind, "bin");
+        mkdirSync(bin);
+        symlinkSync(process.execPath, join(bin, "node"));
+        writeFileSync(join(bin, "npm"), "#!/bin/sh\necho 'broken npm fixture' >&2\nexit 1\n", {
+          mode: 0o755,
+        });
+        node = join(bin, "node");
+      }
       const refused = spawnSync(
         "bash",
-        [
-          "scripts/release-local-install.sh",
-          badStage,
-          badSdks,
-          python,
-          kind === "missing-node" ? "/missing-node" : process.execPath,
-        ],
+        ["scripts/release-local-install.sh", badStage, badSdks, python, node],
         { cwd: root, encoding: "utf8" },
       );
       assert.equal(refused.status, 1, [kind, refused.stderr].join(": "));
       assert.match(refused.stderr, /command failed/);
       assert.doesNotMatch(refused.stdout, /staged CLI and SDK installations passed/);
-      if (kind === "python-sdk") assert.match(refused.stderr, /broken Python SDK fixture/);
+      if (kind === "python-sdk") {
+        assert.match(refused.stderr, /broken Python SDK fixture/);
+        assert.match(refused.stderr, failedAt("sdk-install/smoke.py"));
+      }
+      if (kind === "npm-pack") {
+        assert.match(refused.stderr, /broken npm fixture/);
+        assert.match(refused.stderr, failedAt("npm pack"));
+      }
+      if (kind === "node-sdk") {
+        assert.match(refused.stderr, /broken Node SDK fixture/);
+        assert.match(refused.stderr, failedAt('smoke.mjs "$version"'));
+      }
       if (kind === "missing-npm") assert.match(refused.stderr, /ENOENT|no such file/i);
       if (kind === "npm-cli") assert.match(refused.stderr, /staged npm CLI/);
       if (kind === "missing-node")
@@ -260,7 +321,7 @@ if kind=='npm-cli':
         `
 import io,json,tarfile,zipfile,sys,re
 from pathlib import Path
-p=Path(sys.argv[1]); cwd=Path(sys.argv[2]); kind=sys.argv[3]
+${wrongArchitecture}p=Path(sys.argv[1]); cwd=Path(sys.argv[2]); kind=sys.argv[3]
 inventory=p/'binary.json'
 if kind=='bad-json': inventory.write_text('{')
 elif kind=='bad-record': inventory.write_text('[]')
@@ -268,7 +329,7 @@ elif kind in ['unsafe-record','bad-hash','wrong-target']:
  value=json.loads(inventory.read_text())
  if kind=='unsafe-record': value['archive']='../escape'
  if kind=='bad-hash': value['hashes']['wheel']='not-a-hash'
- if kind=='wrong-target': value['target']='aarch64-apple-darwin'
+ if kind=='wrong-target': value['target']='x86_64-unknown-linux-gnu' if value['target']=='aarch64-apple-darwin' else 'aarch64-apple-darwin'
  inventory.write_text(json.dumps(value))
 if kind in ['no-npm','many-npm','bad-tar','no-npm-binary']:
  package=next(p.glob('*.tgz'))
@@ -286,7 +347,7 @@ if kind in ['no-wheel','many-wheel','bad-filename','bad-platform','old-version',
   fields=wheel.name.split('-'); fields[-1]='win_'+fields[-1].split('_')[-2]+'_'+fields[-1].split('_')[-1]; wheel.rename(p/'-'.join(fields))
  if kind in ['compound-architecture','compound-family']:
   fields=wheel.name.split('-'); tag=fields[-1].removesuffix('.whl')
-  wrong=tag.rsplit('_',1)[0]+'_arm64' if kind=='compound-architecture' else 'win_'+tag.rsplit('_',1)[1]
+  wrong=wrong_architecture(tag) if kind=='compound-architecture' else 'win_'+tag.rsplit('_',1)[1]
   fields[-1]=wrong+'.'+tag+'.whl'; wheel.rename(p/'-'.join(fields))
   wheel=p/'-'.join(fields); replacement=wheel.with_suffix('.changed')
   with zipfile.ZipFile(wheel) as source, zipfile.ZipFile(replacement,'w') as out:
