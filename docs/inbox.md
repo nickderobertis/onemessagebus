@@ -120,7 +120,14 @@ A directory a receiver's process binds, for a sender in another process.
   one thing: a message that is never admitted. When it passes, the sender
   withdraws the message, so a receiver waking later does not deliver what its
   sender was told was lost, and reports the wait. An admitted message is waited
-  on for as long as its receiver stays bound.
+  on for as long as its receiver stays bound. `offer` returns within the bound
+  in every case, no later than one poll (20 ms) after it: where the file system
+  refuses the claim the withdrawal needs — the rename to `<id>.withdrawn`
+  before the courier has the message, or `<id>.claimed` after — it stops there
+  with `BackendError::Unclaimable`, naming the refused claim and the bound,
+  apart from the `Elapsed` of a withdrawn message. That outcome alone leaves it
+  possible that the receiver admits the message later, once the file system
+  lets it; nothing waits for its answer.
 - **Admission and withdrawal after it.** A receiver of this build writes
   `admission.json` beside `spool.json` as it binds, holds `admission.lock`
   locked for as long as it is bound, and removes the advertisement as it
@@ -164,8 +171,8 @@ A directory a receiver's process binds, for a sender in another process.
   leaves it queued in its place, and the next take tries again. The sender's
   withdrawal reads it as taken, because it never claims a withdrawal it cannot
   guarantee. A sender whose bounded wait passes with the message unacknowledged
-  reports it neither admitted nor withdrawn while its claim is refused, and
-  withdraws it once one can be made. An answer whose message cannot be claimed (a close, or a refusal,
+  and its claim refused stops at the bound with `Unclaimable`, naming
+  `<id>.claimed`: neither admitted nor withdrawn, and possibly admitted later. An answer whose message cannot be claimed (a close, or a refusal,
   of a message never taken) is not written, and its sender is told the message
   was lost.
 - **A receiver that does not advertise it** (an older build) has the message
@@ -214,7 +221,9 @@ A directory a receiver's process binds, for a sender in another process.
     platform, since an unadmitted message is its sender's to withdraw.
 - A sender reports the message **lost** when its answer document is present
   but is not an answer (naming the file), when the wait passes with the message
-  never taken (naming the wait), when the receiver took it and no longer holds
+  never taken (naming the wait), when the wait passes with a claim its
+  withdrawal needs refused (naming the claim, and the message possibly admitted
+  later), when the receiver took it and no longer holds
   the spool's lock with no answer written (naming the file), or when the
   receiver could not read the offer (in the receiver's words).
 - A receiver that **closes** records the close in the spool, so a sender

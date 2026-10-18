@@ -1931,49 +1931,117 @@ fn a_claim_the_file_system_refuses_gives_the_message_to_neither_side_until_one_c
     assert_eq!(message_files(&address), Vec::<String>::new());
 }
 
+/// How often a spool sender looks: an offer whose bound passed with its claim
+/// refused returns no later than this after its bound.
+const POLL: Duration = Duration::from_millis(20);
+
+/// Offer `sku` with a bounded wait of `wait` from a thread of its own, saying
+/// what came of it and how long it took.
+#[cfg(unix)]
+fn offering_within(
+    address: &Path,
+    sku: &'static str,
+    wait: Duration,
+) -> std::thread::JoinHandle<(Result<(), Undelivered>, Duration)> {
+    let address = address.to_path_buf();
+    std::thread::spawn(move || {
+        let sender = Spool::connect_within::<Order, Receipt>(&address, wait);
+        let started = Instant::now();
+        let offered = sender.offer(order(sku)).map(drop);
+        (offered, started.elapsed())
+    })
+}
+
+/// That `offered`, the offer of message `id` with the bounded wait `wait`,
+/// stopped at its bound — no later than a poll after it — because the file
+/// system refused the claim `<id><suffix>`, and said so apart from an ordinary
+/// elapsed wait.
+#[cfg(unix)]
+fn assert_unclaimable(
+    (offered, took): (Result<(), Undelivered>, Duration),
+    address: &Path,
+    id: &str,
+    suffix: &str,
+    wait: Duration,
+) {
+    assert!(
+        took >= wait && took <= wait + POLL,
+        "returned {took:?} into a bound of {wait:?}"
+    );
+    let failure = offered.expect_err("an offer neither admitted nor withdrawn is not admitted");
+    let Undelivered::Backend(BackendError::Unclaimable {
+        spool,
+        claim,
+        waited,
+        why,
+    }) = &failure
+    else {
+        panic!("not told its claim was refused: {failure:?}");
+    };
+    assert_eq!(spool, address);
+    assert_eq!(claim, &address.join(format!("{id}{suffix}")));
+    assert_eq!(waited, &wait);
+    assert!(why.contains("ermission"), "{why}");
+    let said = failure.to_string();
+    assert!(
+        said.contains(&claim.display().to_string()) && said.contains("may still admit it"),
+        "{said}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
-fn a_wait_that_passes_while_the_file_system_refuses_a_claim_admits_nothing_until_one_is_made() {
+fn a_wait_that_passes_while_the_file_system_refuses_a_claim_stops_at_its_bound_naming_the_claim() {
     let (_dir, address) = spool_dir();
     let receiver = Receiver::bind(&address);
     receiver.signal("-STOP");
     let wait = Duration::from_millis(300);
-    let offering = {
-        let address = address.clone();
-        std::thread::spawn(move || {
-            Spool::connect_within::<Order, Receipt>(&address, wait)
-                .offer(order("unclaimable"))
-                .map(drop)
-        })
-    };
+    let offering = offering_within(&address, "unclaimable", wait);
     // Stand in for a courier stopped between its two steps: renamed to taken,
     // never queued, never acknowledged.
     let offered = waiting_offer(&address);
+    let id = offered.trim_end_matches(".offer.json").to_owned();
     let taken = offered.replace(".offer.json", ".taken.json");
     std::fs::rename(address.join(&offered), address.join(&taken)).expect("taken by the stand-in");
     let Some(read_only) = ReadOnly::hold(&address) else {
         receiver.signal("-CONT");
         return;
     };
-    std::thread::sleep(wait + SETTLE);
-    assert!(
-        !offering.is_finished(),
-        "an offer whose withdrawal could not be claimed was reported: {:?}",
-        offering.join()
-    );
-    // Once a claim can be made, the unadmitted message is withdrawn.
+    let finished = offering.join().expect("the offer finishes");
     drop(read_only);
-    assert_eq!(
-        offering.join().expect("the offer finishes"),
-        Err(Undelivered::Backend(BackendError::Elapsed {
-            spool: address.clone(),
-            waited: wait,
-        }))
-    );
+    assert_unclaimable(finished, &address, &id, ".claimed", wait);
     receiver.signal("-CONT");
     let mut receiver = receiver;
     assert_eq!(receiver.take(SETTLE), None);
     assert_eq!(receiver.answered(), "answered []");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_offer_whose_withdrawal_before_pickup_is_refused_stops_at_its_bound_and_may_be_admitted_later()
+{
+    let (_dir, address) = spool_dir();
+    let receiver = Receiver::bind(&address);
+    // Bound, but its courier stopped: nothing moves the message on, and the
+    // sender's rename taking it back is refused.
+    receiver.signal("-STOP");
+    let wait = Duration::from_millis(300);
+    let offering = offering_within(&address, "late", wait);
+    let offered = waiting_offer(&address);
+    let id = offered.trim_end_matches(".offer.json").to_owned();
+    let Some(read_only) = ReadOnly::hold(&address) else {
+        receiver.signal("-CONT");
+        let _ = offering.join();
+        return;
+    };
+    let finished = offering.join().expect("the offer finishes");
+    drop(read_only);
+    assert_unclaimable(finished, &address, &id, ".withdrawn", wait);
+    // The one outcome that leaves it possible: the receiver admits it later.
+    receiver.signal("-CONT");
+    let mut receiver = receiver;
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("late"));
+    assert_eq!(receiver.say("answer late nobody-waiting"), "ok");
 }
 
 #[cfg(unix)]

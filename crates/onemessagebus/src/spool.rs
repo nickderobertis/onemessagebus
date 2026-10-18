@@ -460,17 +460,24 @@ impl Exchange {
                 waited: wait,
             };
             if offer.exists() {
-                if let Some(closed) = closed_record(dir)? {
-                    if withdraw(dir, &exchange.id) {
-                        return Err(Undelivered::Closed(closed));
+                let closed = closed_record(dir)?;
+                if closed.is_some() || elapsed {
+                    match withdraw(dir, &exchange.id) {
+                        Ok(()) => {
+                            return Err(closed.map_or_else(
+                                || Undelivered::Backend(lost()),
+                                Undelivered::Closed,
+                            ));
+                        }
+                        // Still offered, so the rename was refused rather than
+                        // lost to the courier's: past the bound, said so.
+                        Err(refused) if elapsed && offer.exists() => {
+                            return Err(exchange.unclaimable(WITHDRAWN, wait, refused));
+                        }
+                        // The courier has it, or the bound is still to come:
+                        // the next look reads what came of it.
+                        Err(_) => {}
                     }
-                    continue;
-                }
-                if elapsed {
-                    if withdraw(dir, &exchange.id) {
-                        return Err(Undelivered::Backend(lost()));
-                    }
-                    continue;
                 }
             } else {
                 // The courier has it, so the receiver that took it is the one
@@ -500,15 +507,39 @@ impl Exchange {
                         }
                         // Claimed beside no acknowledgement: a receiver that
                         // could not write it, refusing the message, whose
-                        // answer the next look reads. Or not claimable at
-                        // all, which decides nothing: neither side has the
-                        // message until a claim can be made.
-                        Withdrawal::Kept | Withdrawal::Undecided => {}
+                        // answer the next look reads.
+                        Withdrawal::Kept => {}
+                        // Not claimable at all, which decides nothing: the
+                        // bound is kept all the same, and the receiver may
+                        // still admit the message once a claim can be made.
+                        Withdrawal::Undecided(refused) => {
+                            return Err(exchange.unclaimable(CLAIMED, wait, refused));
+                        }
                     }
                 }
             }
-            std::thread::sleep(POLL);
+            // Woken at the bound itself, not up to a poll after it.
+            std::thread::sleep(match wait.checked_sub(started.elapsed()) {
+                Some(left) if !left.is_zero() => left.min(POLL),
+                _ => POLL,
+            });
         }
+    }
+
+    /// Why an offer whose bounded wait passed is neither admitted nor
+    /// withdrawn: the file system refused its claim, `<id><suffix>`.
+    fn unclaimable(
+        &self,
+        suffix: &str,
+        waited: Duration,
+        refused: std::io::ErrorKind,
+    ) -> Undelivered {
+        Undelivered::Backend(BackendError::Unclaimable {
+            spool: self.dir.clone(),
+            claim: self.file(suffix),
+            waited,
+            why: refused.to_string(),
+        })
     }
 
     fn file(&self, suffix: &str) -> PathBuf {
@@ -557,7 +588,7 @@ impl Exchange {
         match claim(&claimed) {
             Contest::Won => {}
             Contest::Lost => return Withdrawal::Kept,
-            Contest::Refused => return Withdrawal::Undecided,
+            Contest::Refused(refused) => return Withdrawal::Undecided(refused),
         }
         // The receiver answers before it lets its claim go, so a claim made
         // after that — or made when the answer was already there — finds the
@@ -835,8 +866,9 @@ enum Withdrawal {
     Withdrawn,
     /// The receiver has it, or has answered it.
     Kept,
-    /// The file system would not create the claim, which decides nothing.
-    Undecided,
+    /// The file system would not create the claim, which decides nothing, and
+    /// said why.
+    Undecided(std::io::ErrorKind),
 }
 
 /// Whether a sender in `wait_until` has published its deadline.
@@ -887,8 +919,8 @@ enum Contest {
     /// The other side created it first.
     Lost,
     /// The file system would not create it, which decides nothing: neither
-    /// side has the message until a claim can be made.
-    Refused,
+    /// side has the message until a claim can be made. Carries what it said.
+    Refused(std::io::ErrorKind),
 }
 
 /// Try to create the claim at `path`.
@@ -896,7 +928,7 @@ fn claim(path: &Path) -> Contest {
     match OpenOptions::new().write(true).create_new(true).open(path) {
         Ok(_) => Contest::Won,
         Err(failure) if failure.kind() == std::io::ErrorKind::AlreadyExists => Contest::Lost,
-        Err(_) => Contest::Refused,
+        Err(failure) => Contest::Refused(failure.kind()),
     }
 }
 
@@ -907,14 +939,13 @@ fn discard(dir: &Path, id: &MessageId) {
     }
 }
 
-/// Take back offer `id`, if the courier has not taken it first.
-fn withdraw(dir: &Path, id: &MessageId) -> bool {
+/// Take back offer `id`, if the courier has not taken it first: what the file
+/// system said when it could not be renamed.
+fn withdraw(dir: &Path, id: &MessageId) -> Result<(), std::io::ErrorKind> {
     let withdrawn = id.file(dir, WITHDRAWN);
-    if fs::rename(id.file(dir, OFFER), &withdrawn).is_err() {
-        return false;
-    }
+    fs::rename(id.file(dir, OFFER), &withdrawn).map_err(|failure| failure.kind())?;
     let _ = fs::remove_file(withdrawn);
-    true
+    Ok(())
 }
 
 /// The courier: take each offer into the inbox until the inbox closes or the
@@ -1045,7 +1076,7 @@ impl Hold {
         }
         match claim(&self.file(EXPIRED)) {
             Contest::Won | Contest::Lost => Expiring::Expired,
-            Contest::Refused => Expiring::Refused,
+            Contest::Refused(_) => Expiring::Refused,
         }
     }
 
@@ -1057,7 +1088,7 @@ impl Hold {
         if self.holding() == Holding::Unclaimed {
             match claim(&self.file(CLAIMED)) {
                 Contest::Won => {}
-                Contest::Lost | Contest::Refused => {
+                Contest::Lost | Contest::Refused(_) => {
                     discard(&self.dir, &self.id);
                     return;
                 }
@@ -1110,7 +1141,7 @@ impl Gate for Hold {
                     discard(&self.dir, &self.id);
                     return Claimed::Withdrawn;
                 }
-                Contest::Refused => return Claimed::Undecided,
+                Contest::Refused(_) => return Claimed::Undecided,
             }
         }
         // Claimed, and its sender past its deadline — untaken there, or after
