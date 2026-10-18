@@ -450,6 +450,9 @@ fn inbox_md_names_every_file_a_spool_holds() {
             "<id>.taken.json",
             "<id>.answer.json",
             "<id>.withdrawn",
+            "admission.json",
+            "<id>.admitted.json",
+            "<id>.claimed",
         ],
         "docs/inbox.md's file table no longer names the files a spool holds"
     );

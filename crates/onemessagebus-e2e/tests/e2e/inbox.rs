@@ -117,9 +117,13 @@ fn files_in(dir: &Path) -> Vec<String> {
 fn assert_nothing_written(address: &Path) {
     let files = files_in(address);
     assert!(
-        files
-            .iter()
-            .all(|name| ["receiver.lock", "spool.json", "closed.json"].contains(&name.as_str())),
+        files.iter().all(|name| [
+            "admission.json",
+            "receiver.lock",
+            "spool.json",
+            "closed.json"
+        ]
+        .contains(&name.as_str())),
         "a message was written to the spool: {files:?}"
     );
 }

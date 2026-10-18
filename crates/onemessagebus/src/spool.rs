@@ -10,7 +10,11 @@
 //! Every file is written beside its final name and renamed onto it, so neither
 //! side ever reads half a document, and every hand-over is a rename, so the
 //! courier taking a message and its sender withdrawing it cannot both succeed.
-//! `docs/inbox.md` states the on-disk shape.
+//! Past the courier, a receiver that advertises it in `admission.json` says
+//! when it has queued a message (`<id>.admitted.json`), and the receiver's take
+//! and its sender's withdrawal race to create one claim file (`<id>.claimed`),
+//! which only one of them can: so the guarantee holds up to [`Inbox::take`]
+//! rather than up to the courier. `docs/inbox.md` states the on-disk shape.
 
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::marker::PhantomData;
@@ -18,19 +22,20 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::inbox::{
-    BackendError, Closed, Disposition, Inbox, InboxBackend, Reply, Sender, Shared, Undelivered,
+    BackendError, Closed, Disposition, Gate, Inbox, InboxBackend, Offer, Pending, Reply, Sender,
+    Shared, Unanswered, Undelivered,
 };
 use crate::schema::{Message, SchemaId};
 
-/// How long a sender waits for its message to be taken before it withdraws it
-/// and reports it lost. A taken message is waited on for as long as its receiver
+/// How long a sender waits for its message to be admitted before it withdraws
+/// it and reports it lost. A taken message is waited on for as long as its receiver
 /// stays bound.
 pub const SPOOL_WAIT: Duration = Duration::from_secs(30);
 
@@ -56,12 +61,38 @@ const TAKEN: &str = ".taken.json";
 const ANSWER: &str = ".answer.json";
 /// `<id>.withdrawn`: a message its sender took back, on its way to removal.
 const WITHDRAWN: &str = ".withdrawn";
+/// The receiver's advertisement that it acknowledges admission and honours a
+/// withdrawal after it, bound to the `spool.json` it was written beside.
+const ADMISSION: &str = "admission.json";
+/// `<id>.admitted.json`: a message the receiver's inbox has queued.
+const ADMITTED: &str = ".admitted.json";
+/// `<id>.claimed`: created by whichever of the receiver's take and its
+/// sender's withdrawal comes first; the other cannot create it.
+const CLAIMED: &str = ".claimed";
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Declaration {
     schema_version: u32,
     schema: SchemaId,
+}
+
+/// What a receiver that withdraws after admission writes beside its
+/// declaration. Unknown fields are read past, so a later build can say more.
+#[derive(Serialize, Deserialize)]
+struct Admission {
+    schema_version: u32,
+    /// The modification instant of the `spool.json` this was written beside, in
+    /// nanoseconds since the Unix epoch: a receiver rebinding the spool
+    /// rewrites `spool.json`, which no longer matches it.
+    declaration_modified_ns: u64,
+}
+
+/// The courier's acknowledgement that the inbox has queued a message.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Admitted {
+    schema_version: u32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -73,7 +104,7 @@ struct ClosedRecord {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Offer {
+struct OfferDocument {
     schema_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     schema: Option<SchemaId>,
@@ -150,11 +181,19 @@ impl Spool {
                 return Err(BackendError::io("lock", &lock_path, &failure))
             }
         }
+        let declaration = dir.join(DECLARATION);
         write_document(
-            &dir.join(DECLARATION),
+            &declaration,
             &Declaration {
                 schema_version: SPOOL_SCHEMA_VERSION,
                 schema: M::SCHEMA,
+            },
+        )?;
+        write_document(
+            &dir.join(ADMISSION),
+            &Admission {
+                schema_version: SPOOL_SCHEMA_VERSION,
+                declaration_modified_ns: stamp(&declaration)?,
             },
         )?;
         remove_if_present(&dir.join(CLOSED_RECORD))?;
@@ -184,7 +223,7 @@ impl Spool {
     }
 
     /// A sender into the spool at `address`, waiting [`SPOOL_WAIT`] for a
-    /// message to be taken.
+    /// message to be admitted.
     #[must_use]
     pub fn connect<M: Message + 'static, D: Disposition>(
         address: impl Into<PathBuf>,
@@ -193,7 +232,7 @@ impl Spool {
     }
 
     /// A sender into the spool at `address`, waiting `wait` for a message to be
-    /// taken before withdrawing it.
+    /// admitted before withdrawing it.
     #[must_use]
     pub fn connect_within<M: Message + 'static, D: Disposition>(
         address: impl Into<PathBuf>,
@@ -228,7 +267,9 @@ impl Spool {
     /// [`Undelivered::Backend`] naming the spool and the file or the wait.
     pub fn deliver(address: &Path, message: &Value, wait: Duration) -> Result<Value, Undelivered> {
         let schema = Self::declared(address)?;
-        exchange(address, schema, message.clone(), wait).map(|(disposition, _)| disposition)
+        Exchange::offer(address, schema, message.clone(), wait)?
+            .wait()
+            .map(|(disposition, _)| disposition)
     }
 }
 
@@ -250,18 +291,53 @@ struct Connection<M, D> {
 
 impl<M: Message, D: Disposition> InboxBackend<M, D> for Connection<M, D> {
     fn send(&self, message: M) -> Result<D, Undelivered> {
+        self.offer(message)?.wait()
+    }
+
+    fn offer(&self, message: M) -> Result<Offer<D>, Undelivered> {
         let message = serde_json::to_value(&message).map_err(|failure| BackendError::Encoding {
             what: "message",
             why: failure.to_string(),
         })?;
-        let (disposition, file) = exchange(&self.dir, Some(M::SCHEMA), message, self.wait)?;
+        let exchange = Exchange::offer(&self.dir, Some(M::SCHEMA), message, self.wait)?;
+        Ok(Offer::over(Decoding {
+            exchange,
+            types: PhantomData,
+        }))
+    }
+}
+
+/// A spool offer whose answer is read as `D`.
+struct Decoding<D> {
+    exchange: Exchange,
+    types: PhantomData<fn() -> D>,
+}
+
+impl<D: Disposition> Decoding<D> {
+    fn decode(&self, (disposition, file): (Value, PathBuf)) -> Result<D, Undelivered> {
         serde_json::from_value(disposition).map_err(|failure| {
             Undelivered::Backend(BackendError::Unreadable {
-                at: self.dir.clone(),
+                at: self.exchange.dir.clone(),
                 file,
                 why: format!("its disposition is not one this sender reads: {failure}"),
             })
         })
+    }
+}
+
+impl<D: Disposition> Pending<D> for Decoding<D> {
+    fn withdraw(&mut self) -> bool {
+        self.exchange.withdraw()
+    }
+
+    fn wait(&mut self) -> Result<D, Undelivered> {
+        let answered = self.exchange.wait()?;
+        self.decode(answered)
+    }
+
+    fn wait_until(&mut self, deadline: Instant) -> Result<D, Unanswered> {
+        let answered = self.exchange.wait_until(deadline)?;
+        self.decode(answered).map_err(Unanswered::Undelivered)
     }
 }
 
@@ -280,73 +356,193 @@ fn spool_dir(address: &Path) -> Result<(), BackendError> {
     })
 }
 
-/// Offer `message` and wait for what became of it: the disposition and the
-/// answer document it was read from.
-fn exchange(
-    dir: &Path,
-    schema: Option<SchemaId>,
-    message: Value,
-    wait: Duration,
-) -> Result<(Value, PathBuf), Undelivered> {
-    spool_dir(dir)?;
-    // Before anything is offered: a closed receiver never services its spool
-    // again, and a message left in it would be an offer nothing reads.
-    if let Some(closed) = closed_record(dir)? {
-        return Err(Undelivered::Closed(closed));
-    }
-    let id = mint();
-    let offer = dir.join(format!("{id}{OFFER}"));
-    let taken = dir.join(format!("{id}{TAKEN}"));
-    let answer = dir.join(format!("{id}{ANSWER}"));
-    write_document(
-        &offer,
-        &Offer {
-            schema_version: SPOOL_SCHEMA_VERSION,
-            schema,
-            message,
-        },
-    )?;
-    let started = Instant::now();
-    loop {
-        if let Some(disposition) = read_answer(dir, &answer)? {
-            return Ok((disposition, answer));
+/// One message a sender offered into a spool, admitted to its receiver.
+struct Exchange {
+    dir: PathBuf,
+    id: String,
+    /// Whether the receiver honours a withdrawal after admission: read once the
+    /// courier has the message, from the receiver that took it.
+    withdrawable: bool,
+    /// The answer, when it came before the offer was handed back.
+    answered: Option<(Value, PathBuf)>,
+}
+
+impl Exchange {
+    /// Offer `message` and return once the receiver has admitted it, or
+    /// withdraw it and say why it was not.
+    fn offer(
+        dir: &Path,
+        schema: Option<SchemaId>,
+        message: Value,
+        wait: Duration,
+    ) -> Result<Self, Undelivered> {
+        spool_dir(dir)?;
+        // Before anything is offered: a closed receiver never services its
+        // spool again, and a message left in it would be an offer nothing reads.
+        if let Some(closed) = closed_record(dir)? {
+            return Err(Undelivered::Closed(closed));
         }
-        if offer.exists() {
-            if let Some(closed) = closed_record(dir)? {
-                if withdraw(dir, &id) {
-                    return Err(Undelivered::Closed(closed));
-                }
-                continue;
+        let mut exchange = Self {
+            dir: dir.to_path_buf(),
+            id: mint(),
+            withdrawable: false,
+            answered: None,
+        };
+        let offer = exchange.file(OFFER);
+        write_document(
+            &offer,
+            &OfferDocument {
+                schema_version: SPOOL_SCHEMA_VERSION,
+                schema,
+                message,
+            },
+        )?;
+        let started = Instant::now();
+        let mut advertised = None;
+        loop {
+            if let Some(answered) = exchange.read_answer()? {
+                exchange.answered = Some(answered);
+                return Ok(exchange);
             }
-            if started.elapsed() >= wait {
-                if withdraw(dir, &id) {
-                    return Err(Undelivered::Backend(BackendError::Elapsed {
-                        spool: dir.to_path_buf(),
-                        waited: wait,
-                    }));
-                }
-                continue;
-            }
-        } else if !taken.exists() || !receiver_bound(dir) {
-            // Taken, and either answered between the two looks above or held by
-            // a receiver that is gone: the answer decides which.
-            if let Some(disposition) = read_answer(dir, &answer)? {
-                return Ok((disposition, answer));
-            }
-            // Closing records its reason before moving each offer from offered
-            // to taken and writing its answer. An unbound sender can observe
-            // that middle state; the recorded close still decides the result.
-            if let Some(closed) = closed_record(dir)? {
-                let _ = fs::remove_file(&taken);
-                return Err(Undelivered::Closed(closed));
-            }
-            let _ = fs::remove_file(&taken);
-            return Err(Undelivered::Backend(BackendError::Abandoned {
+            let elapsed = started.elapsed() >= wait;
+            let lost = || BackendError::Elapsed {
                 spool: dir.to_path_buf(),
-                file: taken,
-            }));
+                waited: wait,
+            };
+            if offer.exists() {
+                if let Some(closed) = closed_record(dir)? {
+                    if withdraw(dir, &exchange.id) {
+                        return Err(Undelivered::Closed(closed));
+                    }
+                    continue;
+                }
+                if elapsed {
+                    if withdraw(dir, &exchange.id) {
+                        return Err(Undelivered::Backend(lost()));
+                    }
+                    continue;
+                }
+            } else {
+                // The courier has it, so the receiver that took it is the one
+                // whose advertisement decides what admission means.
+                exchange.withdrawable = *advertised.get_or_insert_with(|| advertises(dir));
+                if !exchange.withdrawable
+                    || exchange.file(ADMITTED).exists()
+                    || exchange.file(CLAIMED).exists()
+                {
+                    return Ok(exchange);
+                }
+                if !exchange.file(TAKEN).exists() || !receiver_bound(dir) {
+                    exchange.answered = Some(exchange.ended()?);
+                    return Ok(exchange);
+                }
+                if elapsed {
+                    if exchange.withdraw() {
+                        return Err(Undelivered::Backend(lost()));
+                    }
+                    if exchange.file(ANSWER).exists() {
+                        continue;
+                    }
+                    // The receiver took it before it said it was queued.
+                    return Ok(exchange);
+                }
+            }
+            std::thread::sleep(POLL);
         }
-        std::thread::sleep(POLL);
+    }
+
+    fn file(&self, suffix: &str) -> PathBuf {
+        self.dir.join(format!("{}{suffix}", self.id))
+    }
+
+    fn read_answer(&self) -> Result<Option<(Value, PathBuf)>, Undelivered> {
+        let answer = self.file(ANSWER);
+        Ok(read_answer(&self.dir, &answer)?.map(|disposition| (disposition, answer)))
+    }
+
+    /// The receiver no longer holds the message: its answer, if it wrote one
+    /// between the caller's look and this one, or why there is none.
+    fn ended(&self) -> Result<(Value, PathBuf), Undelivered> {
+        if let Some(answered) = self.read_answer()? {
+            return Ok(answered);
+        }
+        // Closing records its reason before moving each offer from offered to
+        // taken and writing its answer. An unbound sender can observe that
+        // middle state; the recorded close still decides the result.
+        let taken = self.file(TAKEN);
+        let _ = fs::remove_file(&taken);
+        if let Some(closed) = closed_record(&self.dir)? {
+            return Err(Undelivered::Closed(closed));
+        }
+        Err(Undelivered::Backend(BackendError::Abandoned {
+            spool: self.dir.clone(),
+            file: taken,
+        }))
+    }
+
+    /// Take the admitted message back, if the receiver has not taken it: by
+    /// creating its claim before the receiver's take can.
+    fn withdraw(&mut self) -> bool {
+        if !self.withdrawable || self.answered.is_some() || self.file(ANSWER).exists() {
+            return false;
+        }
+        let claimed = self.file(CLAIMED);
+        if claim(&claimed) != Claim::Won {
+            return false;
+        }
+        // The receiver answers before it lets its claim go, so a claim made
+        // after that finds the answer: the message was taken, and is answered.
+        if self.file(ANSWER).exists() {
+            let _ = fs::remove_file(claimed);
+            return false;
+        }
+        true
+    }
+
+    /// The answer and the file it was read from, once there is one.
+    fn wait(&mut self) -> Result<(Value, PathBuf), Undelivered> {
+        if let Some(answered) = self.answered.take() {
+            return Ok(answered);
+        }
+        loop {
+            if let Some(answered) = self.read_answer()? {
+                return Ok(answered);
+            }
+            if let Some(ended) = self.gone() {
+                return ended;
+            }
+            std::thread::sleep(POLL);
+        }
+    }
+
+    fn wait_until(&mut self, deadline: Instant) -> Result<(Value, PathBuf), Unanswered> {
+        if let Some(answered) = self.answered.take() {
+            return Ok(answered);
+        }
+        loop {
+            if let Some(answered) = self.read_answer()? {
+                return Ok(answered);
+            }
+            if let Some(ended) = self.gone() {
+                return Ok(ended?);
+            }
+            // Past the deadline every look tries to withdraw it, so a message
+            // released after it is withdrawn at the next look.
+            if Instant::now() >= deadline && self.withdraw() {
+                return Err(Unanswered::Expired);
+            }
+            std::thread::sleep(POLL);
+        }
+    }
+
+    /// What became of a taken message whose receiver no longer holds it —
+    /// answered between two looks, or held by a receiver that is gone — or
+    /// `None` while it still does.
+    fn gone(&self) -> Option<Result<(Value, PathBuf), Undelivered>> {
+        if self.file(TAKEN).exists() && receiver_bound(&self.dir) {
+            return None;
+        }
+        Some(self.ended())
     }
 }
 
@@ -384,6 +580,69 @@ fn receiver_bound(dir: &Path) -> bool {
     !matches!(lock.try_lock(), Ok(()))
 }
 
+/// Whether the receiver bound to `dir` advertises a withdrawal after admission:
+/// an `admission.json` written beside the `spool.json` there now. One a
+/// receiver of an older build left behind it no longer matches once that
+/// receiver rewrote the declaration.
+fn advertises(dir: &Path) -> bool {
+    let Ok(Some(admission)) = read_document::<Admission>(dir, &dir.join(ADMISSION)) else {
+        return false;
+    };
+    modified_ns(&dir.join(DECLARATION)) == Some(admission.declaration_modified_ns)
+}
+
+/// Stamp the declaration at `path` with a modification instant of this bind's
+/// own, and answer it as read back. It is a second before now, so a receiver
+/// that rewrites the declaration later — whatever its build — stamps it later,
+/// unless the system clock steps back that far.
+fn stamp(path: &Path) -> Result<u64, BackendError> {
+    let now = SystemTime::now();
+    let at = now.checked_sub(Duration::from_secs(1)).unwrap_or(now);
+    OpenOptions::new()
+        .write(true)
+        .open(path)
+        .and_then(|file| file.set_modified(at))
+        .map_err(|failure| BackendError::io("stamp", path, &failure))?;
+    modified_ns(path).ok_or_else(|| BackendError::Io {
+        action: "read the modification time of",
+        path: path.to_path_buf(),
+        why: "the file system does not report it".to_owned(),
+    })
+}
+
+fn modified_ns(path: &Path) -> Option<u64> {
+    let modified = fs::metadata(path).ok()?.modified().ok()?;
+    u64::try_from(modified.duration_since(UNIX_EPOCH).ok()?.as_nanos()).ok()
+}
+
+/// How a claim on one message went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Claim {
+    /// This side created it, and has the message.
+    Won,
+    /// The other side created it first.
+    Lost,
+    /// The file system refused for another reason, so nothing is decided by
+    /// it: the receiver goes on as if it holds the message, and the sender —
+    /// never claiming a withdrawal it cannot guarantee — reads it as taken.
+    Failed,
+}
+
+fn claim(path: &Path) -> Claim {
+    match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(_) => Claim::Won,
+        Err(failure) if failure.kind() == std::io::ErrorKind::AlreadyExists => Claim::Lost,
+        Err(_) => Claim::Failed,
+    }
+}
+
+/// Remove what is left of message `id` once its sender withdrew it.
+fn discard(dir: &Path, id: &str) {
+    for suffix in [TAKEN, ADMITTED, CLAIMED] {
+        let _ = fs::remove_file(dir.join(format!("{id}{suffix}")));
+    }
+}
+
 /// Take back offer `id`, if the courier has not taken it first.
 fn withdraw(dir: &Path, id: &str) -> bool {
     let withdrawn = dir.join(format!("{id}{WITHDRAWN}"));
@@ -407,6 +666,8 @@ where
         }
         std::thread::sleep(POLL);
     }
+    // Removed while the lock is still held, so it is never a later receiver's.
+    let _ = fs::remove_file(dir.join(ADMISSION));
     drop(lock);
 }
 
@@ -440,15 +701,24 @@ where
         // Withdrawn by its sender first.
         return;
     }
+    let hold = Hold {
+        dir: dir.to_path_buf(),
+        id: id.to_owned(),
+        held: Arc::new(AtomicBool::new(false)),
+    };
+    if dir.join(format!("{id}{CLAIMED}")).exists() {
+        // Withdrawn by its sender as the courier took it.
+        discard(dir, id);
+        return;
+    }
     let message = match read_offer::<M>(dir, &taken) {
         Ok(message) => message,
         Err(reason) => {
-            settle(dir, id, &AnswerBody::Refused { reason });
+            hold.settle(&AnswerBody::Refused { reason });
             return;
         }
     };
-    let replying = dir.to_path_buf();
-    let replying_id = id.to_owned();
+    let replying = hold.clone();
     let _ = shared.offer(
         message,
         Reply::to(move |answer: Result<D, Closed>| {
@@ -461,14 +731,79 @@ where
                 },
                 Err(closed) => AnswerBody::Closed(closed),
             };
-            settle(&replying, &replying_id, &body);
+            replying.settle(&body);
         }),
+        Some(Box::new(hold)),
     );
+}
+
+/// The receiver's side of one message carried in from the spool: what claims
+/// it as it is taken, and writes what became of it.
+#[derive(Clone)]
+struct Hold {
+    dir: PathBuf,
+    id: String,
+    /// Whether the receiver holds the message's claim.
+    held: Arc<AtomicBool>,
+}
+
+impl Hold {
+    fn file(&self, suffix: &str) -> PathBuf {
+        self.dir.join(format!("{}{suffix}", self.id))
+    }
+
+    /// Write what became of the message, if its sender is still waiting for
+    /// it: claimed first, so a sender that withdrew it is never answered, and
+    /// let go of only once the answer is written.
+    fn settle(&self, body: &AnswerBody) {
+        if !self.held.load(Ordering::SeqCst) && claim(&self.file(CLAIMED)) == Claim::Lost {
+            discard(&self.dir, &self.id);
+            return;
+        }
+        let taken = self.file(TAKEN);
+        if taken.exists() {
+            let _ = write_document(
+                &self.file(ANSWER),
+                &AnswerDocument {
+                    schema_version: SPOOL_SCHEMA_VERSION,
+                    answer: clone_body(body),
+                },
+            );
+        }
+        // Without its taken file, its sender stopped waiting: nobody reads an
+        // answer written now.
+        discard(&self.dir, &self.id);
+    }
+}
+
+impl Gate for Hold {
+    fn admitted(&mut self) {
+        let _ = write_document(
+            &self.file(ADMITTED),
+            &Admitted {
+                schema_version: SPOOL_SCHEMA_VERSION,
+            },
+        );
+    }
+
+    fn claim(&mut self) -> bool {
+        if claim(&self.file(CLAIMED)) == Claim::Lost {
+            discard(&self.dir, &self.id);
+            return false;
+        }
+        self.held.store(true, Ordering::SeqCst);
+        true
+    }
+
+    fn release(&mut self) {
+        self.held.store(false, Ordering::SeqCst);
+        let _ = fs::remove_file(self.file(CLAIMED));
+    }
 }
 
 /// The message in a taken offer, or why the receiver cannot read it.
 fn read_offer<M: Message>(dir: &Path, path: &Path) -> Result<M, String> {
-    let offer = read_document::<Offer>(dir, path)
+    let offer = read_document::<OfferDocument>(dir, path)
         .map_err(|failure| failure.to_string())?
         .ok_or_else(|| format!("{} was removed before it was read", path.display()))?;
     if let Some(schema) = &offer.schema {
@@ -481,23 +816,6 @@ fn read_offer<M: Message>(dir: &Path, path: &Path) -> Result<M, String> {
     }
     serde_json::from_value(offer.message)
         .map_err(|failure| format!("the message is not a {}: {failure}", M::SCHEMA))
-}
-
-/// Write what became of message `id`, if its sender is still waiting for it.
-fn settle(dir: &Path, id: &str, body: &AnswerBody) {
-    let taken = dir.join(format!("{id}{TAKEN}"));
-    if !taken.exists() {
-        // Its sender stopped waiting: nobody reads an answer written now.
-        return;
-    }
-    let _ = write_document(
-        &dir.join(format!("{id}{ANSWER}")),
-        &AnswerDocument {
-            schema_version: SPOOL_SCHEMA_VERSION,
-            answer: clone_body(body),
-        },
-    );
-    let _ = fs::remove_file(taken);
 }
 
 fn clone_body(body: &AnswerBody) -> AnswerBody {
@@ -527,7 +845,12 @@ fn close_spool(dir: &Path, closed: &Closed) {
         )
         .is_ok()
         {
-            settle(dir, &id, &AnswerBody::Closed(closed.clone()));
+            Hold {
+                dir: dir.to_path_buf(),
+                id,
+                held: Arc::new(AtomicBool::new(false)),
+            }
+            .settle(&AnswerBody::Closed(closed.clone()));
         }
     }
 }

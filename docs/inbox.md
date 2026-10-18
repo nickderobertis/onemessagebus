@@ -16,14 +16,52 @@ a program brings its message and its disposition, and the inbox carries them.
   for one; `answered()` lists every message answered so far with its
   disposition, oldest first; `close(Closed)` refuses every blocked sender, and
   every later one, with the closer's reason.
-- `Delivered<M, D>` is one taken message: `message()` reads it, and
+- `Delivered<M, D>` is one taken message: `message()` reads it,
   `answer(disposition)` hands the disposition back to exactly the sender that
-  asked.
+  asked, and `release()` hands the message back untaken (below).
 - `M` is a `Message` — a type with a registered schema id — and `D` is a
   `Disposition`, the consumer's own type, which the core requires only to
   serialize, so a disposition crosses a spool as readily as a thread and the
   core has no vocabulary in it. `Carried: Disposition` adds `carried()`, what a
   carried message's sender is answered with.
+
+## Offering, withdrawing and releasing
+
+`Sender::offer(message) -> Result<Offer<D>, Undelivered>` splits `send` in two.
+It returns once the message is **admitted**, meaning it sits in the receiver's
+`Inbox` queue: at once in process, and over a spool once the receiver's courier
+has queued it and acknowledged that. A message not admitted within the
+backend's bounded wait is withdrawn and reported `Undelivered`, exactly as
+`send` reports it. `send` is `offer` followed by `wait`. A message is **taken**
+when `take` or `take_within` returns it.
+
+- `offer.wait()` blocks for the answer, as `send` does after admission.
+- `offer.wait_until(deadline) -> Result<D, Unanswered>` withdraws a message
+  still untaken at the deadline, atomically, and returns `Unanswered::Expired`.
+  The message was never taken and never will be. A message taken before the
+  deadline is waited on past it, and its answer is returned however late it
+  comes, or `Unanswered::Undelivered` if the receiver closes, goes away, or
+  drops its claim. `Unanswered` is `#[non_exhaustive]`.
+- `offer.withdraw() -> Result<(), Offer<D>>` returns `Ok` only when the message
+  was untaken, and then it is never taken. A taken message answers `Err` with
+  the offer, which can still `wait` for its answer.
+- Taking a message and withdrawing it **never both succeed and never both
+  fail**, in process (the inbox's lock decides) and across a spool (one claim
+  file decides, below).
+- `Delivered::release()` is for a receiver that took a message it cannot
+  present. The message goes back into the queue at the position it arrived in,
+  ahead of everything that arrived after it, and to its sender it is untaken
+  again: `withdraw` can succeed, and a `wait_until` whose deadline has passed
+  expires it at once. A message is answered at most once, and one released and
+  then withdrawn or expired is never answered by the receiver.
+- Dropping an `Offer` withdraws nothing. The message stays offered and its
+  answer goes to nobody.
+
+`InboxBackend::offer` is a provided method, so a backend written before it still
+compiles. Its default sends the message and holds the answer: the offer returns
+only once the message was admitted and answered, and its `withdraw` always
+reads the message as taken, because such a backend cannot guarantee a
+withdrawal. `Carry` is one of these.
 
 ## What a sender is told
 
@@ -76,10 +114,35 @@ A directory a receiver's process binds, for a sender in another process.
   under the schema the spool declares, and answers the disposition as JSON: it
   is what `onemessagebus deliver` calls.
 - The **bounded wait** — `SPOOL_WAIT`, 30 seconds, or `deliver --wait` — covers
-  one thing: a message that is never taken. When it passes, the sender
+  one thing: a message that is never admitted. When it passes, the sender
   withdraws the message, so a receiver waking later does not deliver what its
-  sender was told was lost, and reports the wait. A message that has been taken
-  is waited on for as long as its receiver stays bound.
+  sender was told was lost, and reports the wait. An admitted message is waited
+  on for as long as its receiver stays bound.
+- **Admission and withdrawal after it.** A receiver of this build writes
+  `admission.json` beside `spool.json` as it binds, and removes it as it
+  unbinds, while it still holds the lock. The file advertises that the
+  receiver acknowledges admission and honours a withdrawal after it. Its
+  courier renames each offer to taken, queues the message in the inbox, and
+  writes `<id>.admitted.json` under the inbox's lock, before any take can come.
+  From then on the receiver's take and the sender's withdrawal race to create
+  `<id>.claimed`, an exclusive create that only one of them can win. The loser
+  learns it has lost: a take that loses drops the message as withdrawn, and a
+  withdrawal that loses reads the message as taken. A release removes the
+  receiver's claim, so the sender can withdraw again. The receiver claims a
+  message before it writes any answer (a disposition, a close, or a refusal)
+  and lets the claim go only once the answer is written. So a sender whose
+  claim succeeds after that finds the answer, gives its claim back, and reads
+  the message as taken.
+- **A receiver that does not advertise it** (an older build) has the message
+  once its courier has renamed the offer, as before. A sender then reads every
+  admitted message as taken and never claims a withdrawal that receiver would
+  not honour. The advertisement counts only for the `spool.json` it was
+  written beside: it records that declaration's modification instant, which
+  the binding receiver stamps one second in the past. An older receiver that
+  rebinds the spool, even after a newer one was killed and left its
+  `admission.json` behind, rewrites `spool.json` with a later instant, and the
+  stale advertisement no longer matches. The one residual case is a system
+  clock stepping back more than a second between those two binds.
 - A sender reports the message **lost** when its answer document is present
   but is not an answer (naming the file), when the wait passes with the message
   never taken (naming the wait), when the receiver took it and no longer holds
@@ -107,6 +170,9 @@ its sender withdrawing it cannot both succeed.
 | `<id>.taken.json` | the courier, renaming the offer | a message the receiver has taken and not yet answered |
 | `<id>.answer.json` | the courier | `{schema_version, answer}`, where `answer` is `{"disposition": ...}`, `{"closed": {"reason": ...}}` or `{"refused": {"reason": ...}}`; its sender reads it and removes it |
 | `<id>.withdrawn` | a sender, renaming its offer | a message its sender took back, removed at once |
+| `admission.json` | the receiver, on bind; removed on unbind | `{schema_version, declaration_modified_ns}`: the advertisement that the receiver acknowledges admission and honours a withdrawal after it, valid only while `spool.json`'s modification instant, in nanoseconds since the Unix epoch, is the one recorded; unknown fields are read past |
+| `<id>.admitted.json` | the courier, as the inbox queues the message | `{schema_version}`: the message is admitted |
+| `<id>.claimed` | the receiver taking it, or its sender withdrawing it, whichever comes first | empty, created exclusively; the receiver removes it on a release, and removes it with the message's other files once it is answered or withdrawn |
 
 `<id>` is the minting instant in nanoseconds since the Unix epoch (39 digits),
 the minting process's id, and a per-process counter (20 digits), joined by `-`:

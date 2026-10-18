@@ -3,7 +3,10 @@
 //!
 //! A [`Sender`] hands one message to an [`Inbox`] and blocks until the receiver
 //! has taken it and answered it with a [`Disposition`] — the consumer's own type
-//! — or until the inbox is closed. What carries the message is an
+//! — or until the inbox is closed. [`Sender::offer`] splits that in two: it
+//! returns an [`Offer`] once the message is admitted to the receiver's queue,
+//! and the offer waits for the answer, waits up to a deadline, or withdraws the
+//! message — and taking a message and withdrawing it never both succeed. What carries the message is an
 //! [`InboxBackend`]: [`InProcess`] within one process, [`Spool`](crate::Spool)
 //! across processes through a directory the receiver binds, and
 //! [`Carry`](crate::Carry) into a durable store for a receiver that is not
@@ -80,6 +83,25 @@ impl From<Closed> for Undelivered {
 impl From<BackendError> for Undelivered {
     fn from(failure: BackendError) -> Self {
         Self::Backend(failure)
+    }
+}
+
+/// Why a wait bounded by a deadline ended without the receiver's answer.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum Unanswered {
+    /// The message was still untaken at the deadline, and was withdrawn: the
+    /// receiver never takes it.
+    #[error("the message was not taken by its deadline, and was withdrawn")]
+    Expired,
+    /// The receiver took the message, and no answer will come.
+    #[error(transparent)]
+    Undelivered(Undelivered),
+}
+
+impl From<Undelivered> for Unanswered {
+    fn from(undelivered: Undelivered) -> Self {
+        Self::Undelivered(undelivered)
     }
 }
 
@@ -212,18 +234,31 @@ const DROPPED: &str = "the inbox was dropped without being closed";
 /// leaves its sender blocked.
 pub(crate) struct Reply<D> {
     deliver: Option<Box<dyn FnOnce(Answer<D>) + Send>>,
+    /// What tells its sender a taken message was handed back untaken.
+    released: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl<D> Reply<D> {
     pub(crate) fn to(deliver: impl FnOnce(Answer<D>) + Send + 'static) -> Self {
         Self {
             deliver: Some(Box::new(deliver)),
+            released: None,
         }
     }
 
     /// A reply with no sender behind it.
     pub(crate) fn nobody() -> Self {
-        Self { deliver: None }
+        Self {
+            deliver: None,
+            released: None,
+        }
+    }
+
+    /// The same reply, which also runs `released` each time its message is
+    /// handed back untaken.
+    fn on_release(mut self, released: impl Fn() + Send + Sync + 'static) -> Self {
+        self.released = Some(Arc::new(released));
+        self
     }
 
     fn answer(mut self, answer: Answer<D>) {
@@ -231,6 +266,26 @@ impl<D> Reply<D> {
             deliver(answer);
         }
     }
+
+    /// Drop the reply without answering: its message was withdrawn, and its
+    /// sender already knows.
+    fn forget(mut self) {
+        self.deliver = None;
+    }
+}
+
+/// What decides, for a message carried in from elsewhere, whether the receiver
+/// or its sender has it: the in-process queue's lock settles a message sent in
+/// this process, and a gate settles one whose sender can withdraw it from
+/// outside.
+pub(crate) trait Gate: Send {
+    /// Say the message is queued: run as it joins the queue, before any take.
+    fn admitted(&mut self);
+    /// Claim the message for the receiver as it is taken: `false` when its
+    /// sender withdrew it first, which leaves the message to be dropped.
+    fn claim(&mut self) -> bool;
+    /// Give a claimed message back, so its sender can withdraw it again.
+    fn release(&mut self);
 }
 
 impl<D> Drop for Reply<D> {
@@ -248,13 +303,21 @@ struct Queued<M, D> {
     id: u64,
     message: M,
     reply: Reply<D>,
+    gate: Option<Box<dyn Gate>>,
+}
+
+/// A taken message's way back: to its sender, and through its gate.
+struct Taken<D> {
+    reply: Reply<D>,
+    gate: Option<Box<dyn Gate>>,
 }
 
 struct State<M, D> {
     closed: Option<Closed>,
+    /// Waiting to be taken, in id order: the order they arrived.
     queue: VecDeque<Queued<M, D>>,
     /// Taken and not yet answered, by id: what a close answers.
-    taken: HashMap<u64, Reply<D>>,
+    taken: HashMap<u64, Taken<D>>,
     answered: Vec<Answered<M, D>>,
     /// What a backend does when the inbox closes, run once, in order.
     on_close: Vec<CloseHook>,
@@ -288,9 +351,14 @@ impl<M, D> Shared<M, D> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Queue `message` for the receiver, or answer `reply` with the close that
-    /// refuses it.
-    pub(crate) fn offer(&self, message: M, reply: Reply<D>) -> Result<(), Closed> {
+    /// Queue `message` for the receiver, answering its id, or answer `reply`
+    /// with the close that refuses it.
+    pub(crate) fn offer(
+        &self,
+        message: M,
+        reply: Reply<D>,
+        gate: Option<Box<dyn Gate>>,
+    ) -> Result<u64, Closed> {
         let mut state = self.lock();
         if let Some(closed) = state.closed.clone() {
             drop(state);
@@ -299,10 +367,36 @@ impl<M, D> Shared<M, D> {
         }
         let id = state.next;
         state.next += 1;
-        state.queue.push_back(Queued { id, message, reply });
+        let mut gate = gate;
+        if let Some(gate) = gate.as_mut() {
+            // Under the lock, so no take can come before the word that the
+            // message is queued.
+            gate.admitted();
+        }
+        state.queue.push_back(Queued {
+            id,
+            message,
+            reply,
+            gate,
+        });
         drop(state);
         self.arrived.notify_all();
-        Ok(())
+        Ok(id)
+    }
+
+    /// Take queued message `id` back, if the receiver has not taken it: under
+    /// the lock every take holds, so the two never both succeed.
+    fn withdraw(&self, id: u64) -> bool {
+        let mut state = self.lock();
+        let Some(at) = state.queue.iter().position(|queued| queued.id == id) else {
+            return false;
+        };
+        let withdrawn = state.queue.remove(at);
+        drop(state);
+        if let Some(withdrawn) = withdrawn {
+            withdrawn.reply.forget();
+        }
+        true
     }
 
     /// Queue every one of `messages` at once, after `commit` succeeds, or none of
@@ -326,6 +420,7 @@ impl<M, D> Shared<M, D> {
                 id,
                 message,
                 reply: Reply::nobody(),
+                gate: None,
             });
         }
         drop(state);
@@ -358,7 +453,7 @@ impl<M, D> Shared<M, D> {
         state.closed = Some(closed.clone());
         let hooks = std::mem::take(&mut state.on_close);
         let mut replies: Vec<Reply<D>> = state.queue.drain(..).map(|queued| queued.reply).collect();
-        replies.extend(state.taken.drain().map(|(_, reply)| reply));
+        replies.extend(state.taken.drain().map(|(_, taken)| taken.reply));
         drop(state);
         self.arrived.notify_all();
         for hook in hooks {
@@ -465,8 +560,23 @@ impl<M: Message + Send + 'static, D: Disposition> Inbox<M, D> {
     }
 
     fn pop(&self, state: &mut State<M, D>) -> Option<Delivered<M, D>> {
-        let Queued { id, message, reply } = state.queue.pop_front()?;
-        state.taken.insert(id, reply);
+        let (id, message) = loop {
+            let Queued {
+                id,
+                message,
+                reply,
+                mut gate,
+            } = state.queue.pop_front()?;
+            if let Some(gate) = gate.as_mut() {
+                if !gate.claim() {
+                    // Its sender withdrew it first: it is nobody's to take.
+                    reply.forget();
+                    continue;
+                }
+            }
+            state.taken.insert(id, Taken { reply, gate });
+            break (id, message);
+        };
         Some(Delivered {
             message,
             claim: Claim {
@@ -532,8 +642,8 @@ impl<M, D> Drop for Claim<M, D> {
         }
         // Removed under the lock and dropped after it, since dropping a reply
         // answers its sender.
-        let reply = self.shared.lock().taken.remove(&self.id);
-        drop(reply);
+        let taken = self.shared.lock().taken.remove(&self.id);
+        drop(taken);
     }
 }
 
@@ -550,6 +660,42 @@ impl<M: Message, D: Disposition> Delivered<M, D> {
     #[must_use]
     pub fn message(&self) -> &M {
         &self.message
+    }
+
+    /// Hand the message back untaken, for a receiver that took it and cannot
+    /// present it: it returns to the inbox's queue at the position it arrived
+    /// in, ahead of every message that arrived after it. To its sender it is
+    /// untaken again — an [`Offer`] can withdraw it, and one whose deadline has
+    /// passed expires it at once. A message released into a closed inbox is
+    /// gone, and its sender was already told the close.
+    pub fn release(self) {
+        let Self { message, mut claim } = self;
+        claim.settled = true;
+        let released = {
+            let mut state = claim.shared.lock();
+            let Some(Taken { reply, mut gate }) = state.taken.remove(&claim.id) else {
+                return;
+            };
+            if let Some(gate) = gate.as_mut() {
+                gate.release();
+            }
+            let released = reply.released.clone();
+            let at = state.queue.partition_point(|queued| queued.id < claim.id);
+            state.queue.insert(
+                at,
+                Queued {
+                    id: claim.id,
+                    message,
+                    reply,
+                    gate,
+                },
+            );
+            released
+        };
+        claim.shared.arrived.notify_all();
+        if let Some(released) = released {
+            released();
+        }
     }
 }
 
@@ -568,8 +714,8 @@ impl<M: Message, D: Disposition + Clone> Delivered<M, D> {
             });
             state.taken.remove(&claim.id)
         };
-        if let Some(reply) = reply {
-            reply.answer(Ok(disposition));
+        if let Some(taken) = reply {
+            taken.reply.answer(Ok(disposition));
         }
     }
 }
@@ -583,6 +729,135 @@ pub trait InboxBackend<M, D>: Send + Sync {
     ///
     /// [`Undelivered`], naming why no disposition came back.
     fn send(&self, message: M) -> Result<D, Undelivered>;
+
+    /// Hand `message` over and return once its receiver has admitted it.
+    ///
+    /// Provided for a backend that cannot report admission on its own: it
+    /// sends the message and holds the answer, so the offer returns only once
+    /// the message was admitted — and answered — and its
+    /// [`withdraw`](Offer::withdraw) always reads the message as taken, since
+    /// this backend could not guarantee a withdrawal.
+    ///
+    /// # Errors
+    ///
+    /// [`Undelivered`], as [`send`](InboxBackend::send).
+    fn offer(&self, message: M) -> Result<Offer<D>, Undelivered>
+    where
+        D: Disposition,
+    {
+        self.send(message).map(Offer::answered)
+    }
+}
+
+/// One offered message, admitted to its receiver's queue: what waits for its
+/// answer, or takes it back.
+///
+/// Taking it and withdrawing it never both succeed and never both fail: either
+/// the receiver took it, and an answer or the reason there is none follows, or
+/// it was withdrawn, and the receiver never takes it. Dropping an offer
+/// withdraws nothing; the message stays offered and is answered to nobody.
+pub struct Offer<D: Disposition> {
+    pending: Box<dyn Pending<D>>,
+}
+
+/// What one backend does for an admitted message's [`Offer`].
+pub(crate) trait Pending<D>: Send {
+    /// Withdraw the message if its receiver has not taken it: `true` when it
+    /// was withdrawn, and the receiver never takes it.
+    fn withdraw(&mut self) -> bool;
+    /// Block until the receiver answers, or the backend knows it never will.
+    fn wait(&mut self) -> Result<D, Undelivered>;
+    /// As `wait`, but withdraw the message if it is untaken at `deadline`.
+    fn wait_until(&mut self, deadline: Instant) -> Result<D, Unanswered>;
+}
+
+/// An offer whose answer is already known: what a backend that cannot report
+/// admission on its own answers.
+struct Settled<D> {
+    answer: Option<Result<D, Undelivered>>,
+}
+
+impl<D: Send> Pending<D> for Settled<D> {
+    fn withdraw(&mut self) -> bool {
+        false
+    }
+
+    fn wait(&mut self) -> Result<D, Undelivered> {
+        self.answer.take().unwrap_or_else(|| {
+            Err(Undelivered::Closed(Closed::new(
+                "the offer's answer was already read",
+            )))
+        })
+    }
+
+    fn wait_until(&mut self, _deadline: Instant) -> Result<D, Unanswered> {
+        self.wait().map_err(Unanswered::Undelivered)
+    }
+}
+
+impl<D: Disposition> fmt::Debug for Offer<D> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Offer").finish_non_exhaustive()
+    }
+}
+
+impl<D: Disposition> Offer<D> {
+    pub(crate) fn over(pending: impl Pending<D> + 'static) -> Self {
+        Self {
+            pending: Box::new(pending),
+        }
+    }
+
+    /// An offer already answered `disposition`.
+    fn answered(disposition: D) -> Self {
+        Self::over(Settled {
+            answer: Some(Ok(disposition)),
+        })
+    }
+
+    /// Block until the receiver has answered the message, or the inbox is
+    /// closed, as [`Sender::send`] does after admission.
+    ///
+    /// # Errors
+    ///
+    /// [`Undelivered::Closed`] with the closer's reason, including a receiver
+    /// that let the message go unanswered; [`Undelivered::Backend`] when the
+    /// backend cannot produce the answer.
+    pub fn wait(mut self) -> Result<D, Undelivered> {
+        self.pending.wait()
+    }
+
+    /// Wait for the answer, withdrawing the message if it is still untaken at
+    /// `deadline`. A message taken before the deadline is waited on past it,
+    /// for as long as its receiver holds it, and its answer returned however
+    /// late it comes; one handed back with [`Delivered::release`] after the
+    /// deadline is withdrawn at once.
+    ///
+    /// # Errors
+    ///
+    /// [`Unanswered::Expired`] when the message was withdrawn at the deadline
+    /// — it was never taken, and never will be — and
+    /// [`Unanswered::Undelivered`] for every outcome [`wait`](Self::wait)
+    /// reports.
+    pub fn wait_until(mut self, deadline: Instant) -> Result<D, Unanswered> {
+        self.pending.wait_until(deadline)
+    }
+
+    /// Take the message back: `Ok` only when the receiver had not taken it,
+    /// and then it never will. A message already taken is answered `Err` with
+    /// this offer, still able to [`wait`](Self::wait) for its answer.
+    ///
+    /// # Errors
+    ///
+    /// The offer itself, when the receiver took the message first — or when
+    /// the backend cannot guarantee a withdrawal, which reads as taken.
+    pub fn withdraw(mut self) -> Result<(), Self> {
+        if self.pending.withdraw() {
+            Ok(())
+        } else {
+            Err(self)
+        }
+    }
 }
 
 /// The sending end; `Clone`, and usable from any thread.
@@ -624,6 +899,19 @@ impl<M: Message, D: Disposition> Sender<M, D> {
     pub fn send(&self, message: M) -> Result<D, Undelivered> {
         self.backend.send(message)
     }
+
+    /// Hands the message over and returns once the receiver has admitted it to
+    /// its inbox's queue — at once in process, and over a spool once the
+    /// receiver's courier has queued it and said so. A message not admitted
+    /// within the backend's bounded wait is withdrawn first, as
+    /// [`send`](Self::send) withdraws it.
+    ///
+    /// # Errors
+    ///
+    /// As [`send`](Self::send), for a message that was never admitted.
+    pub fn offer(&self, message: M) -> Result<Offer<D>, Undelivered> {
+        self.backend.offer(message)
+    }
 }
 
 impl<M: Message + Send + 'static, D: Disposition> Sender<M, D> {
@@ -643,21 +931,121 @@ pub struct InProcess<M: Message, D: Disposition> {
 
 impl<M: Message + Send + 'static, D: Disposition> InboxBackend<M, D> for InProcess<M, D> {
     fn send(&self, message: M) -> Result<D, Undelivered> {
-        let slot: Arc<(Mutex<Option<Answer<D>>>, Condvar)> = Arc::default();
-        let answered = Arc::clone(&slot);
-        self.shared.offer(
-            message,
-            Reply::to(move |answer| {
-                *answered.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(answer);
-                answered.1.notify_all();
+        self.offer(message)?.wait()
+    }
+
+    fn offer(&self, message: M) -> Result<Offer<D>, Undelivered> {
+        let ticket: Arc<Ticket<D>> = Arc::new(Ticket {
+            slot: Mutex::new(Slot {
+                answer: None,
+                releases: 0,
             }),
-        )?;
-        let mut waiting = slot.0.lock().unwrap_or_else(PoisonError::into_inner);
+            changed: Condvar::new(),
+        });
+        let answered = Arc::clone(&ticket);
+        let released = Arc::clone(&ticket);
+        let reply = Reply::to(move |answer| {
+            answered.lock().answer = Some(answer);
+            answered.changed.notify_all();
+        })
+        .on_release(move || {
+            released.lock().releases += 1;
+            released.changed.notify_all();
+        });
+        let id = self.shared.offer(message, reply, None)?;
+        Ok(Offer::over(Queuing {
+            shared: Arc::clone(&self.shared),
+            id,
+            ticket,
+        }))
+    }
+}
+
+/// Where an in-process message's answer lands, and how often it was handed
+/// back.
+struct Ticket<D> {
+    slot: Mutex<Slot<D>>,
+    changed: Condvar,
+}
+
+struct Slot<D> {
+    answer: Option<Answer<D>>,
+    /// How many times the message was released: what a sender past its
+    /// deadline watches for, to withdraw it the moment it is untaken again.
+    releases: u64,
+}
+
+impl<D> Ticket<D> {
+    fn lock(&self) -> MutexGuard<'_, Slot<D>> {
+        self.slot.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// An in-process message's offer: its place in the queue, and its ticket.
+struct Queuing<M, D> {
+    shared: Arc<Shared<M, D>>,
+    id: u64,
+    ticket: Arc<Ticket<D>>,
+}
+
+impl<M: Send, D: Send> Pending<D> for Queuing<M, D> {
+    fn withdraw(&mut self) -> bool {
+        self.shared.withdraw(self.id)
+    }
+
+    fn wait(&mut self) -> Result<D, Undelivered> {
+        let mut slot = self.ticket.lock();
         loop {
-            if let Some(answer) = waiting.take() {
+            if let Some(answer) = slot.answer.take() {
                 return answer.map_err(Undelivered::Closed);
             }
-            waiting = slot.1.wait(waiting).unwrap_or_else(PoisonError::into_inner);
+            slot = self
+                .ticket
+                .changed
+                .wait(slot)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+
+    fn wait_until(&mut self, deadline: Instant) -> Result<D, Unanswered> {
+        let mut slot = self.ticket.lock();
+        loop {
+            if let Some(answer) = slot.answer.take() {
+                return answer.map_err(|closed| Unanswered::Undelivered(closed.into()));
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            slot = self
+                .ticket
+                .changed
+                .wait_timeout(slot, left)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+        // Past the deadline: withdraw it if it is untaken, and otherwise wait
+        // for its answer — or for a release, which makes it untaken again.
+        loop {
+            let releases = slot.releases;
+            drop(slot);
+            if self.shared.withdraw(self.id) {
+                return Err(Unanswered::Expired);
+            }
+            slot = self.ticket.lock();
+            loop {
+                if let Some(answer) = slot.answer.take() {
+                    return answer.map_err(|closed| Unanswered::Undelivered(closed.into()));
+                }
+                if slot.releases != releases {
+                    break;
+                }
+                slot = self
+                    .ticket
+                    .changed
+                    .wait(slot)
+                    .unwrap_or_else(PoisonError::into_inner);
+            }
         }
     }
 }
