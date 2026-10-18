@@ -23,8 +23,8 @@ use serde::{Deserialize, Serialize};
 pub(crate) enum ClockIdentity {
     /// `CLOCK_MONOTONIC` on one Linux boot, in one time namespace.
     Monotonic {
-        /// The kernel's boot id: a UUID, new at every boot.
-        boot: String,
+        /// The kernel's boot id, new at every boot.
+        boot: BootId,
         /// The inode of the time namespace the clock is read in, whose offset
         /// it carries; `None` on a kernel without time namespaces, where every
         /// process reads the clock alike.
@@ -43,7 +43,7 @@ impl From<ClockIdentity> for String {
             ClockIdentity::Monotonic { boot, namespace } => {
                 let namespace =
                     namespace.map_or_else(|| "none".to_owned(), |inode| inode.to_string());
-                format!("{MONOTONIC}{boot}:{namespace}")
+                format!("{MONOTONIC}{}:{namespace}", boot.0)
             }
             ClockIdentity::System => SYSTEM.to_owned(),
         }
@@ -67,27 +67,28 @@ impl TryFrom<String> for ClockIdentity {
             .strip_prefix(MONOTONIC)
             .and_then(|rest| rest.split_once(':'))
             .ok_or_else(refused)?;
-        if !is_boot_id(boot) {
-            return Err(refused());
-        }
+        let boot = BootId::parse(boot).ok_or_else(refused)?;
         let namespace = match namespace {
             "none" => None,
             inode => Some(inode.parse().map_err(|_| refused())?),
         };
-        Ok(Self::Monotonic {
-            boot: boot.to_owned(),
-            namespace,
-        })
+        Ok(Self::Monotonic { boot, namespace })
     }
 }
 
-/// Whether `text` is a boot id as the kernel writes it: a lowercase UUID.
-fn is_boot_id(text: &str) -> bool {
-    text.len() == 36
-        && text.char_indices().all(|(at, character)| match at {
-            8 | 13 | 18 | 23 => character == '-',
-            _ => matches!(character, '0'..='9' | 'a'..='f'),
-        })
+/// A boot id as the kernel writes it: a lowercase UUID, and nothing else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BootId(String);
+
+impl BootId {
+    fn parse(text: &str) -> Option<Self> {
+        let is_uuid = text.len() == 36
+            && text.char_indices().all(|(at, character)| match at {
+                8 | 13 | 18 | 23 => character == '-',
+                _ => matches!(character, '0'..='9' | 'a'..='f'),
+            });
+        is_uuid.then(|| Self(text.to_owned()))
+    }
 }
 
 /// The clock this process shares with the others on its host.
@@ -175,9 +176,8 @@ fn identify() -> Option<ClockIdentity> {
         Err(failure) if failure.kind() == std::io::ErrorKind::NotFound => None,
         Err(_) => return None,
     };
-    let boot = boot.trim();
-    is_boot_id(boot).then(|| ClockIdentity::Monotonic {
-        boot: boot.to_owned(),
+    Some(ClockIdentity::Monotonic {
+        boot: BootId::parse(boot.trim())?,
         namespace,
     })
 }

@@ -920,21 +920,46 @@ fn published_deadline(address: &Path) -> PathBuf {
     }
 }
 
-/// The preload that shifts one process's wall clock by
-/// `ONEMESSAGEBUS_WALL_CLOCK_SHIFT_SECONDS`, built into `dir`.
+/// The preload that steps a child's wall clock and hides what identifies its
+/// monotonic clock (`tests/fixtures/clock_shim.c` says how), built into `dir`.
 #[cfg(target_os = "linux")]
-fn wall_clock_shift(dir: &Path) -> PathBuf {
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/wall_clock_shift.c");
-    let library = dir.join("wall_clock_shift.so");
+fn clock_shim(dir: &Path) -> PathBuf {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/clock_shim.c");
+    let library = dir.join("clock_shim.so");
     let status = Command::new(std::env::var_os("CC").unwrap_or_else(|| "cc".into()))
         .args(["-shared", "-fPIC", "-o"])
         .arg(&library)
         .arg(&source)
         .arg("-ldl")
         .status()
-        .expect("a C compiler builds the wall-clock shift; set CC to one");
-    assert!(status.success(), "the wall-clock shift does not build");
+        .expect("a C compiler builds the clock shim; set CC to one");
+    assert!(status.success(), "the clock shim does not build");
     library
+}
+
+/// The wall clock a child shimmed with `shift` reads, stepped `seconds` from
+/// everyone else's.
+#[cfg(target_os = "linux")]
+fn step_wall_clock(shift: &Path, seconds: i64) {
+    std::fs::write(shift, seconds.to_string()).expect("the step is written");
+}
+
+/// A child's process preloaded with `library`, its wall clock shifted by what
+/// `shift` holds, and `hide` (if any) hidden from it.
+#[cfg(target_os = "linux")]
+fn shimmed<'a>(
+    library: &'a Path,
+    shift: &'a Path,
+    hide: Option<&'a str>,
+) -> impl FnOnce(&mut Command) + 'a {
+    move |command| {
+        command
+            .env("LD_PRELOAD", library)
+            .env("ONEMESSAGEBUS_WALL_CLOCK_SHIFT_FILE", shift);
+        if let Some(hide) = hide {
+            command.env("ONEMESSAGEBUS_HIDE", hide);
+        }
+    }
 }
 
 /// A receiver whose wall clock reads `shift` seconds off everyone else's, as
@@ -942,12 +967,10 @@ fn wall_clock_shift(dir: &Path) -> PathBuf {
 /// deadline; the shift is checked to have taken.
 #[cfg(target_os = "linux")]
 fn receiver_with_wall_clock_shifted(dir: &Path, address: &Path, shift: i64) -> Receiver {
-    let library = wall_clock_shift(dir);
-    let mut receiver = Receiver::bind_with(address, |command| {
-        command
-            .env("LD_PRELOAD", &library)
-            .env("ONEMESSAGEBUS_WALL_CLOCK_SHIFT_SECONDS", shift.to_string());
-    });
+    let library = clock_shim(dir);
+    let shift_file = dir.join("wall-clock-shift");
+    step_wall_clock(&shift_file, shift);
+    let mut receiver = Receiver::bind_with(address, shimmed(&library, &shift_file, None));
     let ours = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("after the epoch")
@@ -1012,6 +1035,85 @@ fn a_wall_clock_set_back_never_lets_a_message_released_past_its_deadline_be_take
     assert_eq!(sender.reply(), "expired");
     assert_eq!(receiver.take(SETTLE), None);
     assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
+/// The deadline the document at `path` publishes, in nanoseconds.
+#[cfg(target_os = "linux")]
+fn deadline_in(path: &Path) -> u64 {
+    let document: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).expect("a deadline")).expect("JSON");
+    document["deadline"].as_u64().expect("a deadline")
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn on_the_system_clock_a_step_back_never_holds_expiry_past_the_senders_deadline() {
+    let (dir, address) = spool_dir();
+    let library = clock_shim(dir.path());
+    // One system clock for both processes, stepped by this file.
+    let shift = dir.path().join("wall-clock-shift");
+    step_wall_clock(&shift, 0);
+    // Neither can identify CLOCK_MONOTONIC, so both share the system clock.
+    let shim = || shimmed(&library, &shift, Some("boot-id"));
+    let mut receiver = Receiver::bind_with(&address, shim());
+    assert_eq!(advertisement(&address)["clock"], json!("system"));
+    let mut sender = Receiver::start_with("sender_child", SENDER_SPOOL, &address, shim());
+    assert_eq!(sender.reply(), "admitted");
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("late"));
+    sender.tell("wait 300");
+    let published = published_deadline(&address);
+    let ahead = deadline_in(&published);
+    // The system clock is set back an hour after the deadline was published:
+    // on it, that deadline is now an hour off.
+    step_wall_clock(&shift, -3600);
+    // Past its own deadline, the sender publishes it again as passed.
+    let started = Instant::now();
+    while deadline_in(&published) == ahead {
+        assert!(
+            started.elapsed() < TAKE,
+            "the sender never published its deadline as passed"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(deadline_in(&published) < ahead);
+    assert_eq!(
+        receiver.say("release-and-take late"),
+        "none",
+        "a clock set back held a message's expiry past its sender's deadline"
+    );
+    assert_eq!(sender.reply(), "expired");
+    assert_eq!(receiver.take(SETTLE), None);
+    assert_eq!(receiver.answered(), "answered []");
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_receiver_without_a_time_namespace_names_none_and_one_with_one_does_not_trust_it() {
+    let (dir, address) = spool_dir();
+    let library = clock_shim(dir.path());
+    let shift = dir.path().join("wall-clock-shift");
+    step_wall_clock(&shift, 0);
+    let mut receiver =
+        Receiver::bind_with(&address, shimmed(&library, &shift, Some("time-namespace")));
+    let clock = advertisement(&address)["clock"]
+        .as_str()
+        .expect("a clock")
+        .to_owned();
+    assert!(
+        clock.starts_with("linux-monotonic:") && clock.ends_with(":none"),
+        "{clock}"
+    );
+    // This process reads a time namespace, so its clock is not the one named.
+    let offer = Spool::connect::<Order, Receipt>(&address)
+        .offer(order("held"))
+        .expect("admitted");
+    let Err(offer) = offer.withdraw() else {
+        panic!("a withdrawal on a clock it does not share was claimed");
+    };
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("held"));
+    assert_eq!(receiver.say("answer held stock-room"), "ok");
+    assert_eq!(offer.wait(), Ok(filled("stock-room")));
 }
 
 /// A clock identity no process here reads: a boot that never happened.
