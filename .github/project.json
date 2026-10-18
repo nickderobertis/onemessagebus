@@ -6,12 +6,18 @@
   "tags": ["scope:repo", "lang:js", "type:repo"],
   "targets": {
     "bootstrap": {
-      "command": "bash .github/bootstrap.sh"
+      "//": "The workspace's locked npm install, which replaces node_modules; only `just bootstrap` runs it, serialized, because a lint or test that depended on it would swap the Biome binary out from under every task running beside it.",
+      "command": "npm ci --ignore-scripts --quiet",
+      "dependsOn": ["actionlint"]
+    },
+    "actionlint": {
+      "command": "bash .github/bootstrap.sh",
+      "cache": false
     },
     "test": {
       "command": "node --test .github/tests/*.test.mjs",
       "cache": false,
-      "dependsOn": ["bootstrap"],
+      "dependsOn": ["actionlint"],
       "inputs": [
         "default",
         "{workspaceRoot}/screencomp.toml",
@@ -25,7 +31,7 @@
     "lint": {
       "command": "bash .github/lint.sh",
       "inputs": ["default"],
-      "dependsOn": ["bootstrap"]
+      "dependsOn": ["actionlint"]
     },
     "typecheck": {
       "executor": "nx:noop",
