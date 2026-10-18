@@ -1081,28 +1081,50 @@ fn an_acknowledgement_this_build_cannot_read_is_reported_and_the_message_withdra
     assert_eq!(receiver.take(SETTLE), None);
 }
 
+/// A spool nobody can create or remove a file in, for as long as it is held:
+/// `None` for a user permissions bind nothing to, such as root, for whom there
+/// is nothing to show.
+#[cfg(unix)]
+struct ReadOnly<'a>(&'a Path);
+
+#[cfg(unix)]
+impl<'a> ReadOnly<'a> {
+    fn hold(address: &'a Path) -> Option<Self> {
+        let read_only = Self(address);
+        read_only.mode(0o555);
+        let probe = address.join("probe");
+        if std::fs::write(&probe, "").is_ok() {
+            let _ = std::fs::remove_file(&probe);
+            eprintln!("skipped: a read-only directory refuses nothing to this user");
+            return None;
+        }
+        Some(read_only)
+    }
+
+    fn mode(&self, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(mode))
+            .expect("the spool's mode is set");
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ReadOnly<'_> {
+    fn drop(&mut self) {
+        self.mode(0o755);
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn a_claim_the_file_system_refuses_gives_the_message_to_neither_side_until_one_can_be_made() {
-    use std::os::unix::fs::PermissionsExt;
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
     let sender = Spool::connect::<Order, Receipt>(&address);
     let offer = sender.offer(order("stuck")).expect("admitted");
-    let mode = |mode| {
-        std::fs::set_permissions(&address, std::fs::Permissions::from_mode(mode))
-            .expect("the spool's mode is set");
-    };
-    // A spool nobody can create a file in: neither side can make a claim.
-    mode(0o555);
-    let probe = address.join("probe");
-    if std::fs::write(&probe, "").is_ok() {
-        // Permissions bind nobody running as root; there is nothing to show.
-        let _ = std::fs::remove_file(&probe);
-        mode(0o755);
-        eprintln!("skipped: a read-only directory refuses nothing to this user");
+    let Some(read_only) = ReadOnly::hold(&address) else {
         return;
-    }
+    };
     let offer = offer
         .withdraw()
         .expect_err("a withdrawal that cannot be claimed is not claimed");
@@ -1112,10 +1134,74 @@ fn a_claim_the_file_system_refuses_gives_the_message_to_neither_side_until_one_c
         "a take that cannot be claimed took the message"
     );
     // Once a claim can be made, the message is where it was, and is taken.
-    mode(0o755);
+    drop(read_only);
     assert_eq!(receiver.take(TAKE).as_deref(), Some("stuck"));
     assert_eq!(receiver.say("answer stuck at-last"), "ok");
     assert_eq!(offer.wait(), Ok(filled("at-last")));
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_release_whose_claim_the_file_system_keeps_leaves_the_message_the_receivers() {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let sender = Spool::connect::<Order, Receipt>(&address);
+    let offer = sender.offer(order("kept")).expect("admitted");
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("kept"));
+    let Some(read_only) = ReadOnly::hold(&address) else {
+        return;
+    };
+    assert_eq!(receiver.say("release kept"), "ok");
+    // Its claim could not be let go of: still the receiver's, so not withdrawn.
+    let offer = offer
+        .withdraw()
+        .expect_err("a message whose claim the receiver still holds is taken");
+    drop(read_only);
+    assert_eq!(receiver.take(Duration::ZERO).as_deref(), Some("kept"));
+    assert_eq!(receiver.say("answer kept second-look"), "ok");
+    assert_eq!(offer.wait(), Ok(filled("second-look")));
+    assert_eq!(receiver.answered(), "answered [kept]");
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_close_the_file_system_refuses_to_record_tells_the_sender_its_message_was_lost() {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let sender = Spool::connect::<Order, Receipt>(&address);
+    let offer = sender.offer(order("unrecorded")).expect("admitted");
+    let Some(read_only) = ReadOnly::hold(&address) else {
+        return;
+    };
+    // Neither its claim, its answer nor the close can be written.
+    assert_eq!(receiver.say("close for stock-take"), "ok");
+    drop(read_only);
+    let started = Instant::now();
+    match offer.wait_until(Instant::now() + Duration::from_secs(60)) {
+        Err(Unanswered::Undelivered(Undelivered::Backend(BackendError::Abandoned { .. }))) => {}
+        other => panic!("a close nothing recorded was reported as {other:?}"),
+    }
+    assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[test]
+fn a_withdrawal_after_the_answer_is_written_is_refused_and_the_answer_read() {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let sender = Spool::connect::<Order, Receipt>(&address);
+    let offer = sender.offer(order("answered")).expect("admitted");
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("answered"));
+    assert_eq!(receiver.say("answer answered stock-room"), "ok");
+    // The receiver has let its claim go, and its answer is waiting.
+    assert!(message_files(&address)
+        .iter()
+        .all(|name| !name.ends_with(".claimed")));
+    let offer = offer
+        .withdraw()
+        .expect_err("an answered message is not withdrawn");
+    assert_eq!(offer.wait(), Ok(filled("stock-room")));
     assert_eq!(message_files(&address), Vec::<String>::new());
 }
 

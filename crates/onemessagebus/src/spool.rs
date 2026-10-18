@@ -486,8 +486,7 @@ impl Exchange {
     /// Take the admitted message back, if the receiver has not taken it: by
     /// creating its claim before the receiver's take can.
     fn withdraw(&mut self) -> bool {
-        if self.admits == Admits::OnRename || self.answered.is_some() || self.file(ANSWER).exists()
-        {
+        if self.admits == Admits::OnRename || self.answered.is_some() {
             return false;
         }
         let claimed = self.file(CLAIMED);
@@ -495,7 +494,8 @@ impl Exchange {
             return false;
         }
         // The receiver answers before it lets its claim go, so a claim made
-        // after that finds the answer: the message was taken, and is answered.
+        // after that — or made when the answer was already there — finds the
+        // answer: the message was taken, and is answered.
         if self.file(ANSWER).exists() {
             let _ = fs::remove_file(claimed);
             return false;
@@ -815,6 +815,11 @@ impl Gate for Hold {
     }
 
     fn claim(&mut self) -> Claimed {
+        if self.held.load(Ordering::SeqCst) {
+            // Released with a claim the file system would not let go of: it is
+            // still the receiver's, and taking it again needs no new one.
+            return Claimed::Taken;
+        }
         match claim(&self.file(CLAIMED)) {
             Ok(true) => {
                 self.held.store(true, Ordering::SeqCst);
@@ -829,8 +834,11 @@ impl Gate for Hold {
     }
 
     fn release(&mut self) {
-        self.held.store(false, Ordering::SeqCst);
-        let _ = fs::remove_file(self.file(CLAIMED));
+        // Let go of only once its claim is gone: one the file system keeps is
+        // still the receiver's, and its sender reads the message as taken.
+        if fs::remove_file(self.file(CLAIMED)).is_ok() {
+            self.held.store(false, Ordering::SeqCst);
+        }
     }
 }
 

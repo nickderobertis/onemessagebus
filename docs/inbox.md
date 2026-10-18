@@ -130,7 +130,9 @@ A directory a receiver's process binds, for a sender in another process.
   `<id>.claimed`, an exclusive create that only one of them can win. The loser
   learns it has lost: a take that loses drops the message as withdrawn, and a
   withdrawal that loses reads the message as taken. A release removes the
-  receiver's claim, so the sender can withdraw again. The receiver claims a
+  receiver's claim, so the sender can withdraw again. A claim the file system
+  will not remove stays the receiver's, and its sender reads the message as
+  taken. The receiver claims a
   message before it writes any answer (a disposition, a close, or a refusal)
   and lets the claim go only once the answer is written. So a sender whose
   claim succeeds after that finds the answer, gives its claim back, and reads
