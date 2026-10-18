@@ -137,7 +137,11 @@ A directory a receiver's process binds, for a sender in another process.
   first tries to withdraw. A release that finds it renames it onto
   `<id>.expired` under the inbox's lock, drops the message from the inbox and
   keeps its claim, so no take can come before the sender reads the rename,
-  reports `Expired`, and removes the message's files. A claim the file system
+  reports `Expired`, and removes the message's files. A take that claims a
+  message with `<id>.expiring` beside it does the same. A marker the file
+  system refuses to create is created at the sender's next look, and a rename it
+  refuses leaves the message queued with the receiver's claim, so neither side
+  has it until the next take can rename it. A claim the file system
   will not remove stays the receiver's, and its sender reads the message as
   taken. The receiver claims a
   message before it writes any answer (a disposition, a close, or a refusal)

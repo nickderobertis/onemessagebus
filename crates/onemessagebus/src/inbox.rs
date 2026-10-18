@@ -969,16 +969,15 @@ impl<M: Message + Send + 'static, D: Disposition> InboxBackend<M, D> for InProce
     fn offer(&self, message: M) -> Result<Offer<D>, Undelivered> {
         let ticket: Arc<Ticket<D>> = Arc::new(Ticket {
             slot: Mutex::new(Slot {
-                answer: None,
+                outcome: Outcome::Pending,
                 deadline: None,
-                expired: false,
             }),
             changed: Condvar::new(),
         });
         let answered = Arc::clone(&ticket);
         let released = Arc::clone(&ticket);
         let reply = Reply::to(move |answer| {
-            answered.lock().answer = Some(answer);
+            answered.lock().outcome = Outcome::Answered(answer);
             answered.changed.notify_all();
         })
         .on_release(move || {
@@ -989,7 +988,7 @@ impl<M: Message + Send + 'static, D: Disposition> InboxBackend<M, D> for InProce
             {
                 return Released::Untaken;
             }
-            slot.expired = true;
+            slot.outcome = Outcome::Expired;
             drop(slot);
             released.changed.notify_all();
             Released::Expired
@@ -1011,12 +1010,33 @@ struct Ticket<D> {
 }
 
 struct Slot<D> {
-    answer: Option<Answer<D>>,
+    outcome: Outcome<D>,
     /// The deadline its sender waits until, which a release past it expires
     /// the message at.
     deadline: Option<Instant>,
-    /// Released past that deadline, and so withdrawn.
-    expired: bool,
+}
+
+/// What became of an in-process message, as its sender reads it.
+enum Outcome<D> {
+    /// Nothing yet.
+    Pending,
+    /// Its receiver answered, or the inbox says why it never will.
+    Answered(Answer<D>),
+    /// Released past its sender's deadline, and so withdrawn.
+    Expired,
+}
+
+impl<D> Slot<D> {
+    /// The outcome, if there is one, leaving `Pending` in its place.
+    fn settled(&mut self) -> Option<Result<D, Unanswered>> {
+        match std::mem::replace(&mut self.outcome, Outcome::Pending) {
+            Outcome::Pending => None,
+            Outcome::Answered(answer) => {
+                Some(answer.map_err(|closed| Unanswered::Undelivered(closed.into())))
+            }
+            Outcome::Expired => Some(Err(Unanswered::Expired)),
+        }
+    }
 }
 
 impl<D> Ticket<D> {
@@ -1040,7 +1060,10 @@ impl<M: Send, D: Send> Pending<D> for Queuing<M, D> {
     fn wait(self: Box<Self>) -> Result<D, Undelivered> {
         let mut slot = self.ticket.lock();
         loop {
-            if let Some(answer) = slot.answer.take() {
+            // Never `Expired`: with no deadline set, a release queues it again.
+            if let Outcome::Answered(answer) =
+                std::mem::replace(&mut slot.outcome, Outcome::Pending)
+            {
                 return answer.map_err(Undelivered::Closed);
             }
             slot = self
@@ -1057,8 +1080,8 @@ impl<M: Send, D: Send> Pending<D> for Queuing<M, D> {
         // same moment rather than queueing it for a take to find.
         slot.deadline = Some(deadline);
         loop {
-            if let Some(answer) = slot.answer.take() {
-                return answer.map_err(|closed| Unanswered::Undelivered(closed.into()));
+            if let Some(settled) = slot.settled() {
+                return settled;
             }
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
@@ -1079,11 +1102,8 @@ impl<M: Send, D: Send> Pending<D> for Queuing<M, D> {
         }
         let mut slot = self.ticket.lock();
         loop {
-            if let Some(answer) = slot.answer.take() {
-                return answer.map_err(|closed| Unanswered::Undelivered(closed.into()));
-            }
-            if slot.expired {
-                return Err(Unanswered::Expired);
+            if let Some(settled) = slot.settled() {
+                return settled;
             }
             slot = self
                 .ticket

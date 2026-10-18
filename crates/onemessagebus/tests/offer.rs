@@ -1354,6 +1354,60 @@ fn a_release_whose_claim_the_file_system_keeps_leaves_the_message_the_receivers(
 
 #[cfg(unix)]
 #[test]
+fn a_deadline_the_file_system_will_not_let_its_sender_say_is_said_once_it_can_be() {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let sender = Spool::connect::<Order, Receipt>(&address);
+    let offer = sender.offer(order("late")).expect("admitted");
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("late"));
+    let deadline = Instant::now() + Duration::from_millis(100);
+    let Some(read_only) = ReadOnly::hold(&address) else {
+        return;
+    };
+    let waiting = std::thread::spawn(move || offer.wait_until(deadline));
+    // The deadline passes while nothing can be created in the spool.
+    std::thread::sleep(Duration::from_millis(300));
+    drop(read_only);
+    // A look once it can be: then a release expires it.
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(receiver.say("release-and-take late"), "none");
+    assert_eq!(waiting.join().expect("waits"), Err(Unanswered::Expired));
+    assert_eq!(receiver.take(SETTLE), None);
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_release_the_file_system_will_not_let_expire_leaves_the_message_to_nobody_until_it_can() {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let sender = Spool::connect::<Order, Receipt>(&address);
+    let offer = sender.offer(order("late")).expect("admitted");
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("late"));
+    let deadline = Instant::now() + Duration::from_millis(20);
+    let waiting = std::thread::spawn(move || offer.wait_until(deadline));
+    // Past the deadline, and said, before the spool turns read-only.
+    std::thread::sleep(Duration::from_millis(200));
+    let Some(read_only) = ReadOnly::hold(&address) else {
+        return;
+    };
+    // The release cannot expire it, and the take cannot either: neither has it.
+    assert_eq!(receiver.say("release-and-take late"), "none");
+    assert_eq!(receiver.take(Duration::ZERO), None);
+    assert!(
+        !waiting.is_finished(),
+        "its sender was told before it could be"
+    );
+    // Once the word can be handed over, the next take expires it.
+    drop(read_only);
+    assert_eq!(receiver.take(Duration::ZERO), None);
+    assert_eq!(waiting.join().expect("waits"), Err(Unanswered::Expired));
+    assert_eq!(receiver.take(SETTLE), None);
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
+#[cfg(unix)]
+#[test]
 fn a_close_the_file_system_refuses_to_record_tells_the_sender_its_message_was_lost() {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);

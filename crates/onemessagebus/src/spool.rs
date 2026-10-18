@@ -23,7 +23,7 @@ use std::fs::{self, File, OpenOptions, TryLockError};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -550,12 +550,12 @@ impl Exchange {
         if let Some(answered) = self.answered.take() {
             return Ok(answered);
         }
-        let mut expiring = false;
+        let mut expiry = Expiry::Unsaid;
         loop {
             if let Some(answered) = self.read_answer()? {
                 return Ok(answered);
             }
-            if expiring && self.file(EXPIRED).exists() {
+            if expiry == Expiry::Said && self.file(EXPIRED).exists() {
                 // Released past the deadline: the receiver dropped it from its
                 // inbox and holds nothing of it, so what is left is ours.
                 discard(&self.dir, &self.id);
@@ -569,9 +569,12 @@ impl Exchange {
                 // Said before the first withdrawal is tried, so a receiver
                 // that holds the message now expires it as it releases it,
                 // rather than queueing it for a take to find.
-                if !expiring && self.admits == Admits::OnAcknowledgement {
-                    let _ = claim(&self.file(EXPIRING));
-                    expiring = true;
+                // One the file system refuses to create is said at a later look.
+                if expiry == Expiry::Unsaid && self.admits == Admits::OnAcknowledgement {
+                    expiry = match claim(&self.file(EXPIRING)) {
+                        Contest::Won | Contest::Lost => Expiry::Said,
+                        Contest::Refused => Expiry::Unsaid,
+                    };
                 }
                 // Every look tries to withdraw it, for a message released before
                 // the deadline was said.
@@ -743,6 +746,24 @@ enum Admits {
     OnAcknowledgement,
 }
 
+/// Whether a sender past its deadline has said so with `<id>.expiring`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Expiry {
+    /// Not yet: its deadline has not passed, or the file system refused it.
+    Unsaid,
+    /// It is there, for a release to find.
+    Said,
+}
+
+/// Whether the receiver holds a message's claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Holding {
+    /// It does not: the message is untaken, or was released.
+    Unclaimed,
+    /// It created `<id>.claimed`, and has not removed it.
+    Claimed,
+}
+
 /// One message's id in a spool: what every file of it is named by.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct MessageId(String);
@@ -849,7 +870,7 @@ where
     let hold = Hold {
         dir: dir.to_path_buf(),
         id: id.clone(),
-        held: Arc::new(AtomicBool::new(false)),
+        held: Arc::new(Mutex::new(Holding::Unclaimed)),
     };
     let message = match read_offer::<M>(dir, &taken) {
         Ok(message) => message,
@@ -884,7 +905,7 @@ struct Hold {
     dir: PathBuf,
     id: MessageId,
     /// Whether the receiver holds the message's claim.
-    held: Arc<AtomicBool>,
+    held: Arc<Mutex<Holding>>,
 }
 
 impl Hold {
@@ -892,12 +913,30 @@ impl Hold {
         self.id.file(&self.dir, suffix)
     }
 
+    fn holding(&self) -> Holding {
+        *self.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn hold(&self, holding: Holding) {
+        *self.held.lock().unwrap_or_else(PoisonError::into_inner) = holding;
+    }
+
+    /// Hand a sender past its deadline word that the message is dropped, by
+    /// renaming its `<id>.expiring`: `None` when it has said no such thing.
+    fn expire(&self) -> Option<std::io::Result<()>> {
+        match fs::rename(self.file(EXPIRING), self.file(EXPIRED)) {
+            Ok(()) => Some(Ok(())),
+            Err(failure) if failure.kind() == std::io::ErrorKind::NotFound => None,
+            Err(failure) => Some(Err(failure)),
+        }
+    }
+
     /// Write what became of the message, if its sender is still waiting for
     /// it: claimed first, so a sender that withdrew it is never answered, and
     /// let go of only once the answer is written. One that cannot be claimed is
     /// dropped unanswered, so its sender is told it was lost.
     fn settle(&self, body: &AnswerBody) {
-        if !self.held.load(Ordering::SeqCst) {
+        if self.holding() == Holding::Unclaimed {
             match claim(&self.file(CLAIMED)) {
                 Contest::Won => {}
                 Contest::Lost | Contest::Refused => {
@@ -933,34 +972,44 @@ impl Gate for Hold {
     }
 
     fn claim(&mut self) -> Claimed {
-        if self.held.load(Ordering::SeqCst) {
-            // Released with a claim the file system would not let go of: it is
-            // still the receiver's, and taking it again needs no new one.
-            return Claimed::Taken;
+        // Held already when it was released with a claim the file system would
+        // not let go of: it is still the receiver's, and needs no new one.
+        if self.holding() == Holding::Unclaimed {
+            match claim(&self.file(CLAIMED)) {
+                Contest::Won => self.hold(Holding::Claimed),
+                Contest::Lost => {
+                    discard(&self.dir, &self.id);
+                    return Claimed::Withdrawn;
+                }
+                Contest::Refused => return Claimed::Undecided,
+            }
         }
-        match claim(&self.file(CLAIMED)) {
-            Contest::Won => {
-                self.held.store(true, Ordering::SeqCst);
-                Claimed::Taken
-            }
-            Contest::Lost => {
-                discard(&self.dir, &self.id);
-                Claimed::Withdrawn
-            }
-            Contest::Refused => Claimed::Undecided,
+        // Claimed, and its sender past its deadline — said after a release
+        // that queued it again, or after a release that could not expire it:
+        // dropped as the release would have, keeping the claim, so its sender
+        // reads the rename and clears what is left.
+        match self.expire() {
+            None => Claimed::Taken,
+            Some(Ok(())) => Claimed::Withdrawn,
+            Some(Err(_)) => Claimed::Undecided,
         }
     }
 
     fn release(&mut self) -> Released {
-        // A sender past its deadline said so: the rename hands it word that
-        // the message is dropped, and the claim stays, so nothing takes it.
-        if fs::rename(self.file(EXPIRING), self.file(EXPIRED)).is_ok() {
-            return Released::Expired;
+        match self.expire() {
+            // The claim stays, so nothing takes the message, and the rename
+            // hands its sender word that it is dropped.
+            Some(Ok(())) => return Released::Expired,
+            // Its sender is past its deadline and the file system refused the
+            // word: the claim stays the receiver's, and the next take tries
+            // again rather than taking it.
+            Some(Err(_)) => return Released::Untaken,
+            None => {}
         }
         // Let go of only once its claim is gone: one the file system keeps is
         // still the receiver's, and its sender reads the message as taken.
         if fs::remove_file(self.file(CLAIMED)).is_ok() {
-            self.held.store(false, Ordering::SeqCst);
+            self.hold(Holding::Unclaimed);
         }
         Released::Untaken
     }
@@ -1008,7 +1057,7 @@ fn close_spool(dir: &Path, closed: &Closed) {
             Hold {
                 dir: dir.to_path_buf(),
                 id,
-                held: Arc::new(AtomicBool::new(false)),
+                held: Arc::new(Mutex::new(Holding::Unclaimed)),
             }
             .settle(&AnswerBody::Closed(closed.clone()));
         }
