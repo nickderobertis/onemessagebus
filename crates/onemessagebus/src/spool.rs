@@ -360,9 +360,9 @@ fn spool_dir(address: &Path) -> Result<(), BackendError> {
 struct Exchange {
     dir: PathBuf,
     id: String,
-    /// Whether the receiver honours a withdrawal after admission: read once the
-    /// courier has the message, from the receiver that took it.
-    withdrawable: bool,
+    /// What admission means to the receiver that took the message: read once
+    /// the courier has it.
+    admits: Admits,
     /// The answer, when it came before the offer was handed back.
     answered: Option<(Value, PathBuf)>,
 }
@@ -385,7 +385,7 @@ impl Exchange {
         let mut exchange = Self {
             dir: dir.to_path_buf(),
             id: mint(),
-            withdrawable: false,
+            admits: Admits::OnRename,
             answered: None,
         };
         let offer = exchange.file(OFFER);
@@ -425,12 +425,21 @@ impl Exchange {
             } else {
                 // The courier has it, so the receiver that took it is the one
                 // whose advertisement decides what admission means.
-                exchange.withdrawable = *advertised.get_or_insert_with(|| advertises(dir));
-                if !exchange.withdrawable
-                    || exchange.file(ADMITTED).exists()
-                    || exchange.file(CLAIMED).exists()
-                {
+                exchange.admits = *advertised.get_or_insert_with(|| advertises(dir));
+                if exchange.admits == Admits::OnRename || exchange.file(CLAIMED).exists() {
                     return Ok(exchange);
+                }
+                match read_document::<Admitted>(dir, &exchange.file(ADMITTED)) {
+                    Ok(Some(_)) => return Ok(exchange),
+                    Ok(None) => {}
+                    Err(unreadable) => {
+                        // Not an acknowledgement this build reads: withdrawn
+                        // and reported by name, or — taken first — admitted.
+                        if exchange.withdraw() {
+                            return Err(Undelivered::Backend(unreadable));
+                        }
+                        return Ok(exchange);
+                    }
                 }
                 if !exchange.file(TAKEN).exists() || !receiver_bound(dir) {
                     exchange.answered = Some(exchange.ended()?);
@@ -481,11 +490,12 @@ impl Exchange {
     /// Take the admitted message back, if the receiver has not taken it: by
     /// creating its claim before the receiver's take can.
     fn withdraw(&mut self) -> bool {
-        if !self.withdrawable || self.answered.is_some() || self.file(ANSWER).exists() {
+        if self.admits == Admits::OnRename || self.answered.is_some() || self.file(ANSWER).exists()
+        {
             return false;
         }
         let claimed = self.file(CLAIMED);
-        if claim(&claimed) != Claim::Won {
+        if !claim(&claimed) {
             return false;
         }
         // The receiver answers before it lets its claim go, so a claim made
@@ -544,6 +554,14 @@ impl Exchange {
     }
 }
 
+impl Drop for Exchange {
+    /// Its sender stops waiting: without its taken file, the receiver writes
+    /// no answer for nobody to read, and clears what is left of the message.
+    fn drop(&mut self) {
+        let _ = fs::remove_file(self.file(TAKEN));
+    }
+}
+
 /// The answer written at `path`, once there is one.
 fn read_answer(dir: &Path, path: &Path) -> Result<Option<Value>, Undelivered> {
     let Some(document) = read_document::<AnswerDocument>(dir, path)? else {
@@ -578,15 +596,30 @@ fn receiver_bound(dir: &Path) -> bool {
     !matches!(lock.try_lock(), Ok(()))
 }
 
-/// Whether the receiver bound to `dir` advertises a withdrawal after admission:
-/// an `admission.json` written beside the `spool.json` there now. One a
-/// receiver of an older build left behind it no longer matches once that
-/// receiver rewrote the declaration.
-fn advertises(dir: &Path) -> bool {
+/// What admission means to the receiver bound to `dir`: acknowledged, with a
+/// withdrawal after it, when it advertises that in an `admission.json` written
+/// beside the `spool.json` there now. One a killed receiver left behind no
+/// longer matches once a receiver of an older build rewrites the declaration.
+fn advertises(dir: &Path) -> Admits {
     let Ok(Some(admission)) = read_document::<Admission>(dir, &dir.join(ADMISSION)) else {
-        return false;
+        return Admits::OnRename;
     };
-    modified_ns(&dir.join(DECLARATION)) == Some(admission.declaration_modified_ns)
+    if modified_ns(&dir.join(DECLARATION)) == Some(admission.declaration_modified_ns) {
+        Admits::OnAcknowledgement
+    } else {
+        Admits::OnRename
+    }
+}
+
+/// What admission means to a spool's receiver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Admits {
+    /// A receiver that does not advertise it: the message is admitted once its
+    /// courier renames the offer, and is its receiver's from then on.
+    OnRename,
+    /// A receiver that does: the message is admitted once the receiver says its
+    /// inbox has queued it, and can be withdrawn until a take claims it.
+    OnAcknowledgement,
 }
 
 /// Stamp the declaration at `path` with a modification instant of this bind's
@@ -613,25 +646,18 @@ fn modified_ns(path: &Path) -> Option<u64> {
     u64::try_from(modified.duration_since(UNIX_EPOCH).ok()?.as_nanos()).ok()
 }
 
-/// How a claim on one message went.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Claim {
-    /// This side created it, and has the message.
-    Won,
-    /// The other side created it first.
-    Lost,
-    /// The file system refused for another reason, so nothing is decided by
-    /// it: the receiver goes on as if it holds the message, and the sender —
-    /// never claiming a withdrawal it cannot guarantee — reads it as taken.
-    Failed,
-}
-
-fn claim(path: &Path) -> Claim {
-    match OpenOptions::new().write(true).create_new(true).open(path) {
-        Ok(_) => Claim::Won,
-        Err(failure) if failure.kind() == std::io::ErrorKind::AlreadyExists => Claim::Lost,
-        Err(_) => Claim::Failed,
-    }
+/// Create the claim at `path`: `true` when this side made it and has the
+/// message. A claim the other side made first, or one the file system refuses
+/// to make, is not this side's: a receiver drops the message rather than take
+/// it unclaimed, and a sender reads it as taken rather than claim a withdrawal
+/// it cannot guarantee — so a refusing file system loses the message, and its
+/// sender is told so, rather than letting both sides have it.
+fn claim(path: &Path) -> bool {
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .is_ok()
 }
 
 /// Remove what is left of message `id` once its sender withdrew it.
@@ -751,7 +777,7 @@ impl Hold {
     /// it: claimed first, so a sender that withdrew it is never answered, and
     /// let go of only once the answer is written.
     fn settle(&self, body: &AnswerBody) {
-        if !self.held.load(Ordering::SeqCst) && claim(&self.file(CLAIMED)) == Claim::Lost {
+        if !self.held.load(Ordering::SeqCst) && !claim(&self.file(CLAIMED)) {
             discard(&self.dir, &self.id);
             return;
         }
@@ -782,7 +808,7 @@ impl Gate for Hold {
     }
 
     fn claim(&mut self) -> bool {
-        if claim(&self.file(CLAIMED)) == Claim::Lost {
+        if !claim(&self.file(CLAIMED)) {
             discard(&self.dir, &self.id);
             return false;
         }

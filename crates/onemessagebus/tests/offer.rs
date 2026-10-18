@@ -92,7 +92,6 @@ fn message_files(dir: &Path) -> Vec<String> {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
 // The receiver in a process of its own.
 
 /// The environment variable that makes this binary's `receiver_child` a
@@ -281,7 +280,6 @@ fn spool_dir() -> (tempfile::TempDir, PathBuf) {
     (dir, address)
 }
 
-// ---------------------------------------------------------------------------
 // Admission and the answer.
 
 #[test]
@@ -429,7 +427,6 @@ fn a_spool_offer_a_courier_renamed_but_never_queued_is_not_admitted_and_is_withd
     );
 }
 
-// ---------------------------------------------------------------------------
 // Withdrawal.
 
 #[test]
@@ -486,7 +483,6 @@ fn a_spool_withdrawal_before_a_take_keeps_it_from_the_receiver_and_after_one_is_
     assert!(address.join("closed.json").exists());
 }
 
-// ---------------------------------------------------------------------------
 // Deadlines.
 
 #[test]
@@ -530,7 +526,6 @@ fn a_spool_deadline_expires_an_untaken_message_and_outlives_a_taken_one() {
     assert_eq!(waiting.join().expect("waits"), Ok(filled("late")));
 }
 
-// ---------------------------------------------------------------------------
 // A receiver that goes away.
 
 #[test]
@@ -615,7 +610,6 @@ fn a_spool_offer_whose_receiver_process_ends_or_drops_its_claim_is_undelivered()
     assert_eq!(message_files(&address), Vec::<String>::new());
 }
 
-// ---------------------------------------------------------------------------
 // Release.
 
 #[test]
@@ -740,7 +734,6 @@ fn a_spool_release_hands_the_message_back_untaken_in_its_place() {
     assert_eq!(message_files(&address), Vec::<String>::new());
 }
 
-// ---------------------------------------------------------------------------
 // Take racing withdraw.
 
 const RACES: usize = 200;
@@ -866,7 +859,6 @@ fn a_spool_take_and_withdraw_racing_for_one_message_settle_it_exactly_one_way() 
     assert_eq!(message_files(&address), Vec::<String>::new());
 }
 
-// ---------------------------------------------------------------------------
 // A receiver that cannot withdraw after admission.
 
 /// A receiver of a build before admission was acknowledged, bound to `dir`: it
@@ -955,8 +947,15 @@ impl Drop for OlderReceiver {
 /// An older receiver has the message once its courier has it, and a sender
 /// never claims a withdrawal that receiver would not honour.
 fn assert_withdrawal_after_admission_is_refused(address: &Path) {
+    assert_withdrawal_refused_once(address, |_| {});
+}
+
+/// As `assert_withdrawal_after_admission_is_refused`, with `beside` writing
+/// what else is in the spool once the older receiver has bound it.
+fn assert_withdrawal_refused_once(address: &Path, beside: impl FnOnce(&Path)) {
     let answer = Arc::new(std::sync::Mutex::new(None));
     let _older = OlderReceiver::bind(address, Arc::clone(&answer));
+    beside(address);
     let sender = Spool::connect::<Order, Receipt>(address);
     let offer = sender
         .offer(order("held"))
@@ -1009,6 +1008,121 @@ fn an_older_receiver_rebinding_after_a_newer_one_leaves_its_advertisement_unread
     assert_withdrawal_after_admission_is_refused(&address);
 }
 
+/// The modification instant of the declaration in `address`, as an
+/// advertisement records it.
+fn declaration_modified_ns(address: &Path) -> u64 {
+    let modified = std::fs::metadata(address.join("spool.json"))
+        .and_then(|metadata| metadata.modified())
+        .expect("a declaration");
+    u64::try_from(
+        modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("after the epoch")
+            .as_nanos(),
+    )
+    .expect("in range")
+}
+
+#[test]
+fn an_advertisement_this_build_cannot_read_advertises_nothing() {
+    let (_dir, address) = spool_dir();
+    assert_withdrawal_refused_once(&address, |address| {
+        std::fs::write(address.join("admission.json"), "not an advertisement").expect("written");
+    });
+    let (_dir, address) = spool_dir();
+    assert_withdrawal_refused_once(&address, |address| {
+        let advertisement = json!({
+            "schema_version": SPOOL_SCHEMA_VERSION + 1,
+            "declaration_modified_ns": declaration_modified_ns(address),
+        });
+        std::fs::write(address.join("admission.json"), advertisement.to_string()).expect("written");
+    });
+}
+
+#[test]
+fn an_advertisement_that_says_more_than_this_build_knows_still_advertises() {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let advertisement = json!({
+        "schema_version": SPOOL_SCHEMA_VERSION,
+        "declaration_modified_ns": declaration_modified_ns(&address),
+        "said_by_a_later_build": true,
+    });
+    std::fs::write(address.join("admission.json"), advertisement.to_string()).expect("written");
+    let sender = Spool::connect::<Order, Receipt>(&address);
+    let offer = sender.offer(order("obsolete")).expect("admitted");
+    assert!(offer.withdraw().is_ok());
+    assert_eq!(receiver.take(SETTLE), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_acknowledgement_this_build_cannot_read_is_reported_and_the_message_withdrawn() {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    receiver.signal("-STOP");
+    let offering = {
+        let address = address.clone();
+        std::thread::spawn(move || {
+            Spool::connect::<Order, Receipt>(&address)
+                .offer(order("garbled"))
+                .map(drop)
+        })
+    };
+    let offered = loop {
+        if let Some(name) = files_in(&address)
+            .into_iter()
+            .find(|name| name.ends_with(".offer.json"))
+        {
+            break name;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    // Stand in for a courier whose acknowledgement was overwritten.
+    let id = offered.trim_end_matches(".offer.json");
+    let acknowledgement = address.join(format!("{id}.admitted.json"));
+    std::fs::write(&acknowledgement, "not an acknowledgement").expect("written");
+    std::fs::rename(
+        address.join(&offered),
+        address.join(format!("{id}.taken.json")),
+    )
+    .expect("taken by the stand-in");
+    match offering.join().expect("the offer finishes") {
+        Err(Undelivered::Backend(BackendError::Unreadable { file, .. })) => {
+            assert_eq!(file, acknowledgement);
+        }
+        other => panic!("an unreadable acknowledgement was reported as {other:?}"),
+    }
+    receiver.signal("-CONT");
+    assert_eq!(receiver.take(SETTLE), None);
+}
+
+#[test]
+fn a_dropped_offer_withdraws_nothing_and_its_message_is_still_taken_and_answered() {
+    let (sender, inbox) = Sender::<Order, Receipt>::channel();
+    drop(sender.offer(order("left")).expect("admitted"));
+    let delivered = inbox.take().expect("still queued");
+    assert_eq!(delivered.message(), &order("left"));
+    delivered.answer(filled("nobody"));
+    assert_eq!(inbox.answered().len(), 1);
+
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    drop(
+        Spool::connect::<Order, Receipt>(&address)
+            .offer(order("left"))
+            .expect("admitted"),
+    );
+    assert_eq!(receiver.take(Duration::ZERO).as_deref(), Some("left"));
+    assert_eq!(receiver.say("answer left nobody"), "ok");
+    assert_eq!(receiver.answered(), "answered [left]");
+    assert_eq!(
+        message_files(&address),
+        Vec::<String>::new(),
+        "an answer was written for an offer nobody holds"
+    );
+}
+
 #[test]
 fn a_receiver_unbinding_takes_its_advertisement_with_it() {
     let (_dir, address) = spool_dir();
@@ -1019,7 +1133,6 @@ fn a_receiver_unbinding_takes_its_advertisement_with_it() {
     assert!(!address.join("admission.json").exists());
 }
 
-// ---------------------------------------------------------------------------
 // A backend of a consumer's own.
 
 /// A backend that answers at once and says nothing of admission.

@@ -54,8 +54,10 @@ when `take` or `take_within` returns it.
   again: `withdraw` can succeed, and a `wait_until` whose deadline has passed
   expires it at once. A message is answered at most once, and one released and
   then withdrawn or expired is never answered by the receiver.
-- Dropping an `Offer` withdraws nothing. The message stays offered and its
-  answer goes to nobody.
+- Dropping an `Offer` withdraws nothing. The message stays offered and is still
+  taken and answered, and the answer goes to nobody. Over a spool, the dropped
+  offer removes its taken file, so the receiver writes no answer file nobody
+  would read.
 
 `InboxBackend::offer` is a provided method, so a backend written before it still
 compiles. Its default sends the message and holds the answer: the offer returns
@@ -132,7 +134,11 @@ A directory a receiver's process binds, for a sender in another process.
   message before it writes any answer (a disposition, a close, or a refusal)
   and lets the claim go only once the answer is written. So a sender whose
   claim succeeds after that finds the answer, gives its claim back, and reads
-  the message as taken.
+  the message as taken. An acknowledgement the sender cannot read is reported
+  by name, with the message withdrawn unless the receiver took it first. A
+  claim the file system refuses to create is neither side's: the receiver
+  drops the message rather than take it unclaimed, and its sender, which never
+  claims a withdrawal it cannot guarantee, is told the message was lost.
 - **A receiver that does not advertise it** (an older build) has the message
   once its courier has renamed the offer, as before. A sender then reads every
   admitted message as taken and never claims a withdrawal that receiver would

@@ -458,6 +458,74 @@ fn inbox_md_names_every_file_a_spool_holds() {
     );
 }
 
+/// The fields `docs/inbox.md`'s file table gives the document `file` — the
+/// `{a, b}` that leads its description — sorted.
+fn documented_fields(file: &str) -> Vec<String> {
+    let inbox_md = include_str!("../../../docs/inbox.md");
+    let row = inbox_md
+        .lines()
+        .find(|line| line.starts_with(&format!("| `{file}` |")))
+        .unwrap_or_else(|| panic!("docs/inbox.md's file table has no row for {file}"));
+    let description = row.rsplit(" | ").next().expect("a description");
+    let fields = description
+        .strip_prefix("`{")
+        .and_then(|rest| rest.split_once("}`"))
+        .unwrap_or_else(|| panic!("{file}'s row does not lead with its fields: {row}"))
+        .0;
+    let mut fields: Vec<String> = fields.split(", ").map(str::to_owned).collect();
+    fields.sort();
+    fields
+}
+
+fn fields_of(document: &Value) -> Vec<String> {
+    let mut fields: Vec<String> = document
+        .as_object()
+        .expect("a document is an object")
+        .keys()
+        .cloned()
+        .collect();
+    fields.sort();
+    fields
+}
+
+#[test]
+fn the_documented_admission_documents_are_what_a_bound_spool_writes() {
+    use onemessagebus::{Inbox, Spool, SPOOL_SCHEMA_VERSION};
+    use shop::{order, Order, Receipt};
+
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let inbox: Inbox<Order, Receipt> = Inbox::new();
+    let spool = Spool::bind(dir.path(), &inbox).expect("binds");
+    let advertisement = document_at(&dir.path().join("admission.json"));
+    assert_eq!(
+        fields_of(&advertisement),
+        documented_fields("admission.json")
+    );
+    assert_eq!(advertisement["schema_version"], json!(SPOOL_SCHEMA_VERSION));
+    assert!(advertisement["declaration_modified_ns"].is_u64());
+
+    // An admitted message's acknowledgement, read before anything takes it.
+    let offer = Spool::connect::<Order, Receipt>(spool.address())
+        .offer(order("A-1", 2))
+        .expect("admitted");
+    let acknowledgement = std::fs::read_dir(dir.path())
+        .expect("a directory")
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.to_string_lossy().ends_with(".admitted.json"))
+        .expect("an admitted message is acknowledged");
+    let acknowledgement = document_at(&acknowledgement);
+    assert_eq!(
+        fields_of(&acknowledgement),
+        documented_fields("<id>.admitted.json")
+    );
+    assert_eq!(
+        acknowledgement["schema_version"],
+        json!(SPOOL_SCHEMA_VERSION)
+    );
+    assert!(offer.withdraw().is_ok());
+}
+
 #[test]
 fn the_documented_carry_store_is_what_the_carry_backend_writes() {
     use onemessagebus::{Carry, Sender};
