@@ -43,6 +43,7 @@ mod inbox;
 mod kinds;
 mod layout;
 mod link;
+mod monotonic;
 mod plugin;
 mod queue;
 mod read;

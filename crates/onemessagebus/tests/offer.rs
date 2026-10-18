@@ -160,6 +160,12 @@ fn receiver_child() {
                 inbox.close(Closed::new(reason.join(" ")));
                 "ok".to_owned()
             }
+            // The wall clock as this process reads it, in seconds.
+            ["wall"] => std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("after the epoch")
+                .as_secs()
+                .to_string(),
             ["answered"] => {
                 let skus: Vec<String> = inbox
                     .answered()
@@ -216,7 +222,12 @@ struct Receiver {
 
 impl Receiver {
     fn bind(address: &Path) -> Self {
-        let mut receiver = Self::start("receiver_child", RECEIVER_SPOOL, address);
+        Self::bind_with(address, |_| {})
+    }
+
+    /// As `bind`, with `configure` setting up the receiver's process first.
+    fn bind_with(address: &Path, configure: impl FnOnce(&mut Command)) -> Self {
+        let mut receiver = Self::start_with("receiver_child", RECEIVER_SPOOL, address, configure);
         assert_eq!(receiver.reply(), "bound");
         receiver
     }
@@ -224,7 +235,18 @@ impl Receiver {
     /// This binary re-run as its ignored test `child`, with `variable` naming
     /// the spool at `address`.
     fn start(child: &str, variable: &str, address: &Path) -> Self {
-        let mut child = Command::new(std::env::current_exe().expect("this test binary"))
+        Self::start_with(child, variable, address, |_| {})
+    }
+
+    fn start_with(
+        child: &str,
+        variable: &str,
+        address: &Path,
+        configure: impl FnOnce(&mut Command),
+    ) -> Self {
+        let mut command = Command::new(std::env::current_exe().expect("this test binary"));
+        configure(&mut command);
+        let mut child = command
             .args([
                 child,
                 "--exact",
@@ -898,62 +920,193 @@ fn published_deadline(address: &Path) -> PathBuf {
     }
 }
 
+/// The preload that shifts one process's wall clock by
+/// `ONEMESSAGEBUS_WALL_CLOCK_SHIFT_SECONDS`, built into `dir`.
+#[cfg(target_os = "linux")]
+fn wall_clock_shift(dir: &Path) -> PathBuf {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/wall_clock_shift.c");
+    let library = dir.join("wall_clock_shift.so");
+    let status = Command::new(std::env::var_os("CC").unwrap_or_else(|| "cc".into()))
+        .args(["-shared", "-fPIC", "-o"])
+        .arg(&library)
+        .arg(&source)
+        .arg("-ldl")
+        .status()
+        .expect("a C compiler builds the wall-clock shift; set CC to one");
+    assert!(status.success(), "the wall-clock shift does not build");
+    library
+}
+
+/// A receiver whose wall clock reads `shift` seconds off everyone else's, as
+/// if the system clock had been stepped after the sender published its
+/// deadline; the shift is checked to have taken.
+#[cfg(target_os = "linux")]
+fn receiver_with_wall_clock_shifted(dir: &Path, address: &Path, shift: i64) -> Receiver {
+    let library = wall_clock_shift(dir);
+    let mut receiver = Receiver::bind_with(address, |command| {
+        command
+            .env("LD_PRELOAD", &library)
+            .env("ONEMESSAGEBUS_WALL_CLOCK_SHIFT_SECONDS", shift.to_string());
+    });
+    let ours = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after the epoch")
+        .as_secs();
+    let theirs: u64 = receiver.say("wall").parse().expect("seconds");
+    let off = i64::try_from(theirs).expect("small") - i64::try_from(ours).expect("small");
+    assert!(
+        (off - shift).abs() < 60,
+        "the receiver's wall clock is {off}s off, not {shift}s"
+    );
+    receiver
+}
+
+#[cfg(target_os = "linux")]
 #[test]
-fn a_spool_deadline_published_ahead_of_a_clock_set_back_is_published_again_as_it_passes() {
-    let (_dir, address) = spool_dir();
-    let mut receiver = Receiver::bind(&address);
-    let sender = Spool::connect::<Order, Receipt>(&address);
-    let offer = sender.offer(order("late")).expect("admitted");
+fn a_wall_clock_set_forward_never_expires_a_message_released_before_its_deadline() {
+    let (dir, address) = spool_dir();
+    let mut receiver = receiver_with_wall_clock_shifted(dir.path(), &address, 3600);
+    let mut sender = Receiver::start("sender_child", SENDER_SPOOL, &address);
+    assert_eq!(sender.reply(), "admitted");
     assert_eq!(receiver.take(TAKE).as_deref(), Some("late"));
-    let waiting =
-        std::thread::spawn(move || offer.wait_until(Instant::now() + Duration::from_millis(300)));
-    // The system clock is set back after the deadline was published: on it,
-    // the published deadline is now years off.
-    let deadline = published_deadline(&address);
-    std::fs::write(
-        &deadline,
-        json!({"schema_version": SPOOL_SCHEMA_VERSION, "deadline": u64::MAX}).to_string(),
-    )
-    .expect("the deadline is pushed out");
-    // Past the sender's own deadline, it publishes it again as passed.
-    std::thread::sleep(Duration::from_millis(600));
-    assert_eq!(receiver.say("release-and-take late"), "none");
-    assert_eq!(waiting.join().expect("waits"), Err(Unanswered::Expired));
+    sender.tell("wait 2000");
+    let started = Instant::now();
+    published_deadline(&address);
+    sender.signal("-STOP");
+    // Before the deadline on the clock `Instant` reads, however far ahead the
+    // receiver's wall clock is: released, it is untaken and taken again.
+    assert_eq!(receiver.say("release-and-take late"), "took late");
+    assert!(
+        started.elapsed() < Duration::from_millis(1500),
+        "released too late to prove anything"
+    );
+    // Answered after the deadline passes, with the sender suspended across it.
+    std::thread::sleep(Duration::from_millis(2500));
+    assert_eq!(receiver.say("answer late in-time"), "ok");
+    sender.signal("-CONT");
+    assert_eq!(sender.reply(), "answered by in-time");
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_wall_clock_set_back_never_lets_a_message_released_past_its_deadline_be_taken() {
+    let (dir, address) = spool_dir();
+    let mut receiver = receiver_with_wall_clock_shifted(dir.path(), &address, -3600);
+    let mut sender = Receiver::start("sender_child", SENDER_SPOOL, &address);
+    assert_eq!(sender.reply(), "admitted");
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("late"));
+    sender.tell("wait 300");
+    published_deadline(&address);
+    sender.signal("-STOP");
+    // Past the deadline on the clock `Instant` reads, however far behind the
+    // receiver's wall clock is, with the sender never having run since.
+    std::thread::sleep(Duration::from_millis(800));
+    assert_eq!(
+        receiver.say("release-and-take late"),
+        "none",
+        "a take found a message released past its deadline"
+    );
+    assert_eq!(receiver.take(Duration::ZERO), None);
+    sender.signal("-CONT");
+    assert_eq!(sender.reply(), "expired");
     assert_eq!(receiver.take(SETTLE), None);
     assert_eq!(message_files(&address), Vec::<String>::new());
 }
 
-#[test]
-fn a_deadline_the_receiver_cannot_read_is_none_and_its_senders_withdrawal_still_decides() {
+/// A clock identity no process here reads: a boot that never happened.
+const FOREIGN_CLOCK: &str = "linux-monotonic:00000000-0000-0000-0000-000000000000:none";
+
+/// A suspended sender's published deadline replaced with `deadline`, which
+/// the receiver must not read as passed: a release queues the message again,
+/// untaken, and the resumed sender's own withdrawal at its deadline decides.
+fn assert_deadline_not_read(deadline: &serde_json::Value) {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
     let mut sender = Receiver::start("sender_child", SENDER_SPOOL, &address);
     assert_eq!(sender.reply(), "admitted");
     assert_eq!(receiver.take(TAKE).as_deref(), Some("late"));
     sender.tell("wait 300");
-    let deadline = published_deadline(&address);
+    let published = published_deadline(&address);
     sender.signal("-STOP");
-    // A deadline written by a build this one cannot read.
-    std::fs::write(
-        &deadline,
-        json!({"schema_version": SPOOL_SCHEMA_VERSION + 1, "deadline": 0}).to_string(),
-    )
-    .expect("the deadline is rewritten");
+    std::fs::write(&published, deadline.to_string()).expect("the deadline is rewritten");
     std::thread::sleep(Duration::from_millis(600));
-    // Not read as passed: the release queues it again, untaken.
     assert_eq!(receiver.say("release late"), "ok");
     assert!(
         !message_files(&address)
             .iter()
             .any(|name| name.ends_with(".expired")),
-        "an unreadable deadline was read as passed"
+        "{deadline} was read as a passed deadline"
     );
     sender.signal("-CONT");
-    // The resumed sender, past its own deadline, withdraws it.
     assert_eq!(sender.reply(), "expired");
     assert_eq!(receiver.take(SETTLE), None);
     assert_eq!(receiver.answered(), "answered []");
     assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
+#[test]
+fn a_deadline_the_receiver_cannot_read_is_none_and_its_senders_withdrawal_still_decides() {
+    // Written by a build this one cannot read.
+    assert_deadline_not_read(&json!({
+        "schema_version": SPOOL_SCHEMA_VERSION + 1,
+        "deadline": 0,
+    }));
+}
+
+#[test]
+fn a_deadline_on_a_clock_the_receiver_does_not_read_is_none() {
+    // Long past, on a clock this receiver cannot compare its own against.
+    assert_deadline_not_read(&json!({
+        "schema_version": SPOOL_SCHEMA_VERSION,
+        "clock": FOREIGN_CLOCK,
+        "deadline": 0,
+    }));
+}
+
+#[test]
+fn a_receiver_on_a_clock_its_sender_cannot_verify_never_has_an_admitted_message_expire() {
+    let rewrites: [(&str, fn(&mut serde_json::Value)); 3] = [
+        ("another boot's clock", |advertisement| {
+            advertisement["clock"] = json!(FOREIGN_CLOCK);
+        }),
+        ("no clock", |advertisement| {
+            advertisement
+                .as_object_mut()
+                .expect("an object")
+                .remove("clock");
+        }),
+        ("a clock that is no identity", |advertisement| {
+            advertisement["clock"] = json!("the kitchen clock");
+        }),
+    ];
+    for (named, rewrite) in rewrites {
+        let (_dir, address) = spool_dir();
+        let mut receiver = Receiver::bind(&address);
+        let mut rewritten = advertisement(&address);
+        rewrite(&mut rewritten);
+        std::fs::write(address.join("admission.json"), rewritten.to_string()).expect("written");
+        let sender = Spool::connect::<Order, Receipt>(&address);
+        let offer = sender.offer(order("held")).expect("admitted");
+        let Err(offer) = offer.withdraw() else {
+            panic!("{named}: a withdrawal it could not verify was claimed");
+        };
+        let waiting = std::thread::spawn(move || {
+            offer.wait_until(Instant::now() + Duration::from_millis(100))
+        });
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(
+            !waiting.is_finished(),
+            "{named}: an expiry was claimed for an admitted message"
+        );
+        assert_eq!(receiver.take(TAKE).as_deref(), Some("held"), "{named}");
+        assert_eq!(receiver.say("answer held stock-room"), "ok");
+        assert_eq!(
+            waiting.join().expect("waits"),
+            Ok(filled("stock-room")),
+            "{named}"
+        );
+    }
 }
 
 #[test]

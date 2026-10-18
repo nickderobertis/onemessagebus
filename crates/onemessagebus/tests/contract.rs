@@ -491,6 +491,9 @@ fn fields_of(document: &Value) -> Vec<String> {
     fields
 }
 
+// Linux: the one platform where a receiver identifies the monotonic clock its
+// advertisement and a published deadline name.
+#[cfg(target_os = "linux")]
 #[test]
 fn the_documented_admission_documents_are_what_a_bound_spool_writes() {
     use onemessagebus::{Inbox, Spool, SPOOL_SCHEMA_VERSION};
@@ -506,6 +509,9 @@ fn the_documented_admission_documents_are_what_a_bound_spool_writes() {
     );
     assert_eq!(advertisement["schema_version"], json!(SPOOL_SCHEMA_VERSION));
     assert!(advertisement["declaration"].is_string());
+    assert!(advertisement["clock"]
+        .as_str()
+        .is_some_and(|clock| clock.starts_with("linux-monotonic:")));
 
     // An admitted message's acknowledgement, read before anything takes it.
     let offer = Spool::connect::<Order, Receipt>(spool.address())
@@ -560,6 +566,7 @@ fn the_documented_admission_documents_are_what_a_bound_spool_writes() {
     );
     assert_eq!(published["schema_version"], json!(SPOOL_SCHEMA_VERSION));
     assert!(published["deadline"].is_u64());
+    assert_eq!(published["clock"], advertisement["clock"]);
     delivered.answer(Receipt::Deferred);
     assert!(waiting.join().expect("waits").is_ok());
 }
