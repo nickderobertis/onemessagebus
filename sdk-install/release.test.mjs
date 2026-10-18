@@ -308,7 +308,7 @@ elif kind in ['unsafe-record','bad-hash','wrong-target']:
  value=json.loads(inventory.read_text())
  if kind=='unsafe-record': value['archive']='../escape'
  if kind=='bad-hash': value['hashes']['wheel']='not-a-hash'
- if kind=='wrong-target': value['target']='aarch64-apple-darwin'
+ if kind=='wrong-target': value['target']='x86_64-unknown-linux-gnu' if value['target']=='aarch64-apple-darwin' else 'aarch64-apple-darwin'
  inventory.write_text(json.dumps(value))
 if kind in ['no-npm','many-npm','bad-tar','no-npm-binary']:
  package=next(p.glob('*.tgz'))
