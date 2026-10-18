@@ -956,6 +956,31 @@ fn a_deadline_the_receiver_cannot_read_is_none_and_its_senders_withdrawal_still_
     assert_eq!(message_files(&address), Vec::<String>::new());
 }
 
+#[test]
+fn a_first_take_past_the_deadline_of_a_suspended_sender_expires_the_message_untaken() {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let mut sender = Receiver::start("sender_child", SENDER_SPOOL, &address);
+    assert_eq!(sender.reply(), "admitted");
+    // Never taken: the sender starts waiting and is suspended once its deadline
+    // is published, before it passes.
+    sender.tell("wait 300");
+    published_deadline(&address);
+    sender.signal("-STOP");
+    std::thread::sleep(Duration::from_millis(600));
+    assert_eq!(
+        receiver.take(Duration::ZERO),
+        None,
+        "a first take past a suspended sender's deadline took the message"
+    );
+    assert_eq!(receiver.take(Duration::ZERO), None);
+    sender.signal("-CONT");
+    assert_eq!(sender.reply(), "expired");
+    assert_eq!(receiver.take(SETTLE), None);
+    assert_eq!(receiver.answered(), "answered []");
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
 const RACES: usize = 200;
 
 /// Which side of race `race` waits before it moves, and for how long: a sweep
