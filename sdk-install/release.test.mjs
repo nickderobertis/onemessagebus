@@ -17,6 +17,27 @@ import { test } from "node:test";
 const root = resolve(import.meta.dirname, "..");
 const run = (command, args) =>
   execFileSync(command, args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+// The compound-architecture fixture's wrong tag: the source tag with its
+// architecture swapped for one it is not, whichever host built the wheel.
+const wrongArchitecture = `
+def wrong_architecture(tag):
+ head,arch=re.fullmatch(r'(.+)_(x86_64|aarch64|arm64)',tag).groups()
+ return head+('_x86_64' if arch in ('aarch64','arm64') else '_arm64')
+`;
+test("the compound-architecture wrong tag differs from an x86_64 or ARM64 source tag", () => {
+  const sources = ["manylinux_2_17_x86_64", "macosx_11_0_arm64", "manylinux_2_17_aarch64"];
+  const wrong = run("python3", [
+    "-c",
+    `import re,sys${wrongArchitecture}print(' '.join(wrong_architecture(tag) for tag in sys.argv[1:]))`,
+    ...sources,
+  ])
+    .trim()
+    .split(" ");
+  assert.deepEqual(wrong, ["manylinux_2_17_arm64", "macosx_11_0_x86_64", "manylinux_2_17_x86_64"]);
+  const architecture = (tag) => tag.match(/_(x86_64|aarch64|arm64)$/)[1];
+  for (const [index, source] of sources.entries())
+    assert.notEqual(architecture(wrong[index]), architecture(source), source);
+});
 test("one real native build supplies identical wheel/archive/npm bytes and installed CLI/SDKs", {
   timeout: 600000,
 }, () => {
@@ -300,7 +321,7 @@ if kind=='node-sdk':
         `
 import io,json,tarfile,zipfile,sys,re
 from pathlib import Path
-p=Path(sys.argv[1]); cwd=Path(sys.argv[2]); kind=sys.argv[3]
+${wrongArchitecture}p=Path(sys.argv[1]); cwd=Path(sys.argv[2]); kind=sys.argv[3]
 inventory=p/'binary.json'
 if kind=='bad-json': inventory.write_text('{')
 elif kind=='bad-record': inventory.write_text('[]')
@@ -326,7 +347,7 @@ if kind in ['no-wheel','many-wheel','bad-filename','bad-platform','old-version',
   fields=wheel.name.split('-'); fields[-1]='win_'+fields[-1].split('_')[-2]+'_'+fields[-1].split('_')[-1]; wheel.rename(p/'-'.join(fields))
  if kind in ['compound-architecture','compound-family']:
   fields=wheel.name.split('-'); tag=fields[-1].removesuffix('.whl')
-  wrong=tag.rsplit('_',1)[0]+'_arm64' if kind=='compound-architecture' else 'win_'+tag.rsplit('_',1)[1]
+  wrong=wrong_architecture(tag) if kind=='compound-architecture' else 'win_'+tag.rsplit('_',1)[1]
   fields[-1]=wrong+'.'+tag+'.whl'; wheel.rename(p/'-'.join(fields))
   wheel=p/'-'.join(fields); replacement=wheel.with_suffix('.changed')
   with zipfile.ZipFile(wheel) as source, zipfile.ZipFile(replacement,'w') as out:
