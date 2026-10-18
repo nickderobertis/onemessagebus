@@ -9,6 +9,7 @@ import {
   cpSync,
   mkdirSync,
   copyFileSync,
+  symlinkSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -104,7 +105,22 @@ print(json.dumps(dict(hashes=[hashlib.sha256(b).hexdigest() for b in [binary,arc
     const python = resolve(root, run("which", ["python3"]).trim());
     const empty = join(work, "empty");
     mkdirSync(empty);
-    for (const kind of ["python-sdk", "missing-npm", "npm-cli", "missing-node"]) {
+    // A diagnostic names the line that failed, so a later step's refusal cannot stand in.
+    const installer = readFileSync(join(root, "scripts/release-local-install.sh"), "utf8").split(
+      "\n",
+    );
+    const failedAt = (needle) =>
+      new RegExp(
+        `command failed at line ${installer.findIndex((line) => line.includes(needle)) + 1};`,
+      );
+    for (const kind of [
+      "python-sdk",
+      "npm-pack",
+      "missing-npm",
+      "npm-cli",
+      "node-sdk",
+      "missing-node",
+    ]) {
       const badStage = join(work, kind, "stage"),
         badSdks = join(work, kind, "sdks");
       cpSync(stage, badStage, { recursive: true });
@@ -133,26 +149,50 @@ if kind=='npm-cli':
    if member.name=='package/bin/onemessagebus': content=b'#!/bin/sh'+bytes([10])+b'exit 1'+bytes([10]); member.size=len(content)
    out.addfile(member,io.BytesIO(content) if content is not None else None)
  replacement.replace(package)
+if kind=='node-sdk':
+ package=next(sdks.glob('*.tgz')); replacement=package.with_suffix('.changed')
+ with tarfile.open(package) as source, tarfile.open(replacement,'w:gz') as out:
+  for member in source.getmembers():
+   content=source.extractfile(member).read() if member.isfile() else None
+   if member.name=='package/dist/index.js': content=b'throw new Error("broken Node SDK fixture");'+bytes([10])+content; member.size=len(content)
+   out.addfile(member,io.BytesIO(content) if content is not None else None)
+ replacement.replace(package)
 `,
         badStage,
         badSdks,
         kind,
       ]);
+      // The selected Node's directory leads PATH, so an npm beside it is the npm run.
+      let node = kind === "missing-node" ? "/missing-node" : process.execPath;
+      if (kind === "npm-pack") {
+        const bin = join(work, kind, "bin");
+        mkdirSync(bin);
+        symlinkSync(process.execPath, join(bin, "node"));
+        writeFileSync(join(bin, "npm"), "#!/bin/sh\necho 'broken npm fixture' >&2\nexit 1\n", {
+          mode: 0o755,
+        });
+        node = join(bin, "node");
+      }
       const refused = spawnSync(
         "bash",
-        [
-          "scripts/release-local-install.sh",
-          badStage,
-          badSdks,
-          python,
-          kind === "missing-node" ? "/missing-node" : process.execPath,
-        ],
+        ["scripts/release-local-install.sh", badStage, badSdks, python, node],
         { cwd: root, encoding: "utf8" },
       );
       assert.equal(refused.status, 1, [kind, refused.stderr].join(": "));
       assert.match(refused.stderr, /command failed/);
       assert.doesNotMatch(refused.stdout, /staged CLI and SDK installations passed/);
-      if (kind === "python-sdk") assert.match(refused.stderr, /broken Python SDK fixture/);
+      if (kind === "python-sdk") {
+        assert.match(refused.stderr, /broken Python SDK fixture/);
+        assert.match(refused.stderr, failedAt("sdk-install/smoke.py"));
+      }
+      if (kind === "npm-pack") {
+        assert.match(refused.stderr, /broken npm fixture/);
+        assert.match(refused.stderr, failedAt("npm pack"));
+      }
+      if (kind === "node-sdk") {
+        assert.match(refused.stderr, /broken Node SDK fixture/);
+        assert.match(refused.stderr, failedAt('smoke.mjs "$version"'));
+      }
       if (kind === "missing-npm") assert.match(refused.stderr, /ENOENT|no such file/i);
       if (kind === "npm-cli") assert.match(refused.stderr, /staged npm CLI/);
       if (kind === "missing-node")
