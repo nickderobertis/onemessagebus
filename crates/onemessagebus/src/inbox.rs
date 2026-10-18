@@ -151,26 +151,6 @@ pub enum BackendError {
         /// The bounded wait that passed.
         waited: Duration,
     },
-    /// The spool's bounded wait passed with the message neither admitted nor
-    /// withdrawn, because the file system refused the claim its sender needs to
-    /// withdraw it. The one outcome after which its receiver may still admit
-    /// the message later.
-    #[error(
-        "the message offered to the spool at {} was neither admitted nor withdrawn within {}: the file system refused to create {}, the claim its withdrawal needs ({why}), so its receiver may still admit it",
-        spool.display(),
-        wait_text(*waited),
-        claim.display()
-    )]
-    Unclaimable {
-        /// The spool.
-        spool: PathBuf,
-        /// The claim the file system refused to create.
-        claim: PathBuf,
-        /// The bounded wait that passed.
-        waited: Duration,
-        /// What the system said.
-        why: String,
-    },
     /// The receiver took the message and is no longer bound to the spool, and it
     /// answered nothing before it went.
     #[error(
@@ -208,6 +188,26 @@ pub enum BackendError {
         /// What did not: `message`, `disposition`.
         what: &'static str,
         /// What serde said.
+        why: String,
+    },
+    /// The spool's bounded wait passed with the message neither admitted nor
+    /// withdrawn, because the file system refused the claim its sender needs to
+    /// withdraw it. The one outcome after which its receiver may still admit
+    /// the message later.
+    #[error(
+        "the message offered to the spool at {} was neither admitted nor withdrawn within {}: the file system refused to create {}, the claim its withdrawal needs ({why}), so its receiver may still admit it",
+        spool.display(),
+        wait_text(*waited),
+        claim.display()
+    )]
+    Unclaimable {
+        /// The spool.
+        spool: PathBuf,
+        /// The claim the file system refused to create.
+        claim: PathBuf,
+        /// The bounded wait that passed.
+        waited: Duration,
+        /// What the system said.
         why: String,
     },
 }
