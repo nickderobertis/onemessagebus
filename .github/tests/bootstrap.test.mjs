@@ -2,10 +2,10 @@
 // it, in a scratch checkout.
 //
 // The PATH holds only the tools the script needs, so no `go` or `actionlint` of
-// this host leaks in. Doubled are `npm` (a no-op: `npm ci` is not under test),
-// `go` (records its argv and drops a binary into GOBIN), `curl` (serves the
-// release assets from a local directory and records each URL, so nothing
-// leaves this machine) and `uname` (stands in for the hosted macOS runner).
+// this host leaks in. Doubled are `go` (records its argv and drops a binary
+// into GOBIN), `curl` (serves the release assets from a local directory and
+// records each URL, so nothing leaves this machine) and `uname` (stands in for
+// the hosted macOS runner).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -88,7 +88,6 @@ function bootstrap({ go, machine = "Darwin arm64", served = assets }) {
   for (const tool of REAL) symlinkSync(which(tool), join(bin, tool));
   writeFileSync(record, "");
   const [system, arch] = machine.split(" ");
-  script(join(bin, "npm"), "exit 0\n");
   script(join(bin, "uname"), `case "$1" in -s) echo ${system} ;; -m) echo ${arch} ;; esac\n`);
   script(
     join(bin, "curl"),

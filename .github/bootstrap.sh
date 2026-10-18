@@ -4,7 +4,6 @@ set -euo pipefail
 # where it is not — a hosted macOS runner carries no Go — the same release's
 # prebuilt binary is fetched and checked against that release's checksums.
 actionlint_version=1.7.12
-npm ci --ignore-scripts --quiet
 if ! command -v actionlint >/dev/null; then
   mkdir -p .github/.tools
   if command -v go >/dev/null; then
