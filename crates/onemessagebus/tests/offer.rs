@@ -60,11 +60,6 @@ const TAKE: Duration = Duration::from_secs(10);
 /// polls.
 const SETTLE: Duration = Duration::from_millis(400);
 
-/// How long a take told only once its offer returned waits for the message: not
-/// at all where the receiver confirms admission, and a while where the sender
-/// reads it admitted once renamed, as on Windows (`docs/inbox.md`).
-const ADMITTED_TAKE: Duration = if cfg!(unix) { Duration::ZERO } else { TAKE };
-
 fn files_in(dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(dir)
         .expect("the spool is a directory")
@@ -387,10 +382,6 @@ fn an_in_process_offer_returns_admitted_and_waits_for_the_receivers_answer() {
 }
 
 #[test]
-#[cfg_attr(
-    not(unix),
-    ignore = "a spool receiver's admission is confirmed only where its declaration has a file identity, which the standard library gives only on Unix"
-)]
 fn a_spool_offer_returns_once_the_receivers_inbox_has_queued_it_and_waits_for_its_answer() {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
@@ -1683,7 +1674,9 @@ fn assert_withdrawal_refused_once(address: &Path, declare: bool, beside: impl Fn
     let answer = Arc::new(std::sync::Mutex::new(None));
     let _older = OlderReceiver::bind(address, Arc::clone(&answer), declare);
     beside(address);
-    let sender = Spool::connect::<Order, Receipt>(address);
+    // Bounded, as an advertisement left beside the older receiver may have the
+    // sender wait it out for an acknowledgement that receiver never writes.
+    let sender = Spool::connect_within::<Order, Receipt>(address, Duration::from_secs(5));
     let offer = sender
         .offer(order("held"))
         .expect("admitted by the older receiver");
@@ -1876,29 +1869,102 @@ fn an_advertisement_this_build_cannot_read_advertises_nothing() {
     });
 }
 
-#[test]
-fn an_advertisement_naming_no_declaration_identity_is_never_trusted_while_its_lock_is_held() {
-    // What a receiver writes where a file has no identity, as on Windows: no
-    // sender can tell its declaration from an older receiver's, so a live
-    // receiver of this build is read as one that does not advertise.
-    let (_dir, address) = spool_dir();
-    let mut receiver = Receiver::bind(&address);
-    let mut unidentified = advertisement(&address);
+/// Rewrite the bound receiver's `admission.json` at `address` to record what a
+/// receiver writes where a file has no identity, as on Windows.
+fn unidentify(address: &Path) {
+    let mut unidentified = advertisement(address);
     unidentified["declaration"] = json!("unidentified");
     std::fs::write(address.join("admission.json"), unidentified.to_string()).expect("written");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_receiver_whose_declaration_has_no_identity_still_admits_a_message_before_its_offer_returns() {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    unidentify(&address);
+
+    // Live: the offer returns once the inbox has queued it and said so, and
+    // the message, never withdrawn, is taken and answered.
     let sender = Spool::connect::<Order, Receipt>(&address);
-    let offer = sender.offer(order("held")).expect("admitted once renamed");
+    receiver.signal("-STOP");
+    let offering = std::thread::spawn(move || sender.offer(order("held")));
+    waiting_offer(&address);
+    std::thread::sleep(SETTLE);
+    assert!(
+        !offering.is_finished(),
+        "an offer returned before the receiver's inbox admitted it"
+    );
+    receiver.signal("-CONT");
+    let offer = offering
+        .join()
+        .expect("the offer finishes")
+        .expect("admitted");
+    assert!(
+        message_files(&address)
+            .iter()
+            .any(|name| name.ends_with(".admitted.json")),
+        "the offer returned without the inbox's acknowledgement: {:?}",
+        message_files(&address)
+    );
     let offer = offer
         .withdraw()
-        .expect_err("a declaration with no identity advertises nothing");
-    assert_eq!(receiver.take(TAKE).as_deref(), Some("held"));
+        .expect_err("a declaration with no identity is never withdrawn from");
+    assert_eq!(receiver.take(Duration::ZERO).as_deref(), Some("held"));
     assert_eq!(receiver.say("answer held stock-room"), "ok");
     assert_eq!(offer.wait(), Ok(filled("stock-room")));
-    assert_eq!(
-        message_files(&address),
-        Vec::<String>::new(),
-        "the receiver's acknowledgement outlived its answered message"
+    assert_eq!(message_files(&address), Vec::<String>::new());
+
+    // Renamed to taken by a stand-in for a courier that never queues it: the
+    // offer does not return at the rename, and once its wait passes the
+    // message is its receiver's — never claimed, since an older courier
+    // behind this advertisement would honour no claim.
+    receiver.signal("-STOP");
+    let wait = Duration::from_millis(1500);
+    let offering = {
+        let address = address.clone();
+        std::thread::spawn(move || {
+            Spool::connect_within::<Order, Receipt>(&address, wait).offer(order("renamed"))
+        })
+    };
+    let offered = waiting_offer(&address);
+    let taken = offered.replace(".offer.json", ".taken.json");
+    std::fs::rename(address.join(&offered), address.join(&taken)).expect("taken by the stand-in");
+    std::thread::sleep(SETTLE);
+    assert!(
+        !offering.is_finished(),
+        "an offer returned at the rename, before any acknowledgement"
     );
+    let offer = offering
+        .join()
+        .expect("the offer finishes")
+        .expect("its receiver's once the wait passes");
+    assert!(
+        !message_files(&address)
+            .iter()
+            .any(|name| name.ends_with(".claimed")),
+        "a claim was made that an older courier would not honour"
+    );
+    receiver.signal("-CONT");
+    assert_taken_until_the_receiver_goes(offer, receiver);
+}
+
+#[test]
+fn an_advertisement_naming_no_declaration_identity_beside_an_older_receiver_never_withdraws() {
+    // A dying receiver of this build where a file has no identity, its lock
+    // still held as an older receiver rebinds: the older receiver writes no
+    // acknowledgement, and nothing it admitted is withdrawn or expired.
+    let (_dir, address) = left_by_a_killed_receiver();
+    unidentify(&address);
+    let lingering = std::fs::File::options()
+        .write(true)
+        .open(address.join("admission.lock"))
+        .expect("the advertisement's lock");
+    lingering
+        .try_lock()
+        .expect("free once its receiver is gone");
+    assert_withdrawal_refused_once(&address, true, |_| {});
+    drop(lingering);
 }
 
 #[test]
@@ -2513,7 +2579,7 @@ fn a_dropped_offer_withdraws_nothing_and_its_message_is_still_taken_and_answered
             .offer(order("left"))
             .expect("admitted"),
     );
-    assert_eq!(receiver.take(ADMITTED_TAKE).as_deref(), Some("left"));
+    assert_eq!(receiver.take(Duration::ZERO).as_deref(), Some("left"));
     assert_eq!(receiver.say("answer left nobody"), "ok");
     assert_eq!(receiver.answered(), "answered [left]");
     assert_eq!(

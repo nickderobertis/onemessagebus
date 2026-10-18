@@ -495,6 +495,12 @@ impl Exchange {
                     exchange.answered = Some(exchange.ended()?);
                     return Ok(exchange);
                 }
+                // The courier that has it may be an older one behind an
+                // advertisement left by a receiver still dying, which honours
+                // no claim: the message is its receiver's.
+                if elapsed && exchange.admits == Admits::AcknowledgedUnverifiable {
+                    return Ok(exchange);
+                }
                 if elapsed {
                     match exchange.withdraw_unadmitted() {
                         Withdrawal::Withdrawn => {
@@ -774,15 +780,19 @@ fn open_lock(path: &Path) -> Result<File, BackendError> {
 /// killed newer one finds it free; and it renames a new declaration into place,
 /// so for the moment a dying receiver's locks take to be let go of, the
 /// identity differs. A declaration recorded `unidentified` cannot be told from
-/// an older receiver's, so it is never trusted.
+/// an older receiver's, so its admission is still waited for but never
+/// withdrawn from, nor claimed against at the bound.
 fn advertises(dir: &Path) -> Admits {
     let Ok(Some(admission)) = read_document::<Admission>(dir, &dir.join(ADMISSION)) else {
         return Admits::OnRename;
     };
-    if !held(&dir.join(ADMISSION_LOCK))
-        || admission.declaration == Identity::Unidentified
-        || Identity::of(&dir.join(DECLARATION)).as_ref() != Some(&admission.declaration)
-    {
+    if !held(&dir.join(ADMISSION_LOCK)) {
+        return Admits::OnRename;
+    }
+    if admission.declaration == Identity::Unidentified {
+        return Admits::AcknowledgedUnverifiable;
+    }
+    if Identity::of(&dir.join(DECLARATION)).as_ref() != Some(&admission.declaration) {
         return Admits::OnRename;
     }
     // A receiver whose clock this sender cannot verify it shares could not
@@ -806,7 +816,7 @@ enum Identity {
     /// Its device and inode, which no other file shares while it exists.
     Unix { device: u64, inode: u64 },
     /// The standard library gives a file no identity on this platform, so
-    /// every file reads the same, and no sender trusts the advertisement.
+    /// every file reads the same, and no sender withdraws on its advertisement.
     Unidentified,
 }
 
@@ -870,6 +880,13 @@ enum Admits {
     /// the message is admitted once the receiver says its inbox has queued it,
     /// and is its receiver's from then on.
     AcknowledgedThenTaken,
+    /// A receiver that does, beside a declaration with no identity, which an
+    /// older receiver's rebind cannot be told from: the message is admitted
+    /// once the receiver says its inbox has queued it — or, once the bounded
+    /// wait passes with the courier holding it unacknowledged, at that bound,
+    /// since an older courier honours no claim — and is its receiver's from
+    /// then on.
+    AcknowledgedUnverifiable,
 }
 
 /// How a sender's attempt to take its message back went.

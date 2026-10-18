@@ -32,7 +32,9 @@ It returns once the message is **admitted**, meaning it sits in the receiver's
 `Inbox` queue: at once in process, and over a spool once the receiver's courier
 has queued it and acknowledged that. A message not admitted within the
 backend's bounded wait is withdrawn and reported `Undelivered`, exactly as
-`send` reports it. `send` is `offer` followed by `wait`. A message is **taken**
+`send` reports it — except one a spool courier already holds where the
+receiver's declaration has no file identity, as on Windows, which is read as
+its receiver's at the bound (below). `send` is `offer` followed by `wait`. A message is **taken**
 when `take` or `take_within` returns it.
 
 - `offer.wait()` blocks for the answer, as `send` does after admission.
@@ -198,10 +200,18 @@ A directory a receiver's process binds, for a sender in another process.
     never matches, even in the moment a dying receiver's locks take to be let
     go of. Where the standard library gives a file no identity, as on Windows,
     it records `unidentified`, which an older receiver's declaration cannot be
-    told from, so no sender trusts it: on Windows every receiver reads as one
-    that does not advertise, its message admitted once its courier renames it
-    and its receiver's from then on, with no acknowledgement waited for and no
-    withdrawal or expiry after that rename.
+    told from. A sender still waits for `<id>.admitted.json` beside it, so
+    `offer` returns only once the receiver's inbox has queued the message, but
+    it never withdraws from that receiver or claims against it: `withdraw` on
+    an admitted message answers taken, `wait_until` never reports one
+    `Expired`, and when the bounded wait passes with the courier holding the
+    message (its offer renamed to `<id>.taken.json`) and no acknowledgement
+    written, the message is read as admitted, its receiver's, rather than
+    withdrawn, since an older courier behind that advertisement honours no
+    claim; its `wait` then reports the receiver's answer, or `Undelivered`.
+    That is the one case where `offer` returns without the receiver's inbox
+    having confirmed admission. Before the courier has it, the bounded wait
+    withdraws it as on every platform.
   - **It reads the sender's monotonic clock.** `admission.json` records the
     receiver's clock as `linux-monotonic:<boot id>:<time namespace inode>`
     (`…:none` on a kernel without time namespaces): the kernel's boot id, and
@@ -224,8 +234,7 @@ A directory a receiver's process binds, for a sender in another process.
     records no clock or one this build cannot read, either side unable to read
     `/proc/sys/kernel/random/boot_id` or failing to read `/proc/self/ns/time`
     for any reason but its absence (absent, the namespace is `none`), and every
-    platform other than Linux, where this build identifies no shared clock
-    (Windows loses the acknowledgement as well, above).
+    platform other than Linux, where this build identifies no shared clock.
     Before admission the bounded wait still withdraws the message on every
     platform, since an unadmitted message is its sender's to withdraw.
 - A sender reports the message **lost** when its answer document is present
@@ -259,7 +268,7 @@ receiver's take and its sender's withdrawal after admission.
 | `<id>.taken.json` | the courier, renaming the offer | a message the receiver has taken and not yet answered |
 | `<id>.answer.json` | the courier | `{schema_version, answer}`, where `answer` is `{"disposition": ...}`, `{"closed": {"reason": ...}}` or `{"refused": {"reason": ...}}`; its sender reads it and removes it |
 | `<id>.withdrawn` | a sender, renaming its offer | a message its sender took back, removed at once |
-| `admission.json` | the receiver, on bind; removed on unbind | `{schema_version, declaration, clock}`: the advertisement that the receiver acknowledges admission and honours a withdrawal after it, trusted only while `admission.lock` is held, `spool.json`'s identity is the `declaration` recorded (`unix:<device>:<inode>`; `unidentified`, written where a file has no identity, is never trusted), and the `clock` (`linux-monotonic:<boot id>:<time namespace inode>`, or `…:none`; absent where the receiver identifies none) is the sender's own; unknown fields are read past |
+| `admission.json` | the receiver, on bind; removed on unbind | `{schema_version, declaration, clock}`: the advertisement that the receiver acknowledges admission and honours a withdrawal after it, trusted only while `admission.lock` is held, `spool.json`'s identity is the `declaration` recorded (`unix:<device>:<inode>`; or `unidentified`, written where a file has no identity, whose admission is waited for but never withdrawn from), and the `clock` (`linux-monotonic:<boot id>:<time namespace inode>`, or `…:none`; absent where the receiver identifies none) is the sender's own; unknown fields are read past |
 | `admission.lock` | the receiver, on bind | locked exclusively for as long as a receiver that advertises is bound; the system releases it when that process ends, however it ends |
 | `<id>.admitted.json` | the courier, as the inbox queues the message | `{schema_version}`: the message is admitted |
 | `<id>.claimed` | the receiver taking it, or its sender withdrawing it, whichever comes first | empty, created exclusively; the receiver removes it on a release, and removes it with the message's other files once it is answered or withdrawn |
