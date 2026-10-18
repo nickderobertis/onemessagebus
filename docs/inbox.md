@@ -51,8 +51,9 @@ when `take` or `take_within` returns it.
 - `Delivered::release()` is for a receiver that took a message it cannot
   present. The message goes back into the queue at the position it arrived in,
   ahead of everything that arrived after it, and to its sender it is untaken
-  again: `withdraw` can succeed, and a `wait_until` whose deadline has passed
-  expires it at once. A message is answered at most once, and one released and
+  again: `withdraw` can succeed, and a release after a `wait_until`'s deadline
+  has passed expires the message in the same operation, so no take can find
+  it between the release and its sender waking. A message is answered at most once, and one released and
   then withdrawn or expired is never answered by the receiver.
 - Dropping an `Offer` withdraws nothing. The message stays offered and is still
   taken and answered, and the answer goes to nobody. Over a spool, the dropped
@@ -131,7 +132,12 @@ A directory a receiver's process binds, for a sender in another process.
   `<id>.claimed`, an exclusive create that only one of them can win. The loser
   learns it has lost: a take that loses drops the message as withdrawn, and a
   withdrawal that loses reads the message as taken. A release removes the
-  receiver's claim, so the sender can withdraw again. A claim the file system
+  receiver's claim, so the sender can withdraw again. A sender whose
+  `wait_until` deadline passes says so by creating `<id>.expiring` before it
+  first tries to withdraw. A release that finds it renames it onto
+  `<id>.expired` under the inbox's lock, drops the message from the inbox and
+  keeps its claim, so no take can come before the sender reads the rename,
+  reports `Expired`, and removes the message's files. A claim the file system
   will not remove stays the receiver's, and its sender reads the message as
   taken. The receiver claims a
   message before it writes any answer (a disposition, a close, or a refusal)
@@ -196,6 +202,8 @@ receiver's take and its sender's withdrawal after admission.
 | `admission.lock` | the receiver, on bind | locked exclusively for as long as a receiver that advertises is bound; the system releases it when that process ends, however it ends |
 | `<id>.admitted.json` | the courier, as the inbox queues the message | `{schema_version}`: the message is admitted |
 | `<id>.claimed` | the receiver taking it, or its sender withdrawing it, whichever comes first | empty, created exclusively; the receiver removes it on a release, and removes it with the message's other files once it is answered or withdrawn |
+| `<id>.expiring` | a sender whose `wait_until` deadline has passed | empty: a release expires the message rather than queueing it; removed with the message's other files |
+| `<id>.expired` | the receiver, renaming `<id>.expiring` as it releases the message | empty: the message is dropped from the inbox, and its sender removes it with the message's other files |
 
 `<id>` is the minting instant in nanoseconds since the Unix epoch (39 digits),
 the minting process's id, and a per-process counter (20 digits), joined by `-`:

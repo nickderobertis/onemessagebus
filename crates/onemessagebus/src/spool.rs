@@ -14,7 +14,10 @@
 //! when it has queued a message (`<id>.admitted.json`), and the receiver's take
 //! and its sender's withdrawal race to create one claim file (`<id>.claimed`),
 //! which only one of them can: so the guarantee holds up to [`Inbox::take`]
-//! rather than up to the courier. `docs/inbox.md` states the on-disk shape.
+//! rather than up to the courier. A sender past its deadline says so
+//! (`<id>.expiring`), and a release that finds it renames it (`<id>.expired`)
+//! and drops the message rather than queueing it. `docs/inbox.md` states the
+//! on-disk shape.
 
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::marker::PhantomData;
@@ -29,8 +32,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::inbox::{
-    BackendError, Claimed, Closed, Disposition, Gate, Inbox, InboxBackend, Offer, Pending, Reply,
-    Sender, Shared, Unanswered, Undelivered,
+    BackendError, Claimed, Closed, Disposition, Gate, Inbox, InboxBackend, Offer, Pending,
+    Released, Reply, Sender, Shared, Unanswered, Undelivered,
 };
 use crate::schema::{Message, SchemaId};
 
@@ -72,6 +75,12 @@ const ADMITTED: &str = ".admitted.json";
 /// `<id>.claimed`: created by whichever of the receiver's take and its
 /// sender's withdrawal comes first; the other cannot create it.
 const CLAIMED: &str = ".claimed";
+/// `<id>.expiring`: created by a sender whose deadline passed while the
+/// receiver held the message, so a release expires it rather than queueing it.
+const EXPIRING: &str = ".expiring";
+/// `<id>.expired`: the receiver's release renamed `<id>.expiring` onto it, and
+/// dropped the message from its inbox.
+const EXPIRED: &str = ".expired";
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -541,19 +550,40 @@ impl Exchange {
         if let Some(answered) = self.answered.take() {
             return Ok(answered);
         }
+        let mut expiring = false;
         loop {
             if let Some(answered) = self.read_answer()? {
                 return Ok(answered);
             }
+            if expiring && self.file(EXPIRED).exists() {
+                // Released past the deadline: the receiver dropped it from its
+                // inbox and holds nothing of it, so what is left is ours.
+                discard(&self.dir, &self.id);
+                return Err(Unanswered::Expired);
+            }
             if let Some(ended) = self.gone() {
                 return Ok(ended?);
             }
-            // Past the deadline every look tries to withdraw it, so a message
-            // released after it is withdrawn at the next look.
-            if Instant::now() >= deadline && self.withdraw() {
-                return Err(Unanswered::Expired);
+            let now = Instant::now();
+            if now >= deadline {
+                // Said before the first withdrawal is tried, so a receiver
+                // that holds the message now expires it as it releases it,
+                // rather than queueing it for a take to find.
+                if !expiring && self.admits == Admits::OnAcknowledgement {
+                    let _ = claim(&self.file(EXPIRING));
+                    expiring = true;
+                }
+                // Every look tries to withdraw it, for a message released before
+                // the deadline was said.
+                if self.withdraw() {
+                    return Err(Unanswered::Expired);
+                }
             }
-            std::thread::sleep(POLL);
+            // Woken at the deadline itself, not up to a poll after it.
+            std::thread::sleep(match deadline.checked_duration_since(now) {
+                Some(left) if !left.is_zero() => left.min(POLL),
+                _ => POLL,
+            });
         }
     }
 
@@ -747,7 +777,7 @@ fn claim(path: &Path) -> Contest {
 
 /// Remove what is left of message `id` once its sender withdrew it.
 fn discard(dir: &Path, id: &MessageId) {
-    for suffix in [TAKEN, ADMITTED, CLAIMED] {
+    for suffix in [TAKEN, ADMITTED, CLAIMED, EXPIRING, EXPIRED] {
         let _ = fs::remove_file(id.file(dir, suffix));
     }
 }
@@ -921,12 +951,18 @@ impl Gate for Hold {
         }
     }
 
-    fn release(&mut self) {
+    fn release(&mut self) -> Released {
+        // A sender past its deadline said so: the rename hands it word that
+        // the message is dropped, and the claim stays, so nothing takes it.
+        if fs::rename(self.file(EXPIRING), self.file(EXPIRED)).is_ok() {
+            return Released::Expired;
+        }
         // Let go of only once its claim is gone: one the file system keeps is
         // still the receiver's, and its sender reads the message as taken.
         if fs::remove_file(self.file(CLAIMED)).is_ok() {
             self.held.store(false, Ordering::SeqCst);
         }
+        Released::Untaken
     }
 }
 

@@ -140,6 +140,18 @@ fn receiver_child() {
                 held.remove(*sku).expect("a held message").release();
                 "ok".to_owned()
             }
+            // Release, and take at once, with nothing between the two.
+            ["release-and-take", sku] => {
+                held.remove(*sku).expect("a held message").release();
+                match inbox.take() {
+                    Some(delivered) => {
+                        let sku = delivered.message().sku.clone();
+                        held.insert(sku.clone(), delivered);
+                        format!("took {sku}")
+                    }
+                    None => "none".to_owned(),
+                }
+            }
             ["drop", sku] => {
                 drop(held.remove(*sku).expect("a held message"));
                 "ok".to_owned()
@@ -723,6 +735,73 @@ fn a_spool_release_hands_the_message_back_untaken_in_its_place() {
         assert_eq!(offer.wait(), Ok(filled(sku)));
     }
     assert_eq!(receiver.answered(), "answered [again,m1,m2,m3]");
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
+/// How many times each journey releases a message past its deadline and takes
+/// at once.
+const EXPIRIES: usize = 20;
+
+#[test]
+fn an_in_process_release_past_the_deadline_expires_the_message_before_any_take_can_find_it() {
+    let (sender, inbox) = Sender::<Order, Receipt>::channel();
+    for round in 0..EXPIRIES {
+        let offer = sender.offer(order("late")).expect("admitted");
+        let delivered = inbox.take().expect("queued");
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let waiting = std::thread::spawn(move || offer.wait_until(deadline));
+        std::thread::sleep(Duration::from_millis(60));
+        delivered.release();
+        // Before the waiting sender has been scheduled to look.
+        assert!(
+            inbox.take().is_none(),
+            "round {round}: a take found a message released past its deadline"
+        );
+        assert_eq!(waiting.join().expect("waits"), Err(Unanswered::Expired));
+        assert!(inbox.take_within(SETTLE).is_none());
+    }
+    // Released before the deadline, it is untaken and queued again.
+    let offer = sender.offer(order("early")).expect("admitted");
+    let delivered = inbox.take().expect("queued");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let waiting = std::thread::spawn(move || offer.wait_until(deadline));
+    std::thread::sleep(Duration::from_millis(20));
+    delivered.release();
+    let delivered = inbox.take().expect("queued again");
+    delivered.answer(filled("in time"));
+    assert_eq!(waiting.join().expect("waits"), Ok(filled("in time")));
+}
+
+#[test]
+fn a_spool_release_past_the_deadline_expires_the_message_before_any_take_can_find_it() {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let sender = Spool::connect::<Order, Receipt>(&address);
+    for round in 0..EXPIRIES {
+        let offer = sender.offer(order("late")).expect("admitted");
+        assert_eq!(receiver.take(TAKE).as_deref(), Some("late"));
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let waiting = std::thread::spawn(move || offer.wait_until(deadline));
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(
+            receiver.say("release-and-take late"),
+            "none",
+            "round {round}: a take found a message released past its deadline"
+        );
+        assert_eq!(waiting.join().expect("waits"), Err(Unanswered::Expired));
+        assert_eq!(receiver.take(SETTLE), None);
+        assert_eq!(message_files(&address), Vec::<String>::new());
+    }
+    // Released before the deadline, it is untaken and queued again.
+    let offer = sender.offer(order("early")).expect("admitted");
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("early"));
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let waiting = std::thread::spawn(move || offer.wait_until(deadline));
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(receiver.say("release-and-take early"), "took early");
+    assert_eq!(receiver.say("answer early in-time"), "ok");
+    assert_eq!(waiting.join().expect("waits"), Ok(filled("in-time")));
+    assert_eq!(receiver.answered(), "answered [early]");
     assert_eq!(message_files(&address), Vec::<String>::new());
 }
 

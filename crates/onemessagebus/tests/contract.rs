@@ -454,6 +454,8 @@ fn inbox_md_names_every_file_a_spool_holds() {
             "admission.lock",
             "<id>.admitted.json",
             "<id>.claimed",
+            "<id>.expiring",
+            "<id>.expired",
         ],
         "docs/inbox.md's file table no longer names the files a spool holds"
     );

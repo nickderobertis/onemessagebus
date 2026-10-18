@@ -234,8 +234,9 @@ const DROPPED: &str = "the inbox was dropped without being closed";
 /// leaves its sender blocked.
 pub(crate) struct Reply<D> {
     deliver: Option<Box<dyn FnOnce(Answer<D>) + Send>>,
-    /// What tells its sender a taken message was handed back untaken.
-    released: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// What asks its sender, under the inbox's lock, whether a taken message
+    /// handed back untaken is still wanted, or has expired.
+    released: Option<Arc<dyn Fn() -> Released + Send + Sync>>,
 }
 
 impl<D> Reply<D> {
@@ -254,9 +255,9 @@ impl<D> Reply<D> {
         }
     }
 
-    /// The same reply, which also runs `released` each time its message is
+    /// The same reply, which also asks `released` each time its message is
     /// handed back untaken.
-    fn on_release(mut self, released: impl Fn() + Send + Sync + 'static) -> Self {
+    fn on_release(mut self, released: impl Fn() -> Released + Send + Sync + 'static) -> Self {
         self.released = Some(Arc::new(released));
         self
     }
@@ -285,6 +286,16 @@ pub(crate) enum Claimed {
     Undecided,
 }
 
+/// What became of a taken message handed back with [`Delivered::release`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Released {
+    /// It is untaken again, and goes back into the queue in its place.
+    Untaken,
+    /// Its sender's deadline had passed: it is withdrawn in the same moment,
+    /// and never queued again.
+    Expired,
+}
+
 /// What decides, for a message carried in from elsewhere, whether the receiver
 /// or its sender has it: the in-process queue's lock settles a message sent in
 /// this process, and a gate settles one whose sender can withdraw it from
@@ -294,8 +305,9 @@ pub(crate) trait Gate: Send {
     fn admitted(&mut self);
     /// Claim the message for the receiver as it is taken.
     fn claim(&mut self) -> Claimed;
-    /// Give a claimed message back, so its sender can withdraw it again.
-    fn release(&mut self);
+    /// Give a claimed message back, so its sender can withdraw it again — or,
+    /// when its sender is past its deadline, expire it.
+    fn release(&mut self) -> Released;
 }
 
 impl<D> Drop for Reply<D> {
@@ -685,36 +697,41 @@ impl<M: Message, D: Disposition> Delivered<M, D> {
     /// present it: it returns to the inbox's queue at the position it arrived
     /// in, ahead of every message that arrived after it. To its sender it is
     /// untaken again — an [`Offer`] can withdraw it, and one whose deadline has
-    /// passed expires it at once. A message released into a closed inbox is
-    /// gone, and its sender was already told the close.
+    /// passed expires it in the same moment, so no take can come between the
+    /// release and its sender learning it expired. A message released into a
+    /// closed inbox is gone, and its sender was already told the close.
     pub fn release(self) {
         let Self { message, mut claim } = self;
         claim.settled = true;
-        let released = {
-            let mut state = claim.shared.lock();
-            let Some(Taken { reply, mut gate }) = state.taken.remove(&claim.id) else {
-                return;
-            };
-            if let Some(gate) = gate.as_mut() {
-                gate.release();
-            }
-            let released = reply.released.clone();
-            let at = state.queue.partition_point(|queued| queued.id < claim.id);
-            state.queue.insert(
-                at,
-                Queued {
-                    id: claim.id,
-                    message,
-                    reply,
-                    gate,
-                },
-            );
-            released
+        let mut state = claim.shared.lock();
+        let Some(Taken { reply, mut gate }) = state.taken.remove(&claim.id) else {
+            return;
         };
-        claim.shared.arrived.notify_all();
-        if let Some(released) = released {
-            released();
+        // Asked under the lock every take holds, so a message whose sender is
+        // past its deadline is never in the queue for one to find.
+        let released = match gate.as_mut() {
+            Some(gate) => gate.release(),
+            None => reply
+                .released
+                .as_ref()
+                .map_or(Released::Untaken, |released| released()),
+        };
+        if released == Released::Expired {
+            reply.forget();
+            return;
         }
+        let at = state.queue.partition_point(|queued| queued.id < claim.id);
+        state.queue.insert(
+            at,
+            Queued {
+                id: claim.id,
+                message,
+                reply,
+                gate,
+            },
+        );
+        drop(state);
+        claim.shared.arrived.notify_all();
     }
 }
 
@@ -846,7 +863,7 @@ impl<D: Disposition> Offer<D> {
     /// `deadline`. A message taken before the deadline is waited on past it,
     /// for as long as its receiver holds it, and its answer returned however
     /// late it comes; one handed back with [`Delivered::release`] after the
-    /// deadline is withdrawn at once.
+    /// deadline is withdrawn by that release, before any take can find it.
     ///
     /// # Errors
     ///
@@ -953,7 +970,8 @@ impl<M: Message + Send + 'static, D: Disposition> InboxBackend<M, D> for InProce
         let ticket: Arc<Ticket<D>> = Arc::new(Ticket {
             slot: Mutex::new(Slot {
                 answer: None,
-                releases: 0,
+                deadline: None,
+                expired: false,
             }),
             changed: Condvar::new(),
         });
@@ -964,8 +982,17 @@ impl<M: Message + Send + 'static, D: Disposition> InboxBackend<M, D> for InProce
             answered.changed.notify_all();
         })
         .on_release(move || {
-            released.lock().releases += 1;
+            let mut slot = released.lock();
+            if !slot
+                .deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
+            {
+                return Released::Untaken;
+            }
+            slot.expired = true;
+            drop(slot);
             released.changed.notify_all();
+            Released::Expired
         });
         let id = self.shared.offer(message, reply, None)?;
         Ok(Offer::over(Queuing {
@@ -976,8 +1003,8 @@ impl<M: Message + Send + 'static, D: Disposition> InboxBackend<M, D> for InProce
     }
 }
 
-/// Where an in-process message's answer lands, and how often it was handed
-/// back.
+/// Where an in-process message's answer lands, and whether a release expired
+/// it.
 struct Ticket<D> {
     slot: Mutex<Slot<D>>,
     changed: Condvar,
@@ -985,9 +1012,11 @@ struct Ticket<D> {
 
 struct Slot<D> {
     answer: Option<Answer<D>>,
-    /// How many times the message was released: what a sender past its
-    /// deadline watches for, to withdraw it the moment it is untaken again.
-    releases: u64,
+    /// The deadline its sender waits until, which a release past it expires
+    /// the message at.
+    deadline: Option<Instant>,
+    /// Released past that deadline, and so withdrawn.
+    expired: bool,
 }
 
 impl<D> Ticket<D> {
@@ -1024,6 +1053,9 @@ impl<M: Send, D: Send> Pending<D> for Queuing<M, D> {
 
     fn wait_until(self: Box<Self>, deadline: Instant) -> Result<D, Unanswered> {
         let mut slot = self.ticket.lock();
+        // Set before any wait, so a release past it expires the message in the
+        // same moment rather than queueing it for a take to find.
+        slot.deadline = Some(deadline);
         loop {
             if let Some(answer) = slot.answer.take() {
                 return answer.map_err(|closed| Unanswered::Undelivered(closed.into()));
@@ -1040,27 +1072,24 @@ impl<M: Send, D: Send> Pending<D> for Queuing<M, D> {
                 .0;
         }
         // Past the deadline: withdraw it if it is untaken, and otherwise wait
-        // for its answer — or for a release, which makes it untaken again.
+        // for its answer — or for a release, which expires it.
+        drop(slot);
+        if self.shared.withdraw(self.id) {
+            return Err(Unanswered::Expired);
+        }
+        let mut slot = self.ticket.lock();
         loop {
-            let releases = slot.releases;
-            drop(slot);
-            if self.shared.withdraw(self.id) {
+            if let Some(answer) = slot.answer.take() {
+                return answer.map_err(|closed| Unanswered::Undelivered(closed.into()));
+            }
+            if slot.expired {
                 return Err(Unanswered::Expired);
             }
-            slot = self.ticket.lock();
-            loop {
-                if let Some(answer) = slot.answer.take() {
-                    return answer.map_err(|closed| Unanswered::Undelivered(closed.into()));
-                }
-                if slot.releases != releases {
-                    break;
-                }
-                slot = self
-                    .ticket
-                    .changed
-                    .wait(slot)
-                    .unwrap_or_else(PoisonError::into_inner);
-            }
+            slot = self
+                .ticket
+                .changed
+                .wait(slot)
+                .unwrap_or_else(PoisonError::into_inner);
         }
     }
 }
