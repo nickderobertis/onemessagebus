@@ -128,6 +128,9 @@ A directory a receiver's process binds, for a sender in another process.
   receiver acknowledges admission and honours a withdrawal after it. Its
   courier renames each offer to taken, queues the message in the inbox, and
   writes `<id>.admitted.json` under the inbox's lock, before any take can come.
+  One the file system refuses to write leaves the message out of the queue, so
+  no take ever finds it: the receiver answers it refused, naming the file, and
+  its sender's `offer` reports that at once rather than the bounded wait.
   From then on the receiver's take and the sender's withdrawal race to create
   `<id>.claimed`, an exclusive create that only one of them can win. The loser
   learns it has lost: a take that loses drops the message as withdrawn, and a
@@ -195,8 +198,8 @@ A directory a receiver's process binds, for a sender in another process.
     admitted message answers taken, and `wait_until` never reports an admitted
     message `Expired` but waits for its answer. A withdrawal when the bounded
     wait passes claims `<id>.claimed` and keeps it only while
-    `<id>.admitted.json` is absent, which the inbox writes under its lock before
-    any take; finding it there, the sender gives the claim back and reads the
+    `<id>.admitted.json` is absent, without which the inbox queues nothing and
+    which it writes under its lock before any take; finding it there, the sender gives the claim back and reads the
     message as taken. A take that lost to that claim in the moment before it
     was given back drops the message, and its sender is told it was lost:
     never answered, never expired, never withdrawn. That covers a receiver on

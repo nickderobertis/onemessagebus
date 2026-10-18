@@ -275,6 +275,15 @@ impl<D> Reply<D> {
     }
 }
 
+/// Whether a gate said its message is queued.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Acknowledged {
+    /// It did: the message joins the queue.
+    Said,
+    /// It could not: the message is left out, and is nobody's to take.
+    Unsaid,
+}
+
 /// How a gate's claim on a message went, as the receiver takes it.
 pub(crate) enum Claimed {
     /// The receiver has it.
@@ -302,7 +311,9 @@ pub(crate) enum Released {
 /// outside.
 pub(crate) trait Gate: Send {
     /// Say the message is queued: run as it joins the queue, before any take.
-    fn admitted(&mut self);
+    /// A word the gate could not say leaves the message out of the queue, so
+    /// nothing takes it; the gate has told its sender why.
+    fn admitted(&mut self) -> Acknowledged;
     /// Claim the message for the receiver as it is taken.
     fn claim(&mut self) -> Claimed;
     /// Give a claimed message back, so its sender can withdraw it again — or,
@@ -392,8 +403,12 @@ impl<M, D> Shared<M, D> {
         let mut gate = gate;
         if let Some(gate) = gate.as_mut() {
             // Under the lock, so no take can come before the word that the
-            // message is queued.
-            gate.admitted();
+            // message is queued — nor any at all when it cannot be said.
+            if gate.admitted() == Acknowledged::Unsaid {
+                drop(state);
+                reply.forget();
+                return Ok(id);
+            }
         }
         state.queue.push_back(Queued {
             id,

@@ -2094,40 +2094,54 @@ fn offer_unacknowledged(
 
 #[cfg(unix)]
 #[test]
-#[cfg_attr(
-    not(target_os = "linux"),
-    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
-)]
-fn an_acknowledgement_the_courier_cannot_write_leaves_the_message_withdrawn_or_taken() {
-    // Nothing takes it: when the wait passes it is withdrawn, the failure is
-    // named, and the queued message is never taken.
+fn an_acknowledgement_the_courier_cannot_write_refuses_the_message_and_nothing_takes_it() {
     let (_dir, address) = spool_dir();
-    let mut receiver = Receiver::bind(&address);
+    let receiver = Receiver::bind(&address);
+    assert_unacknowledged_refused(receiver, &address);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_acknowledgement_the_courier_cannot_write_on_an_unverified_clock_is_never_taken_or_released() {
+    let (_dir, address) = spool_dir();
+    let receiver = Receiver::bind(&address);
+    let mut rewritten = advertisement(&address);
+    rewritten["clock"] = json!(FOREIGN_CLOCK);
+    std::fs::write(address.join("admission.json"), rewritten.to_string()).expect("written");
+    assert_unacknowledged_refused(receiver, &address);
+}
+
+/// A message whose acknowledgement the courier of `receiver`, at `address`,
+/// cannot write is never queued: no take finds it, so the receiver has nothing
+/// to release, and its sender is told at once, by name, that it was refused.
+#[cfg(unix)]
+fn assert_unacknowledged_refused(mut receiver: Receiver, address: &Path) {
+    // A wait far longer than the journey: the refusal comes from the receiver,
+    // not from the wait passing.
+    let started = Instant::now();
     let (offering, acknowledgement) =
-        offer_unacknowledged(&receiver, &address, "unsaid", Duration::from_millis(500));
+        offer_unacknowledged(&receiver, address, "unsaid", Duration::from_secs(30));
+    if let Some(taken) = receiver.take(SETTLE) {
+        assert_eq!(receiver.say(&format!("release {taken}")), "ok");
+        panic!("the receiver took {taken}, whose admission it never acknowledged");
+    }
     match offering.join().expect("the offer finishes").map(drop) {
-        Err(Undelivered::Backend(failure)) => assert!(
-            failure
-                .to_string()
-                .contains(&acknowledgement.display().to_string()),
-            "{failure}"
-        ),
+        Err(Undelivered::Backend(BackendError::Refused { spool, why })) => {
+            assert_eq!(spool, address);
+            assert!(
+                why.contains(&acknowledgement.display().to_string()),
+                "{why}"
+            );
+        }
         other => panic!("an acknowledgement never written was reported as {other:?}"),
     }
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        started.elapsed()
+    );
     assert_eq!(receiver.take(SETTLE), None);
     assert_eq!(receiver.answered(), "answered []");
-
-    // Taken before the wait passes: admitted by the take, and answered.
-    let (_dir, address) = spool_dir();
-    let mut receiver = Receiver::bind(&address);
-    let (offering, _) = offer_unacknowledged(&receiver, &address, "taken", Duration::from_secs(30));
-    assert_eq!(receiver.take(TAKE).as_deref(), Some("taken"));
-    let offer = offering
-        .join()
-        .expect("the offer finishes")
-        .expect("admitted by the take");
-    assert_eq!(receiver.say("answer taken stock-room"), "ok");
-    assert_eq!(offer.wait(), Ok(filled("stock-room")));
 }
 
 #[test]

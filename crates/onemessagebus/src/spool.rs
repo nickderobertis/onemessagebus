@@ -34,8 +34,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::inbox::{
-    BackendError, Claimed, Closed, Disposition, Gate, Inbox, InboxBackend, Offer, Pending,
-    Released, Reply, Sender, Shared, Unanswered, Undelivered,
+    Acknowledged, BackendError, Claimed, Closed, Disposition, Gate, Inbox, InboxBackend, Offer,
+    Pending, Released, Reply, Sender, Shared, Unanswered, Undelivered,
 };
 use crate::schema::{Message, SchemaId};
 use crate::shared_clock::{ClockIdentity, SharedClock};
@@ -476,7 +476,12 @@ impl Exchange {
                 // The courier has it, so the receiver that took it is the one
                 // whose advertisement decides what admission means.
                 exchange.admits = *advertised.get_or_insert_with(|| advertises(dir));
-                if exchange.admits == Admits::OnRename || exchange.file(CLAIMED).exists() {
+                // Claimed with its acknowledgement written: taken. A claim
+                // beside none is the receiver refusing a message it could not
+                // acknowledge, whose answer is on its way.
+                if exchange.admits == Admits::OnRename
+                    || (exchange.file(CLAIMED).exists() && exchange.file(ADMITTED).is_file())
+                {
                     return Ok(exchange);
                 }
                 match read_document::<Admitted>(dir, &exchange.file(ADMITTED)) {
@@ -556,9 +561,9 @@ impl Exchange {
     /// Take back a message whose admission was never acknowledged, when the
     /// bounded wait passes. Past admission only a receiver on a clock this
     /// sender verified it shares is withdrawn from; any other's inbox queues
-    /// the message and writes `<id>.admitted.json` under one lock, before any
-    /// take, so a claim made while that file is absent came before the message
-    /// could be taken. One made after it is given back, and the message read
+    /// the message only once `<id>.admitted.json` is written, under one lock,
+    /// before any take, so a claim made while that file is absent came before
+    /// the message could be taken. One made after it is given back, and the message read
     /// as taken.
     fn withdraw_unadmitted(&mut self) -> bool {
         if self.admits != Admits::AcknowledgedThenTaken {
@@ -569,7 +574,7 @@ impl Exchange {
             Contest::Won => {}
             Contest::Lost | Contest::Refused => return false,
         }
-        if self.file(ADMITTED).exists() || self.file(ANSWER).exists() {
+        if self.file(ADMITTED).is_file() || self.file(ANSWER).exists() {
             let _ = fs::remove_file(claimed);
             return false;
         }
@@ -1057,13 +1062,24 @@ impl Hold {
 }
 
 impl Gate for Hold {
-    fn admitted(&mut self) {
-        let _ = write_document(
+    fn admitted(&mut self) -> Acknowledged {
+        let written = write_document(
             &self.file(ADMITTED),
             &Admitted {
                 schema_version: SPOOL_SCHEMA_VERSION,
             },
         );
+        match written {
+            Ok(()) => Acknowledged::Said,
+            // Never queued, so no take finds a message its sender cannot
+            // learn was admitted: it is refused, and its sender told why.
+            Err(failure) => {
+                self.settle(&AnswerBody::Refused {
+                    reason: format!("its admission could not be acknowledged: {failure}"),
+                });
+                Acknowledged::Unsaid
+            }
+        }
     }
 
     fn claim(&mut self) -> Claimed {
