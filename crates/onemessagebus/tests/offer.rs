@@ -2092,6 +2092,7 @@ fn a_claim_the_file_system_refuses_gives_the_message_to_neither_side_until_one_c
 
 /// How often a spool sender looks: an offer whose bound passed with its claim
 /// refused returns no later than this after its bound.
+#[cfg(unix)]
 const POLL: Duration = Duration::from_millis(20);
 
 /// Offer `sku` with a bounded wait of `wait` from a thread of its own, saying
