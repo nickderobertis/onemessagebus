@@ -773,12 +773,14 @@ fn open_lock(path: &Path) -> Result<File, BackendError> {
 /// is read on. An older receiver never takes the lock, so one rebinding after a
 /// killed newer one finds it free; and it renames a new declaration into place,
 /// so for the moment a dying receiver's locks take to be let go of, the
-/// identity differs.
+/// identity differs. A declaration recorded `unidentified` cannot be told from
+/// an older receiver's, so it is never trusted.
 fn advertises(dir: &Path) -> Admits {
     let Ok(Some(admission)) = read_document::<Admission>(dir, &dir.join(ADMISSION)) else {
         return Admits::OnRename;
     };
     if !held(&dir.join(ADMISSION_LOCK))
+        || admission.declaration == Identity::Unidentified
         || Identity::of(&dir.join(DECLARATION)).as_ref() != Some(&admission.declaration)
     {
         return Admits::OnRename;
@@ -804,7 +806,7 @@ enum Identity {
     /// Its device and inode, which no other file shares while it exists.
     Unix { device: u64, inode: u64 },
     /// The standard library gives a file no identity on this platform, so
-    /// every file reads the same, and the advertisement's lock alone decides.
+    /// every file reads the same, and no sender trusts the advertisement.
     Unidentified,
 }
 

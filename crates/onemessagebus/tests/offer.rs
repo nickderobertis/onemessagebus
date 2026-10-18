@@ -60,6 +60,11 @@ const TAKE: Duration = Duration::from_secs(10);
 /// polls.
 const SETTLE: Duration = Duration::from_millis(400);
 
+/// How long a take told only once its offer returned waits for the message: not
+/// at all where the receiver confirms admission, and a while where the sender
+/// reads it admitted once renamed, as on Windows (`docs/inbox.md`).
+const ADMITTED_TAKE: Duration = if cfg!(unix) { Duration::ZERO } else { TAKE };
+
 fn files_in(dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(dir)
         .expect("the spool is a directory")
@@ -382,6 +387,10 @@ fn an_in_process_offer_returns_admitted_and_waits_for_the_receivers_answer() {
 }
 
 #[test]
+#[cfg_attr(
+    not(unix),
+    ignore = "a spool receiver's admission is confirmed only where its declaration has a file identity, which the standard library gives only on Unix"
+)]
 fn a_spool_offer_returns_once_the_receivers_inbox_has_queued_it_and_waits_for_its_answer() {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
@@ -1868,6 +1877,31 @@ fn an_advertisement_this_build_cannot_read_advertises_nothing() {
 }
 
 #[test]
+fn an_advertisement_naming_no_declaration_identity_is_never_trusted_while_its_lock_is_held() {
+    // What a receiver writes where a file has no identity, as on Windows: no
+    // sender can tell its declaration from an older receiver's, so a live
+    // receiver of this build is read as one that does not advertise.
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let mut unidentified = advertisement(&address);
+    unidentified["declaration"] = json!("unidentified");
+    std::fs::write(address.join("admission.json"), unidentified.to_string()).expect("written");
+    let sender = Spool::connect::<Order, Receipt>(&address);
+    let offer = sender.offer(order("held")).expect("admitted once renamed");
+    let offer = offer
+        .withdraw()
+        .expect_err("a declaration with no identity advertises nothing");
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("held"));
+    assert_eq!(receiver.say("answer held stock-room"), "ok");
+    assert_eq!(offer.wait(), Ok(filled("stock-room")));
+    assert_eq!(
+        message_files(&address),
+        Vec::<String>::new(),
+        "the receiver's acknowledgement outlived its answered message"
+    );
+}
+
+#[test]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
@@ -2009,6 +2043,7 @@ fn an_unreadable_acknowledgement_beside_the_receivers_claim_is_admitted_when_the
     assert_taken_until_the_receiver_goes(offer, receiver);
 }
 
+#[cfg(unix)]
 #[test]
 fn an_unreadable_acknowledgement_on_an_unverified_clock_gives_back_the_withdrawal_claim_and_is_admitted(
 ) {
@@ -2478,7 +2513,7 @@ fn a_dropped_offer_withdraws_nothing_and_its_message_is_still_taken_and_answered
             .offer(order("left"))
             .expect("admitted"),
     );
-    assert_eq!(receiver.take(Duration::ZERO).as_deref(), Some("left"));
+    assert_eq!(receiver.take(ADMITTED_TAKE).as_deref(), Some("left"));
     assert_eq!(receiver.say("answer left nobody"), "ok");
     assert_eq!(receiver.answered(), "answered [left]");
     assert_eq!(
