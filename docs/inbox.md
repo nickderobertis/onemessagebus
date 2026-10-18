@@ -163,7 +163,9 @@ A directory a receiver's process binds, for a sender in another process.
   create decides nothing, so neither side has the message. The receiver's take
   leaves it queued in its place, and the next take tries again. The sender's
   withdrawal reads it as taken, because it never claims a withdrawal it cannot
-  guarantee. An answer whose message cannot be claimed (a close, or a refusal,
+  guarantee. A sender whose bounded wait passes with the message unacknowledged
+  reports it neither admitted nor withdrawn while its claim is refused, and
+  withdraws it once one can be made. An answer whose message cannot be claimed (a close, or a refusal,
   of a message never taken) is not written, and its sender is told the message
   was lost.
 - **A receiver that does not advertise it** (an older build) has the message

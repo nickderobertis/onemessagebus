@@ -476,12 +476,7 @@ impl Exchange {
                 // The courier has it, so the receiver that took it is the one
                 // whose advertisement decides what admission means.
                 exchange.admits = *advertised.get_or_insert_with(|| advertises(dir));
-                // Claimed with its acknowledgement written: taken. A claim
-                // beside none is the receiver refusing a message it could not
-                // acknowledge, whose answer is on its way.
-                if exchange.admits == Admits::OnRename
-                    || (exchange.file(CLAIMED).exists() && exchange.file(ADMITTED).is_file())
-                {
+                if exchange.admits == Admits::OnRename {
                     return Ok(exchange);
                 }
                 match read_document::<Admitted>(dir, &exchange.file(ADMITTED)) {
@@ -494,12 +489,22 @@ impl Exchange {
                     return Ok(exchange);
                 }
                 if elapsed {
-                    if exchange.withdraw_unadmitted() {
-                        return Err(Undelivered::Backend(unreadable.unwrap_or_else(lost)));
+                    match exchange.withdraw_unadmitted() {
+                        Withdrawal::Withdrawn => {
+                            return Err(Undelivered::Backend(unreadable.unwrap_or_else(lost)));
+                        }
+                        // Taken, beside an acknowledgement this build could
+                        // not read: admitted.
+                        Withdrawal::Kept if exchange.file(ADMITTED).is_file() => {
+                            return Ok(exchange);
+                        }
+                        // Claimed beside no acknowledgement: a receiver that
+                        // could not write it, refusing the message, whose
+                        // answer the next look reads. Or not claimable at
+                        // all, which decides nothing: neither side has the
+                        // message until a claim can be made.
+                        Withdrawal::Kept | Withdrawal::Undecided => {}
                     }
-                    // The receiver took it — or answered it — before it said
-                    // it was queued: admitted either way.
-                    return Ok(exchange);
                 }
             }
             std::thread::sleep(POLL);
@@ -541,21 +546,27 @@ impl Exchange {
         if self.admits != Admits::OnAcknowledgement || self.answered.is_some() {
             return false;
         }
+        // Not claimable, the file system refusing, is never reported withdrawn.
+        self.contest() == Withdrawal::Withdrawn
+    }
+
+    /// Create the message's claim before the receiver's take can, and keep it
+    /// unless the receiver had already answered.
+    fn contest(&self) -> Withdrawal {
         let claimed = self.file(CLAIMED);
         match claim(&claimed) {
             Contest::Won => {}
-            // Taken, or — the file system refusing — not claimable, which a
-            // sender never reports as withdrawn.
-            Contest::Lost | Contest::Refused => return false,
+            Contest::Lost => return Withdrawal::Kept,
+            Contest::Refused => return Withdrawal::Undecided,
         }
         // The receiver answers before it lets its claim go, so a claim made
         // after that — or made when the answer was already there — finds the
         // answer: the message was taken, and is answered.
         if self.file(ANSWER).exists() {
             let _ = fs::remove_file(claimed);
-            return false;
+            return Withdrawal::Kept;
         }
-        true
+        Withdrawal::Withdrawn
     }
 
     /// Take back a message whose admission was never acknowledged, when the
@@ -563,22 +574,18 @@ impl Exchange {
     /// sender verified it shares is withdrawn from; any other's inbox queues
     /// the message only once `<id>.admitted.json` is written, under one lock,
     /// before any take, so a claim made while that file is absent came before
-    /// the message could be taken. One made after it is given back, and the message read
-    /// as taken.
-    fn withdraw_unadmitted(&mut self) -> bool {
-        if self.admits != Admits::AcknowledgedThenTaken {
-            return self.withdraw();
+    /// the message could be taken. One made after it is given back, and the
+    /// message read as taken.
+    fn withdraw_unadmitted(&mut self) -> Withdrawal {
+        let withdrawal = self.contest();
+        if self.admits == Admits::AcknowledgedThenTaken
+            && withdrawal == Withdrawal::Withdrawn
+            && self.file(ADMITTED).is_file()
+        {
+            let _ = fs::remove_file(self.file(CLAIMED));
+            return Withdrawal::Kept;
         }
-        let claimed = self.file(CLAIMED);
-        match claim(&claimed) {
-            Contest::Won => {}
-            Contest::Lost | Contest::Refused => return false,
-        }
-        if self.file(ADMITTED).is_file() || self.file(ANSWER).exists() {
-            let _ = fs::remove_file(claimed);
-            return false;
-        }
-        true
+        withdrawal
     }
 
     /// The answer and the file it was read from, once there is one.
@@ -819,6 +826,17 @@ enum Admits {
     /// the message is admitted once the receiver says its inbox has queued it,
     /// and is its receiver's from then on.
     AcknowledgedThenTaken,
+}
+
+/// How a sender's attempt to take its message back went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Withdrawal {
+    /// It holds the claim: the message is never taken.
+    Withdrawn,
+    /// The receiver has it, or has answered it.
+    Kept,
+    /// The file system would not create the claim, which decides nothing.
+    Undecided,
 }
 
 /// Whether a sender in `wait_until` has published its deadline.

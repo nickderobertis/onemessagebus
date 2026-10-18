@@ -1933,6 +1933,51 @@ fn a_claim_the_file_system_refuses_gives_the_message_to_neither_side_until_one_c
 
 #[cfg(unix)]
 #[test]
+fn a_wait_that_passes_while_the_file_system_refuses_a_claim_admits_nothing_until_one_is_made() {
+    let (_dir, address) = spool_dir();
+    let receiver = Receiver::bind(&address);
+    receiver.signal("-STOP");
+    let wait = Duration::from_millis(300);
+    let offering = {
+        let address = address.clone();
+        std::thread::spawn(move || {
+            Spool::connect_within::<Order, Receipt>(&address, wait)
+                .offer(order("unclaimable"))
+                .map(drop)
+        })
+    };
+    // Stand in for a courier stopped between its two steps: renamed to taken,
+    // never queued, never acknowledged.
+    let offered = waiting_offer(&address);
+    let taken = offered.replace(".offer.json", ".taken.json");
+    std::fs::rename(address.join(&offered), address.join(&taken)).expect("taken by the stand-in");
+    let Some(read_only) = ReadOnly::hold(&address) else {
+        receiver.signal("-CONT");
+        return;
+    };
+    std::thread::sleep(wait + SETTLE);
+    assert!(
+        !offering.is_finished(),
+        "an offer whose withdrawal could not be claimed was reported: {:?}",
+        offering.join()
+    );
+    // Once a claim can be made, the unadmitted message is withdrawn.
+    drop(read_only);
+    assert_eq!(
+        offering.join().expect("the offer finishes"),
+        Err(Undelivered::Backend(BackendError::Elapsed {
+            spool: address.clone(),
+            waited: wait,
+        }))
+    );
+    receiver.signal("-CONT");
+    let mut receiver = receiver;
+    assert_eq!(receiver.take(SETTLE), None);
+    assert_eq!(receiver.answered(), "answered []");
+}
+
+#[cfg(unix)]
+#[test]
 fn a_release_whose_claim_the_file_system_keeps_leaves_the_message_the_receivers() {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
