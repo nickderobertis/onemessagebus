@@ -134,17 +134,21 @@ A directory a receiver's process binds, for a sender in another process.
   withdrawal that loses reads the message as taken. A release removes the
   receiver's claim, so the sender can withdraw again. A sender in
   `wait_until` publishes its deadline in `<id>.deadline.json` before it waits,
-  on the monotonic clock its `Instant` was taken on (`CLOCK_MONOTONIC` on
-  Linux), which it shares with the receiver (below), together with that
-  clock's identity. A release decides from that document, under the inbox's
-  lock and on its own reading of the same clock, whether the deadline has
-  passed. The sender need not run after its deadline for the release to expire
-  the message, and no step of the wall clock, forward or back, moves when it
-  does: a release past it creates `<id>.expired`, drops the message from the
-  inbox and keeps its claim, so no take can come before the sender reads it,
-  reports `Expired`, and removes the message's files. A take that claims a
-  message past its published deadline does the same. A deadline the file system
-  refuses to publish is published at the sender's next look. One the receiver
+  on the clock it shares with the receiver (below), together with that
+  clock's identity: on Linux `CLOCK_MONOTONIC`, the clock its `Instant` was
+  taken on, and elsewhere the system clock. A release decides from that
+  document, under the inbox's lock and on its own reading of the same clock,
+  whether the deadline has passed. The sender need not run after its deadline
+  for the release to expire the message: a release past it creates
+  `<id>.expired`, drops the message from the inbox and keeps its claim, so no
+  take can come before the sender reads it, reports `Expired`, and removes the
+  message's files. A take that claims a message past its published deadline
+  does the same. On `CLOCK_MONOTONIC` no step of the wall clock, forward or
+  back, moves when that happens. On the system clock a step moves only when a
+  release expires the message, never whether a take and a withdrawal can both
+  succeed, and once the sender's own deadline passes it publishes the deadline
+  again as passed, so a clock set back cannot hold expiry past it. A deadline
+  the file system refuses to publish is published at the sender's next look. One the receiver
   cannot read, or one on a clock it does not read, is no deadline, and the
   sender's own withdrawal at it still decides. An `<id>.expired` the file system
   refuses to create leaves the message queued with the receiver's claim, so
@@ -168,8 +172,8 @@ A directory a receiver's process binds, for a sender in another process.
   admitted message as taken and never claims a withdrawal that receiver would
   not honour. A sender trusts an advertisement only while the receiver that
   wrote it is alive and bound, only beside the declaration it was written
-  with, and only where the two share a monotonic clock. The first two checks
-  read no clock:
+  with, and only where the two share a clock. The first two checks read no
+  clock:
   - **Its lock is held.** The system releases `admission.lock` when its
     receiver's process ends, however it ends, and an older receiver never
     takes it. So one that rebinds after a newer one was killed, leaving its
@@ -182,21 +186,22 @@ A directory a receiver's process binds, for a sender in another process.
     never matches, even in the moment a dying receiver's locks take to be let
     go of. Where the standard library gives a file no identity, as on Windows,
     it records `unidentified`, and the lock alone decides.
-  - **It reads the sender's monotonic clock.** `admission.json` records the
-    receiver's clock as `linux-monotonic:<boot id>:<time namespace inode>`
-    (`…:none` on a kernel without time namespaces): the kernel's boot id, and
-    the time namespace whose offset the clock carries. A sender trusts the
+  - **It reads the sender's clock.** `admission.json` records the receiver's
+    clock as `linux-monotonic:<boot id>:<time namespace inode>` (`…:none` on a
+    kernel without time namespaces): the kernel's boot id, and the time
+    namespace whose offset the clock carries. Where a process cannot identify
+    that clock — off Linux, or with `/proc/sys/kernel/random/boot_id` or
+    `/proc/self/ns/time` unreadable — its clock is `system`. A sender trusts the
     advertisement only when that is its own clock, because only then does a
-    deadline it publishes mean the same moment to the receiver. Where it cannot
-    verify that, the receiver is read as not advertising: `withdraw` on an
-    admitted message answers taken, and `wait_until` never reports an admitted
-    message `Expired` but waits for its answer. That covers a receiver on
-    another boot or in another time namespace, one whose `admission.json`
-    records no clock or one this build cannot read, either side unable to read
-    `/proc/sys/kernel/random/boot_id` or `/proc/self/ns/time`, and every
-    platform other than Linux, where this build identifies no shared clock.
-    Before admission the bounded wait still withdraws the message on every
-    platform, since an unadmitted message is its sender's to withdraw.
+    deadline it publishes mean the same moment to the receiver. Where it is
+    not, the receiver is read as not advertising: `withdraw` on an admitted
+    message answers taken, and `wait_until` never reports an admitted message
+    `Expired` but waits for its answer. That covers a receiver on another boot
+    or in another time namespace, one on the system clock beside a sender on
+    `CLOCK_MONOTONIC` or the reverse, and one whose `admission.json` records no
+    clock or one this build cannot read. Before admission the bounded wait
+    still withdraws the message, since an unadmitted message is its sender's
+    to withdraw.
 - A sender reports the message **lost** when its answer document is present
   but is not an answer (naming the file), when the wait passes with the message
   never taken (naming the wait), when the receiver took it and no longer holds
@@ -225,11 +230,11 @@ receiver's take and its sender's withdrawal after admission.
 | `<id>.taken.json` | the courier, renaming the offer | a message the receiver has taken and not yet answered |
 | `<id>.answer.json` | the courier | `{schema_version, answer}`, where `answer` is `{"disposition": ...}`, `{"closed": {"reason": ...}}` or `{"refused": {"reason": ...}}`; its sender reads it and removes it |
 | `<id>.withdrawn` | a sender, renaming its offer | a message its sender took back, removed at once |
-| `admission.json` | the receiver, on bind; removed on unbind | `{schema_version, declaration, clock}`: the advertisement that the receiver acknowledges admission and honours a withdrawal after it, trusted only while `admission.lock` is held, `spool.json`'s identity is the `declaration` recorded (`unix:<device>:<inode>`, or `unidentified`), and the `clock` (`linux-monotonic:<boot id>:<time namespace inode>`, or `…:none`; absent where the receiver identifies none) is the sender's own; unknown fields are read past |
+| `admission.json` | the receiver, on bind; removed on unbind | `{schema_version, declaration, clock}`: the advertisement that the receiver acknowledges admission and honours a withdrawal after it, trusted only while `admission.lock` is held, `spool.json`'s identity is the `declaration` recorded (`unix:<device>:<inode>`, or `unidentified`), and the `clock` (`linux-monotonic:<boot id>:<time namespace inode>`, `…:none`, or `system`) is the sender's own; unknown fields are read past |
 | `admission.lock` | the receiver, on bind | locked exclusively for as long as a receiver that advertises is bound; the system releases it when that process ends, however it ends |
 | `<id>.admitted.json` | the courier, as the inbox queues the message | `{schema_version}`: the message is admitted |
 | `<id>.claimed` | the receiver taking it, or its sender withdrawing it, whichever comes first | empty, created exclusively; the receiver removes it on a release, and removes it with the message's other files once it is answered or withdrawn |
-| `<id>.deadline.json` | a sender in `wait_until`, before it waits | `{schema_version, clock, deadline}`: the deadline in nanoseconds on the monotonic `clock` named as in `admission.json`, past which a release or take expires the message; removed with the message's other files |
+| `<id>.deadline.json` | a sender in `wait_until`, before it waits, and again once its deadline passes | `{schema_version, clock, deadline}`: the deadline in nanoseconds on the `clock` named as in `admission.json` (since the Unix epoch on `system`), past which a release or take expires the message; removed with the message's other files |
 | `<id>.expired` | the receiver, releasing or taking the message past its deadline | empty: the message is dropped from the inbox, and its sender removes it with the message's other files |
 
 `<id>` is the minting instant in nanoseconds since the Unix epoch (39 digits),

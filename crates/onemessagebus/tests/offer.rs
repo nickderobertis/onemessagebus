@@ -1064,9 +1064,12 @@ fn a_deadline_on_a_clock_the_receiver_does_not_read_is_none() {
     }));
 }
 
+/// A named rewrite of a bound receiver's `admission.json`.
+type Rewrite = (&'static str, fn(&mut serde_json::Value));
+
 #[test]
 fn a_receiver_on_a_clock_its_sender_cannot_verify_never_has_an_admitted_message_expire() {
-    let rewrites: [(&str, fn(&mut serde_json::Value)); 3] = [
+    let rewrites: [Rewrite; 3] = [
         ("another boot's clock", |advertisement| {
             advertisement["clock"] = json!(FOREIGN_CLOCK);
         }),

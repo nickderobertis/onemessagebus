@@ -15,8 +15,8 @@
 //! and its sender's withdrawal race to create one claim file (`<id>.claimed`),
 //! which only one of them can: so the guarantee holds up to [`Inbox::take`]
 //! rather than up to the courier. A sender in `wait_until` publishes its
-//! deadline (`<id>.deadline.json`) before it waits, on the monotonic clock it
-//! verified it shares with the receiver, and a release or take past
+//! deadline (`<id>.deadline.json`) before it waits, on the clock it verified
+//! it shares with the receiver, and a release or take past
 //! it drops the message and says so (`<id>.expired`) rather than queueing or
 //! taking it. `docs/inbox.md` states the
 //! on-disk shape.
@@ -37,8 +37,8 @@ use crate::inbox::{
     BackendError, Claimed, Closed, Disposition, Gate, Inbox, InboxBackend, Offer, Pending,
     Released, Reply, Sender, Shared, Unanswered, Undelivered,
 };
-use crate::monotonic::{ClockIdentity, SharedClock};
 use crate::schema::{Message, SchemaId};
+use crate::shared_clock::{ClockIdentity, SharedClock};
 
 /// How long a sender waits for its message to be admitted before it withdraws
 /// it and reports it lost. A taken message is waited on for as long as its receiver
@@ -101,10 +101,10 @@ struct Admission {
     /// declaration is a new file renamed into place, so a receiver rebinding
     /// the spool leaves one this no longer names.
     declaration: Identity,
-    /// The monotonic clock the receiver reads a published deadline on. A
-    /// sender that cannot verify it shares that clock reads the receiver as
-    /// not advertising, so no expiry it reports rests on a clock the two do
-    /// not share. Absent where the receiver identifies none.
+    /// The clock the receiver reads a published deadline on. A sender that
+    /// cannot verify it shares that clock reads the receiver as not
+    /// advertising, so no expiry it reports rests on a clock the two do not
+    /// share.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     clock: Option<ClockIdentity>,
 }
@@ -116,8 +116,8 @@ struct Admitted {
     schema_version: u32,
 }
 
-/// The deadline a waiting sender published, on the monotonic clock it shares
-/// with the receiver: the clock its `Instant` was taken on.
+/// The deadline a waiting sender published, on the clock it shares with the
+/// receiver.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DeadlineDocument {
@@ -239,7 +239,7 @@ impl Spool {
                     path: declaration.clone(),
                     why: "it is gone as soon as it was written".to_owned(),
                 })?,
-                clock: SharedClock::here().map(|clock| clock.identity().clone()),
+                clock: Some(SharedClock::here().identity().clone()),
             },
         )?;
         remove_if_present(&dir.join(CLOSED_RECORD))?;
@@ -574,6 +574,7 @@ impl Exchange {
         }
         // Shared with the receiver: it advertises only where it is.
         let clock = SharedClock::here();
+        let deadline_at = clock.at(deadline);
         let mut published = Published::Nothing;
         loop {
             if let Some(answered) = self.read_answer()? {
@@ -589,21 +590,32 @@ impl Exchange {
                 return Ok(ended?);
             }
             let now = Instant::now();
-            // Published before any wait, on the clock the deadline's `Instant`
-            // was taken on, so a release or take past it expires the message
-            // however long this sender goes without running, and no step of the
-            // wall clock moves it. One the file system refuses is published at
-            // a later look.
-            if let (Published::Nothing, Admits::OnAcknowledgement, Some(clock)) =
-                (published, self.admits, &clock)
-            {
-                let document = DeadlineDocument {
-                    schema_version: SPOOL_SCHEMA_VERSION,
-                    clock: clock.identity().clone(),
-                    deadline: clock.at(deadline),
+            if self.admits == Admits::OnAcknowledgement {
+                // Published before any wait, so a release or take past it
+                // expires the message however long this sender goes without
+                // running; and again as passed once this sender's own deadline
+                // has, so where the shared clock is the system clock, one set
+                // back cannot hold expiry past it. On `CLOCK_MONOTONIC` no step
+                // of the wall clock moves it at all. One the file system
+                // refuses is published at a later look.
+                let due = if now >= deadline {
+                    Published::Passed
+                } else {
+                    Published::Deadline
                 };
-                if write_document(&self.file(DEADLINE), &document).is_ok() {
-                    published = Published::Deadline;
+                if published < due {
+                    let at = match due {
+                        Published::Passed => deadline_at.min(clock.now()),
+                        Published::Deadline | Published::Nothing => deadline_at,
+                    };
+                    let document = DeadlineDocument {
+                        schema_version: SPOOL_SCHEMA_VERSION,
+                        clock: clock.identity().clone(),
+                        deadline: at,
+                    };
+                    if write_document(&self.file(DEADLINE), &document).is_ok() {
+                        published = due;
+                    }
                 }
             }
             // Past the deadline every look tries to withdraw it, for a message
@@ -690,8 +702,8 @@ fn open_lock(path: &Path) -> Result<File, BackendError> {
 /// withdrawal after it, only while the receiver that wrote `admission.json` is
 /// alive and bound — it holds `admission.lock` — and the `spool.json` there now
 /// is the file it was written beside — and only where the sender verifies
-/// that the two read one monotonic clock (`admission.json`'s `clock`), the one
-/// a published deadline is read on. Neither of the first two depends on a
+/// that the two read one clock (`admission.json`'s `clock`), the one a
+/// published deadline is read on. Neither of the first two depends on a
 /// clock. An older
 /// receiver never takes the lock, so one rebinding after a killed newer one
 /// finds it free; and it renames a new declaration into place, so for the
@@ -703,10 +715,10 @@ fn advertises(dir: &Path) -> Admits {
     // A receiver whose clock this sender cannot verify it shares could not
     // read a deadline the way this sender took it, so it is read as advertising
     // nothing: no withdrawal or expiry after admission is claimed against it.
-    let shares_a_clock = matches!(
-        (SharedClock::here(), &admission.clock),
-        (Some(here), Some(theirs)) if here.is(theirs)
-    );
+    let shares_a_clock = admission
+        .clock
+        .as_ref()
+        .is_some_and(|theirs| SharedClock::here().is(theirs));
     if shares_a_clock
         && held(&dir.join(ADMISSION_LOCK))
         && Identity::of(&dir.join(DECLARATION)).as_ref() == Some(&admission.declaration)
@@ -786,13 +798,16 @@ enum Admits {
     OnAcknowledgement,
 }
 
-/// Whether a sender in `wait_until` has published its deadline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// What a sender in `wait_until` has published of its deadline, in the order
+/// it publishes them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Published {
-    /// Not yet: the file system refused it so far.
+    /// Nothing yet: the file system refused it so far.
     Nothing,
-    /// It is there, for a release or a take to read.
+    /// The deadline itself, before it passed.
     Deadline,
+    /// That the deadline has passed, as this sender's own clock reads it.
+    Passed,
 }
 
 /// What a receiver found of a message's deadline as it released or took it.
@@ -973,20 +988,16 @@ impl Hold {
     }
 
     /// Whether the deadline its sender published has passed, read here and
-    /// now on the monotonic clock the two share, so it needs nothing of the
+    /// now on the clock the two share, so it needs nothing of the
     /// sender; and if so, tell the sender the message is dropped. A deadline
     /// this build cannot read, or one on a clock this receiver does not read,
     /// is no deadline: the sender's own withdrawal at it still decides.
     fn expire(&self) -> Expiring {
-        let due = match (
+        let clock = SharedClock::here();
+        let due = matches!(
             read_document::<DeadlineDocument>(&self.dir, &self.file(DEADLINE)),
-            SharedClock::here(),
-        ) {
-            (Ok(Some(published)), Some(clock)) => {
-                clock.is(&published.clock) && clock.now() >= published.deadline
-            }
-            _ => false,
-        };
+            Ok(Some(published)) if clock.is(&published.clock) && clock.now() >= published.deadline
+        );
         if !due {
             return Expiring::NotDue;
         }
