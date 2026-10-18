@@ -454,7 +454,7 @@ fn inbox_md_names_every_file_a_spool_holds() {
             "admission.lock",
             "<id>.admitted.json",
             "<id>.claimed",
-            "<id>.expiring",
+            "<id>.deadline.json",
             "<id>.expired",
         ],
         "docs/inbox.md's file table no longer names the files a spool holds"
@@ -527,6 +527,41 @@ fn the_documented_admission_documents_are_what_a_bound_spool_writes() {
         json!(SPOOL_SCHEMA_VERSION)
     );
     assert!(offer.withdraw().is_ok());
+
+    // A waiting sender's published deadline, read while the receiver holds
+    // its message.
+    let offer = Spool::connect::<Order, Receipt>(spool.address())
+        .offer(order("A-2", 1))
+        .expect("admitted");
+    let delivered = inbox.take().expect("queued");
+    let waiting = std::thread::spawn(move || {
+        offer.wait_until(std::time::Instant::now() + std::time::Duration::from_secs(60))
+    });
+    let started = std::time::Instant::now();
+    let published = loop {
+        let found = std::fs::read_dir(dir.path())
+            .expect("a directory")
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| path.to_string_lossy().ends_with(".deadline.json"));
+        if let Some(found) = found {
+            break found;
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "a waiting sender publishes its deadline"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    let published = document_at(&published);
+    assert_eq!(
+        fields_of(&published),
+        documented_fields("<id>.deadline.json")
+    );
+    assert_eq!(published["schema_version"], json!(SPOOL_SCHEMA_VERSION));
+    assert!(published["deadline"].is_u64());
+    delivered.answer(Receipt::Deferred);
+    assert!(waiting.join().expect("waits").is_ok());
 }
 
 #[test]

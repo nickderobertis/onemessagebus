@@ -174,7 +174,39 @@ fn receiver_child() {
     }
 }
 
-/// A receiver bound to a spool in a process of its own.
+/// The environment variable that makes this binary's `sender_child` a sender
+/// into the spool it names.
+const SENDER_SPOOL: &str = "ONEMESSAGEBUS_OFFER_SENDER_SPOOL";
+
+/// The child half of the journey whose sender is suspended: one offer into the
+/// spool `SENDER_SPOOL` names, then `wait <millis>` waits until a deadline that
+/// far off and says what came of it.
+#[test]
+#[ignore = "the child half of the suspended-sender journey, which runs it with --ignored"]
+fn sender_child() {
+    let address = std::env::var_os(SENDER_SPOOL)
+        .expect("run only as a spool journey's child, which names the spool");
+    let sender = Spool::connect::<Order, Receipt>(PathBuf::from(address));
+    let offer = sender.offer(order("late")).expect("admitted");
+    println!("@ admitted");
+    let mut command = String::new();
+    std::io::stdin().read_line(&mut command).expect("a command");
+    let millis: u64 = command
+        .trim()
+        .strip_prefix("wait ")
+        .and_then(|millis| millis.parse().ok())
+        .unwrap_or_else(|| panic!("the child was told {command:?}"));
+    let deadline = Instant::now() + Duration::from_millis(millis);
+    let outcome = match offer.wait_until(deadline) {
+        Ok(Receipt::Filled { by }) => format!("answered by {by}"),
+        Err(Unanswered::Expired) => "expired".to_owned(),
+        Err(other) => format!("unanswered: {other}"),
+    };
+    println!("@ {outcome}");
+}
+
+/// A receiver bound to a spool in a process of its own — or, started as
+/// `sender_child`, a sender in one.
 struct Receiver {
     child: Child,
     /// Closed to end the receiver cleanly, so its process exits as it would.
@@ -184,29 +216,35 @@ struct Receiver {
 
 impl Receiver {
     fn bind(address: &Path) -> Self {
+        let mut receiver = Self::start("receiver_child", RECEIVER_SPOOL, address);
+        assert_eq!(receiver.reply(), "bound");
+        receiver
+    }
+
+    /// This binary re-run as its ignored test `child`, with `variable` naming
+    /// the spool at `address`.
+    fn start(child: &str, variable: &str, address: &Path) -> Self {
         let mut child = Command::new(std::env::current_exe().expect("this test binary"))
             .args([
-                "receiver_child",
+                child,
                 "--exact",
                 "--nocapture",
                 "--ignored",
                 "--test-threads=1",
             ])
-            .env(RECEIVER_SPOOL, address)
+            .env(variable, address)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .expect("the receiver process starts");
+            .expect("the child process starts");
         let commands = Some(child.stdin.take().expect("its stdin"));
         let replies = BufReader::new(child.stdout.take().expect("its stdout"));
-        let mut receiver = Self {
+        Self {
             child,
             commands,
             replies,
-        };
-        assert_eq!(receiver.reply(), "bound");
-        receiver
+        }
     }
 
     fn reply(&mut self) -> String {
@@ -802,6 +840,42 @@ fn a_spool_release_past_the_deadline_expires_the_message_before_any_take_can_fin
     assert_eq!(receiver.say("answer early in-time"), "ok");
     assert_eq!(waiting.join().expect("waits"), Ok(filled("in-time")));
     assert_eq!(receiver.answered(), "answered [early]");
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
+#[test]
+fn a_spool_release_past_the_deadline_of_a_suspended_sender_expires_the_message_before_any_take() {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let mut sender = Receiver::start("sender_child", SENDER_SPOOL, &address);
+    assert_eq!(sender.reply(), "admitted");
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("late"));
+    // The sender starts waiting, and is suspended well before its deadline:
+    // as soon as its wait has published anything beside the message, or after
+    // a moment if it publishes nothing.
+    let before = message_files(&address);
+    sender.tell("wait 1500");
+    let started = Instant::now();
+    while message_files(&address) == before && started.elapsed() < Duration::from_millis(300) {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    sender.signal("-STOP");
+    assert!(
+        started.elapsed() < Duration::from_millis(1000),
+        "the sender was suspended too late to prove anything"
+    );
+    // Past its deadline, with the sender never having run since.
+    std::thread::sleep(Duration::from_millis(2500));
+    assert_eq!(
+        receiver.say("release-and-take late"),
+        "none",
+        "a take found a message released past a suspended sender's deadline"
+    );
+    assert_eq!(receiver.take(Duration::ZERO), None);
+    sender.signal("-CONT");
+    assert_eq!(sender.reply(), "expired");
+    assert_eq!(receiver.take(SETTLE), None);
+    assert_eq!(receiver.answered(), "answered []");
     assert_eq!(message_files(&address), Vec::<String>::new());
 }
 

@@ -132,16 +132,23 @@ A directory a receiver's process binds, for a sender in another process.
   `<id>.claimed`, an exclusive create that only one of them can win. The loser
   learns it has lost: a take that loses drops the message as withdrawn, and a
   withdrawal that loses reads the message as taken. A release removes the
-  receiver's claim, so the sender can withdraw again. A sender whose
-  `wait_until` deadline passes says so by creating `<id>.expiring` before it
-  first tries to withdraw. A release that finds it renames it onto
-  `<id>.expired` under the inbox's lock, drops the message from the inbox and
-  keeps its claim, so no take can come before the sender reads the rename,
+  receiver's claim, so the sender can withdraw again. A sender in
+  `wait_until` publishes its deadline in `<id>.deadline.json` before it waits,
+  on the system clock, the one clock both processes read. A release decides
+  from that document, under the inbox's lock, whether the deadline has passed,
+  so the sender need not run after its deadline for the release to expire the
+  message: a release past it creates `<id>.expired`, drops the message from the
+  inbox and keeps its claim, so no take can come before the sender reads it,
   reports `Expired`, and removes the message's files. A take that claims a
-  message with `<id>.expiring` beside it does the same. A marker the file
-  system refuses to create is created at the sender's next look, and a rename it
-  refuses leaves the message queued with the receiver's claim, so neither side
-  has it until the next take can rename it. A claim the file system
+  message past its published deadline does the same. Once the sender's own
+  deadline passes it publishes the deadline again as passed, so a system clock
+  set back cannot hold expiry past it, and a step of that clock moves only when
+  a release expires the message, never whether a take and a withdrawal can both
+  succeed. A deadline the file system refuses to publish is published at the
+  sender's next look, and one the receiver cannot read is no deadline: the
+  sender's own withdrawal at it still decides. An `<id>.expired` the file system
+  refuses to create leaves the message queued with the receiver's claim, so
+  neither side has it until the next take can create it. A claim the file system
   will not remove stays the receiver's, and its sender reads the message as
   taken. The receiver claims a
   message before it writes any answer (a disposition, a close, or a refusal)
@@ -206,8 +213,8 @@ receiver's take and its sender's withdrawal after admission.
 | `admission.lock` | the receiver, on bind | locked exclusively for as long as a receiver that advertises is bound; the system releases it when that process ends, however it ends |
 | `<id>.admitted.json` | the courier, as the inbox queues the message | `{schema_version}`: the message is admitted |
 | `<id>.claimed` | the receiver taking it, or its sender withdrawing it, whichever comes first | empty, created exclusively; the receiver removes it on a release, and removes it with the message's other files once it is answered or withdrawn |
-| `<id>.expiring` | a sender whose `wait_until` deadline has passed | empty: a release expires the message rather than queueing it; removed with the message's other files |
-| `<id>.expired` | the receiver, renaming `<id>.expiring` as it releases the message | empty: the message is dropped from the inbox, and its sender removes it with the message's other files |
+| `<id>.deadline.json` | a sender in `wait_until`, before it waits, and again once its deadline passes | `{schema_version, deadline}`: the deadline in nanoseconds since the Unix epoch, past which a release or take expires the message; removed with the message's other files |
+| `<id>.expired` | the receiver, releasing or taking the message past its deadline | empty: the message is dropped from the inbox, and its sender removes it with the message's other files |
 
 `<id>` is the minting instant in nanoseconds since the Unix epoch (39 digits),
 the minting process's id, and a per-process counter (20 digits), joined by `-`:

@@ -14,9 +14,10 @@
 //! when it has queued a message (`<id>.admitted.json`), and the receiver's take
 //! and its sender's withdrawal race to create one claim file (`<id>.claimed`),
 //! which only one of them can: so the guarantee holds up to [`Inbox::take`]
-//! rather than up to the courier. A sender past its deadline says so
-//! (`<id>.expiring`), and a release that finds it renames it (`<id>.expired`)
-//! and drops the message rather than queueing it. `docs/inbox.md` states the
+//! rather than up to the courier. A sender in `wait_until` publishes its
+//! deadline (`<id>.deadline.json`) before it waits, and a release or take past
+//! it drops the message and says so (`<id>.expired`) rather than queueing or
+//! taking it. `docs/inbox.md` states the
 //! on-disk shape.
 
 use std::fs::{self, File, OpenOptions, TryLockError};
@@ -25,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -75,11 +76,11 @@ const ADMITTED: &str = ".admitted.json";
 /// `<id>.claimed`: created by whichever of the receiver's take and its
 /// sender's withdrawal comes first; the other cannot create it.
 const CLAIMED: &str = ".claimed";
-/// `<id>.expiring`: created by a sender whose deadline passed while the
-/// receiver held the message, so a release expires it rather than queueing it.
-const EXPIRING: &str = ".expiring";
-/// `<id>.expired`: the receiver's release renamed `<id>.expiring` onto it, and
-/// dropped the message from its inbox.
+/// `<id>.deadline.json`: the deadline a sender in `wait_until` published before
+/// it waited, which a release or take past it expires the message at.
+const DEADLINE: &str = ".deadline.json";
+/// `<id>.expired`: created by the receiver as it dropped the message from its
+/// inbox, past its sender's deadline.
 const EXPIRED: &str = ".expired";
 
 #[derive(Serialize, Deserialize)]
@@ -105,6 +106,16 @@ struct Admission {
 #[serde(deny_unknown_fields)]
 struct Admitted {
     schema_version: u32,
+}
+
+/// The deadline a waiting sender published, on the system clock: the one clock
+/// both processes read.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeadlineDocument {
+    schema_version: u32,
+    /// Nanoseconds since the Unix epoch.
+    deadline: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -550,12 +561,13 @@ impl Exchange {
         if let Some(answered) = self.answered.take() {
             return Ok(answered);
         }
-        let mut expiry = Expiry::Unsaid;
+        let deadline_at = on_the_system_clock(deadline);
+        let mut published = Published::Nothing;
         loop {
             if let Some(answered) = self.read_answer()? {
                 return Ok(answered);
             }
-            if expiry == Expiry::Said && self.file(EXPIRED).exists() {
+            if published != Published::Nothing && self.file(EXPIRED).exists() {
                 // Released past the deadline: the receiver dropped it from its
                 // inbox and holds nothing of it, so what is left is ours.
                 discard(&self.dir, &self.id);
@@ -565,22 +577,35 @@ impl Exchange {
                 return Ok(ended?);
             }
             let now = Instant::now();
-            if now >= deadline {
-                // Said before the first withdrawal is tried, so a receiver
-                // that holds the message now expires it as it releases it,
-                // rather than queueing it for a take to find.
-                // One the file system refuses to create is said at a later look.
-                if expiry == Expiry::Unsaid && self.admits == Admits::OnAcknowledgement {
-                    expiry = match claim(&self.file(EXPIRING)) {
-                        Contest::Won | Contest::Lost => Expiry::Said,
-                        Contest::Refused => Expiry::Unsaid,
+            if self.admits == Admits::OnAcknowledgement {
+                // Published before any wait, so a release or take past it
+                // expires the message however long this sender goes without
+                // running; and again as passed once this sender's own deadline
+                // has, so a system clock set back cannot hold expiry past it.
+                // One the file system refuses is published at a later look.
+                let due = if now >= deadline {
+                    Published::Passed
+                } else {
+                    Published::Deadline
+                };
+                if published < due {
+                    let at = match due {
+                        Published::Passed => deadline_at.min(unix_nanos(SystemTime::now())),
+                        Published::Deadline | Published::Nothing => deadline_at,
                     };
+                    let document = DeadlineDocument {
+                        schema_version: SPOOL_SCHEMA_VERSION,
+                        deadline: at,
+                    };
+                    if write_document(&self.file(DEADLINE), &document).is_ok() {
+                        published = due;
+                    }
                 }
-                // Every look tries to withdraw it, for a message released before
-                // the deadline was said.
-                if self.withdraw() {
-                    return Err(Unanswered::Expired);
-                }
+            }
+            // Past the deadline every look tries to withdraw it, for a message
+            // untaken there.
+            if now >= deadline && self.withdraw() {
+                return Err(Unanswered::Expired);
             }
             // Woken at the deadline itself, not up to a poll after it.
             std::thread::sleep(match deadline.checked_duration_since(now) {
@@ -746,13 +771,39 @@ enum Admits {
     OnAcknowledgement,
 }
 
-/// Whether a sender past its deadline has said so with `<id>.expiring`.
+/// What a sender in `wait_until` has published of its deadline, in the order
+/// it publishes them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Published {
+    /// Nothing yet: the file system refused it so far.
+    Nothing,
+    /// The deadline itself, before it passed.
+    Deadline,
+    /// That the deadline has passed, as this sender's own clock reads it.
+    Passed,
+}
+
+/// What a receiver found of a message's deadline as it released or took it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Expiry {
-    /// Not yet: its deadline has not passed, or the file system refused it.
-    Unsaid,
-    /// It is there, for a release to find.
-    Said,
+enum Expiring {
+    /// No deadline published, or one not yet passed.
+    NotDue,
+    /// Past it: the message is dropped, and its sender told.
+    Expired,
+    /// Past it, and the file system refused to tell its sender.
+    Refused,
+}
+
+/// `deadline` on the system clock, in nanoseconds since the Unix epoch.
+fn on_the_system_clock(deadline: Instant) -> u64 {
+    let left = deadline.saturating_duration_since(Instant::now());
+    unix_nanos(SystemTime::now()).saturating_add(u64::try_from(left.as_nanos()).unwrap_or(u64::MAX))
+}
+
+fn unix_nanos(at: SystemTime) -> u64 {
+    at.duration_since(UNIX_EPOCH).map_or(0, |since| {
+        u64::try_from(since.as_nanos()).unwrap_or(u64::MAX)
+    })
 }
 
 /// Whether the receiver holds a message's claim.
@@ -798,7 +849,7 @@ fn claim(path: &Path) -> Contest {
 
 /// Remove what is left of message `id` once its sender withdrew it.
 fn discard(dir: &Path, id: &MessageId) {
-    for suffix in [TAKEN, ADMITTED, CLAIMED, EXPIRING, EXPIRED] {
+    for suffix in [TAKEN, ADMITTED, CLAIMED, DEADLINE, EXPIRED] {
         let _ = fs::remove_file(id.file(dir, suffix));
     }
 }
@@ -921,13 +972,21 @@ impl Hold {
         *self.held.lock().unwrap_or_else(PoisonError::into_inner) = holding;
     }
 
-    /// Hand a sender past its deadline word that the message is dropped, by
-    /// renaming its `<id>.expiring`: `None` when it has said no such thing.
-    fn expire(&self) -> Option<std::io::Result<()>> {
-        match fs::rename(self.file(EXPIRING), self.file(EXPIRED)) {
-            Ok(()) => Some(Ok(())),
-            Err(failure) if failure.kind() == std::io::ErrorKind::NotFound => None,
-            Err(failure) => Some(Err(failure)),
+    /// Whether the deadline its sender published has passed, read here and
+    /// now, so it needs nothing of the sender; and if so, tell the sender the
+    /// message is dropped. A deadline this build cannot read is no deadline:
+    /// the sender's own withdrawal at it still decides.
+    fn expire(&self) -> Expiring {
+        let due = matches!(
+            read_document::<DeadlineDocument>(&self.dir, &self.file(DEADLINE)),
+            Ok(Some(published)) if unix_nanos(SystemTime::now()) >= published.deadline
+        );
+        if !due {
+            return Expiring::NotDue;
+        }
+        match claim(&self.file(EXPIRED)) {
+            Contest::Won | Contest::Lost => Expiring::Expired,
+            Contest::Refused => Expiring::Refused,
         }
     }
 
@@ -984,27 +1043,29 @@ impl Gate for Hold {
                 Contest::Refused => return Claimed::Undecided,
             }
         }
-        // Claimed, and its sender past its deadline — said after a release
-        // that queued it again, or after a release that could not expire it:
-        // dropped as the release would have, keeping the claim, so its sender
-        // reads the rename and clears what is left.
+        // Claimed, and its sender past its deadline — untaken there, or after
+        // a release that could not expire it: dropped as a release would,
+        // keeping the claim, so its sender reads `<id>.expired` and clears what
+        // is left.
         match self.expire() {
-            None => Claimed::Taken,
-            Some(Ok(())) => Claimed::Withdrawn,
-            Some(Err(_)) => Claimed::Undecided,
+            Expiring::NotDue => Claimed::Taken,
+            Expiring::Expired => Claimed::Withdrawn,
+            Expiring::Refused => Claimed::Undecided,
         }
     }
 
     fn release(&mut self) -> Released {
+        // Decided here, under the inbox's lock, from the deadline its sender
+        // published, so the sender need not run for the release to expire it.
         match self.expire() {
-            // The claim stays, so nothing takes the message, and the rename
-            // hands its sender word that it is dropped.
-            Some(Ok(())) => return Released::Expired,
+            // The claim stays, so nothing takes the message, and `<id>.expired`
+            // tells its sender it is dropped.
+            Expiring::Expired => return Released::Expired,
             // Its sender is past its deadline and the file system refused the
             // word: the claim stays the receiver's, and the next take tries
             // again rather than taking it.
-            Some(Err(_)) => return Released::Untaken,
-            None => {}
+            Expiring::Refused => return Released::Untaken,
+            Expiring::NotDue => {}
         }
         // Let go of only once its claim is gone: one the file system keeps is
         // still the receiver's, and its sender reads the message as taken.
