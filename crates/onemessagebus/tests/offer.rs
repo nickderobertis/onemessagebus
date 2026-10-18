@@ -83,6 +83,7 @@ fn message_files(dir: &Path) -> Vec<String> {
         .filter(|name| {
             ![
                 "admission.json",
+                "admission.lock",
                 "receiver.lock",
                 "spool.json",
                 "closed.json",
@@ -396,9 +397,12 @@ fn a_spool_offer_a_courier_renamed_but_never_queued_is_not_admitted_and_is_withd
     let offering = {
         let address = address.clone();
         std::thread::spawn(move || {
+            // Whether the offer or its wait says so depends on whether the
+            // sender looked at the advertisement before or after the receiver
+            // died; the sender is told the same thing either way.
             Spool::connect::<Order, Receipt>(&address)
                 .offer(order("orphan"))
-                .map(drop)
+                .and_then(Offer::wait)
         })
     };
     let offered = loop {
@@ -854,7 +858,9 @@ struct OlderReceiver {
 }
 
 impl OlderReceiver {
-    fn bind(dir: &Path, answer: Arc<std::sync::Mutex<Option<Receipt>>>) -> Self {
+    /// Bound, writing its declaration as every build does when `declare`, or
+    /// leaving the one there — the file an earlier receiver wrote — when not.
+    fn bind(dir: &Path, answer: Arc<std::sync::Mutex<Option<Receipt>>>, declare: bool) -> Self {
         use std::sync::atomic::{AtomicBool, Ordering};
         std::fs::create_dir_all(dir).expect("made");
         let lock = std::fs::File::options()
@@ -864,14 +870,17 @@ impl OlderReceiver {
             .open(dir.join("receiver.lock"))
             .expect("opened");
         lock.try_lock().expect("the older receiver binds");
-        // As every build writes a document: beside its name, then renamed on.
-        let staging = dir.join("spool.json.staging");
-        std::fs::write(
-            &staging,
-            json!({"schema_version": SPOOL_SCHEMA_VERSION, "schema": "shop.order@1"}).to_string(),
-        )
-        .expect("staged");
-        std::fs::rename(&staging, dir.join("spool.json")).expect("declared");
+        if declare {
+            // As every build writes a document: beside its name, then renamed on.
+            let staging = dir.join("spool.json.staging");
+            std::fs::write(
+                &staging,
+                json!({"schema_version": SPOOL_SCHEMA_VERSION, "schema": "shop.order@1"})
+                    .to_string(),
+            )
+            .expect("staged");
+            std::fs::rename(&staging, dir.join("spool.json")).expect("declared");
+        }
         let stop = Arc::new(AtomicBool::new(false));
         let serving = {
             let dir = dir.to_path_buf();
@@ -931,14 +940,14 @@ impl Drop for OlderReceiver {
 /// An older receiver has the message once its courier has it, and a sender
 /// never claims a withdrawal that receiver would not honour.
 fn assert_withdrawal_after_admission_is_refused(address: &Path) {
-    assert_withdrawal_refused_once(address, |_| {});
+    assert_withdrawal_refused_once(address, true, |_| {});
 }
 
 /// As `assert_withdrawal_after_admission_is_refused`, with `beside` writing
 /// what else is in the spool once the older receiver has bound it.
-fn assert_withdrawal_refused_once(address: &Path, beside: impl FnOnce(&Path)) {
+fn assert_withdrawal_refused_once(address: &Path, declare: bool, beside: impl FnOnce(&Path)) {
     let answer = Arc::new(std::sync::Mutex::new(None));
-    let _older = OlderReceiver::bind(address, Arc::clone(&answer));
+    let _older = OlderReceiver::bind(address, Arc::clone(&answer), declare);
     beside(address);
     let sender = Spool::connect::<Order, Receipt>(address);
     let offer = sender
@@ -992,34 +1001,131 @@ fn an_older_receiver_rebinding_after_a_newer_one_leaves_its_advertisement_unread
     assert_withdrawal_after_admission_is_refused(&address);
 }
 
-/// The modification instant of the declaration in `address`, as an
-/// advertisement records it.
-fn declaration_modified_ns(address: &Path) -> u64 {
-    let modified = std::fs::metadata(address.join("spool.json"))
+/// A spool a newer receiver bound and was killed in, leaving its advertisement
+/// behind.
+fn left_by_a_killed_receiver() -> (tempfile::TempDir, PathBuf) {
+    let (dir, address) = spool_dir();
+    Receiver::bind(&address).kill();
+    assert!(
+        address.join("admission.json").exists(),
+        "a killed receiver removed its advertisement"
+    );
+    (dir, address)
+}
+
+#[test]
+fn an_older_receiver_whose_declaration_carries_the_stale_timestamp_still_refuses_withdrawal() {
+    let (_dir, address) = left_by_a_killed_receiver();
+    // The instant the declaration the advertisement was written beside carries.
+    let stale = std::fs::metadata(address.join("spool.json"))
         .and_then(|metadata| metadata.modified())
         .expect("a declaration");
-    u64::try_from(
-        modified
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("after the epoch")
-            .as_nanos(),
+    // An older receiver rebinds, and its declaration comes to carry that same
+    // instant — a clock set back, or two writes in one timestamp tick.
+    assert_withdrawal_refused_once(&address, true, |address| {
+        std::fs::File::options()
+            .write(true)
+            .open(address.join("spool.json"))
+            .and_then(|declaration| declaration.set_modified(stale))
+            .expect("the older declaration is stamped");
+    });
+}
+
+#[test]
+fn an_advertisement_whose_receiver_is_gone_is_not_trusted_beside_the_declaration_it_names() {
+    // The declaration is the very file the advertisement names — as when a
+    // file system hands a rewritten declaration a freed file's identity — and
+    // the receiver that wrote it holds nothing any more.
+    let (_dir, address) = left_by_a_killed_receiver();
+    assert_withdrawal_refused_once(&address, false, |_| {});
+}
+
+#[test]
+fn an_advertisement_beside_a_rewritten_declaration_is_not_trusted_while_its_lock_is_held() {
+    let (_dir, address) = left_by_a_killed_receiver();
+    // Stand in for a dying receiver whose advertisement's lock is let go of
+    // last: still held while an older receiver rebinds and declares anew.
+    let lingering = std::fs::File::options()
+        .write(true)
+        .open(address.join("admission.lock"))
+        .expect("the advertisement's lock");
+    lingering
+        .try_lock()
+        .expect("free once its receiver is gone");
+    assert_withdrawal_refused_once(&address, true, |_| {});
+    drop(lingering);
+}
+
+#[test]
+fn a_senders_look_at_the_advertisements_lock_never_refuses_or_misleads_a_binding_receiver() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let (_dir, address) = spool_dir();
+    std::fs::create_dir_all(&address).expect("made");
+    let stop = Arc::new(AtomicBool::new(false));
+    let looks = Arc::new(AtomicUsize::new(0));
+    // A sender's look, over and over: open the lock, try it, let it go.
+    let looking = {
+        let lock = address.join("admission.lock");
+        let (stop, looks) = (Arc::clone(&stop), Arc::clone(&looks));
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::SeqCst) {
+                if let Ok(file) = std::fs::File::options().write(true).open(&lock) {
+                    let _ = file.try_lock();
+                    looks.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        })
+    };
+    for round in 0..50 {
+        let inbox = Inbox::<Order, Receipt>::new();
+        let spool = Spool::bind(&address, &inbox)
+            .unwrap_or_else(|failure| panic!("round {round}: a look refused the bind: {failure}"));
+        let offer = Spool::connect::<Order, Receipt>(&address)
+            .offer(order(&format!("round-{round}")))
+            .expect("admitted");
+        assert!(
+            offer.withdraw().is_ok(),
+            "round {round}: a bound receiver was read as not advertising"
+        );
+        drop(spool);
+    }
+    stop.store(true, Ordering::SeqCst);
+    looking.join().expect("the looks stop");
+    assert!(looks.load(Ordering::SeqCst) > 0, "nothing looked");
+}
+
+/// A live receiver of this build whose advertisement `rewrite` replaced: its
+/// sender reads every admitted message as taken, and is still answered.
+fn assert_rewritten_advertisement_refused(rewrite: impl FnOnce(&Path)) {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    rewrite(&address);
+    let sender = Spool::connect::<Order, Receipt>(&address);
+    let offer = sender.offer(order("held")).expect("admitted");
+    let offer = offer
+        .withdraw()
+        .expect_err("an advertisement this build cannot read advertises nothing");
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("held"));
+    assert_eq!(receiver.say("answer held stock-room"), "ok");
+    assert_eq!(offer.wait(), Ok(filled("stock-room")));
+}
+
+fn advertisement(address: &Path) -> serde_json::Value {
+    serde_json::from_str(
+        &std::fs::read_to_string(address.join("admission.json")).expect("an advertisement"),
     )
-    .expect("in range")
+    .expect("JSON")
 }
 
 #[test]
 fn an_advertisement_this_build_cannot_read_advertises_nothing() {
-    let (_dir, address) = spool_dir();
-    assert_withdrawal_refused_once(&address, |address| {
+    assert_rewritten_advertisement_refused(|address| {
         std::fs::write(address.join("admission.json"), "not an advertisement").expect("written");
     });
-    let (_dir, address) = spool_dir();
-    assert_withdrawal_refused_once(&address, |address| {
-        let advertisement = json!({
-            "schema_version": SPOOL_SCHEMA_VERSION + 1,
-            "declaration_modified_ns": declaration_modified_ns(address),
-        });
-        std::fs::write(address.join("admission.json"), advertisement.to_string()).expect("written");
+    assert_rewritten_advertisement_refused(|address| {
+        let mut later = advertisement(address);
+        later["schema_version"] = json!(SPOOL_SCHEMA_VERSION + 1);
+        std::fs::write(address.join("admission.json"), later.to_string()).expect("written");
     });
 }
 
@@ -1027,12 +1133,9 @@ fn an_advertisement_this_build_cannot_read_advertises_nothing() {
 fn an_advertisement_that_says_more_than_this_build_knows_still_advertises() {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
-    let advertisement = json!({
-        "schema_version": SPOOL_SCHEMA_VERSION,
-        "declaration_modified_ns": declaration_modified_ns(&address),
-        "said_by_a_later_build": true,
-    });
-    std::fs::write(address.join("admission.json"), advertisement.to_string()).expect("written");
+    let mut more = advertisement(&address);
+    more["said_by_a_later_build"] = json!(true);
+    std::fs::write(address.join("admission.json"), more.to_string()).expect("written");
     let sender = Spool::connect::<Order, Receipt>(&address);
     let offer = sender.offer(order("obsolete")).expect("admitted");
     assert!(offer.withdraw().is_ok());

@@ -119,6 +119,7 @@ fn assert_nothing_written(address: &Path) {
     assert!(
         files.iter().all(|name| [
             "admission.json",
+            "admission.lock",
             "receiver.lock",
             "spool.json",
             "closed.json"

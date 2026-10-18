@@ -121,8 +121,9 @@ A directory a receiver's process binds, for a sender in another process.
   sender was told was lost, and reports the wait. An admitted message is waited
   on for as long as its receiver stays bound.
 - **Admission and withdrawal after it.** A receiver of this build writes
-  `admission.json` beside `spool.json` as it binds, and removes it as it
-  unbinds, while it still holds the lock. The file advertises that the
+  `admission.json` beside `spool.json` as it binds, holds `admission.lock`
+  locked for as long as it is bound, and removes the advertisement as it
+  unbinds, while it still holds both locks. The file advertises that the
   receiver acknowledges admission and honours a withdrawal after it. Its
   courier renames each offer to taken, queues the message in the inbox, and
   writes `<id>.admitted.json` under the inbox's lock, before any take can come.
@@ -145,13 +146,21 @@ A directory a receiver's process binds, for a sender in another process.
 - **A receiver that does not advertise it** (an older build) has the message
   once its courier has renamed the offer, as before. A sender then reads every
   admitted message as taken and never claims a withdrawal that receiver would
-  not honour. The advertisement counts only for the `spool.json` it was
-  written beside: it records that declaration's modification instant, which
-  the binding receiver stamps one second in the past. An older receiver that
-  rebinds the spool, even after a newer one was killed and left its
-  `admission.json` behind, rewrites `spool.json` with a later instant, and the
-  stale advertisement no longer matches. The one residual case is a system
-  clock stepping back more than a second between those two binds.
+  not honour. A sender trusts an advertisement only while the receiver that
+  wrote it is alive and bound, and only beside the declaration it was written
+  with. Neither check reads a clock:
+  - **Its lock is held.** The system releases `admission.lock` when its
+    receiver's process ends, however it ends, and an older receiver never
+    takes it. So one that rebinds after a newer one was killed, leaving its
+    `admission.json` behind, leaves the lock free. A sender's look tries the
+    lock and lets it go at once, and a binding receiver waits for the lock
+    rather than trying it, so no look refuses a bind.
+  - **Its declaration is the file there now.** `admission.json` records
+    `spool.json`'s identity: the device and inode on Unix. Every declaration
+    is a new file renamed into place, so an older receiver's first rebind
+    never matches, even in the moment a dying receiver's locks take to be let
+    go of. Where the standard library gives a file no identity, as on Windows,
+    it records `unidentified`, and the lock alone decides.
 - A sender reports the message **lost** when its answer document is present
   but is not an answer (naming the file), when the wait passes with the message
   never taken (naming the wait), when the receiver took it and no longer holds
@@ -180,7 +189,8 @@ receiver's take and its sender's withdrawal after admission.
 | `<id>.taken.json` | the courier, renaming the offer | a message the receiver has taken and not yet answered |
 | `<id>.answer.json` | the courier | `{schema_version, answer}`, where `answer` is `{"disposition": ...}`, `{"closed": {"reason": ...}}` or `{"refused": {"reason": ...}}`; its sender reads it and removes it |
 | `<id>.withdrawn` | a sender, renaming its offer | a message its sender took back, removed at once |
-| `admission.json` | the receiver, on bind; removed on unbind | `{schema_version, declaration_modified_ns}`: the advertisement that the receiver acknowledges admission and honours a withdrawal after it, valid only while `spool.json`'s modification instant, in nanoseconds since the Unix epoch, is the one recorded; unknown fields are read past |
+| `admission.json` | the receiver, on bind; removed on unbind | `{schema_version, declaration}`: the advertisement that the receiver acknowledges admission and honours a withdrawal after it, trusted only while `admission.lock` is held and `spool.json`'s identity is the `declaration` recorded (`unix:<device>:<inode>`, or `unidentified`); unknown fields are read past |
+| `admission.lock` | the receiver, on bind | locked exclusively for as long as a receiver that advertises is bound; the system releases it when that process ends, however it ends |
 | `<id>.admitted.json` | the courier, as the inbox queues the message | `{schema_version}`: the message is admitted |
 | `<id>.claimed` | the receiver taking it, or its sender withdrawing it, whichever comes first | empty, created exclusively; the receiver removes it on a release, and removes it with the message's other files once it is answered or withdrawn |
 

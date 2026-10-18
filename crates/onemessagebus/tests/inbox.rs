@@ -393,7 +393,12 @@ fn a_spool_carries_a_message_across_and_answers_exactly_what_the_receiver_said()
     receiver.join().expect("the receiver stops");
     assert_eq!(
         files_in(&address),
-        ["admission.json", "receiver.lock", "spool.json"],
+        [
+            "admission.json",
+            "admission.lock",
+            "receiver.lock",
+            "spool.json"
+        ],
         "a settled exchange left files behind"
     );
     let declaration: Value =

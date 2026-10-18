@@ -451,6 +451,7 @@ fn inbox_md_names_every_file_a_spool_holds() {
             "<id>.answer.json",
             "<id>.withdrawn",
             "admission.json",
+            "admission.lock",
             "<id>.admitted.json",
             "<id>.claimed",
         ],
@@ -502,7 +503,7 @@ fn the_documented_admission_documents_are_what_a_bound_spool_writes() {
         documented_fields("admission.json")
     );
     assert_eq!(advertisement["schema_version"], json!(SPOOL_SCHEMA_VERSION));
-    assert!(advertisement["declaration_modified_ns"].is_u64());
+    assert!(advertisement["declaration"].is_string());
 
     // An admitted message's acknowledgement, read before anything takes it.
     let offer = Spool::connect::<Order, Receipt>(spool.address())

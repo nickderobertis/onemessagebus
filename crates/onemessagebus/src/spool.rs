@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -64,6 +64,9 @@ const WITHDRAWN: &str = ".withdrawn";
 /// The receiver's advertisement that it acknowledges admission and honours a
 /// withdrawal after it, bound to the `spool.json` it was written beside.
 const ADMISSION: &str = "admission.json";
+/// Held locked by a receiver that advertises, for as long as it is bound: an
+/// advertisement whose lock nobody holds is a dead receiver's.
+const ADMISSION_LOCK: &str = "admission.lock";
 /// `<id>.admitted.json`: a message the receiver's inbox has queued.
 const ADMITTED: &str = ".admitted.json";
 /// `<id>.claimed`: created by whichever of the receiver's take and its
@@ -82,10 +85,10 @@ struct Declaration {
 #[derive(Serialize, Deserialize)]
 struct Admission {
     schema_version: u32,
-    /// The modification instant of the `spool.json` this was written beside, in
-    /// nanoseconds since the Unix epoch: a receiver rebinding the spool
-    /// rewrites `spool.json`, which no longer matches it.
-    declaration_modified_ns: u64,
+    /// The identity of the `spool.json` file this was written beside: see
+    /// [`identity`]. Every declaration is a new file renamed into place, so a
+    /// receiver rebinding the spool leaves one this no longer names.
+    declaration: String,
 }
 
 /// The courier's acknowledgement that the inbox has queued a message.
@@ -167,6 +170,9 @@ impl Spool {
     {
         let dir = dir.into();
         fs::create_dir_all(&dir).map_err(|failure| BackendError::io("create", &dir, &failure))?;
+        // Opened before the receiver's lock, so a process that ends with both
+        // held lets this one go first.
+        let admission_lock = open_lock(&dir.join(ADMISSION_LOCK))?;
         let lock_path = dir.join(RECEIVER_LOCK);
         let lock = OpenOptions::new()
             .create(true)
@@ -181,6 +187,11 @@ impl Spool {
                 return Err(BackendError::io("lock", &lock_path, &failure))
             }
         }
+        // Waited for rather than tried: only a sender's look holds it now, and
+        // only for a moment.
+        admission_lock
+            .lock()
+            .map_err(|failure| BackendError::io("lock", &dir.join(ADMISSION_LOCK), &failure))?;
         let declaration = dir.join(DECLARATION);
         write_document(
             &declaration,
@@ -193,7 +204,11 @@ impl Spool {
             &dir.join(ADMISSION),
             &Admission {
                 schema_version: SPOOL_SCHEMA_VERSION,
-                declaration_modified_ns: stamp(&declaration)?,
+                declaration: identity(&declaration).ok_or_else(|| BackendError::Io {
+                    action: "read the identity of",
+                    path: declaration.clone(),
+                    why: "it is gone as soon as it was written".to_owned(),
+                })?,
             },
         )?;
         remove_if_present(&dir.join(CLOSED_RECORD))?;
@@ -206,7 +221,7 @@ impl Spool {
             let stop = Arc::clone(&stop);
             std::thread::Builder::new()
                 .name("onemessagebus-spool".to_owned())
-                .spawn(move || serve(&serving, &shared, &stop, lock))
+                .spawn(move || serve(&serving, &shared, &stop, [admission_lock, lock]))
                 .map_err(|failure| BackendError::io("start the courier for", &dir, &failure))?
         };
         Ok(Self {
@@ -584,7 +599,12 @@ fn closed_record(dir: &Path) -> Result<Option<Closed>, BackendError> {
 
 /// Whether a receiver holds the spool's lock.
 fn receiver_bound(dir: &Path) -> bool {
-    let Ok(lock) = OpenOptions::new().write(true).open(dir.join(RECEIVER_LOCK)) else {
+    held(&dir.join(RECEIVER_LOCK))
+}
+
+/// Whether some process holds the lock file at `path`.
+fn held(path: &Path) -> bool {
+    let Ok(lock) = OpenOptions::new().write(true).open(path) else {
         return false;
     };
     // Taking the lock proves nobody holds it; the handle is dropped at once, so
@@ -592,19 +612,49 @@ fn receiver_bound(dir: &Path) -> bool {
     !matches!(lock.try_lock(), Ok(()))
 }
 
+fn open_lock(path: &Path) -> Result<File, BackendError> {
+    OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .map_err(|failure| BackendError::io("open", path, &failure))
+}
+
 /// What admission means to the receiver bound to `dir`: acknowledged, with a
-/// withdrawal after it, when it advertises that in an `admission.json` written
-/// beside the `spool.json` there now. One a killed receiver left behind no
-/// longer matches once a receiver of an older build rewrites the declaration.
+/// withdrawal after it, only while the receiver that wrote `admission.json` is
+/// alive and bound — it holds `admission.lock` — and the `spool.json` there now
+/// is the file it was written beside. Neither depends on a clock. An older
+/// receiver never takes the lock, so one rebinding after a killed newer one
+/// finds it free; and it renames a new declaration into place, so for the
+/// moment a dying receiver's locks take to be let go of, the identity differs.
 fn advertises(dir: &Path) -> Admits {
     let Ok(Some(admission)) = read_document::<Admission>(dir, &dir.join(ADMISSION)) else {
         return Admits::OnRename;
     };
-    if modified_ns(&dir.join(DECLARATION)) == Some(admission.declaration_modified_ns) {
+    if held(&dir.join(ADMISSION_LOCK))
+        && identity(&dir.join(DECLARATION)).as_ref() == Some(&admission.declaration)
+    {
         Admits::OnAcknowledgement
     } else {
         Admits::OnRename
     }
+}
+
+/// The identity of the file at `path`, which no other file shares while it
+/// exists: its device and inode.
+#[cfg(unix)]
+fn identity(path: &Path) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = fs::metadata(path).ok()?;
+    Some(format!("unix:{}:{}", metadata.dev(), metadata.ino()))
+}
+
+/// The same for every file: the standard library gives a file no identity
+/// here, so the advertisement's lock alone decides.
+#[cfg(not(unix))]
+fn identity(path: &Path) -> Option<String> {
+    fs::metadata(path).ok().map(|_| "unidentified".to_owned())
 }
 
 /// What admission means to a spool's receiver.
@@ -616,30 +666,6 @@ enum Admits {
     /// A receiver that does: the message is admitted once the receiver says its
     /// inbox has queued it, and can be withdrawn until a take claims it.
     OnAcknowledgement,
-}
-
-/// Stamp the declaration at `path` with a modification instant of this bind's
-/// own, and answer it as read back. It is a second before now, so a receiver
-/// that rewrites the declaration later — whatever its build — stamps it later,
-/// unless the system clock steps back that far.
-fn stamp(path: &Path) -> Result<u64, BackendError> {
-    let now = SystemTime::now();
-    let at = now.checked_sub(Duration::from_secs(1)).unwrap_or(now);
-    OpenOptions::new()
-        .write(true)
-        .open(path)
-        .and_then(|file| file.set_modified(at))
-        .map_err(|failure| BackendError::io("stamp", path, &failure))?;
-    modified_ns(path).ok_or_else(|| BackendError::Io {
-        action: "read the modification time of",
-        path: path.to_path_buf(),
-        why: "the file system does not report it".to_owned(),
-    })
-}
-
-fn modified_ns(path: &Path) -> Option<u64> {
-    let modified = fs::metadata(path).ok()?.modified().ok()?;
-    u64::try_from(modified.duration_since(UNIX_EPOCH).ok()?.as_nanos()).ok()
 }
 
 /// One message's id in a spool: what every file of it is named by.
@@ -683,8 +709,9 @@ fn withdraw(dir: &Path, id: &MessageId) -> bool {
 }
 
 /// The courier: take each offer into the inbox until the inbox closes or the
-/// spool is dropped, holding the receiver's lock throughout.
-fn serve<M, D>(dir: &Path, shared: &Arc<Shared<M, D>>, stop: &AtomicBool, lock: File)
+/// spool is dropped, holding the advertisement's lock and the receiver's lock
+/// throughout, and letting them go in that order.
+fn serve<M, D>(dir: &Path, shared: &Arc<Shared<M, D>>, stop: &AtomicBool, locks: [File; 2])
 where
     M: Message + Send + 'static,
     D: Disposition,
@@ -695,8 +722,11 @@ where
         }
         std::thread::sleep(POLL);
     }
-    // Removed while the lock is still held, so it is never a later receiver's.
+    // Removed while the locks are still held, so it is never a later
+    // receiver's.
     let _ = fs::remove_file(dir.join(ADMISSION));
+    let [admission_lock, lock] = locks;
+    drop(admission_lock);
     drop(lock);
 }
 
