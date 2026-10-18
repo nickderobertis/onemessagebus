@@ -1359,6 +1359,65 @@ fn a_receiver_on_a_clock_its_sender_cannot_verify_still_admits_a_message_before_
     assert_eq!(receiver.answered(), "answered [held]");
 }
 
+// A sender that cannot identify its own clock, beside a receiver that does:
+// it still waits for the inbox's acknowledgement, and then claims no expiry.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_sender_that_cannot_identify_its_clock_waits_for_admission_and_never_has_an_admitted_message_expire(
+) {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let address = dir.path().join("spool");
+    std::fs::create_dir(&address).expect("the spool directory");
+    let library = clock_shim(dir.path());
+    let shift = dir.path().join("wall-clock-shift");
+    step_wall_clock(&shift, 0);
+    let mut receiver = Receiver::bind(&address);
+    receiver.signal("-STOP");
+    let sender = Receiver::start_with(
+        "sender_child",
+        SENDER_SPOOL,
+        &address,
+        shimmed(&library, &shift, Some("boot-id")),
+    );
+    let admitting = std::thread::spawn(move || {
+        let mut sender = sender;
+        let said = sender.reply();
+        (sender, said)
+    });
+    waiting_offer(&address);
+    std::thread::sleep(SETTLE);
+    assert!(
+        !admitting.is_finished(),
+        "an offer returned before the receiver's inbox admitted it"
+    );
+    receiver.signal("-CONT");
+    let (mut sender, said) = admitting.join().expect("the sender replies");
+    assert_eq!(said, "admitted");
+    assert!(
+        message_files(&address)
+            .iter()
+            .any(|name| name.ends_with(".admitted.json")),
+        "the offer returned without the inbox's acknowledgement: {:?}",
+        message_files(&address)
+    );
+    // Its deadline passes with the message untaken: none was published, and
+    // no withdrawal at it is claimed, so the receiver still takes it and the
+    // answer it gives after the deadline is the one returned.
+    sender.tell("wait 50");
+    std::thread::sleep(SETTLE);
+    assert!(
+        !message_files(&address)
+            .iter()
+            .any(|name| name.ends_with(".deadline.json") || name.ends_with(".expired")),
+        "a deadline on a clock the sender could not identify was published: {:?}",
+        message_files(&address)
+    );
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("late"));
+    assert_eq!(receiver.say("answer late stock-room"), "ok");
+    assert_eq!(sender.reply(), "answered by stock-room");
+    assert_eq!(receiver.answered(), "answered [late]");
+}
+
 #[test]
 #[cfg_attr(
     not(target_os = "linux"),
