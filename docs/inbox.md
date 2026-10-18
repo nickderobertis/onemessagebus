@@ -157,9 +157,10 @@ A directory a receiver's process binds, for a sender in another process.
 Every document is one JSON object carrying `"schema_version": 1`
 (`SPOOL_SCHEMA_VERSION`), and one naming another version is refused rather than
 guessed at. Each is written beside its final name, at that name plus
-`.staging`, and renamed onto it, so neither side reads half a document; and
-every hand-over of a message is a rename, so the courier taking a message and
-its sender withdrawing it cannot both succeed.
+`.staging`, and renamed onto it, so neither side reads half a document. Every
+hand-over of a message is a rename or an exclusive create, so the courier taking
+a message and its sender withdrawing it cannot both succeed, and neither can the
+receiver's take and its sender's withdrawal after admission.
 
 | file | written by | what it is |
 | --- | --- | --- |
