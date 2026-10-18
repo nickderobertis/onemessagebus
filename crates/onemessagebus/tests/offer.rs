@@ -1871,6 +1871,106 @@ fn an_acknowledgement_this_build_cannot_read_is_reported_and_the_message_withdra
     assert_eq!(receiver.take(SETTLE), None);
 }
 
+/// Offer `sku` with a bounded wait of `wait` into the receiver at `address`,
+/// stopped, and stand in for a courier that took it and wrote an
+/// acknowledgement this build cannot read, and — when `claimed` — for that
+/// receiver's take, holding its claim. What the offer came to once the wait
+/// passed, and the message's id.
+fn offer_beside_unreadable_acknowledgement(
+    receiver: &Receiver,
+    address: &Path,
+    sku: &'static str,
+    wait: Duration,
+    claimed: bool,
+) -> (Result<Offer<Receipt>, Undelivered>, String) {
+    receiver.signal("-STOP");
+    let offering = {
+        let address = address.to_path_buf();
+        std::thread::spawn(move || {
+            Spool::connect_within::<Order, Receipt>(&address, wait).offer(order(sku))
+        })
+    };
+    let offered = loop {
+        if let Some(name) = files_in(address)
+            .into_iter()
+            .find(|name| name.ends_with(".offer.json"))
+        {
+            break name;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let id = offered.trim_end_matches(".offer.json").to_owned();
+    std::fs::write(
+        address.join(format!("{id}.admitted.json")),
+        "not an acknowledgement",
+    )
+    .expect("written");
+    if claimed {
+        std::fs::write(address.join(format!("{id}.claimed")), "").expect("claimed");
+    }
+    std::fs::rename(
+        address.join(&offered),
+        address.join(format!("{id}.taken.json")),
+    )
+    .expect("taken by the stand-in");
+    (offering.join().expect("the offer finishes"), id)
+}
+
+/// That `offer`, admitted to the receiver at `address`, is its receiver's: it
+/// is not withdrawn, and once that receiver's process ends it is undelivered,
+/// never answered.
+fn assert_taken_until_the_receiver_goes(offer: Offer<Receipt>, receiver: Receiver) {
+    let offer = offer
+        .withdraw()
+        .expect_err("a message its receiver has is not withdrawn");
+    receiver.kill();
+    assert!(
+        matches!(
+            offer.wait(),
+            Err(Undelivered::Backend(BackendError::Abandoned { .. }))
+        ),
+        "a message its receiver had was not abandoned with it"
+    );
+}
+
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
+fn an_unreadable_acknowledgement_beside_the_receivers_claim_is_admitted_when_the_wait_passes() {
+    let (_dir, address) = spool_dir();
+    let receiver = Receiver::bind(&address);
+    let wait = Duration::from_millis(300);
+    let (offered, id) =
+        offer_beside_unreadable_acknowledgement(&receiver, &address, "claimed", wait, true);
+    // The withdrawal at the bound lost to the receiver's claim: taken.
+    let offer = offered.expect("a message its receiver claimed is admitted");
+    assert!(address.join(format!("{id}.claimed")).is_file());
+    assert_taken_until_the_receiver_goes(offer, receiver);
+}
+
+#[test]
+fn an_unreadable_acknowledgement_on_an_unverified_clock_gives_back_the_withdrawal_claim_and_is_admitted(
+) {
+    let (_dir, address) = spool_dir();
+    let receiver = Receiver::bind(&address);
+    let mut rewritten = advertisement(&address);
+    rewritten["clock"] = json!(FOREIGN_CLOCK);
+    std::fs::write(address.join("admission.json"), rewritten.to_string()).expect("written");
+    let wait = Duration::from_millis(300);
+    let (offered, id) =
+        offer_beside_unreadable_acknowledgement(&receiver, &address, "unverified", wait, false);
+    // Its claim made after an acknowledgement was there, on a clock it cannot
+    // verify: given back, and the message read as taken.
+    let offer = offered.expect("an acknowledged message is admitted");
+    assert!(
+        !address.join(format!("{id}.claimed")).exists(),
+        "the withdrawal's claim was kept"
+    );
+    assert_taken_until_the_receiver_goes(offer, receiver);
+}
+
 /// A spool nobody can create or remove a file in, for as long as it is held:
 /// `None` for a user permissions bind nothing to, such as root, for whom there
 /// is nothing to show.
@@ -2172,7 +2272,8 @@ fn a_withdrawal_after_the_answer_is_written_is_refused_and_the_answer_read() {
 
 /// Offer `sku` into the receiver at `address`, stopped, and stand in the way
 /// of its acknowledgement — a directory where the courier writes it — before
-/// the receiver resumes: the courier queues the message and cannot say so.
+/// the receiver resumes: the courier cannot say it queued the message, so it
+/// refuses it rather than queueing it.
 #[cfg(unix)]
 fn offer_unacknowledged(
     receiver: &Receiver,
