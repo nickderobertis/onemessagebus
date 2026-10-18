@@ -462,7 +462,9 @@ fn inbox_md_names_every_file_a_spool_holds() {
 }
 
 /// The fields `docs/inbox.md`'s file table gives the document `file` — the
-/// `{a, b}` that leads its description — sorted.
+/// `{a, b}` that leads its description — sorted. Read only by the admission
+/// documents' journey, which runs on Linux.
+#[cfg(target_os = "linux")]
 fn documented_fields(file: &str) -> Vec<String> {
     let inbox_md = include_str!("../../../docs/inbox.md");
     let row = inbox_md
@@ -480,6 +482,7 @@ fn documented_fields(file: &str) -> Vec<String> {
     fields
 }
 
+#[cfg(target_os = "linux")]
 fn fields_of(document: &Value) -> Vec<String> {
     let mut fields: Vec<String> = document
         .as_object()

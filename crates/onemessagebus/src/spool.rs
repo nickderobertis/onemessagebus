@@ -37,8 +37,8 @@ use crate::inbox::{
     BackendError, Claimed, Closed, Disposition, Gate, Inbox, InboxBackend, Offer, Pending,
     Released, Reply, Sender, Shared, Unanswered, Undelivered,
 };
-use crate::shared_clock::{ClockIdentity, SharedClock};
 use crate::schema::{Message, SchemaId};
+use crate::shared_clock::{ClockIdentity, SharedClock};
 
 /// How long a sender waits for its message to be admitted before it withdraws
 /// it and reports it lost. A taken message is waited on for as long as its receiver

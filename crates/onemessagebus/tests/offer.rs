@@ -421,6 +421,10 @@ fn a_spool_offer_whose_courier_never_queues_it_is_withdrawn_when_the_wait_passes
 
 #[cfg(unix)]
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
 fn a_spool_offer_a_courier_renamed_but_never_queued_is_not_admitted_and_is_withdrawn() {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
@@ -523,6 +527,10 @@ fn an_in_process_withdrawal_before_a_take_keeps_it_from_the_receiver_and_after_o
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
 fn a_spool_withdrawal_before_a_take_keeps_it_from_the_receiver_and_after_one_is_refused() {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
@@ -573,6 +581,10 @@ fn an_in_process_deadline_expires_an_untaken_message_and_outlives_a_taken_one() 
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
 fn a_spool_deadline_expires_an_untaken_message_and_outlives_a_taken_one() {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
@@ -744,6 +756,10 @@ fn an_in_process_release_hands_the_message_back_untaken_in_its_place() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
 fn a_spool_release_hands_the_message_back_untaken_in_its_place() {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
@@ -833,6 +849,10 @@ fn an_in_process_release_past_the_deadline_expires_the_message_before_any_take_c
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
 fn a_spool_release_past_the_deadline_expires_the_message_before_any_take_can_find_it() {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
@@ -866,6 +886,10 @@ fn a_spool_release_past_the_deadline_expires_the_message_before_any_take_can_fin
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
 fn a_spool_release_past_the_deadline_of_a_suspended_sender_expires_the_message_before_any_take() {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
@@ -1037,54 +1061,50 @@ fn a_wall_clock_set_back_never_lets_a_message_released_past_its_deadline_be_take
     assert_eq!(message_files(&address), Vec::<String>::new());
 }
 
-/// The deadline the document at `path` publishes, in nanoseconds.
-#[cfg(target_os = "linux")]
-fn deadline_in(path: &Path) -> u64 {
-    let document: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(path).expect("a deadline")).expect("JSON");
-    document["deadline"].as_u64().expect("a deadline")
-}
-
 #[cfg(target_os = "linux")]
 #[test]
-fn on_the_system_clock_a_step_back_never_holds_expiry_past_the_senders_deadline() {
+fn a_receiver_that_cannot_read_its_boot_id_names_no_clock_and_never_has_an_admitted_message_expire()
+{
     let (dir, address) = spool_dir();
     let library = clock_shim(dir.path());
-    // One system clock for both processes, stepped by this file.
     let shift = dir.path().join("wall-clock-shift");
     step_wall_clock(&shift, 0);
-    // Neither can identify CLOCK_MONOTONIC, so both share the system clock.
-    let shim = || shimmed(&library, &shift, Some("boot-id"));
-    let mut receiver = Receiver::bind_with(&address, shim());
-    assert_eq!(advertisement(&address)["clock"], json!("system"));
-    let mut sender = Receiver::start_with("sender_child", SENDER_SPOOL, &address, shim());
-    assert_eq!(sender.reply(), "admitted");
-    assert_eq!(receiver.take(TAKE).as_deref(), Some("late"));
-    sender.tell("wait 300");
-    let published = published_deadline(&address);
-    let ahead = deadline_in(&published);
-    // The system clock is set back an hour after the deadline was published:
-    // on it, that deadline is now an hour off.
-    step_wall_clock(&shift, -3600);
-    // Past its own deadline, the sender publishes it again as passed.
-    let started = Instant::now();
-    while deadline_in(&published) == ahead {
-        assert!(
-            started.elapsed() < TAKE,
-            "the sender never published its deadline as passed"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert!(deadline_in(&published) < ahead);
-    assert_eq!(
-        receiver.say("release-and-take late"),
-        "none",
-        "a clock set back held a message's expiry past its sender's deadline"
+    // `/proc/sys/kernel/random/boot_id` unreadable: no clock is identified,
+    // and no wall clock stands in for one.
+    let receiver = Receiver::bind_with(&address, shimmed(&library, &shift, Some("boot-id")));
+    assert_no_clock_named_and_admitted_messages_taken(receiver, &address);
+}
+
+// Off Linux no monotonic clock is identified, by the receiver or this sender.
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn off_linux_a_receiver_names_no_clock_and_never_has_an_admitted_message_expire() {
+    let (_dir, address) = spool_dir();
+    let receiver = Receiver::bind(&address);
+    assert_no_clock_named_and_admitted_messages_taken(receiver, &address);
+}
+
+/// `receiver`'s advertisement names no clock, so an admitted message is read
+/// as taken: its withdrawal is refused, and a deadline passing never expires
+/// it before the receiver's answer comes.
+fn assert_no_clock_named_and_admitted_messages_taken(mut receiver: Receiver, address: &Path) {
+    assert_eq!(advertisement(address).get("clock"), None);
+    let offer = Spool::connect::<Order, Receipt>(address)
+        .offer(order("held"))
+        .expect("admitted");
+    let Err(offer) = offer.withdraw() else {
+        panic!("a withdrawal on a clock no one identified was claimed");
+    };
+    let waiting =
+        std::thread::spawn(move || offer.wait_until(Instant::now() + Duration::from_millis(100)));
+    std::thread::sleep(Duration::from_millis(400));
+    assert!(
+        !waiting.is_finished(),
+        "an expiry was claimed for an admitted message on no shared clock"
     );
-    assert_eq!(sender.reply(), "expired");
-    assert_eq!(receiver.take(SETTLE), None);
-    assert_eq!(receiver.answered(), "answered []");
-    assert_eq!(message_files(&address), Vec::<String>::new());
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("held"));
+    assert_eq!(receiver.say("answer held stock-room"), "ok");
+    assert_eq!(waiting.join().expect("waits"), Ok(filled("stock-room")));
 }
 
 #[cfg(target_os = "linux")]
@@ -1148,6 +1168,10 @@ fn assert_deadline_not_read(deadline: &serde_json::Value) {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
 fn a_deadline_the_receiver_cannot_read_is_none_and_its_senders_withdrawal_still_decides() {
     // Written by a build this one cannot read.
     assert_deadline_not_read(&json!({
@@ -1157,6 +1181,10 @@ fn a_deadline_the_receiver_cannot_read_is_none_and_its_senders_withdrawal_still_
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
 fn a_deadline_on_a_clock_the_receiver_does_not_read_is_none() {
     // Long past, on a clock this receiver cannot compare its own against.
     assert_deadline_not_read(&json!({
@@ -1215,6 +1243,10 @@ fn a_receiver_on_a_clock_its_sender_cannot_verify_never_has_an_admitted_message_
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
 fn a_first_take_past_the_deadline_of_a_suspended_sender_expires_the_message_untaken() {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
@@ -1311,6 +1343,10 @@ fn an_in_process_take_and_withdraw_racing_for_one_message_settle_it_exactly_one_
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
 fn a_spool_take_and_withdraw_racing_for_one_message_settle_it_exactly_one_way() {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
@@ -1570,6 +1606,10 @@ fn an_advertisement_beside_a_rewritten_declaration_is_not_trusted_while_its_lock
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
 fn a_senders_look_at_the_advertisements_lock_never_refuses_or_misleads_a_binding_receiver() {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     let (_dir, address) = spool_dir();
@@ -1648,6 +1688,10 @@ fn an_advertisement_this_build_cannot_read_advertises_nothing() {
 }
 
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
 fn an_advertisement_that_says_more_than_this_build_knows_still_advertises() {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
@@ -1662,6 +1706,10 @@ fn an_advertisement_that_says_more_than_this_build_knows_still_advertises() {
 
 #[cfg(unix)]
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
 fn an_acknowledgement_this_build_cannot_read_is_reported_and_the_message_withdrawn() {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
@@ -1788,6 +1836,10 @@ fn a_release_whose_claim_the_file_system_keeps_leaves_the_message_the_receivers(
 
 #[cfg(unix)]
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
 fn a_deadline_the_file_system_will_not_let_its_sender_say_is_said_once_it_can_be() {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
@@ -1812,6 +1864,10 @@ fn a_deadline_the_file_system_will_not_let_its_sender_say_is_said_once_it_can_be
 
 #[cfg(unix)]
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
 fn a_release_the_file_system_will_not_let_expire_leaves_the_message_to_nobody_until_it_can() {
     let (_dir, address) = spool_dir();
     let mut receiver = Receiver::bind(&address);
@@ -1917,6 +1973,10 @@ fn offer_unacknowledged(
 
 #[cfg(unix)]
 #[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
 fn an_acknowledgement_the_courier_cannot_write_leaves_the_message_withdrawn_or_taken() {
     // Nothing takes it: when the wait passes it is withdrawn, the failure is
     // named, and the queued message is never taken.

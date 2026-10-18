@@ -193,7 +193,8 @@ A directory a receiver's process binds, for a sender in another process.
     message `Expired` but waits for its answer. That covers a receiver on
     another boot or in another time namespace, one whose `admission.json`
     records no clock or one this build cannot read, either side unable to read
-    `/proc/sys/kernel/random/boot_id` or `/proc/self/ns/time`, and every
+    `/proc/sys/kernel/random/boot_id` or failing to read `/proc/self/ns/time`
+    for any reason but its absence (absent, the namespace is `none`), and every
     platform other than Linux, where this build identifies no shared clock.
     Before admission the bounded wait still withdraws the message on every
     platform, since an unadmitted message is its sender's to withdraw.

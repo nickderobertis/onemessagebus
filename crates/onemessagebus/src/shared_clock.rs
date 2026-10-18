@@ -115,7 +115,7 @@ impl SharedClock {
     #[cfg(target_os = "linux")]
     pub(crate) fn here() -> Option<Self> {
         static HERE: OnceLock<Option<ClockIdentity>> = OnceLock::new();
-        HERE.get_or_init(|| None).clone().map(|identity| Self {
+        HERE.get_or_init(identify).clone().map(|identity| Self {
             identity,
             reader: Reader,
         })
