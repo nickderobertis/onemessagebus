@@ -330,12 +330,12 @@ impl<D: Disposition> Pending<D> for Decoding<D> {
         self.exchange.withdraw()
     }
 
-    fn wait(&mut self) -> Result<D, Undelivered> {
+    fn wait(mut self: Box<Self>) -> Result<D, Undelivered> {
         let answered = self.exchange.wait()?;
         self.decode(answered)
     }
 
-    fn wait_until(&mut self, deadline: Instant) -> Result<D, Unanswered> {
+    fn wait_until(mut self: Box<Self>, deadline: Instant) -> Result<D, Unanswered> {
         let answered = self.exchange.wait_until(deadline)?;
         self.decode(answered).map_err(Unanswered::Undelivered)
     }
@@ -440,10 +440,8 @@ impl Exchange {
                     if exchange.withdraw() {
                         return Err(Undelivered::Backend(lost()));
                     }
-                    if exchange.file(ANSWER).exists() {
-                        continue;
-                    }
-                    // The receiver took it before it said it was queued.
+                    // The receiver took it — or answered it — before it said
+                    // it was queued: admitted either way.
                     return Ok(exchange);
                 }
             }
@@ -701,16 +699,13 @@ where
         // Withdrawn by its sender first.
         return;
     }
+    // A sender that withdrew it as the courier took it holds its claim, so
+    // the take — or the answer — that follows finds the message withdrawn.
     let hold = Hold {
         dir: dir.to_path_buf(),
         id: id.to_owned(),
         held: Arc::new(AtomicBool::new(false)),
     };
-    if dir.join(format!("{id}{CLAIMED}")).exists() {
-        // Withdrawn by its sender as the courier took it.
-        discard(dir, id);
-        return;
-    }
     let message = match read_offer::<M>(dir, &taken) {
         Ok(message) => message,
         Err(reason) => {

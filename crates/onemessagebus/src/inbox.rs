@@ -766,15 +766,15 @@ pub(crate) trait Pending<D>: Send {
     /// was withdrawn, and the receiver never takes it.
     fn withdraw(&mut self) -> bool;
     /// Block until the receiver answers, or the backend knows it never will.
-    fn wait(&mut self) -> Result<D, Undelivered>;
+    fn wait(self: Box<Self>) -> Result<D, Undelivered>;
     /// As `wait`, but withdraw the message if it is untaken at `deadline`.
-    fn wait_until(&mut self, deadline: Instant) -> Result<D, Unanswered>;
+    fn wait_until(self: Box<Self>, deadline: Instant) -> Result<D, Unanswered>;
 }
 
 /// An offer whose answer is already known: what a backend that cannot report
 /// admission on its own answers.
 struct Settled<D> {
-    answer: Option<Result<D, Undelivered>>,
+    answer: D,
 }
 
 impl<D: Send> Pending<D> for Settled<D> {
@@ -782,16 +782,12 @@ impl<D: Send> Pending<D> for Settled<D> {
         false
     }
 
-    fn wait(&mut self) -> Result<D, Undelivered> {
-        self.answer.take().unwrap_or_else(|| {
-            Err(Undelivered::Closed(Closed::new(
-                "the offer's answer was already read",
-            )))
-        })
+    fn wait(self: Box<Self>) -> Result<D, Undelivered> {
+        Ok(self.answer)
     }
 
-    fn wait_until(&mut self, _deadline: Instant) -> Result<D, Unanswered> {
-        self.wait().map_err(Unanswered::Undelivered)
+    fn wait_until(self: Box<Self>, _deadline: Instant) -> Result<D, Unanswered> {
+        Ok(self.answer)
     }
 }
 
@@ -811,7 +807,7 @@ impl<D: Disposition> Offer<D> {
     /// An offer already answered `disposition`.
     fn answered(disposition: D) -> Self {
         Self::over(Settled {
-            answer: Some(Ok(disposition)),
+            answer: disposition,
         })
     }
 
@@ -823,7 +819,7 @@ impl<D: Disposition> Offer<D> {
     /// [`Undelivered::Closed`] with the closer's reason, including a receiver
     /// that let the message go unanswered; [`Undelivered::Backend`] when the
     /// backend cannot produce the answer.
-    pub fn wait(mut self) -> Result<D, Undelivered> {
+    pub fn wait(self) -> Result<D, Undelivered> {
         self.pending.wait()
     }
 
@@ -839,7 +835,7 @@ impl<D: Disposition> Offer<D> {
     /// — it was never taken, and never will be — and
     /// [`Unanswered::Undelivered`] for every outcome [`wait`](Self::wait)
     /// reports.
-    pub fn wait_until(mut self, deadline: Instant) -> Result<D, Unanswered> {
+    pub fn wait_until(self, deadline: Instant) -> Result<D, Unanswered> {
         self.pending.wait_until(deadline)
     }
 
@@ -993,7 +989,7 @@ impl<M: Send, D: Send> Pending<D> for Queuing<M, D> {
         self.shared.withdraw(self.id)
     }
 
-    fn wait(&mut self) -> Result<D, Undelivered> {
+    fn wait(self: Box<Self>) -> Result<D, Undelivered> {
         let mut slot = self.ticket.lock();
         loop {
             if let Some(answer) = slot.answer.take() {
@@ -1007,7 +1003,7 @@ impl<M: Send, D: Send> Pending<D> for Queuing<M, D> {
         }
     }
 
-    fn wait_until(&mut self, deadline: Instant) -> Result<D, Unanswered> {
+    fn wait_until(self: Box<Self>, deadline: Instant) -> Result<D, Unanswered> {
         let mut slot = self.ticket.lock();
         loop {
             if let Some(answer) = slot.answer.take() {

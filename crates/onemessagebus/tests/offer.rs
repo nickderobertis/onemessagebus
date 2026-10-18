@@ -146,6 +146,10 @@ fn receiver_child() {
                 drop(held.remove(*sku).expect("a held message"));
                 "ok".to_owned()
             }
+            ["close", reason @ ..] => {
+                inbox.close(Closed::new(reason.join(" ")));
+                "ok".to_owned()
+            }
             ["answered"] => {
                 let skus: Vec<String> = inbox
                     .answered()
@@ -163,7 +167,8 @@ fn receiver_child() {
 /// A receiver bound to a spool in a process of its own.
 struct Receiver {
     child: Child,
-    commands: ChildStdin,
+    /// Closed to end the receiver cleanly, so its process exits as it would.
+    commands: Option<ChildStdin>,
     replies: BufReader<ChildStdout>,
 }
 
@@ -183,7 +188,7 @@ impl Receiver {
             .stderr(Stdio::null())
             .spawn()
             .expect("the receiver process starts");
-        let commands = child.stdin.take().expect("its stdin");
+        let commands = Some(child.stdin.take().expect("its stdin"));
         let replies = BufReader::new(child.stdout.take().expect("its stdout"));
         let mut receiver = Self {
             child,
@@ -209,8 +214,9 @@ impl Receiver {
 
     /// Tell the receiver one thing, without waiting for what came of it.
     fn tell(&mut self, command: &str) {
-        writeln!(self.commands, "{command}").expect("told");
-        self.commands.flush().expect("flushed");
+        let commands = self.commands.as_mut().expect("the receiver is listening");
+        writeln!(commands, "{command}").expect("told");
+        commands.flush().expect("flushed");
     }
 
     fn say(&mut self, command: &str) -> String {
@@ -253,7 +259,17 @@ impl Receiver {
 }
 
 impl Drop for Receiver {
+    /// End the receiver as a receiver ends: its commands run out, it unbinds,
+    /// and its process exits. Killed only if it does not within ten seconds.
     fn drop(&mut self) {
+        drop(self.commands.take());
+        let until = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < until {
+            if !matches!(self.child.try_wait(), Ok(None)) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -380,6 +396,37 @@ fn a_spool_offer_a_courier_renamed_but_never_queued_is_not_admitted_and_is_withd
     receiver.signal("-CONT");
     assert_eq!(receiver.take(SETTLE), None);
     assert_eq!(receiver.answered(), "answered []");
+
+    // Renamed, and its receiver gone before it was queued: lost, by name.
+    receiver.signal("-STOP");
+    let offering = {
+        let address = address.clone();
+        std::thread::spawn(move || {
+            Spool::connect::<Order, Receipt>(&address)
+                .offer(order("orphan"))
+                .map(drop)
+        })
+    };
+    let offered = loop {
+        if let Some(name) = files_in(&address)
+            .into_iter()
+            .find(|name| name.ends_with(".offer.json"))
+        {
+            break name;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let id = offered.trim_end_matches(".offer.json");
+    let taken = address.join(format!("{id}.taken.json"));
+    std::fs::rename(address.join(&offered), &taken).expect("taken by the stand-in");
+    receiver.kill();
+    assert_eq!(
+        offering.join().expect("the offer finishes"),
+        Err(Undelivered::Backend(BackendError::Abandoned {
+            spool: address.clone(),
+            file: taken,
+        }))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -429,6 +476,14 @@ fn a_spool_withdrawal_before_a_take_keeps_it_from_the_receiver_and_after_one_is_
     assert_eq!(offer.wait(), Ok(filled("stock-room")));
     assert_eq!(receiver.answered(), "answered [current]");
     assert_eq!(message_files(&address), Vec::<String>::new());
+
+    // Withdrawn and still queued when the receiver closes: its sender is not
+    // told the close, and nothing of it is left.
+    let offer = sender.offer(order("withdrawn")).expect("admitted");
+    assert!(offer.withdraw().is_ok());
+    assert_eq!(receiver.say("close for stock-take"), "ok");
+    assert_eq!(message_files(&address), Vec::<String>::new());
+    assert!(address.join("closed.json").exists());
 }
 
 // ---------------------------------------------------------------------------
@@ -617,6 +672,17 @@ fn an_in_process_release_hands_the_message_back_untaken_in_its_place() {
     for (offer, sku) in offers.into_iter().zip(["m1", "m2", "m3"]) {
         assert_eq!(offer.wait(), Ok(filled(sku)));
     }
+
+    // Released into a closed inbox: gone, and its sender told the close.
+    let offer = sender.offer(order("late")).expect("admitted");
+    let delivered = inbox.take().expect("queued");
+    inbox.close(Closed::new("closed for stock-take"));
+    delivered.release();
+    assert!(inbox.take().is_none());
+    assert_eq!(
+        offer.wait(),
+        Err(Undelivered::Closed(Closed::new("closed for stock-take")))
+    );
 }
 
 #[test]
@@ -679,6 +745,20 @@ fn a_spool_release_hands_the_message_back_untaken_in_its_place() {
 
 const RACES: usize = 200;
 
+/// Which side of race `race` waits before it moves, and for how long: a sweep
+/// from the taker a millisecond ahead to the withdrawer a millisecond ahead,
+/// so each side wins at one end whatever the machine's speed, and the middle
+/// is a true race.
+fn head_start(race: usize) -> (Duration, Duration) {
+    let step = i64::try_from(race % 21).expect("small") - 10;
+    let lead = Duration::from_micros(step.unsigned_abs() * 100);
+    if step > 0 {
+        (Duration::ZERO, lead)
+    } else {
+        (lead, Duration::ZERO)
+    }
+}
+
 /// Busy for `span`, which a sleep is too coarse to give.
 fn spin(span: Duration) {
     let until = Instant::now() + span;
@@ -696,19 +776,18 @@ fn an_in_process_take_and_withdraw_racing_for_one_message_settle_it_exactly_one_
         let sku = format!("race-{race}");
         let offer = sender.offer(order(&sku)).expect("admitted");
         let start = Arc::new(Barrier::new(2));
+        let (taker_waits, withdrawer_waits) = head_start(race);
         let taking = {
             let inbox = Arc::clone(&inbox);
             let start = Arc::clone(&start);
             std::thread::spawn(move || {
                 start.wait();
+                spin(taker_waits);
                 inbox.take_within(Duration::from_millis(50))
             })
         };
         start.wait();
-        // A different head start each race, so each side wins some of them.
-        spin(Duration::from_micros(
-            u64::try_from(race % 20).expect("small") * 5,
-        ));
+        spin(withdrawer_waits);
         let withdrawn = offer.withdraw();
         let taken = taking.join().expect("the take finishes");
         assert!(
@@ -746,8 +825,12 @@ fn a_spool_take_and_withdraw_racing_for_one_message_settle_it_exactly_one_way() 
         let sku = format!("race-{race}");
         let offer = sender.offer(order(&sku)).expect("admitted");
         // The take is told, and the withdrawal made, with neither waiting on
-        // the other.
+        // the other; the withdrawal is held back a little more each race, so
+        // the take, a process away, wins some of them.
         receiver.tell("take 50");
+        spin(Duration::from_micros(
+            u64::try_from(race % 11).expect("small") * 200,
+        ));
         let withdrawn = offer.withdraw();
         let taken = receiver.reply();
         assert_eq!(
@@ -889,6 +972,21 @@ fn assert_withdrawal_after_admission_is_refused(address: &Path) {
         offer.wait_until(Instant::now() + Duration::from_millis(1)),
         Ok(filled("older"))
     );
+    // Answered before its sender saw it admitted: the offer holds the answer.
+    for bounded in [false, true] {
+        let offer = sender.offer(order("prompt")).expect("answered");
+        let offer = offer.withdraw().expect_err("answered, so taken");
+        let answered = if bounded {
+            offer
+                .wait_until(Instant::now())
+                .map_err(|unanswered| panic!("{unanswered:?}"))
+        } else {
+            offer
+                .wait()
+                .map_err(|undelivered| panic!("{undelivered:?}"))
+        };
+        assert_eq!(answered, Ok::<_, ()>(filled("older")));
+    }
 }
 
 #[test]
