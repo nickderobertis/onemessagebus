@@ -1063,16 +1063,22 @@ fn a_wall_clock_set_back_never_lets_a_message_released_past_its_deadline_be_take
 
 #[cfg(target_os = "linux")]
 #[test]
-fn a_receiver_that_cannot_read_its_boot_id_names_no_clock_and_never_has_an_admitted_message_expire()
-{
-    let (dir, address) = spool_dir();
-    let library = clock_shim(dir.path());
-    let shift = dir.path().join("wall-clock-shift");
-    step_wall_clock(&shift, 0);
-    // `/proc/sys/kernel/random/boot_id` unreadable: no clock is identified,
-    // and no wall clock stands in for one.
-    let receiver = Receiver::bind_with(&address, shimmed(&library, &shift, Some("boot-id")));
-    assert_no_clock_named_and_admitted_messages_taken(receiver, &address);
+fn a_receiver_that_cannot_identify_its_clock_names_none_and_never_has_an_admitted_message_expire() {
+    // Each a way `/proc` fails to identify the receiver's clock, so no clock is
+    // identified and no wall clock stands in for one.
+    for hidden in [
+        "boot-id",
+        "boot-id-malformed",
+        "time-namespace-denied",
+        "time-namespace-malformed",
+    ] {
+        let (dir, address) = spool_dir();
+        let library = clock_shim(dir.path());
+        let shift = dir.path().join("wall-clock-shift");
+        step_wall_clock(&shift, 0);
+        let receiver = Receiver::bind_with(&address, shimmed(&library, &shift, Some(hidden)));
+        assert_no_clock_named_and_admitted_messages_taken(receiver, &address);
+    }
 }
 
 // Off Linux no monotonic clock is identified, by the receiver or this sender.

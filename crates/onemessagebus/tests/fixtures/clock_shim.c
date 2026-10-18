@@ -6,8 +6,11 @@
  *   clock stepped forward or back, and every other clock is as it is. Absent,
  *   the shift is none; anything but a whole number aborts the process.
  * - ONEMESSAGEBUS_HIDE=boot-id makes /proc/sys/kernel/random/boot_id
- *   unreadable, and ONEMESSAGEBUS_HIDE=time-namespace makes
- *   /proc/self/ns/time absent, as on a kernel without time namespaces.
+ *   unreadable, and ONEMESSAGEBUS_HIDE=boot-id-malformed reads it as no UUID.
+ * - ONEMESSAGEBUS_HIDE=time-namespace makes /proc/self/ns/time absent, as on a
+ *   kernel without time namespaces; ONEMESSAGEBUS_HIDE=time-namespace-denied
+ *   makes it unreadable, and ONEMESSAGEBUS_HIDE=time-namespace-malformed
+ *   links it to no namespace inode.
  * Built by `offer.rs` with the system C compiler. */
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -27,8 +30,27 @@ static int hides(const char *what, const char *path, const char *hidden) {
     return hide && strcmp(hide, what) == 0 && strcmp(path, hidden) == 0;
 }
 
+static const char BOOT_ID[] = "/proc/sys/kernel/random/boot_id";
+
 static int boot_id_hidden(const char *path) {
-    return hides("boot-id", path, "/proc/sys/kernel/random/boot_id");
+    return hides("boot-id", path, BOOT_ID);
+}
+
+/* A boot id that is no UUID, read from a pipe in place of the kernel's. */
+static int malformed_boot_id(const char *path) {
+    if (!hides("boot-id-malformed", path, BOOT_ID)) {
+        return -1;
+    }
+    int ends[2];
+    if (pipe(ends) != 0) {
+        abort();
+    }
+    static const char text[] = "not-a-boot-id\n";
+    if (write(ends[1], text, sizeof text - 1) != (ssize_t)(sizeof text - 1)) {
+        abort();
+    }
+    close(ends[1]);
+    return ends[0];
 }
 
 static mode_t mode_of(int flags, va_list rest) {
@@ -48,6 +70,10 @@ int open64(const char *path, int flags, ...) {
         errno = EACCES;
         return -1;
     }
+    int malformed = malformed_boot_id(path);
+    if (malformed >= 0) {
+        return malformed;
+    }
     return real(path, flags, mode);
 }
 
@@ -64,6 +90,10 @@ int open(const char *path, int flags, ...) {
         errno = EACCES;
         return -1;
     }
+    int malformed = malformed_boot_id(path);
+    if (malformed >= 0) {
+        return malformed;
+    }
     return real(path, flags, mode);
 }
 
@@ -72,9 +102,20 @@ ssize_t readlink(const char *path, char *buffer, size_t size) {
     if (!real) {
         real = (ssize_t (*)(const char *, char *, size_t))dlsym(RTLD_NEXT, "readlink");
     }
-    if (hides("time-namespace", path, "/proc/self/ns/time")) {
+    static const char TIME_NAMESPACE[] = "/proc/self/ns/time";
+    if (hides("time-namespace", path, TIME_NAMESPACE)) {
         errno = ENOENT;
         return -1;
+    }
+    if (hides("time-namespace-denied", path, TIME_NAMESPACE)) {
+        errno = EACCES;
+        return -1;
+    }
+    if (hides("time-namespace-malformed", path, TIME_NAMESPACE)) {
+        static const char link[] = "time:[not-an-inode]";
+        size_t length = sizeof link - 1 < size ? sizeof link - 1 : size;
+        memcpy(buffer, link, length);
+        return (ssize_t)length;
     }
     return real(path, buffer, size);
 }
