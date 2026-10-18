@@ -6,13 +6,18 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.7",
     "@onebudgetspec/cli": "0.1.4",
-    "nx": "^23.1.1",
-    "smol-toml": "1.6.1",
+    "nx": "^23.3.0",
+    "smol-toml": "1.9.1",
     "yaml": "2.9.0"
   },
   "workspaces": [
     "npm/onemessagebus-cli",
     "npm/onemessagebus-sdk",
     ".github"
-  ]
+  ],
+  "overrides": {
+    "nx": {
+      "undici": "7.30.1"
+    }
+  }
 }
