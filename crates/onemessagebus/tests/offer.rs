@@ -2196,21 +2196,53 @@ fn a_claim_the_file_system_refuses_gives_the_message_to_neither_side_until_one_c
 #[cfg(unix)]
 const POLL: Duration = Duration::from_millis(20);
 
+/// What came of an offer made from a thread of its own: its outcome, how long
+/// it took, and the most any sleep beside it overslept meanwhile.
+#[cfg(unix)]
+type Offered = (Result<(), Undelivered>, Duration, Duration);
+
 /// Offer `sku` with a bounded wait of `wait` from a thread of its own, saying
-/// what came of it and how long it took.
+/// what came of it, how long it took, and how late the host woke a sleeper of
+/// one poll beside it — the scheduling delay no poll loop controls, which a
+/// loaded host adds to every wake.
 #[cfg(unix)]
 fn offering_within(
     address: &Path,
     sku: &'static str,
     wait: Duration,
-) -> std::thread::JoinHandle<(Result<(), Undelivered>, Duration)> {
+) -> std::thread::JoinHandle<Offered> {
     let address = address.to_path_buf();
     std::thread::spawn(move || {
         let sender = Spool::connect_within::<Order, Receipt>(&address, wait);
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let probe = std::thread::spawn({
+            let done = Arc::clone(&done);
+            move || {
+                let mut latest = Duration::ZERO;
+                while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                    let slept = Instant::now();
+                    std::thread::sleep(POLL);
+                    latest = latest.max(slept.elapsed().saturating_sub(POLL));
+                }
+                latest
+            }
+        });
         let started = Instant::now();
         let offered = sender.offer(order(sku)).map(drop);
-        (offered, started.elapsed())
+        let took = started.elapsed();
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
+        (offered, took, probe.join().expect("the probe finishes"))
     })
+}
+
+/// That an offer bounded by `wait` returned at its bound and no later than a
+/// poll after it, beyond what the host delayed every sleeper by meanwhile.
+#[cfg(unix)]
+fn assert_within_a_poll_of(took: Duration, late: Duration, wait: Duration) {
+    assert!(
+        took >= wait && took <= wait + POLL + late,
+        "returned {took:?} into a bound of {wait:?}, with sleepers woken up to {late:?} late"
+    );
 }
 
 /// That `offered`, the offer of message `id` with the bounded wait `wait`,
@@ -2219,16 +2251,13 @@ fn offering_within(
 /// elapsed wait.
 #[cfg(unix)]
 fn assert_unclaimable(
-    (offered, took): (Result<(), Undelivered>, Duration),
+    (offered, took, late): Offered,
     address: &Path,
     id: &str,
     suffix: &str,
     wait: Duration,
 ) {
-    assert!(
-        took >= wait && took <= wait + POLL,
-        "returned {took:?} into a bound of {wait:?}"
-    );
+    assert_within_a_poll_of(took, late, wait);
     let failure = offered.expect_err("an offer neither admitted nor withdrawn is not admitted");
     let Undelivered::Backend(BackendError::Unclaimable {
         spool,
@@ -2295,11 +2324,8 @@ fn a_wait_that_passes_with_the_receivers_claim_but_no_acknowledgement_stops_at_i
         address.join(format!("{id}.taken.json")),
     )
     .expect("taken by the stand-in");
-    let (offered, took) = offering.join().expect("the offer finishes");
-    assert!(
-        took >= wait && took <= wait + POLL,
-        "returned {took:?} into a bound of {wait:?}"
-    );
+    let (offered, took, late) = offering.join().expect("the offer finishes");
+    assert_within_a_poll_of(took, late, wait);
     let claim = address.join(format!("{id}.claimed"));
     let failure = offered.expect_err("a message never acknowledged is not admitted");
     assert_eq!(
