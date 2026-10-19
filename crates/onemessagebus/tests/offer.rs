@@ -2196,6 +2196,25 @@ fn a_claim_the_file_system_refuses_gives_the_message_to_neither_side_until_one_c
 #[cfg(unix)]
 const POLL: Duration = Duration::from_millis(20);
 
+/// The macOS lane's scheduling allowance: how much later than a poll past its
+/// bound a hosted macOS runner, loaded by the suite's parallel journeys, may
+/// wake a sender that is itself already done waiting. A fixed limit the
+/// manager ruled, never a measured one; every other host is held to the poll.
+#[cfg(target_os = "macos")]
+const SCHEDULING: Duration = Duration::from_millis(200);
+#[cfg(all(unix, not(target_os = "macos")))]
+const SCHEDULING: Duration = Duration::ZERO;
+
+/// That an offer bounded by `wait` returned no earlier than its bound and no
+/// later than a poll after it, beyond the macOS lane's scheduling allowance.
+#[cfg(unix)]
+fn assert_within_a_poll_of(took: Duration, wait: Duration) {
+    assert!(
+        took >= wait && took <= wait + POLL + SCHEDULING,
+        "returned {took:?} into a bound of {wait:?}"
+    );
+}
+
 /// Offer `sku` with a bounded wait of `wait` from a thread of its own, saying
 /// what came of it and how long it took.
 #[cfg(unix)]
@@ -2225,10 +2244,7 @@ fn assert_unclaimable(
     suffix: &str,
     wait: Duration,
 ) {
-    assert!(
-        took >= wait && took <= wait + POLL,
-        "returned {took:?} into a bound of {wait:?}"
-    );
+    assert_within_a_poll_of(took, wait);
     let failure = offered.expect_err("an offer neither admitted nor withdrawn is not admitted");
     let Undelivered::Backend(BackendError::Unclaimable {
         spool,
@@ -2296,10 +2312,7 @@ fn a_wait_that_passes_with_the_receivers_claim_but_no_acknowledgement_stops_at_i
     )
     .expect("taken by the stand-in");
     let (offered, took) = offering.join().expect("the offer finishes");
-    assert!(
-        took >= wait && took <= wait + POLL,
-        "returned {took:?} into a bound of {wait:?}"
-    );
+    assert_within_a_poll_of(took, wait);
     let claim = address.join(format!("{id}.claimed"));
     let failure = offered.expect_err("a message never acknowledged is not admitted");
     assert_eq!(
