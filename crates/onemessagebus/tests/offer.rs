@@ -2196,15 +2196,13 @@ fn a_claim_the_file_system_refuses_gives_the_message_to_neither_side_until_one_c
 #[cfg(unix)]
 const POLL: Duration = Duration::from_millis(20);
 
-/// What came of an offer made from a thread of its own: its outcome, how long
-/// it took, and the most any sleep beside it overslept meanwhile.
+/// What came of an offer made from a thread of its own: its outcome, and how
+/// long it took.
 #[cfg(unix)]
-type Offered = (Result<(), Undelivered>, Duration, Duration);
+type Offered = (Result<(), Undelivered>, Duration);
 
 /// Offer `sku` with a bounded wait of `wait` from a thread of its own, saying
-/// what came of it, how long it took, and how late the host woke a sleeper of
-/// one poll beside it — the scheduling delay no poll loop controls, which a
-/// loaded host adds to every wake.
+/// what came of it and how long it took.
 #[cfg(unix)]
 fn offering_within(
     address: &Path,
@@ -2214,50 +2212,65 @@ fn offering_within(
     let address = address.to_path_buf();
     std::thread::spawn(move || {
         let sender = Spool::connect_within::<Order, Receipt>(&address, wait);
-        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let probe = std::thread::spawn({
-            let done = Arc::clone(&done);
-            move || {
-                let mut latest = Duration::ZERO;
-                while !done.load(std::sync::atomic::Ordering::Relaxed) {
-                    let slept = Instant::now();
-                    std::thread::sleep(POLL);
-                    latest = latest.max(slept.elapsed().saturating_sub(POLL));
-                }
-                latest
-            }
-        });
         let started = Instant::now();
         let offered = sender.offer(order(sku)).map(drop);
-        let took = started.elapsed();
-        done.store(true, std::sync::atomic::Ordering::Relaxed);
-        (offered, took, probe.join().expect("the probe finishes"))
+        (offered, started.elapsed())
     })
 }
 
-/// That an offer bounded by `wait` returned at its bound and no later than a
-/// poll after it, beyond what the host delayed every sleeper by meanwhile.
+/// The bounded offers a journey makes before it holds that none returned
+/// within a poll of its bound.
 #[cfg(unix)]
-fn assert_within_a_poll_of(took: Duration, late: Duration, wait: Duration) {
-    assert!(
-        took >= wait && took <= wait + POLL + late,
-        "returned {took:?} into a bound of {wait:?}, with sleepers woken up to {late:?} late"
-    );
+const ATTEMPTS: usize = 5;
+
+/// Make bounded offers by `attempt`, which says how long each took, until one
+/// returns no later than a poll after its bound `wait`; how many it made.
+///
+/// Every offer is held to its bound from below, and one must return within a
+/// poll of it, with no allowance added. The journeys fix everything the
+/// sender reads before its bound — the receiver stopped, the stand-in's files
+/// in place — so what it does past the bound is the same on every attempt: a
+/// wait of its own past the bound recurs on all of them, where a host too
+/// loaded to wake the sender on time does not.
+#[cfg(unix)]
+fn within_a_poll_of(wait: Duration, mut attempt: impl FnMut() -> Duration) -> usize {
+    let mut took = Vec::new();
+    while took.len() < ATTEMPTS {
+        let this = attempt();
+        assert!(this >= wait, "returned {this:?} into a bound of {wait:?}");
+        took.push(this);
+        if this <= wait + POLL {
+            return took.len();
+        }
+    }
+    panic!("no offer returned within {POLL:?} of its bound of {wait:?}: {took:?}");
+}
+
+/// The name of the offer waiting in `address` that is none of `seen`.
+#[cfg(unix)]
+fn waiting_offer_besides(address: &Path, seen: &[String]) -> String {
+    loop {
+        if let Some(name) = files_in(address)
+            .into_iter()
+            .find(|name| name.ends_with(".offer.json") && !seen.contains(name))
+        {
+            return name;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 /// That `offered`, the offer of message `id` with the bounded wait `wait`,
-/// stopped at its bound — no later than a poll after it — because the file
-/// system refused the claim `<id><suffix>`, and said so apart from an ordinary
-/// elapsed wait.
+/// stopped because the file system refused the claim `<id><suffix>`, and said
+/// so apart from an ordinary elapsed wait; how long it took.
 #[cfg(unix)]
 fn assert_unclaimable(
-    (offered, took, late): Offered,
+    (offered, took): Offered,
     address: &Path,
     id: &str,
     suffix: &str,
     wait: Duration,
-) {
-    assert_within_a_poll_of(took, late, wait);
+) -> Duration {
     let failure = offered.expect_err("an offer neither admitted nor withdrawn is not admitted");
     let Undelivered::Backend(BackendError::Unclaimable {
         spool,
@@ -2277,6 +2290,7 @@ fn assert_unclaimable(
         said.contains(&claim.display().to_string()) && said.contains("may still admit it"),
         "{said}"
     );
+    took
 }
 
 #[cfg(unix)]
@@ -2286,20 +2300,24 @@ fn a_wait_that_passes_while_the_file_system_refuses_a_claim_stops_at_its_bound_n
     let receiver = Receiver::bind(&address);
     receiver.signal("-STOP");
     let wait = Duration::from_millis(300);
-    let offering = offering_within(&address, "unclaimable", wait);
-    // Stand in for a courier stopped between its two steps: renamed to taken,
-    // never queued, never acknowledged.
-    let offered = waiting_offer(&address);
-    let id = offered.trim_end_matches(".offer.json").to_owned();
-    let taken = offered.replace(".offer.json", ".taken.json");
-    std::fs::rename(address.join(&offered), address.join(&taken)).expect("taken by the stand-in");
-    let Some(read_only) = ReadOnly::hold(&address) else {
+    if ReadOnly::hold(&address).is_none() {
         receiver.signal("-CONT");
         return;
-    };
-    let finished = offering.join().expect("the offer finishes");
-    drop(read_only);
-    assert_unclaimable(finished, &address, &id, ".claimed", wait);
+    }
+    within_a_poll_of(wait, || {
+        let offering = offering_within(&address, "unclaimable", wait);
+        // Stand in for a courier stopped between its two steps: renamed to
+        // taken, never queued, never acknowledged.
+        let offered = waiting_offer(&address);
+        let id = offered.trim_end_matches(".offer.json").to_owned();
+        let taken = offered.replace(".offer.json", ".taken.json");
+        std::fs::rename(address.join(&offered), address.join(&taken))
+            .expect("taken by the stand-in");
+        let read_only = ReadOnly::hold(&address).expect("refused before");
+        let finished = offering.join().expect("the offer finishes");
+        drop(read_only);
+        assert_unclaimable(finished, &address, &id, ".claimed", wait)
+    });
     receiver.signal("-CONT");
     let mut receiver = receiver;
     assert_eq!(receiver.take(SETTLE), None);
@@ -2313,37 +2331,40 @@ fn a_wait_that_passes_with_the_receivers_claim_but_no_acknowledgement_stops_at_i
     let receiver = Receiver::bind(&address);
     receiver.signal("-STOP");
     let wait = Duration::from_millis(300);
-    let offering = offering_within(&address, "unsettled", wait);
-    // Stand in for a receiver stopped between claiming the message and saying
-    // anything of it: renamed to taken, claimed, never acknowledged or answered.
-    let offered = waiting_offer(&address);
-    let id = offered.trim_end_matches(".offer.json").to_owned();
-    std::fs::write(address.join(format!("{id}.claimed")), "").expect("claimed by the stand-in");
-    std::fs::rename(
-        address.join(&offered),
-        address.join(format!("{id}.taken.json")),
-    )
-    .expect("taken by the stand-in");
-    let (offered, took, late) = offering.join().expect("the offer finishes");
-    assert_within_a_poll_of(took, late, wait);
-    let claim = address.join(format!("{id}.claimed"));
-    let failure = offered.expect_err("a message never acknowledged is not admitted");
-    assert_eq!(
-        failure,
-        Undelivered::Backend(BackendError::Unsettled {
-            spool: address.clone(),
-            claim: claim.clone(),
-            waited: wait,
-        })
-    );
-    let said = failure.to_string();
-    assert!(
-        said.contains("neither admitted nor withdrawn")
-            && said.contains(&claim.display().to_string()),
-        "{said}"
-    );
-    // Claimed nothing either way: the receiver's claim is left where it was.
-    assert!(claim.is_file(), "the receiver's claim was removed");
+    within_a_poll_of(wait, || {
+        let offering = offering_within(&address, "unsettled", wait);
+        // Stand in for a receiver stopped between claiming the message and
+        // saying anything of it: renamed to taken, claimed, never
+        // acknowledged or answered.
+        let offered = waiting_offer(&address);
+        let id = offered.trim_end_matches(".offer.json").to_owned();
+        std::fs::write(address.join(format!("{id}.claimed")), "").expect("claimed by the stand-in");
+        std::fs::rename(
+            address.join(&offered),
+            address.join(format!("{id}.taken.json")),
+        )
+        .expect("taken by the stand-in");
+        let (offered, took) = offering.join().expect("the offer finishes");
+        let claim = address.join(format!("{id}.claimed"));
+        let failure = offered.expect_err("a message never acknowledged is not admitted");
+        assert_eq!(
+            failure,
+            Undelivered::Backend(BackendError::Unsettled {
+                spool: address.clone(),
+                claim: claim.clone(),
+                waited: wait,
+            })
+        );
+        let said = failure.to_string();
+        assert!(
+            said.contains("neither admitted nor withdrawn")
+                && said.contains(&claim.display().to_string()),
+            "{said}"
+        );
+        // Claimed nothing either way: the receiver's claim is left where it was.
+        assert!(claim.is_file(), "the receiver's claim was removed");
+        took
+    });
     receiver.signal("-CONT");
 }
 
@@ -2357,22 +2378,28 @@ fn an_offer_whose_withdrawal_before_pickup_is_refused_stops_at_its_bound_and_may
     // sender's rename taking it back is refused.
     receiver.signal("-STOP");
     let wait = Duration::from_millis(300);
-    let offering = offering_within(&address, "late", wait);
-    let offered = waiting_offer(&address);
-    let id = offered.trim_end_matches(".offer.json").to_owned();
-    let Some(read_only) = ReadOnly::hold(&address) else {
+    if ReadOnly::hold(&address).is_none() {
         receiver.signal("-CONT");
-        let _ = offering.join();
         return;
-    };
-    let finished = offering.join().expect("the offer finishes");
-    drop(read_only);
-    assert_unclaimable(finished, &address, &id, ".withdrawn", wait);
-    // The one outcome that leaves it possible: the receiver admits it later.
+    }
+    let mut seen = Vec::new();
+    let attempts = within_a_poll_of(wait, || {
+        let offering = offering_within(&address, "late", wait);
+        let offered = waiting_offer_besides(&address, &seen);
+        let id = offered.trim_end_matches(".offer.json").to_owned();
+        seen.push(offered);
+        let read_only = ReadOnly::hold(&address).expect("refused before");
+        let finished = offering.join().expect("the offer finishes");
+        drop(read_only);
+        assert_unclaimable(finished, &address, &id, ".withdrawn", wait)
+    });
+    // The one outcome that leaves it possible: the receiver admits each later.
     receiver.signal("-CONT");
     let mut receiver = receiver;
-    assert_eq!(receiver.take(TAKE).as_deref(), Some("late"));
-    assert_eq!(receiver.say("answer late nobody-waiting"), "ok");
+    for _ in 0..attempts {
+        assert_eq!(receiver.take(TAKE).as_deref(), Some("late"));
+        assert_eq!(receiver.say("answer late nobody-waiting"), "ok");
+    }
 }
 
 #[cfg(unix)]
