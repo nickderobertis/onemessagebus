@@ -968,6 +968,10 @@ impl<D: Disposition + Clone> Offer<D> {
     /// answers the same, [`wait`](Self::wait) and
     /// [`wait_until`](Self::wait_until) return that outcome at once, and
     /// [`withdraw`](Self::withdraw) answers `Err` with the offer.
+    ///
+    /// It alone needs `D: Clone`: the answer it returns is kept, because a
+    /// later `try_answer`, [`wait`](Self::wait) or
+    /// [`wait_until`](Self::wait_until) returns it too.
     pub fn try_answer(&mut self) -> Option<Result<D, Undelivered>> {
         if let Held::Pending(pending) = &mut self.held {
             let outcome = pending.try_answer()?;

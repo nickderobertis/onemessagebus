@@ -49,7 +49,10 @@ when `take` or `take_within` returns it.
   the offer, which can still `wait` for its answer.
 - `offer.try_answer()` looks for the answer without waiting and without
   consuming the offer; its signature and bounds are the rustdoc of
-  `Offer::try_answer`. It returns `None` while the message is untaken, or taken and not yet answered;
+  `Offer::try_answer`. It needs a clonable answer type (`D: Clone`), on the
+  probe alone and on no other `Offer` method, because the answer it returns is
+  also returned by a later `try_answer`, `wait` or `wait_until`: the settled
+  offer keeps the answer and hands each caller a copy. It returns `None` while the message is untaken, or taken and not yet answered;
   `Some(Ok(answer))` once the receiver answered; and `Some(Err(_))` once no
   answer will come — the inbox closed, the receiver went away, or it dropped
   its claim — as `wait` would report it. It never blocks on a take, an answer
