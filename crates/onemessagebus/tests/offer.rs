@@ -2205,10 +2205,10 @@ const SCHEDULING: Duration = Duration::from_millis(200);
 #[cfg(all(unix, not(target_os = "macos")))]
 const SCHEDULING: Duration = Duration::ZERO;
 
-/// That an offer bounded by `wait` returned no earlier than its bound and no
-/// later than a poll after it, beyond the macOS lane's scheduling allowance.
+/// The one place every bounded journey's limit is decided, so the platforms
+/// differ only in `SCHEDULING`.
 #[cfg(unix)]
-fn assert_within_a_poll_of(took: Duration, wait: Duration) {
+fn assert_within_a_poll_and_scheduling_of(took: Duration, wait: Duration) {
     assert!(
         took >= wait && took <= wait + POLL + SCHEDULING,
         "returned {took:?} into a bound of {wait:?}"
@@ -2244,7 +2244,7 @@ fn assert_unclaimable(
     suffix: &str,
     wait: Duration,
 ) {
-    assert_within_a_poll_of(took, wait);
+    assert_within_a_poll_and_scheduling_of(took, wait);
     let failure = offered.expect_err("an offer neither admitted nor withdrawn is not admitted");
     let Undelivered::Backend(BackendError::Unclaimable {
         spool,
@@ -2312,7 +2312,7 @@ fn a_wait_that_passes_with_the_receivers_claim_but_no_acknowledgement_stops_at_i
     )
     .expect("taken by the stand-in");
     let (offered, took) = offering.join().expect("the offer finishes");
-    assert_within_a_poll_of(took, wait);
+    assert_within_a_poll_and_scheduling_of(took, wait);
     let claim = address.join(format!("{id}.claimed"));
     let failure = offered.expect_err("a message never acknowledged is not admitted");
     assert_eq!(
