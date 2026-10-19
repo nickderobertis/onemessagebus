@@ -845,8 +845,20 @@ pub trait InboxBackend<M, D>: Send + Sync {
 /// the receiver took it, and an answer or the reason there is none follows, or
 /// it was withdrawn, and the receiver never takes it. Dropping an offer
 /// withdraws nothing; the message stays offered and is answered to nobody.
+///
+/// [`try_answer`](Self::try_answer) looks for the answer without waiting and
+/// without giving the offer up; once it has found one the offer is settled, and
+/// every later call reports that outcome.
 pub struct Offer<D: Disposition> {
-    pending: Box<dyn Pending<D>>,
+    held: Held<D>,
+}
+
+/// An offer's state as its sender holds it.
+enum Held<D> {
+    /// What became of the message is still the backend's to report.
+    Pending(Box<dyn Pending<D>>),
+    /// What became of it is known, and nothing is left to withdraw.
+    Settled(Result<D, Undelivered>),
 }
 
 /// What one backend does for an admitted message's [`Offer`].
@@ -854,30 +866,14 @@ pub(crate) trait Pending<D>: Send {
     /// Withdraw the message if its receiver has not taken it: `true` when it
     /// was withdrawn, and the receiver never takes it.
     fn withdraw(&mut self) -> bool;
+    /// One look for the answer, never waiting: `None` while the receiver has
+    /// not taken the message or holds it unanswered. A `Some` hands the outcome
+    /// over, and the backend is asked nothing after it.
+    fn try_answer(&mut self) -> Option<Result<D, Undelivered>>;
     /// Block until the receiver answers, or the backend knows it never will.
     fn wait(self: Box<Self>) -> Result<D, Undelivered>;
     /// As `wait`, but withdraw the message if it is untaken at `deadline`.
     fn wait_until(self: Box<Self>, deadline: Instant) -> Result<D, Unanswered>;
-}
-
-/// An offer whose answer is already known: what a backend that cannot report
-/// admission on its own answers.
-struct Settled<D> {
-    answer: D,
-}
-
-impl<D: Send> Pending<D> for Settled<D> {
-    fn withdraw(&mut self) -> bool {
-        false
-    }
-
-    fn wait(self: Box<Self>) -> Result<D, Undelivered> {
-        Ok(self.answer)
-    }
-
-    fn wait_until(self: Box<Self>, _deadline: Instant) -> Result<D, Unanswered> {
-        Ok(self.answer)
-    }
 }
 
 impl<D: Disposition> fmt::Debug for Offer<D> {
@@ -889,15 +885,16 @@ impl<D: Disposition> fmt::Debug for Offer<D> {
 impl<D: Disposition> Offer<D> {
     pub(crate) fn over(pending: impl Pending<D> + 'static) -> Self {
         Self {
-            pending: Box::new(pending),
+            held: Held::Pending(Box::new(pending)),
         }
     }
 
-    /// An offer already answered `disposition`.
+    /// An offer already answered `disposition`: what a backend that cannot
+    /// report admission on its own answers.
     fn answered(disposition: D) -> Self {
-        Self::over(Settled {
-            answer: disposition,
-        })
+        Self {
+            held: Held::Settled(Ok(disposition)),
+        }
     }
 
     /// Block until the receiver has answered the message, or the inbox is
@@ -909,7 +906,10 @@ impl<D: Disposition> Offer<D> {
     /// that let the message go unanswered; [`Undelivered::Backend`] when the
     /// backend cannot produce the answer.
     pub fn wait(self) -> Result<D, Undelivered> {
-        self.pending.wait()
+        match self.held {
+            Held::Pending(pending) => pending.wait(),
+            Held::Settled(outcome) => outcome,
+        }
     }
 
     /// Wait for the answer, withdrawing the message if it is still untaken at
@@ -925,7 +925,10 @@ impl<D: Disposition> Offer<D> {
     /// [`Unanswered::Undelivered`] for every outcome [`wait`](Self::wait)
     /// reports.
     pub fn wait_until(self, deadline: Instant) -> Result<D, Unanswered> {
-        self.pending.wait_until(deadline)
+        match self.held {
+            Held::Pending(pending) => pending.wait_until(deadline),
+            Held::Settled(outcome) => outcome.map_err(Unanswered::Undelivered),
+        }
     }
 
     /// Take the message back: `Ok` only when the receiver had not taken it,
@@ -937,10 +940,46 @@ impl<D: Disposition> Offer<D> {
     /// The offer itself, when the receiver took the message first — or when
     /// the backend cannot guarantee a withdrawal, which reads as taken.
     pub fn withdraw(mut self) -> Result<(), Self> {
-        if self.pending.withdraw() {
-            Ok(())
-        } else {
-            Err(self)
+        match &mut self.held {
+            Held::Pending(pending) => {
+                if pending.withdraw() {
+                    Ok(())
+                } else {
+                    Err(self)
+                }
+            }
+            Held::Settled(_) => Err(self),
+        }
+    }
+}
+
+impl<D: Disposition + Clone> Offer<D> {
+    /// Whether the receiver has answered, learned without waiting and without
+    /// giving the offer up: `None` while the message is untaken, or taken and
+    /// not yet answered; `Some(Ok(answer))` once the receiver answered; and
+    /// `Some(Err(_))` once it never will — the inbox closed, or its receiver
+    /// let the message go — as [`wait`](Self::wait) reports.
+    ///
+    /// It never blocks on a take, an answer or a spool's polling: it looks once
+    /// at what has already happened. While it answers `None` the offer keeps
+    /// every guarantee it had — a [`withdraw`](Self::withdraw) still races a
+    /// take, and a [`wait_until`](Self::wait_until) still expires an untaken
+    /// message. Once it answers `Some` the offer is settled: every later call
+    /// answers the same, [`wait`](Self::wait) and
+    /// [`wait_until`](Self::wait_until) return that outcome at once, and
+    /// [`withdraw`](Self::withdraw) answers `Err` with the offer.
+    ///
+    /// It alone needs `D: Clone`: the answer it returns is kept, because a
+    /// later `try_answer`, [`wait`](Self::wait) or
+    /// [`wait_until`](Self::wait_until) returns it too.
+    pub fn try_answer(&mut self) -> Option<Result<D, Undelivered>> {
+        if let Held::Pending(pending) = &mut self.held {
+            let outcome = pending.try_answer()?;
+            self.held = Held::Settled(outcome);
+        }
+        match &self.held {
+            Held::Settled(outcome) => Some(outcome.clone()),
+            Held::Pending(_) => None,
         }
     }
 }
@@ -1108,6 +1147,17 @@ struct Queuing<M, D> {
 impl<M: Send, D: Send> Pending<D> for Queuing<M, D> {
     fn withdraw(&mut self) -> bool {
         self.shared.withdraw(self.id)
+    }
+
+    fn try_answer(&mut self) -> Option<Result<D, Undelivered>> {
+        // Never `Expired`: only `wait_until` sets a deadline, and it consumes
+        // the offer.
+        let Outcome::Answered(answer) =
+            std::mem::replace(&mut self.ticket.lock().outcome, Outcome::Pending)
+        else {
+            return None;
+        };
+        Some(answer.map_err(Undelivered::Closed))
     }
 
     fn wait(self: Box<Self>) -> Result<D, Undelivered> {

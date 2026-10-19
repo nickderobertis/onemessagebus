@@ -6,7 +6,8 @@
 //!
 //! Each journey is shown on both backends: admission, the answer, a withdrawal
 //! before and after a take, a deadline that expires and one that is outlived, a
-//! receiver that goes away, a release, and take racing withdraw.
+//! receiver that goes away, a release, take racing withdraw, and a look for the
+//! answer that never waits.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -2667,4 +2668,517 @@ fn an_unanswered_says_why_in_words() {
     );
     let closed: Unanswered = Undelivered::Closed(Closed::new("gone home")).into();
     assert_eq!(closed.to_string(), "the inbox is closed: gone home");
+}
+
+/// How many times each journey looks for an answer in a row, to show every
+/// look answers the same.
+const LOOKS: usize = 5;
+
+/// What one look for an offer's answer found.
+type Look = Option<Result<Receipt, Undelivered>>;
+
+/// `LOOKS` looks for `offer`'s answer, made on a thread of their own and handed
+/// back with the offer — failing, rather than hanging, if they do not all
+/// return within `TAKE` while the journey holds back every event they could be
+/// waiting for.
+fn looked_at_promptly(mut offer: Offer<Receipt>) -> (Offer<Receipt>, Vec<Look>) {
+    let (looked, looks) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let outcomes = (0..LOOKS).map(|_| offer.try_answer()).collect();
+        let _ = looked.send((offer, outcomes));
+    });
+    looks
+        .recv_timeout(TAKE)
+        .expect("try_answer waited for something the journey had not let happen")
+}
+
+fn assert_unanswered_promptly(offer: Offer<Receipt>) -> Offer<Receipt> {
+    let (offer, outcomes) = looked_at_promptly(offer);
+    assert_eq!(outcomes, vec![None; LOOKS]);
+    offer
+}
+
+/// Look until the offer is settled, as a sender that cannot block does.
+fn settled(offer: &mut Offer<Receipt>) -> Result<Receipt, Undelivered> {
+    let until = Instant::now() + TAKE;
+    loop {
+        if let Some(outcome) = offer.try_answer() {
+            return outcome;
+        }
+        assert!(Instant::now() < until, "the offer never settled");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// A settled offer answers `outcome` to every later look, and to `wait` and
+/// `wait_until` at once, and withdraws nothing.
+fn assert_settled_as(make: impl Fn() -> Offer<Receipt>, outcome: &Result<Receipt, Undelivered>) {
+    let mut offer = make();
+    assert_eq!(offer.try_answer().as_ref(), Some(outcome));
+    let mut offer = offer
+        .withdraw()
+        .expect_err("a settled offer withdraws nothing");
+    assert_eq!(offer.try_answer().as_ref(), Some(outcome));
+    let started = Instant::now();
+    assert_eq!(&offer.wait(), outcome);
+    let mut offer = make();
+    assert_eq!(offer.try_answer().as_ref(), Some(outcome));
+    assert_eq!(
+        offer.wait_until(Instant::now() + Duration::from_secs(60)),
+        outcome.clone().map_err(Unanswered::Undelivered)
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "a settled offer waited: {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn an_in_process_try_answer_is_none_until_the_receiver_answers_and_then_settles_the_offer() {
+    let (sender, inbox) = Sender::<Order, Receipt>::channel();
+    let answered = |sku: &str| {
+        let mut offer = sender.offer(order(sku)).expect("admitted");
+        assert_eq!(offer.try_answer(), None, "answered before it was taken");
+        let delivered = inbox.take().expect("queued");
+        assert_eq!(offer.try_answer(), None, "answered before the receiver did");
+        delivered.answer(filled("stock-room"));
+        assert_eq!(offer.try_answer(), Some(Ok(filled("stock-room"))));
+        offer
+    };
+    assert_settled_as(|| answered("a-1"), &Ok(filled("stock-room")));
+    assert_eq!(inbox.answered().len(), 2, "a look answered something twice");
+}
+
+#[test]
+fn a_spool_try_answer_is_none_until_the_receiver_answers_and_then_settles_the_offer() {
+    let (_dir, address) = spool_dir();
+    let receiver = std::cell::RefCell::new(Receiver::bind(&address));
+    let sender = Spool::connect::<Order, Receipt>(&address);
+    let answered = || {
+        let mut offer = sender.offer(order("a-1")).expect("admitted");
+        assert_eq!(offer.try_answer(), None, "answered before it was taken");
+        let mut receiver = receiver.borrow_mut();
+        assert_eq!(receiver.take(Duration::ZERO).as_deref(), Some("a-1"));
+        assert_eq!(offer.try_answer(), None, "answered before the receiver did");
+        assert_eq!(receiver.say("answer a-1 stock-room"), "ok");
+        // Written before the receiver said so: the first look after finds it.
+        assert_eq!(offer.try_answer(), Some(Ok(filled("stock-room"))));
+        offer
+    };
+    assert_settled_as(answered, &Ok(filled("stock-room")));
+    assert_eq!(receiver.borrow_mut().answered(), "answered [a-1,a-1]");
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
+#[test]
+fn an_in_process_try_answer_leaves_withdrawal_and_expiry_as_they_were() {
+    let (sender, inbox) = Sender::<Order, Receipt>::channel();
+    let mut offer = sender.offer(order("obsolete")).expect("admitted");
+    assert_eq!(offer.try_answer(), None);
+    assert!(offer.withdraw().is_ok());
+    assert!(inbox.take_within(SETTLE).is_none());
+
+    let mut offer = sender.offer(order("stale")).expect("admitted");
+    assert_eq!(offer.try_answer(), None);
+    let deadline = Instant::now() + Duration::from_millis(200);
+    assert_eq!(offer.wait_until(deadline), Err(Unanswered::Expired));
+    assert!(Instant::now() >= deadline);
+    assert!(inbox.take_within(SETTLE).is_none());
+    assert!(inbox.answered().is_empty());
+}
+
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
+fn a_spool_try_answer_leaves_withdrawal_and_expiry_as_they_were() {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let sender = Spool::connect::<Order, Receipt>(&address);
+
+    let mut offer = sender.offer(order("obsolete")).expect("admitted");
+    assert_eq!(offer.try_answer(), None);
+    assert!(offer.withdraw().is_ok());
+    assert_eq!(receiver.take(SETTLE), None);
+
+    let mut offer = sender.offer(order("stale")).expect("admitted");
+    assert_eq!(offer.try_answer(), None);
+    let deadline = Instant::now() + Duration::from_millis(200);
+    assert_eq!(offer.wait_until(deadline), Err(Unanswered::Expired));
+    assert!(Instant::now() >= deadline);
+    assert_eq!(receiver.take(SETTLE), None);
+    assert_eq!(receiver.answered(), "answered []");
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
+#[test]
+fn an_in_process_try_answer_reports_a_close_or_a_dropped_claim_as_undelivered() {
+    let let_go = Closed::new("the receiver took the message and let it go without answering");
+    let (sender, inbox) = Sender::<Order, Receipt>::channel();
+    let dropped = || {
+        let mut offer = sender.offer(order("d")).expect("admitted");
+        drop(inbox.take().expect("queued"));
+        assert_eq!(
+            settled(&mut offer),
+            Err(Undelivered::Closed(let_go.clone()))
+        );
+        offer
+    };
+    assert_settled_as(dropped, &Err(Undelivered::Closed(let_go.clone())));
+
+    let (sender, inbox) = Sender::<Order, Receipt>::channel();
+    let mut offer = sender.offer(order("c")).expect("admitted");
+    let held = inbox.take().expect("queued");
+    assert_eq!(offer.try_answer(), None);
+    inbox.close(Closed::new("closed for stock-take"));
+    let closed = Err(Undelivered::Closed(Closed::new("closed for stock-take")));
+    assert_eq!(settled(&mut offer), closed);
+    // The receiver's answer after the close never reaches the settled offer.
+    held.answer(filled("too-late"));
+    assert_eq!(offer.try_answer(), Some(closed.clone()));
+    assert_eq!(offer.wait(), closed);
+}
+
+#[test]
+fn a_spool_try_answer_reports_a_close_or_a_dropped_claim_as_undelivered() {
+    let let_go = Closed::new("the receiver took the message and let it go without answering");
+    let (_dir, address) = spool_dir();
+    let receiver = std::cell::RefCell::new(Receiver::bind(&address));
+    let sender = Spool::connect::<Order, Receipt>(&address);
+    let dropped = || {
+        let mut offer = sender.offer(order("d")).expect("admitted");
+        let mut receiver = receiver.borrow_mut();
+        assert_eq!(receiver.take(TAKE).as_deref(), Some("d"));
+        assert_eq!(offer.try_answer(), None);
+        assert_eq!(receiver.say("drop d"), "ok");
+        assert_eq!(
+            settled(&mut offer),
+            Err(Undelivered::Closed(let_go.clone()))
+        );
+        offer
+    };
+    assert_settled_as(dropped, &Err(Undelivered::Closed(let_go.clone())));
+    assert_eq!(message_files(&address), Vec::<String>::new());
+
+    let mut receiver = receiver.into_inner();
+    let mut offer = sender.offer(order("c")).expect("admitted");
+    assert_eq!(receiver.take(TAKE).as_deref(), Some("c"));
+    assert_eq!(offer.try_answer(), None);
+    assert_eq!(receiver.say("close for stock-take"), "ok");
+    let closed = Err(Undelivered::Closed(Closed::new("for stock-take")));
+    assert_eq!(settled(&mut offer), closed);
+    assert_eq!(offer.try_answer(), Some(closed.clone()));
+    assert_eq!(offer.wait(), closed);
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
+#[test]
+fn an_in_process_try_answer_racing_the_receivers_answer_sees_it_exactly_once() {
+    let (sender, inbox) = Sender::<Order, Receipt>::channel();
+    for race in 0..RACES {
+        let sku = format!("race-{race}");
+        let mut offer = sender.offer(order(&sku)).expect("admitted");
+        let delivered = inbox.take().expect("queued");
+        let start = Arc::new(Barrier::new(2));
+        let (answerer_waits, looker_waits) = head_start(race);
+        let answering = {
+            let start = Arc::clone(&start);
+            let sku = sku.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                spin(answerer_waits);
+                delivered.answer(filled(&sku));
+            })
+        };
+        start.wait();
+        spin(looker_waits);
+        let outcome = loop {
+            if let Some(outcome) = offer.try_answer() {
+                break outcome;
+            }
+        };
+        answering.join().expect("the answer is given");
+        assert_eq!(outcome, Ok(filled(&sku)), "race {race}");
+        assert_eq!(offer.try_answer(), Some(Ok(filled(&sku))), "race {race}");
+        assert_eq!(offer.wait(), Ok(filled(&sku)), "race {race}");
+        assert_eq!(inbox.answered().len(), race + 1, "race {race}");
+    }
+    let answered: Vec<String> = inbox
+        .answered()
+        .into_iter()
+        .map(|answered| answered.message.sku)
+        .collect();
+    assert_eq!(
+        answered,
+        (0..RACES)
+            .map(|race| format!("race-{race}"))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_spool_try_answer_racing_the_receivers_answer_sees_it_exactly_once() {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let sender = Spool::connect::<Order, Receipt>(&address);
+    let mut skus = Vec::new();
+    for race in 0..RACES {
+        let sku = format!("race-{race}");
+        let mut offer = sender.offer(order(&sku)).expect("admitted");
+        assert_eq!(receiver.take(TAKE).as_deref(), Some(sku.as_str()));
+        // The answer is told, and the looks made, with neither waiting on the
+        // other: the receiver answers a process away while this one looks.
+        receiver.tell(&format!("answer {sku} {sku}"));
+        spin(Duration::from_micros(
+            u64::try_from(race % 11).expect("small") * 200,
+        ));
+        let outcome = settled(&mut offer);
+        assert_eq!(receiver.reply(), "ok", "race {race}");
+        assert_eq!(outcome, Ok(filled(&sku)), "race {race}");
+        assert_eq!(offer.try_answer(), Some(Ok(filled(&sku))), "race {race}");
+        assert_eq!(offer.wait(), Ok(filled(&sku)), "race {race}");
+        skus.push(sku);
+    }
+    assert_eq!(
+        receiver.answered(),
+        format!("answered [{}]", skus.join(","))
+    );
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
+#[test]
+fn an_in_process_try_answer_never_waits_for_a_take_or_an_answer() {
+    let (sender, inbox) = Sender::<Order, Receipt>::channel();
+    let offer = sender.offer(order("held")).expect("admitted");
+    // Nothing takes it until every look has returned.
+    let offer = assert_unanswered_promptly(offer);
+    let delivered = inbox.take().expect("still queued after the looks");
+    // Nothing answers it until every look has returned.
+    let mut offer = assert_unanswered_promptly(offer);
+    delivered.answer(filled("stock-room"));
+    assert_eq!(offer.try_answer(), Some(Ok(filled("stock-room"))));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_spool_try_answer_never_waits_for_a_take_an_answer_or_a_courier_poll() {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    let sender = Spool::connect::<Order, Receipt>(&address);
+    let offer = sender.offer(order("held")).expect("admitted");
+    // Its whole process stopped, courier and all: no take and no polling
+    // cycle can happen until every look has returned.
+    receiver.signal("-STOP");
+    let offer = assert_unanswered_promptly(offer);
+    receiver.signal("-CONT");
+    assert_eq!(receiver.take(Duration::ZERO).as_deref(), Some("held"));
+    // Held, and its process stopped again: no answer can come until every look
+    // has returned.
+    receiver.signal("-STOP");
+    let mut offer = assert_unanswered_promptly(offer);
+    receiver.signal("-CONT");
+    assert_eq!(receiver.say("answer held stock-room"), "ok");
+    assert_eq!(offer.try_answer(), Some(Ok(filled("stock-room"))));
+    assert_eq!(receiver.answered(), "answered [held]");
+}
+
+#[test]
+fn a_backend_that_cannot_report_admission_offers_an_already_settled_message() {
+    let mut offer = Sender::over(Counter)
+        .offer(order("n"))
+        .expect("answered, so admitted");
+    assert_eq!(offer.try_answer(), Some(Ok(Tally(1))));
+    assert_eq!(offer.try_answer(), Some(Ok(Tally(1))));
+    assert_eq!(offer.wait(), Ok(Tally(1)));
+}
+
+/// A receiver this test stands in for by hand, as one of a build before
+/// admission was acknowledged would: it holds the spool's lock and moves or
+/// answers one message's files exactly when the journey says, so each outcome
+/// a look can find is put there on purpose.
+struct StandIn {
+    dir: PathBuf,
+    lock: Option<std::fs::File>,
+}
+
+impl StandIn {
+    fn bind(dir: &Path) -> Self {
+        std::fs::create_dir_all(dir).expect("made");
+        let lock = std::fs::File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join("receiver.lock"))
+            .expect("opened");
+        lock.try_lock().expect("the stand-in binds");
+        Self {
+            dir: dir.to_path_buf(),
+            lock: Some(lock),
+        }
+    }
+
+    /// Offer `sku` on a thread of its own, and the id of its offer file once
+    /// it is there.
+    fn offering(
+        &self,
+        sku: &'static str,
+    ) -> (
+        std::thread::JoinHandle<Result<Offer<Receipt>, Undelivered>>,
+        String,
+    ) {
+        let offering = {
+            let address = self.dir.clone();
+            std::thread::spawn(move || Spool::connect::<Order, Receipt>(&address).offer(order(sku)))
+        };
+        let id = loop {
+            if let Some(name) = files_in(&self.dir)
+                .into_iter()
+                .find(|name| name.ends_with(".offer.json"))
+            {
+                break name.trim_end_matches(".offer.json").to_owned();
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        (offering, id)
+    }
+
+    /// Take message `id`, as a courier renames it, and the sender's offer once
+    /// that has admitted it.
+    fn take(
+        &self,
+        offering: std::thread::JoinHandle<Result<Offer<Receipt>, Undelivered>>,
+        id: &str,
+    ) -> Offer<Receipt> {
+        std::fs::rename(
+            self.dir.join(format!("{id}.offer.json")),
+            self.dir.join(format!("{id}.taken.json")),
+        )
+        .expect("taken by the stand-in");
+        offering
+            .join()
+            .expect("the offer finishes")
+            .expect("admitted")
+    }
+
+    /// Write `text` as message `id`'s answer, beside its name and renamed on.
+    fn answer(&self, id: &str, text: &str) -> PathBuf {
+        let answer = self.dir.join(format!("{id}.answer.json"));
+        let staging = self.dir.join(format!("{id}.answer.json.staging"));
+        std::fs::write(&staging, text).expect("staged");
+        std::fs::rename(&staging, &answer).expect("answered");
+        answer
+    }
+
+    /// Go away without answering: the lock is let go.
+    fn leave(&mut self) {
+        drop(self.lock.take());
+    }
+}
+
+/// A settled offer looks the same again, withdraws nothing, and waits for
+/// nothing.
+fn assert_stays_settled(mut offer: Offer<Receipt>, outcome: &Result<Receipt, Undelivered>) {
+    assert_eq!(offer.try_answer().as_ref(), Some(outcome));
+    let mut offer = offer
+        .withdraw()
+        .expect_err("a settled offer withdraws nothing");
+    assert_eq!(offer.try_answer().as_ref(), Some(outcome));
+    let started = Instant::now();
+    assert_eq!(&offer.wait(), outcome);
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn a_spool_try_answer_finds_an_answer_written_before_the_offer_returned() {
+    let (_dir, address) = spool_dir();
+    let stand_in = StandIn::bind(&address);
+    let (offering, id) = stand_in.offering("early");
+    // Answered before the offer saw it taken: the offer returns holding it.
+    stand_in.answer(
+        &id,
+        &json!({"schema_version": SPOOL_SCHEMA_VERSION,
+                "answer": {"disposition": filled("early-bird")}})
+        .to_string(),
+    );
+    let mut offer = offering
+        .join()
+        .expect("the offer finishes")
+        .expect("admitted");
+    assert_eq!(offer.try_answer(), Some(Ok(filled("early-bird"))));
+    assert_stays_settled(offer, &Ok(filled("early-bird")));
+}
+
+#[test]
+fn a_spool_try_answer_settles_an_answer_it_cannot_read_as_undelivered() {
+    let (_dir, address) = spool_dir();
+    let stand_in = StandIn::bind(&address);
+
+    // A disposition this sender does not read.
+    let (offering, id) = stand_in.offering("foreign");
+    let mut offer = stand_in.take(offering, &id);
+    assert_eq!(offer.try_answer(), None);
+    let file = stand_in.answer(
+        &id,
+        &json!({"schema_version": SPOOL_SCHEMA_VERSION, "answer": {"disposition": 42}}).to_string(),
+    );
+    let outcome = settled(&mut offer);
+    assert!(
+        matches!(
+            &outcome,
+            Err(Undelivered::Backend(BackendError::Unreadable { file: at, why, .. }))
+                if *at == file && why.contains("not one this sender reads")
+        ),
+        "{outcome:?}"
+    );
+    assert_stays_settled(offer, &outcome);
+
+    // A receiver that refused the message.
+    let (offering, id) = stand_in.offering("refused");
+    let mut offer = stand_in.take(offering, &id);
+    assert_eq!(offer.try_answer(), None);
+    stand_in.answer(
+        &id,
+        &json!({"schema_version": SPOOL_SCHEMA_VERSION,
+                "answer": {"refused": {"reason": "no such shelf"}}})
+        .to_string(),
+    );
+    let refused = Err(Undelivered::Backend(BackendError::Refused {
+        spool: address.clone(),
+        why: "no such shelf".to_owned(),
+    }));
+    assert_eq!(settled(&mut offer), refused);
+    assert_stays_settled(offer, &refused);
+
+    // An answer document this build cannot read at all.
+    let (offering, id) = stand_in.offering("garbled");
+    let mut offer = stand_in.take(offering, &id);
+    assert_eq!(offer.try_answer(), None);
+    let file = stand_in.answer(&id, "not a document");
+    let outcome = settled(&mut offer);
+    assert!(
+        matches!(
+            &outcome,
+            Err(Undelivered::Backend(BackendError::Unreadable { file: at, .. })) if *at == file
+        ),
+        "{outcome:?}"
+    );
+    assert_stays_settled(offer, &outcome);
+}
+
+#[test]
+fn a_spool_try_answer_settles_a_receiver_gone_without_answering_as_abandoned() {
+    let (_dir, address) = spool_dir();
+    let mut stand_in = StandIn::bind(&address);
+    let (offering, id) = stand_in.offering("orphan");
+    let mut offer = stand_in.take(offering, &id);
+    assert_eq!(offer.try_answer(), None);
+    stand_in.leave();
+    let abandoned = Err(Undelivered::Backend(BackendError::Abandoned {
+        spool: address.clone(),
+        file: address.join(format!("{id}.taken.json")),
+    }));
+    assert_eq!(settled(&mut offer), abandoned);
+    assert_stays_settled(offer, &abandoned);
 }
