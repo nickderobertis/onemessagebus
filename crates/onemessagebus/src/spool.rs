@@ -377,6 +377,13 @@ impl<D: Disposition> Pending<D> for Decoding<D> {
         self.exchange.withdraw()
     }
 
+    fn try_answer(&mut self) -> Option<Result<D, Undelivered>> {
+        Some(match self.exchange.try_answer()? {
+            Ok(answered) => self.decode(answered),
+            Err(undelivered) => Err(undelivered),
+        })
+    }
+
     fn wait(mut self: Box<Self>) -> Result<D, Undelivered> {
         let answered = self.exchange.wait()?;
         self.decode(answered)
@@ -634,6 +641,20 @@ impl Exchange {
             return Withdrawal::Kept;
         }
         withdrawal
+    }
+
+    /// The answer and the file it was read from, if it is there now, or why
+    /// none will come; `None` while the receiver still holds the message. One
+    /// look at the spool's files, never a wait.
+    fn try_answer(&mut self) -> Option<Result<(Value, PathBuf), Undelivered>> {
+        if let Some(answered) = self.answered.take() {
+            return Some(Ok(answered));
+        }
+        match self.read_answer() {
+            Ok(Some(answered)) => Some(Ok(answered)),
+            Ok(None) => self.gone(),
+            Err(undelivered) => Some(Err(undelivered)),
+        }
     }
 
     /// The answer and the file it was read from, once there is one.

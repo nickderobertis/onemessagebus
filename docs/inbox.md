@@ -47,6 +47,19 @@ when `take` or `take_within` returns it.
 - `offer.withdraw() -> Result<(), Offer<D>>` returns `Ok` only when the message
   was untaken, and then it is never taken. A taken message answers `Err` with
   the offer, which can still `wait` for its answer.
+- `offer.try_answer() -> Option<Result<D, Undelivered>>` (for `D: Clone`)
+  looks for the answer without waiting and without consuming the offer. It
+  returns `None` while the message is untaken, or taken and not yet answered;
+  `Some(Ok(answer))` once the receiver answered; and `Some(Err(_))` once no
+  answer will come — the inbox closed, the receiver went away, or it dropped
+  its claim — as `wait` would report it. It never blocks on a take, an answer
+  or a spool courier's poll: it reads what has already happened, in process
+  under the ticket's lock and over a spool with one look at the message's
+  files. While it returns `None` the offer keeps every guarantee above:
+  `withdraw` still races a take atomically and a `wait_until` deadline still
+  expires an untaken message. Once it returns `Some` the offer is **settled**:
+  every later `try_answer` returns the same outcome, `wait` and `wait_until`
+  return it at once, and `withdraw` returns `Err` with the offer.
 - Taking a message and withdrawing it **never both succeed and never both
   fail**, in process (the inbox's lock decides) and across a spool (one claim
   file decides, below).
