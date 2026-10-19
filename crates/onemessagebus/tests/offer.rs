@@ -2993,3 +2993,192 @@ fn a_backend_that_cannot_report_admission_offers_an_already_settled_message() {
     assert_eq!(offer.try_answer(), Some(Ok(Tally(1))));
     assert_eq!(offer.wait(), Ok(Tally(1)));
 }
+
+/// A receiver this test stands in for by hand, as one of a build before
+/// admission was acknowledged would: it holds the spool's lock and moves or
+/// answers one message's files exactly when the journey says, so each outcome
+/// a look can find is put there on purpose.
+struct StandIn {
+    dir: PathBuf,
+    lock: Option<std::fs::File>,
+}
+
+impl StandIn {
+    fn bind(dir: &Path) -> Self {
+        std::fs::create_dir_all(dir).expect("made");
+        let lock = std::fs::File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join("receiver.lock"))
+            .expect("opened");
+        lock.try_lock().expect("the stand-in binds");
+        Self {
+            dir: dir.to_path_buf(),
+            lock: Some(lock),
+        }
+    }
+
+    /// Offer `sku` on a thread of its own, and the id of its offer file once
+    /// it is there.
+    fn offering(
+        &self,
+        sku: &'static str,
+    ) -> (
+        std::thread::JoinHandle<Result<Offer<Receipt>, Undelivered>>,
+        String,
+    ) {
+        let offering = {
+            let address = self.dir.clone();
+            std::thread::spawn(move || Spool::connect::<Order, Receipt>(&address).offer(order(sku)))
+        };
+        let id = loop {
+            if let Some(name) = files_in(&self.dir)
+                .into_iter()
+                .find(|name| name.ends_with(".offer.json"))
+            {
+                break name.trim_end_matches(".offer.json").to_owned();
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        (offering, id)
+    }
+
+    /// Take message `id`, as a courier renames it, and the sender's offer once
+    /// that has admitted it.
+    fn take(
+        &self,
+        offering: std::thread::JoinHandle<Result<Offer<Receipt>, Undelivered>>,
+        id: &str,
+    ) -> Offer<Receipt> {
+        std::fs::rename(
+            self.dir.join(format!("{id}.offer.json")),
+            self.dir.join(format!("{id}.taken.json")),
+        )
+        .expect("taken by the stand-in");
+        offering
+            .join()
+            .expect("the offer finishes")
+            .expect("admitted")
+    }
+
+    /// Write `text` as message `id`'s answer, beside its name and renamed on.
+    fn answer(&self, id: &str, text: &str) -> PathBuf {
+        let answer = self.dir.join(format!("{id}.answer.json"));
+        let staging = self.dir.join(format!("{id}.answer.json.staging"));
+        std::fs::write(&staging, text).expect("staged");
+        std::fs::rename(&staging, &answer).expect("answered");
+        answer
+    }
+
+    /// Go away without answering: the lock is let go.
+    fn leave(&mut self) {
+        drop(self.lock.take());
+    }
+}
+
+/// A settled offer looks the same again, withdraws nothing, and waits for
+/// nothing.
+fn assert_stays_settled(mut offer: Offer<Receipt>, outcome: &Result<Receipt, Undelivered>) {
+    assert_eq!(offer.try_answer().as_ref(), Some(outcome));
+    let mut offer = offer
+        .withdraw()
+        .expect_err("a settled offer withdraws nothing");
+    assert_eq!(offer.try_answer().as_ref(), Some(outcome));
+    let started = Instant::now();
+    assert_eq!(&offer.wait(), outcome);
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn a_spool_try_answer_finds_an_answer_written_before_the_offer_returned() {
+    let (_dir, address) = spool_dir();
+    let stand_in = StandIn::bind(&address);
+    let (offering, id) = stand_in.offering("early");
+    // Answered before the offer saw it taken: the offer returns holding it.
+    stand_in.answer(
+        &id,
+        &json!({"schema_version": SPOOL_SCHEMA_VERSION,
+                "answer": {"disposition": filled("early-bird")}})
+        .to_string(),
+    );
+    let mut offer = offering
+        .join()
+        .expect("the offer finishes")
+        .expect("admitted");
+    assert_eq!(offer.try_answer(), Some(Ok(filled("early-bird"))));
+    assert_stays_settled(offer, &Ok(filled("early-bird")));
+}
+
+#[test]
+fn a_spool_try_answer_settles_an_answer_it_cannot_read_as_undelivered() {
+    let (_dir, address) = spool_dir();
+    let stand_in = StandIn::bind(&address);
+
+    // A disposition this sender does not read.
+    let (offering, id) = stand_in.offering("foreign");
+    let mut offer = stand_in.take(offering, &id);
+    assert_eq!(offer.try_answer(), None);
+    let file = stand_in.answer(
+        &id,
+        &json!({"schema_version": SPOOL_SCHEMA_VERSION, "answer": {"disposition": 42}}).to_string(),
+    );
+    let outcome = settled(&mut offer);
+    assert!(
+        matches!(
+            &outcome,
+            Err(Undelivered::Backend(BackendError::Unreadable { file: at, why, .. }))
+                if *at == file && why.contains("not one this sender reads")
+        ),
+        "{outcome:?}"
+    );
+    assert_stays_settled(offer, &outcome);
+
+    // A receiver that refused the message.
+    let (offering, id) = stand_in.offering("refused");
+    let mut offer = stand_in.take(offering, &id);
+    assert_eq!(offer.try_answer(), None);
+    stand_in.answer(
+        &id,
+        &json!({"schema_version": SPOOL_SCHEMA_VERSION,
+                "answer": {"refused": {"reason": "no such shelf"}}})
+        .to_string(),
+    );
+    let refused = Err(Undelivered::Backend(BackendError::Refused {
+        spool: address.clone(),
+        why: "no such shelf".to_owned(),
+    }));
+    assert_eq!(settled(&mut offer), refused);
+    assert_stays_settled(offer, &refused);
+
+    // An answer document this build cannot read at all.
+    let (offering, id) = stand_in.offering("garbled");
+    let mut offer = stand_in.take(offering, &id);
+    assert_eq!(offer.try_answer(), None);
+    let file = stand_in.answer(&id, "not a document");
+    let outcome = settled(&mut offer);
+    assert!(
+        matches!(
+            &outcome,
+            Err(Undelivered::Backend(BackendError::Unreadable { file: at, .. })) if *at == file
+        ),
+        "{outcome:?}"
+    );
+    assert_stays_settled(offer, &outcome);
+}
+
+#[test]
+fn a_spool_try_answer_settles_a_receiver_gone_without_answering_as_abandoned() {
+    let (_dir, address) = spool_dir();
+    let mut stand_in = StandIn::bind(&address);
+    let (offering, id) = stand_in.offering("orphan");
+    let mut offer = stand_in.take(offering, &id);
+    assert_eq!(offer.try_answer(), None);
+    stand_in.leave();
+    let abandoned = Err(Undelivered::Backend(BackendError::Abandoned {
+        spool: address.clone(),
+        file: address.join(format!("{id}.taken.json")),
+    }));
+    assert_eq!(settled(&mut offer), abandoned);
+    assert_stays_settled(offer, &abandoned);
+}

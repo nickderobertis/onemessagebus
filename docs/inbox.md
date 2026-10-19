@@ -47,9 +47,9 @@ when `take` or `take_within` returns it.
 - `offer.withdraw() -> Result<(), Offer<D>>` returns `Ok` only when the message
   was untaken, and then it is never taken. A taken message answers `Err` with
   the offer, which can still `wait` for its answer.
-- `offer.try_answer() -> Option<Result<D, Undelivered>>` (for `D: Clone`)
-  looks for the answer without waiting and without consuming the offer. It
-  returns `None` while the message is untaken, or taken and not yet answered;
+- `offer.try_answer()` looks for the answer without waiting and without
+  consuming the offer; its signature and bounds are the rustdoc of
+  `Offer::try_answer`. It returns `None` while the message is untaken, or taken and not yet answered;
   `Some(Ok(answer))` once the receiver answered; and `Some(Err(_))` once no
   answer will come — the inbox closed, the receiver went away, or it dropped
   its claim — as `wait` would report it. It never blocks on a take, an answer
