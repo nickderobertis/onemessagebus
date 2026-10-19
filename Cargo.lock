@@ -1083,6 +1083,7 @@ version = "0.9.1"
 dependencies = [
  "getrandom 0.3.4",
  "jsonschema",
+ "rustix",
  "rustls",
  "rustls-native-certs",
  "schemars",

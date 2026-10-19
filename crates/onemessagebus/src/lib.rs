@@ -50,6 +50,7 @@ mod redact;
 pub mod resident;
 mod schema;
 pub mod sdk_schema;
+mod shared_clock;
 mod spool;
 pub mod transport;
 mod validate;
@@ -86,7 +87,7 @@ pub use envelope::{ArtifactRef, Envelope, Kind, Labels, NoDimensions, Source};
 pub use filter::{glob, Filter, FilterError, LabelMatch, Matcher};
 pub use inbox::{
     Answered, BackendError, Carried, Closed, Delivered, Disposition, InProcess, Inbox,
-    InboxBackend, Sender, Undelivered,
+    InboxBackend, Offer, Sender, Unanswered, Undelivered,
 };
 pub use kinds::{
     KindEntry, KindOrigin, TransportConfig, TransportFactory, TransportKind, TransportKinds, LOCAL,

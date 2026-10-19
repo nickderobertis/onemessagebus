@@ -450,9 +450,128 @@ fn inbox_md_names_every_file_a_spool_holds() {
             "<id>.taken.json",
             "<id>.answer.json",
             "<id>.withdrawn",
+            "admission.json",
+            "admission.lock",
+            "<id>.admitted.json",
+            "<id>.claimed",
+            "<id>.deadline.json",
+            "<id>.expired",
         ],
         "docs/inbox.md's file table no longer names the files a spool holds"
     );
+}
+
+/// The fields `docs/inbox.md`'s file table gives the document `file` — the
+/// `{a, b}` that leads its description — sorted. Read only by the admission
+/// documents' journey, which runs on Linux.
+#[cfg(target_os = "linux")]
+fn documented_fields(file: &str) -> Vec<String> {
+    let inbox_md = include_str!("../../../docs/inbox.md");
+    let row = inbox_md
+        .lines()
+        .find(|line| line.starts_with(&format!("| `{file}` |")))
+        .unwrap_or_else(|| panic!("docs/inbox.md's file table has no row for {file}"));
+    let description = row.rsplit(" | ").next().expect("a description");
+    let fields = description
+        .strip_prefix("`{")
+        .and_then(|rest| rest.split_once("}`"))
+        .unwrap_or_else(|| panic!("{file}'s row does not lead with its fields: {row}"))
+        .0;
+    let mut fields: Vec<String> = fields.split(", ").map(str::to_owned).collect();
+    fields.sort();
+    fields
+}
+
+#[cfg(target_os = "linux")]
+fn fields_of(document: &Value) -> Vec<String> {
+    let mut fields: Vec<String> = document
+        .as_object()
+        .expect("a document is an object")
+        .keys()
+        .cloned()
+        .collect();
+    fields.sort();
+    fields
+}
+
+// Linux: the one platform where a receiver identifies the monotonic clock its
+// advertisement and a published deadline name.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_documented_admission_documents_are_what_a_bound_spool_writes() {
+    use onemessagebus::{Inbox, Spool, SPOOL_SCHEMA_VERSION};
+    use shop::{order, Order, Receipt};
+
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let inbox: Inbox<Order, Receipt> = Inbox::new();
+    let spool = Spool::bind(dir.path(), &inbox).expect("binds");
+    let advertisement = document_at(&dir.path().join("admission.json"));
+    assert_eq!(
+        fields_of(&advertisement),
+        documented_fields("admission.json")
+    );
+    assert_eq!(advertisement["schema_version"], json!(SPOOL_SCHEMA_VERSION));
+    assert!(advertisement["declaration"].is_string());
+    assert!(advertisement["clock"]
+        .as_str()
+        .is_some_and(|clock| clock.starts_with("linux-monotonic:")));
+
+    // An admitted message's acknowledgement, read before anything takes it.
+    let offer = Spool::connect::<Order, Receipt>(spool.address())
+        .offer(order("A-1", 2))
+        .expect("admitted");
+    let acknowledgement = std::fs::read_dir(dir.path())
+        .expect("a directory")
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.to_string_lossy().ends_with(".admitted.json"))
+        .expect("an admitted message is acknowledged");
+    let acknowledgement = document_at(&acknowledgement);
+    assert_eq!(
+        fields_of(&acknowledgement),
+        documented_fields("<id>.admitted.json")
+    );
+    assert_eq!(
+        acknowledgement["schema_version"],
+        json!(SPOOL_SCHEMA_VERSION)
+    );
+    assert!(offer.withdraw().is_ok());
+
+    // A waiting sender's published deadline, read while the receiver holds
+    // its message.
+    let offer = Spool::connect::<Order, Receipt>(spool.address())
+        .offer(order("A-2", 1))
+        .expect("admitted");
+    let delivered = inbox.take().expect("queued");
+    let waiting = std::thread::spawn(move || {
+        offer.wait_until(std::time::Instant::now() + std::time::Duration::from_secs(60))
+    });
+    let started = std::time::Instant::now();
+    let published = loop {
+        let found = std::fs::read_dir(dir.path())
+            .expect("a directory")
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| path.to_string_lossy().ends_with(".deadline.json"));
+        if let Some(found) = found {
+            break found;
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "a waiting sender publishes its deadline"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    let published = document_at(&published);
+    assert_eq!(
+        fields_of(&published),
+        documented_fields("<id>.deadline.json")
+    );
+    assert_eq!(published["schema_version"], json!(SPOOL_SCHEMA_VERSION));
+    assert!(published["deadline"].is_u64());
+    assert_eq!(published["clock"], advertisement["clock"]);
+    delivered.answer(Receipt::Deferred);
+    assert!(waiting.join().expect("waits").is_ok());
 }
 
 #[test]
