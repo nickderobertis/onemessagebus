@@ -283,6 +283,11 @@ NATS JetStream mapping.
   modification time; an append heals a torn tail back to its record boundary and
   records the loss in `<queue>.jsonl.torn`. `MemoryTransport::new()` keeps the
   same promises in memory.
+- A queue's records file is **append-only**, and that is a property a caller
+  must keep: records are added to it only by appending through the transport,
+  and a record already in it is never rewritten, reordered or removed in place.
+  Rewriting records already in the file is outside this contract, and what the
+  transport answers over a file rewritten that way is not specified.
 - Beside each cursor file and each queue's records the local transport keeps a
   **checkpoint** — that so many whole records end at a byte offset, the last of
   them digesting to a given value — so a cursor read, a commit and a numbered
@@ -296,9 +301,9 @@ NATS JetStream mapping.
   no answer, and the records and cursor files are what they always were, so a
   reader that knows nothing of the checkpoints reads every queue as before. The
   records before a checkpoint's offset are not read — that is the read it saves
-  — so earlier records rewritten in place around an unchanged record at the
-  same byte go undetected; a local log is append-only and written only through
-  the transport, so no writer it supports does that.
+  — and this limit follows from the records file being append-only, above:
+  earlier records rewritten in place around an unchanged record at the same
+  byte go undetected, and the transport answers from the checkpoint.
 
 <!-- fixture: transport-layout -->
 ```json

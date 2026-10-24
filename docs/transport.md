@@ -101,12 +101,17 @@ up. It serializes as its transport's token, so a cursor survives a process. A
   records and cursor files are byte for byte what they were, so a release that
   knows nothing of checkpoints reads a queue this one wrote, and this one reads
   a queue that one wrote, each consumer at the same record.
+- A queue's records file is **append-only**, and keeping it so is the
+  caller's part: records reach it only by appending through this transport (see
+  the lock, below), and a record already in it is never rewritten, reordered or
+  removed in place. Rewriting records already in the file is outside the
+  transport's contract, and what it answers over a file rewritten that way is
+  not specified.
 - What a checkpoint does **not** read is the records before its offset: not
-  reading them is the point. So earlier records rewritten in place around an
-  unchanged record at the same byte go undetected, and the transport answers
-  from the checkpoint. A local log is append-only and written only through this
-  transport (see the lock, below), so no writer it supports does that; a log
-  replaced by another file, cut short, or rewritten at the checkpoint's own
+  reading them is the point, and its one limit follows from the file being
+  append-only. Earlier records rewritten in place around an unchanged record at
+  the same byte go undetected, and the transport answers from the checkpoint; a
+  log replaced by another file, cut short, or rewritten at the checkpoint's own
   record is detected.
 - A **fingerprint** is each file's length and modification time — the queue's
   records file and its cursor files; `wait_for_change` polls it.
