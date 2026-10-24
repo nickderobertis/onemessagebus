@@ -204,7 +204,7 @@ fn costs_over(answered: usize) -> Costs {
 fn a_claim_a_cursor_read_and_a_submit_cost_the_same_however_long_the_history() {
     let small = costs_over(SMALL);
     let large = costs_over(LARGE);
-    for costs in [&small, &large] {
+    for (costs, answered) in [(&small, SMALL), (&large, LARGE)] {
         for (what, recovery) in [
             ("cursor read", costs.recovering_cursor),
             ("submit", costs.recovering_submit),
@@ -215,6 +215,11 @@ fn a_claim_a_cursor_read_and_a_submit_cost_the_same_however_long_the_history() {
                  the position from the line-count cursor",
                 recovery.bytes,
                 costs.history_bytes
+            );
+            assert!(
+                recovery.records >= answered as u64,
+                "the recovering {what} examined {} records of a history of {answered}",
+                recovery.records
             );
         }
     }
@@ -1115,5 +1120,76 @@ fn earlier_records_rewritten_in_place_around_the_checkpoint_go_undetected_as_doc
             .cursor(&commands_queue(), &ConsumerName::default_consumer())
             .expect("reads"),
         v0_9_3::cursor(&records, &cursor).map(onemessagebus::Position::from_token)
+    );
+}
+
+/// What each read examined, record by record: a read from the start examines
+/// every line — whole records, a blank line and a torn tail — a read from a
+/// position only those after it, a cursor read with its checkpoint the one
+/// record before it, and a recovery the whole log.
+#[test]
+fn the_transport_counts_each_record_it_examines() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    std::fs::write(
+        dir.path().join("commands.jsonl"),
+        "{\"id\":0}\n\n{\"id\":1}\n{\"id\":2}\n{\"id\":3,\"to",
+    )
+    .expect("the records");
+    std::fs::write(dir.path().join("commands-cursor.json"), "2").expect("the cursor");
+    let transport = LocalTransport::open(dir.path()).expect("opens");
+    let file = std::fs::metadata(dir.path().join("commands.jsonl"))
+        .expect("the records")
+        .len();
+    let cursor = |transport: &LocalTransport| {
+        transport
+            .cursor(&commands_queue(), &ConsumerName::default_consumer())
+            .expect("reads")
+    };
+
+    let (whole, batch) = cost(&transport, || {
+        transport
+            .read(&commands_queue(), None, usize::MAX)
+            .expect("reads")
+    });
+    assert_eq!(batch.records.len(), 3);
+    assert_eq!(
+        whole,
+        Reads {
+            bytes: file,
+            records: 5
+        },
+        "three records, a blank line, a torn tail"
+    );
+
+    let (recovered, at) = cost(&transport, || cursor(&transport));
+    let at = at.expect("a position");
+    assert_eq!(at.token(), 19);
+    assert_eq!(
+        recovered.records, 5,
+        "a recovery examines every line of the log"
+    );
+    assert!(recovered.bytes >= file);
+
+    let (checkpointed, again) = cost(&transport, || cursor(&transport));
+    assert_eq!(again, Some(at));
+    assert_eq!(
+        checkpointed.records, 1,
+        "a checkpoint is validated by the one record before it"
+    );
+
+    let (after, batch) = cost(&transport, || {
+        transport
+            .read(&commands_queue(), Some(&at), usize::MAX)
+            .expect("reads")
+    });
+    assert_eq!(batch.records.len(), 1);
+    assert_eq!(
+        after,
+        Reads {
+            bytes: file - at.token() + 1,
+            records: 2
+        },
+        "a read from a position examines the record after it and the torn tail, and reads the \
+         byte before it"
     );
 }
