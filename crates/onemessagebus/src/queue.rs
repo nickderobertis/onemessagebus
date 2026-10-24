@@ -1486,7 +1486,7 @@ impl RawQueue {
             });
         }
         self.within_section(|inner| {
-            let count = inner.read(&self.spec.name, None, usize::MAX)?.records.len() as u64;
+            let count = inner.count(&self.spec.name)?;
             let numbered = self.reshape(self.with_id(record, count)?)?;
             self.check(&numbered)?;
             let line = serde_json::to_vec(&numbered).unwrap_or_default();

@@ -42,5 +42,8 @@ ureq = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+winapi-util = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }

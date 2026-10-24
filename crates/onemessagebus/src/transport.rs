@@ -67,6 +67,19 @@ pub trait Transport: Send + Sync + 'static {
         limit: usize,
     ) -> Result<Batch, TransportError>;
 
+    /// How many whole records a queue holds: as many as a [`read`](Self::read)
+    /// from the start hands back, a torn trailing record not among them.
+    ///
+    /// The default reads the whole queue to count them; a transport that can
+    /// answer for less overrides it.
+    ///
+    /// # Errors
+    ///
+    /// Whatever that read failed with.
+    fn count(&self, queue: &QueueName) -> Result<u64, TransportError> {
+        Ok(self.read(queue, None, usize::MAX)?.records.len() as u64)
+    }
+
     /// Where a named consumer has read up to, or `None` for one that has read
     /// nothing.
     ///
@@ -342,13 +355,14 @@ name_type!(
 name_type!(
     /// A document's name: ASCII letters, digits, `-`, `_` and `.`, starting with
     /// a letter or digit — `queue.json`. A name a queue's own files are kept
-    /// under locally (one ending `.jsonl`, `.torn`, `.staging` or `.lock`, or
-    /// holding `-cursor.`) is refused, so a document never overwrites a queue.
+    /// under locally (one ending `.jsonl`, `.jsonl.count`, `.torn`, `.staging` or
+    /// `.lock`, or holding `-cursor.`) is refused, so a document never overwrites
+    /// a queue.
     DocumentName,
     "document",
     |text| {
         check_name("document", text, true)?;
-        let reserved = [".jsonl", ".torn", ".staging", ".lock"]
+        let reserved = [".jsonl", ".jsonl.count", ".torn", ".staging", ".lock"]
             .iter()
             .find(|suffix| text.ends_with(*suffix))
             .map(|suffix| format!("it ends in `{suffix}`, which a queue's own files are kept under"))
@@ -504,6 +518,8 @@ fn unpoisoned<'a, T>(
 /// | a named document | `<dir>/<name>` |
 /// | a queue's exclusive section | `<dir>/.lock/<queue>.lock` |
 /// | the fragments an append healed away | `<dir>/<queue>.jsonl.torn` |
+/// | a cursor's offset checkpoint | `<dir>/<queue>-cursor.json.offset`, `<dir>/<queue>-cursor.<consumer>.json.offset` |
+/// | a queue's record-count checkpoint | `<dir>/<queue>.jsonl.count` |
 ///
 /// A [`Position`] is the byte offset at a record boundary. A cursor file holds
 /// the **number of records** before the position rather than the offset,
@@ -511,17 +527,131 @@ fn unpoisoned<'a, T>(
 /// without the log; the transport converts between the two. A [`Fingerprint`] is each file's length and modification
 /// time.
 ///
+/// The two checkpoints keep that conversion, and a numbered push's count of
+/// records, from reading the whole log: each says that so many whole records
+/// end at a byte offset, the last of them digesting to a given value. They are
+/// caches and nothing else. One is used only while its seal holds, the records
+/// file is the one it was kept for (its device and inode on Unix, its volume
+/// serial number and file index on Windows), and the record before its offset
+/// reads back with its digest — and a cursor's only while it was kept for the
+/// count in the cursor file beside it, a count past the log's last record
+/// included; one that is missing, unreadable, stale or wrong is passed over for
+/// a read of the log from its start, after which it is replaced. Each is
+/// replaced whole — written aside, then renamed into place — so deleting either
+/// at any moment, or two processes replacing one at once, changes no answer.
+/// The cursor and records files are what they always were, so a reader that
+/// knows nothing of the checkpoints reads every queue as before. What a
+/// checkpoint cannot tell without the read of the log it saves is earlier
+/// records rewritten in place around an unchanged record at the same byte; a
+/// log is append-only and written only through this transport, so no writer it
+/// supports does that.
+///
 /// An append takes the queue's lock, heals a torn tail a dead writer left —
 /// truncating it back to the last record boundary and recording what it
 /// discarded in `<queue>.jsonl.torn` — and writes the record and its newline in
-/// one write, rolled back if the write fails. Reads take no lock.
+/// one write, rolled back if the write fails. Reads take no lock. Once its
+/// checkpoint holds, none of an append, a read from a position, a cursor read,
+/// a commit or a count reads the records before the position it starts from;
+/// [`reads`](Self::reads) counts what each did read.
 #[derive(Debug, Clone)]
 pub struct LocalTransport {
     dir: PathBuf,
+    reads: Arc<ReadCounter>,
+}
+
+/// What a [`LocalTransport`] has read off its queues' files since it was
+/// opened: the bytes, and the records it examined to find what it was asked
+/// for. A clone shares its counts with the transport it was cloned from, an
+/// exclusive section's included.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Reads {
+    /// Bytes read from a queue's records, cursor and checkpoint files.
+    pub bytes: u64,
+    /// Records — whole lines and a torn tail — examined in what was read.
+    pub records: u64,
+}
+
+#[derive(Debug, Default)]
+struct ReadCounter {
+    bytes: AtomicU64,
+    records: AtomicU64,
+}
+
+impl ReadCounter {
+    fn bytes(&self, read: usize) {
+        self.bytes.fetch_add(read as u64, Ordering::Relaxed);
+    }
+
+    fn records(&self, examined: usize) {
+        self.records.fetch_add(examined as u64, Ordering::Relaxed);
+    }
 }
 
 /// A byte range of a queue's file: where a line starts, and where it ends.
 type Span = (usize, usize);
+
+/// How many bytes before a position a backward read takes first, doubled until
+/// it holds what it is looking for.
+const BACKWARD: u64 = 512;
+
+/// That `count` whole records of the records file `file` names end at byte
+/// `offset`, the last of them digesting to `digest`, kept for a cursor file
+/// holding `cursor` and sealed by `seal`: what a cursor's or a queue's
+/// checkpoint file holds. `cursor` is `count` but for a cursor past the end of
+/// the log, whose count of records is more than the log holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct Checkpoint {
+    count: u64,
+    offset: u64,
+    digest: u64,
+    file: u64,
+    cursor: u64,
+    seal: u64,
+}
+
+impl Checkpoint {
+    /// No records, at the start of the records file `file` names.
+    fn start(file: u64) -> Self {
+        Self::sealed(0, 0, 0, file)
+    }
+
+    fn sealed(count: u64, offset: u64, digest: u64, file: u64) -> Self {
+        Self {
+            count,
+            offset,
+            digest,
+            file,
+            cursor: count,
+            seal: 0,
+        }
+        .for_cursor(count)
+    }
+
+    /// This checkpoint, kept for a cursor file holding `cursor`.
+    fn for_cursor(mut self, cursor: u64) -> Self {
+        self.cursor = cursor;
+        self.seal = self.seal();
+        self
+    }
+
+    /// The seal over the claims: an integrity check against a checkpoint cut
+    /// short or edited by hand, as a projection's is, not a security boundary.
+    fn seal(&self) -> u64 {
+        let claims = [self.count, self.offset, self.digest, self.file, self.cursor];
+        digest(&claims.map(u64::to_le_bytes).concat())
+    }
+
+    fn is_intact(&self) -> bool {
+        self.seal == self.seal()
+    }
+}
+
+/// The 64-bit FNV-1a digest of a record's bytes.
+fn digest(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
 
 /// A counter making each staging file of this process its own.
 static STAGING: AtomicU64 = AtomicU64::new(0);
@@ -535,7 +665,20 @@ impl LocalTransport {
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self, TransportError> {
         let dir = dir.into();
         fs::create_dir_all(&dir).map_err(|failure| TransportError::io("create", &dir, failure))?;
-        Ok(Self { dir })
+        Ok(Self {
+            dir,
+            reads: Arc::default(),
+        })
+    }
+
+    /// What this transport, and every clone of it, has read off its queues'
+    /// files so far.
+    #[must_use]
+    pub fn reads(&self) -> Reads {
+        Reads {
+            bytes: self.reads.bytes.load(Ordering::Relaxed),
+            records: self.reads.records.load(Ordering::Relaxed),
+        }
     }
 
     /// The directory this transport keeps its queues in.
@@ -629,24 +772,21 @@ impl LocalTransport {
 
     /// Truncate a fragment a dead writer left at the end of a queue's file, and
     /// record what was discarded beside it. Called with the queue's lock held.
+    ///
+    /// It reads the file's last byte, and the fragment before it only when there
+    /// is one.
     fn heal(&self, queue: &QueueName, path: &Path, file: &mut File) -> Result<(), TransportError> {
-        let bytes = read_all(path, file, 0)?;
-        let Some(last) = bytes.last() else {
-            return Ok(());
-        };
-        if *last == b'\n' {
+        let end = length(path, file)?;
+        if end == 0 || self.read_span(path, file, end - 1, end)? == b"\n" {
             return Ok(());
         }
-        let boundary = bytes
-            .iter()
-            .rposition(|byte| *byte == b'\n')
-            .map_or(0, |at| at + 1);
-        file.set_len(boundary as u64)
+        let boundary = self.boundary_before(path, file, end)?;
+        file.set_len(boundary)
             .map_err(|failure| TransportError::io("truncate", path, failure))?;
         let loss = serde_json::json!({
             "at": crate::clock::now_rfc3339(),
             "offset": boundary,
-            "bytes": bytes.len() - boundary,
+            "bytes": end - boundary,
             "healed_by": std::process::id(),
         });
         let torn_log = self.dir.join(format!("{queue}.jsonl.torn"));
@@ -662,11 +802,17 @@ impl LocalTransport {
     }
 
     /// The whole records of a queue's file, as `(start, end)` byte ranges of the
-    /// non-blank lines, and the torn tail after them.
-    fn scan(bytes: &[u8]) -> (Vec<Span>, Option<Span>) {
+    /// non-blank lines, and the torn tail after them: at most `most` records,
+    /// and no torn tail when it stopped short of the end.
+    fn scan(&self, bytes: &[u8], most: usize) -> (Vec<Span>, Option<Span>) {
         let mut lines = Vec::new();
         let mut start = 0;
-        while start < bytes.len() {
+        let mut examined = 0;
+        let torn = loop {
+            if start >= bytes.len() || lines.len() >= most {
+                break None;
+            }
+            examined += 1;
             match bytes[start..].iter().position(|byte| *byte == b'\n') {
                 Some(offset) => {
                     let end = start + offset;
@@ -675,19 +821,235 @@ impl LocalTransport {
                     }
                     start = end + 1;
                 }
-                None => return (lines, Some((start, bytes.len() - start))),
+                None => break Some((start, bytes.len() - start)),
             }
-        }
-        (lines, None)
+        };
+        self.reads.records(examined);
+        (lines, torn)
     }
 
-    fn file_bytes(&self, queue: &QueueName) -> Result<Vec<u8>, TransportError> {
+    /// A queue's records file, open for reading, or `None` where there is none.
+    /// A refusal to open it is a refusal to read it, as it was when the whole
+    /// file was read at once: Windows refuses a directory at the open, where
+    /// Unix refuses it at the read.
+    fn open_records(&self, queue: &QueueName) -> Result<Option<(PathBuf, File)>, TransportError> {
         let path = self.records_path(queue);
-        match fs::read(&path) {
-            Ok(bytes) => Ok(bytes),
-            Err(failure) if failure.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        match File::open(&path) {
+            Ok(file) => Ok(Some((path, file))),
+            Err(failure) if failure.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(failure) => Err(TransportError::io("read", &path, failure)),
         }
+    }
+
+    /// The bytes of an open file from `from` up to `to`, counted.
+    fn read_span(
+        &self,
+        path: &Path,
+        file: &mut File,
+        from: u64,
+        to: u64,
+    ) -> Result<Vec<u8>, TransportError> {
+        file.seek(SeekFrom::Start(from))
+            .map_err(|failure| TransportError::io("seek", path, failure))?;
+        let mut bytes = Vec::new();
+        io::Read::take(&mut *file, to.saturating_sub(from))
+            .read_to_end(&mut bytes)
+            .map_err(|failure| TransportError::io("read", path, failure))?;
+        self.reads.bytes(bytes.len());
+        Ok(bytes)
+    }
+
+    /// The bytes of an open file from `from` up to `to`, read backwards: each
+    /// read takes the next run before what `before` already holds — `BACKWARD`
+    /// bytes first, doubling — so nothing is read twice.
+    fn read_back(
+        &self,
+        path: &Path,
+        file: &mut File,
+        before: &mut Vec<u8>,
+        from: u64,
+    ) -> Result<u64, TransportError> {
+        let window = (before.len() as u64).max(BACKWARD);
+        let start = from.saturating_sub(window);
+        let mut run = self.read_span(path, file, start, from)?;
+        run.append(before);
+        *before = run;
+        Ok(start)
+    }
+
+    /// Where the last whole line before `end` ends, past its newline; `0` when
+    /// there is none. Reads backwards from `end` until it finds a newline.
+    fn boundary_before(
+        &self,
+        path: &Path,
+        file: &mut File,
+        end: u64,
+    ) -> Result<u64, TransportError> {
+        let mut bytes = Vec::new();
+        let mut from = end;
+        while from > 0 {
+            from = self.read_back(path, file, &mut bytes, from)?;
+            if let Some(at) = bytes.iter().rposition(|byte| *byte == b'\n') {
+                return Ok(from + at as u64 + 1);
+            }
+        }
+        Ok(0)
+    }
+
+    /// The digest of the record whose newline is the byte just before `at`;
+    /// `None` when that byte is no newline, or the line it ends is blank. Reads
+    /// backwards from `at` over that one record, and no further.
+    fn record_before(
+        &self,
+        path: &Path,
+        file: &mut File,
+        at: u64,
+    ) -> Result<Option<u64>, TransportError> {
+        let mut bytes = Vec::new();
+        let mut from = self.read_back(path, file, &mut bytes, at)?;
+        let Some((b'\n', _)) = bytes.split_last() else {
+            return Ok(None);
+        };
+        loop {
+            let before = &bytes[..bytes.len() - 1];
+            if let Some(newline) = before.iter().rposition(|byte| *byte == b'\n') {
+                return Ok(self.digest_of(&before[newline + 1..]));
+            }
+            if from == 0 {
+                return Ok(self.digest_of(before));
+            }
+            from = self.read_back(path, file, &mut bytes, from)?;
+        }
+    }
+
+    /// The digest of one line examined, or `None` for a blank one.
+    fn digest_of(&self, line: &[u8]) -> Option<u64> {
+        self.reads.records(1);
+        (!line.iter().all(u8::is_ascii_whitespace)).then(|| digest(line))
+    }
+
+    /// The checkpoint at `path`, or `None` for one that is missing or that this
+    /// build cannot read: either way, one not to rely on.
+    fn checkpoint(&self, path: &Path) -> Option<Checkpoint> {
+        let bytes = fs::read(path).ok()?;
+        self.reads.bytes(bytes.len());
+        serde_json::from_slice(&bytes).ok()
+    }
+
+    /// Whether `checkpoint` holds of a records file `end` bytes long that
+    /// `identity` names: sealed, of this very file, not past its end, and the
+    /// record before its offset ending there and digesting to what it says. The
+    /// records before that one are not read: not reading them is what a
+    /// checkpoint is for.
+    fn holds(
+        &self,
+        path: &Path,
+        file: &mut File,
+        (end, identity): (u64, u64),
+        checkpoint: &Checkpoint,
+    ) -> Result<bool, TransportError> {
+        // llmlint: ignore[boundary_inputs_validated] the records before the offset are left unread on purpose: the records file is append-only, a property its callers keep, and the limit that follows is the one Contract T and docs/transport.md state and `tests/history.rs` pins.
+        if !checkpoint.is_intact() || checkpoint.file != identity || checkpoint.offset > end {
+            return Ok(false);
+        }
+        if checkpoint.count == 0 {
+            return Ok(checkpoint.offset == 0 && checkpoint.digest == 0);
+        }
+        Ok(self.record_before(path, file, checkpoint.offset)? == Some(checkpoint.digest))
+    }
+
+    /// Replace a checkpoint. It is a cache: one that could not be written costs
+    /// the next reader a read of the log, never an answer, so it fails nothing.
+    fn keep(&self, path: &Path, checkpoint: &Checkpoint) {
+        if let Ok(text) = serde_json::to_string(checkpoint) {
+            let _ = self.write_atomic(path, text.as_bytes());
+        }
+    }
+
+    /// `base` moved on past `lines`, the records of `bytes`, which were read
+    /// from byte `from` of the file: `base` itself when there are none.
+    fn advanced(bytes: &[u8], from: u64, lines: &[Span], base: Checkpoint) -> Checkpoint {
+        lines.last().map_or(base, |(start, end)| {
+            Checkpoint::sealed(
+                base.count.saturating_add(lines.len() as u64),
+                from + *end as u64 + 1,
+                digest(&bytes[*start..*end]),
+                base.file,
+            )
+        })
+    }
+
+    /// The file beside a cursor that keeps its offset checkpoint.
+    fn offset_path(cursor: &Path) -> PathBuf {
+        let mut path = cursor.as_os_str().to_owned();
+        path.push(".offset");
+        PathBuf::from(path)
+    }
+
+    /// The file beside a queue's records that keeps its record-count checkpoint.
+    fn count_path(&self, queue: &QueueName) -> PathBuf {
+        self.dir.join(format!("{queue}.jsonl.count"))
+    }
+
+    /// The count a cursor file holds, or `None` for one that is missing or that
+    /// this build cannot read.
+    fn cursor_count(&self, path: &Path) -> Result<Option<u64>, TransportError> {
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(failure) if failure.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(failure) => return Err(TransportError::io("read", path, failure)),
+        };
+        self.reads.bytes(text.len());
+        Ok(serde_json::from_str::<u64>(text.trim()).ok())
+    }
+
+    /// A cursor's checkpoint, when it holds of the records file and was kept for
+    /// `count`, the count in the cursor file beside it.
+    fn cursor_checkpoint(
+        &self,
+        cursor: &Path,
+        count: u64,
+        path: &Path,
+        file: &mut File,
+        measured: (u64, u64),
+    ) -> Result<Option<Checkpoint>, TransportError> {
+        match self.checkpoint(&Self::offset_path(cursor)) {
+            Some(checkpoint) if checkpoint.cursor == count && checkpoint.count <= count => Ok(self
+                .holds(path, file, measured, &checkpoint)?
+                .then_some(checkpoint)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Write a cursor at `checkpoint`'s count, then its offset checkpoint.
+    fn write_cursor(&self, cursor: &Path, checkpoint: &Checkpoint) -> Result<(), TransportError> {
+        let count = checkpoint.count;
+        let text = serde_json::to_string_pretty(&count).unwrap_or_else(|_| count.to_string());
+        self.write_atomic(cursor, text.as_bytes())?;
+        self.keep(&Self::offset_path(cursor), checkpoint);
+        Ok(())
+    }
+
+    /// How many whole records a queue holds, counted on from its record-count
+    /// checkpoint when that holds, and the checkpoint moved to the last of them.
+    fn count_in(&self, queue: &QueueName) -> Result<u64, TransportError> {
+        let Some((path, mut file)) = self.open_records(queue)? else {
+            return Ok(0);
+        };
+        let measured = measure(&path, &file)?;
+        let (end, identity) = measured;
+        let kept = self.count_path(queue);
+        let base = match self.checkpoint(&kept) {
+            Some(checkpoint) if self.holds(&path, &mut file, measured, &checkpoint)? => checkpoint,
+            _ => Checkpoint::start(identity),
+        };
+        let bytes = self.read_span(&path, &mut file, base.offset, end)?;
+        let (lines, _) = self.scan(&bytes, usize::MAX);
+        let checkpoint = Self::advanced(&bytes, base.offset, &lines, base);
+        if checkpoint != base {
+            self.keep(&kept, &checkpoint);
+        }
+        Ok(checkpoint.count)
     }
 
     fn write_atomic(&self, path: &Path, bytes: &[u8]) -> Result<(), TransportError> {
@@ -731,9 +1093,18 @@ impl LocalTransport {
         from: Option<&Position>,
         limit: usize,
     ) -> Result<Batch, TransportError> {
-        let bytes = self.file_bytes(queue)?;
         let from = from.map_or(0, |position| position.0);
-        let end = bytes.len() as u64;
+        let Some((path, mut file)) = self.open_records(queue)? else {
+            if from > 0 {
+                return Err(TransportError::PastEnd {
+                    queue: queue.clone(),
+                    position: Position(from),
+                    end: Position(0),
+                });
+            }
+            return Ok(Batch::default());
+        };
+        let end = length(&path, &file)?;
         if from > end {
             return Err(TransportError::PastEnd {
                 queue: queue.clone(),
@@ -741,24 +1112,28 @@ impl LocalTransport {
                 end: Position(end),
             });
         }
-        let from = usize::try_from(from).unwrap_or(usize::MAX);
-        if from > 0 && bytes[from - 1] != b'\n' {
-            return Err(TransportError::NotABoundary {
-                queue: queue.clone(),
-                position: Position(from as u64),
-            });
+        // The byte before `from` comes too, to show `from` is a boundary.
+        let mut bytes = self.read_span(&path, &mut file, from.saturating_sub(1), u64::MAX)?;
+        if from > 0 {
+            if bytes.first() != Some(&b'\n') {
+                return Err(TransportError::NotABoundary {
+                    queue: queue.clone(),
+                    position: Position(from),
+                });
+            }
+            bytes.remove(0);
         }
-        let (lines, torn) = Self::scan(&bytes[from..]);
+        let (lines, torn) = self.scan(&bytes, limit.saturating_add(1));
         let mut batch = Batch::default();
         for (start, stop) in lines.iter().take(limit) {
             batch.records.push(Stored {
-                bytes: bytes[from + start..from + stop].to_vec(),
-                after: Position((from + stop + 1) as u64),
+                bytes: bytes[*start..*stop].to_vec(),
+                after: Position(from + *stop as u64 + 1),
             });
         }
         if lines.len() <= limit {
             batch.torn = torn.map(|(start, length)| TornRecord {
-                at: Position((from + start) as u64),
+                at: Position(from + start as u64),
                 bytes: length as u64,
             });
         }
@@ -766,14 +1141,40 @@ impl LocalTransport {
     }
 }
 
-/// Every byte of an open file from `from`.
-fn read_all(path: &Path, file: &mut File, from: u64) -> Result<Vec<u8>, TransportError> {
-    file.seek(SeekFrom::Start(from))
-        .map_err(|failure| TransportError::io("seek", path, failure))?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .map_err(|failure| TransportError::io("read", path, failure))?;
-    Ok(bytes)
+fn length(path: &Path, file: &File) -> Result<u64, TransportError> {
+    Ok(measure(path, file)?.0)
+}
+
+/// How long an open records file is, and what tells it from another file put
+/// in its place: its device and inode on Unix, its volume serial number and
+/// file index on Windows, so a log replaced under a checkpoint is one the
+/// checkpoint no longer holds of.
+fn measure(path: &Path, file: &File) -> Result<(u64, u64), TransportError> {
+    let metadata = file
+        .metadata()
+        .map_err(|failure| TransportError::io("measure", path, failure))?;
+    #[cfg(unix)]
+    let identity = {
+        use std::os::unix::fs::MetadataExt as _;
+        digest(
+            &[metadata.dev(), metadata.ino()]
+                .map(u64::to_le_bytes)
+                .concat(),
+        )
+    };
+    #[cfg(windows)]
+    let identity = {
+        let information = winapi_util::file::information(file)
+            .map_err(|failure| TransportError::io("measure", path, failure))?;
+        digest(
+            &[information.volume_serial_number(), information.file_index()]
+                .map(u64::to_le_bytes)
+                .concat(),
+        )
+    };
+    #[cfg(not(any(unix, windows)))]
+    let identity = 0;
+    Ok((metadata.len(), identity))
 }
 
 impl Transport for LocalTransport {
@@ -796,28 +1197,37 @@ impl Transport for LocalTransport {
         queue: &QueueName,
         consumer: &ConsumerName,
     ) -> Result<Option<Position>, TransportError> {
-        let path = self.cursor_path(queue, consumer);
-        let text = match fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(failure) if failure.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(failure) => return Err(TransportError::io("read", &path, failure)),
-        };
+        let cursor = self.cursor_path(queue, consumer);
         // A cursor this build cannot read is a consumer that has read nothing,
         // rather than a queue nobody can claim from again.
-        let Ok(count) = serde_json::from_str::<u64>(text.trim()) else {
+        let Some(count) = self.cursor_count(&cursor)? else {
             return Ok(None);
         };
-        let bytes = self.file_bytes(queue)?;
-        let (lines, _) = Self::scan(&bytes);
-        let count = usize::try_from(count).unwrap_or(usize::MAX);
-        let offset = match count {
-            0 => 0,
-            n => lines
-                .get(n - 1)
-                .or(lines.last())
-                .map_or(0, |(_, end)| end + 1),
+        if count == 0 {
+            return Ok(Some(Position(0)));
+        }
+        let Some((path, mut file)) = self.open_records(queue)? else {
+            return Ok(Some(Position(0)));
         };
-        Ok(Some(Position(offset as u64)))
+        let measured = measure(&path, &file)?;
+        let (end, identity) = measured;
+        // The position after `count` records — after the last record, for a
+        // count past them — read on from the checkpoint when it holds and from
+        // the start of the log otherwise, and the checkpoint kept where that
+        // read ended, so the next read need not make it again.
+        let base = self.cursor_checkpoint(&cursor, count, &path, &mut file, measured)?;
+        if let Some(checkpoint) = base.filter(|checkpoint| checkpoint.count == count) {
+            return Ok(Some(Position(checkpoint.offset)));
+        }
+        let base = base.unwrap_or(Checkpoint::start(identity).for_cursor(count));
+        let bytes = self.read_span(&path, &mut file, base.offset, end)?;
+        let wanted = usize::try_from(count - base.count).unwrap_or(usize::MAX);
+        let (lines, _) = self.scan(&bytes, wanted);
+        let checkpoint = Self::advanced(&bytes, base.offset, &lines, base).for_cursor(count);
+        if checkpoint != base {
+            self.keep(&Self::offset_path(&cursor), &checkpoint);
+        }
+        Ok(Some(Position(checkpoint.offset)))
     }
 
     fn commit(
@@ -826,8 +1236,19 @@ impl Transport for LocalTransport {
         consumer: &ConsumerName,
         at: &Position,
     ) -> Result<(), TransportError> {
-        let bytes = self.file_bytes(queue)?;
-        let end = bytes.len() as u64;
+        let cursor = self.cursor_path(queue, consumer);
+        let Some((path, mut file)) = self.open_records(queue)? else {
+            if at.0 > 0 {
+                return Err(TransportError::PastEnd {
+                    queue: queue.clone(),
+                    position: *at,
+                    end: Position(0),
+                });
+            }
+            return self.write_cursor(&cursor, &Checkpoint::start(0));
+        };
+        let measured = measure(&path, &file)?;
+        let (end, identity) = measured;
         if at.0 > end {
             return Err(TransportError::PastEnd {
                 queue: queue.clone(),
@@ -835,18 +1256,30 @@ impl Transport for LocalTransport {
                 end: Position(end),
             });
         }
-        let offset = usize::try_from(at.0).unwrap_or(usize::MAX);
-        if offset > 0 && bytes[offset - 1] != b'\n' {
+        if at.0 > 0 && self.read_span(&path, &mut file, at.0 - 1, at.0)? != b"\n" {
             return Err(TransportError::NotABoundary {
                 queue: queue.clone(),
                 position: *at,
             });
         }
-        let (lines, _) = Self::scan(&bytes);
-        let count = lines.iter().filter(|(_, stop)| *stop < offset).count();
-        let path = self.cursor_path(queue, consumer);
-        let text = serde_json::to_string_pretty(&count).unwrap_or_else(|_| count.to_string());
-        self.write_atomic(&path, text.as_bytes())
+        // Counted on from the consumer's checkpoint when it holds and is not past
+        // `at`, and from the start of the log otherwise. The cursor this replaces
+        // is read only to find that checkpoint, so one that cannot be read is
+        // replaced as it always was, counted from the start.
+        let base = match self.cursor_count(&cursor).ok().flatten() {
+            Some(count) if count > 0 => self
+                .cursor_checkpoint(&cursor, count, &path, &mut file, measured)?
+                .filter(|checkpoint| checkpoint.offset <= at.0),
+            _ => None,
+        }
+        .unwrap_or(Checkpoint::start(identity));
+        let bytes = self.read_span(&path, &mut file, base.offset, at.0)?;
+        let (lines, _) = self.scan(&bytes, usize::MAX);
+        self.write_cursor(&cursor, &Self::advanced(&bytes, base.offset, &lines, base))
+    }
+
+    fn count(&self, queue: &QueueName) -> Result<u64, TransportError> {
+        self.count_in(queue)
     }
 
     fn exclusive(
@@ -990,6 +1423,10 @@ impl Transport for LocalHeld {
         limit: usize,
     ) -> Result<Batch, TransportError> {
         self.local.read_in(queue, from, limit)
+    }
+
+    fn count(&self, queue: &QueueName) -> Result<u64, TransportError> {
+        self.local.count_in(queue)
     }
 
     fn cursor(

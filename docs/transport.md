@@ -21,6 +21,7 @@ pub trait Transport: Send + Sync + 'static {
     fn wait_for_change(&self, queue: &QueueName, since: &Fingerprint, timeout: Duration) -> Result<Changed, TransportError>;
     fn document(&self, queue: &QueueName, name: &DocumentName) -> Result<Option<Vec<u8>>, TransportError>;
     fn replace_document(&self, queue: &QueueName, name: &DocumentName, bytes: &[u8]) -> Result<(), TransportError>;
+    fn count(&self, queue: &QueueName) -> Result<u64, TransportError> { /* the length of a read from the start */ }
 }
 ```
 
@@ -32,6 +33,7 @@ pub trait Transport: Send + Sync + 'static {
 | `exclusive` | run `body` with nothing else appending to the queue until it returns; `body` is handed the transport to use inside the section |
 | `fingerprint` / `wait_for_change` | a cheap token that moves whenever the queue's records or cursors do, and a bounded wait for it to move |
 | `document` / `replace_document` | a small named document beside a queue, read whole and replaced atomically; a name is one document across the transport, whichever queue names it |
+| `count` | how many whole records a queue holds — what a numbered push allocates the next id from — a torn trailing record not among them; the default reads the queue from the start and counts the records `read` hands back, so a transport, or a plugin, that does not override it answers as before |
 
 The trait is **object-safe**, because a transport is chosen at runtime from
 configuration and held as `Arc<dyn Transport>`, and every type it names can be
@@ -42,9 +44,9 @@ queue, subscription and author table as the local and memory transports.
 
 **Queue, consumer and document names** are validated where they enter: a queue
 or consumer name is ASCII letters, digits, `-` and `_`, starting with a letter or
-digit; a document name may also hold `.`, and may not end in `.jsonl`, `.torn`,
-`.staging` or `.lock` or hold `-cursor.`, so a document never overwrites a
-queue's own files.
+digit; a document name may also hold `.`, and may not end in `.jsonl`,
+`.jsonl.count`, `.torn`, `.staging` or `.lock` or hold `-cursor.`, so a document
+never overwrites a queue's own files.
 
 ## Positions and fingerprints
 
@@ -66,6 +68,8 @@ up. It serializes as its transport's token, so a cursor survives a process. A
 | a named document | `<dir>/<name>` |
 | a queue's exclusive section | `<dir>/.lock/<queue>.lock` |
 | the fragments an append healed away | `<dir>/<queue>.jsonl.torn` |
+| a cursor's offset checkpoint | `<dir>/<queue>-cursor.json.offset`, `<dir>/<queue>-cursor.<consumer>.json.offset` |
+| a queue's record-count checkpoint | `<dir>/<queue>.jsonl.count` |
 
 - A **position** is the byte offset at a record boundary.
 - A **cursor file** holds the **number of records** before the position,
@@ -74,6 +78,43 @@ up. It serializes as its transport's token, so a cursor survives a process. A
   converts between the two, so a reader counting records needs no log while a
   position keeps its meaning. A cursor file that is not a number reads as a
   consumer that has read nothing.
+- A **checkpoint** beside a cursor file, and one beside a queue's records, says
+  that so many whole records of that records file end at a byte offset, the
+  last of them digesting to a given value, and is sealed. With them a
+  cursor read, a commit and a numbered push's `count` read from that offset —
+  the record before it, and what follows — rather than the whole log, so a claim
+  and a push cost the same however many records the queue has already had
+  claimed and answered; `LocalTransport::reads` counts the bytes and records
+  each read, and `crates/onemessagebus/tests/history.rs` holds them to that.
+- A checkpoint is **a cache and nothing else**. It is used only while its seal
+  holds, the records file is the one it was kept for (its device and inode on
+  Unix, its volume serial number and file index on Windows), and the record
+  before its offset reads back with its digest — and a cursor's only while it
+  was kept for the count in the cursor file beside it. A cursor counting more
+  records than the log holds, as one left over a log cut short does, is kept
+  too: it stays at the end of the log as records arrive, as 0.9.3's does,
+  reading only what arrived. So a cursor another release moved, a log replaced,
+  rewritten or truncated under it, and a checkpoint missing, unreadable,
+  unwritable or edited
+  are each passed over for one read of the log from its start, after
+  which the checkpoint is replaced. It is replaced whole, written beside it and
+  renamed on, so a reader never sees part of one, and deleting either at any
+  moment, or two processes replacing one at once, changes no answer. The
+  records and cursor files are byte for byte what they were, so a release that
+  knows nothing of checkpoints reads a queue this one wrote, and this one reads
+  a queue that one wrote, each consumer at the same record.
+- A queue's records file is **append-only**, and keeping it so is the
+  caller's part: records reach it only by appending through this transport (see
+  the lock, below), and a record already in it is never rewritten, reordered or
+  removed in place. Rewriting records already in the file is outside the
+  transport's contract, and what it answers over a file rewritten that way is
+  not specified.
+- What a checkpoint does **not** read is the records before its offset: not
+  reading them is the point, and its one limit follows from the file being
+  append-only. Earlier records rewritten in place around an unchanged record at
+  the same byte go undetected, and the transport answers from the checkpoint; a
+  log replaced by another file, cut short, or rewritten at the checkpoint's own
+  record is detected.
 - A **fingerprint** is each file's length and modification time — the queue's
   records file and its cursor files; `wait_for_change` polls it.
 - An **append** takes the queue's lock, heals a torn tail a dead writer left —

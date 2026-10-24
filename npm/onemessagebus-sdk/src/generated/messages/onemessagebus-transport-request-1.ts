@@ -381,7 +381,7 @@ export const OnemessagebusTransportRequestV1 = registeredMessage(
       DocumentName: {
         type: "string",
         description:
-          "A document's name: ASCII letters, digits, `-`, `_` and `.`, starting with\na letter or digit — `queue.json`. A name a queue's own files are kept\nunder locally (one ending `.jsonl`, `.torn`, `.staging` or `.lock`, or\nholding `-cursor.`) is refused, so a document never overwrites a queue.",
+          "A document's name: ASCII letters, digits, `-`, `_` and `.`, starting with\na letter or digit — `queue.json`. A name a queue's own files are kept\nunder locally (one ending `.jsonl`, `.jsonl.count`, `.torn`, `.staging` or\n`.lock`, or holding `-cursor.`) is refused, so a document never overwrites\na queue.",
       },
     },
   },
