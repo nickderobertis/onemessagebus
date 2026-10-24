@@ -1233,8 +1233,10 @@ impl Transport for LocalTransport {
             });
         }
         // Counted on from the consumer's checkpoint when it holds and is not past
-        // `at`, and from the start of the log otherwise.
-        let base = match self.cursor_count(&cursor)? {
+        // `at`, and from the start of the log otherwise. The cursor this replaces
+        // is read only to find that checkpoint, so one that cannot be read is
+        // replaced as it always was, counted from the start.
+        let base = match self.cursor_count(&cursor).ok().flatten() {
             Some(count) if count > 0 => self
                 .cursor_checkpoint(&cursor, count, &path, &mut file, measured)?
                 .filter(|checkpoint| checkpoint.offset <= at.0),

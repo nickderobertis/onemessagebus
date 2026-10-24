@@ -1034,3 +1034,28 @@ fn records_and_torn_fragments_longer_than_a_backward_read_are_read_back_whole() 
         "the torn fragment was not healed back to an empty file"
     );
 }
+
+/// A commit replaces a cursor file that cannot be read — not text, or not a
+/// number — as 0.9.3 did, writing the count before the position.
+#[test]
+fn a_commit_replaces_a_cursor_that_cannot_be_read() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    answered_history(dir.path(), SMALL);
+    let transport = LocalTransport::open(dir.path()).expect("opens");
+    let cursor = transport.cursor_path(&commands_queue(), &ConsumerName::default_consumer());
+    let third = transport
+        .read(&commands_queue(), None, 3)
+        .expect("reads")
+        .records
+        .pop()
+        .expect("a third record")
+        .after;
+    for unreadable in [&[0xff, 0xfe, b'4'][..], b"not a number"] {
+        std::fs::write(&cursor, unreadable).expect("an unreadable cursor");
+        transport
+            .commit(&commands_queue(), &ConsumerName::default_consumer(), &third)
+            .expect("the commit replaces it");
+        assert_eq!(std::fs::read_to_string(&cursor).expect("the cursor"), "3");
+        assert_eq!(cursor_cost(&transport, "default").1, Some(third));
+    }
+}
