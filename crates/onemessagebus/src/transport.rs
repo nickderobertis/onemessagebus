@@ -829,12 +829,15 @@ impl LocalTransport {
     }
 
     /// A queue's records file, open for reading, or `None` where there is none.
+    /// A refusal to open it is a refusal to read it, as it was when the whole
+    /// file was read at once: Windows refuses a directory at the open, where
+    /// Unix refuses it at the read.
     fn open_records(&self, queue: &QueueName) -> Result<Option<(PathBuf, File)>, TransportError> {
         let path = self.records_path(queue);
         match File::open(&path) {
             Ok(file) => Ok(Some((path, file))),
             Err(failure) if failure.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(failure) => Err(TransportError::io("open", &path, failure)),
+            Err(failure) => Err(TransportError::io("read", &path, failure)),
         }
     }
 
