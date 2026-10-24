@@ -1059,3 +1059,61 @@ fn a_commit_replaces_a_cursor_that_cannot_be_read() {
         assert_eq!(cursor_cost(&transport, "default").1, Some(third));
     }
 }
+
+/// The one rewrite a checkpoint does not detect, as Contract T states: the
+/// records before its offset rewritten in place — here two of them merged into
+/// one — around an unchanged record at the same byte. The transport answers
+/// from the checkpoint, the position and the next id where they were before the
+/// rewrite; deleting the checkpoints, which is always safe, reads the log as it
+/// now stands.
+#[test]
+fn earlier_records_rewritten_in_place_around_the_checkpoint_go_undetected_as_documented() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    std::fs::write(
+        dir.path().join("commands.jsonl"),
+        "{\"id\":0}\n{\"id\":1}\n{\"id\":2}\n",
+    )
+    .expect("the records");
+    let transport = LocalTransport::open(dir.path()).expect("opens");
+    let end = onemessagebus::Position::from_token(27);
+    transport
+        .commit(&commands_queue(), &ConsumerName::default_consumer(), &end)
+        .expect("commits");
+    assert_eq!(transport.count(&commands_queue()).expect("counts"), 3);
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(dir.path().join("commands.jsonl"))
+        .expect("opens");
+    std::io::Write::write_all(&mut file, b"{\"id\":0,\"and\":11}\n").expect("rewrites");
+    drop(file);
+    let records = dir.path().join("commands.jsonl");
+    assert_eq!(
+        std::fs::read_to_string(&records).expect("the records"),
+        "{\"id\":0,\"and\":11}\n{\"id\":2}\n",
+        "the rewrite did not keep the last record at the same byte"
+    );
+    assert_eq!(
+        transport.count(&commands_queue()).expect("counts"),
+        3,
+        "a rewrite the documentation says goes undetected was detected; update Contract T"
+    );
+    assert_eq!(
+        transport
+            .cursor(&commands_queue(), &ConsumerName::default_consumer())
+            .expect("reads"),
+        Some(end)
+    );
+
+    for checkpoint in ["commands.jsonl.count", "commands-cursor.json.offset"] {
+        std::fs::remove_file(dir.path().join(checkpoint)).expect("deletes");
+    }
+    assert_eq!(transport.count(&commands_queue()).expect("counts"), 2);
+    let cursor = transport.cursor_path(&commands_queue(), &ConsumerName::default_consumer());
+    assert_eq!(
+        transport
+            .cursor(&commands_queue(), &ConsumerName::default_consumer())
+            .expect("reads"),
+        v0_9_3::cursor(&records, &cursor).map(onemessagebus::Position::from_token)
+    );
+}

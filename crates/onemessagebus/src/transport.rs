@@ -530,15 +530,20 @@ fn unpoisoned<'a, T>(
 /// The two checkpoints keep that conversion, and a numbered push's count of
 /// records, from reading the whole log: each says that so many whole records
 /// end at a byte offset, the last of them digesting to a given value. They are
-/// caches and nothing else. One is used only once the record before its offset
-/// is read back and digests to what it says — and a cursor's only while its
+/// caches and nothing else. One is used only while its seal holds, the records
+/// file is the one it was kept for (its device and inode, where the host has
+/// them), and the record before its offset reads back with its digest — and a
+/// cursor's only while its
 /// count is the count in the cursor file beside it; one that is missing,
 /// unreadable, stale or wrong is passed over for a read of the log from its
 /// start, after which it is replaced. Each is replaced whole — written aside,
 /// then renamed into place — so deleting either at any moment, or two processes
 /// replacing one at once, changes no answer. The cursor and records files are
 /// what they always were, so a reader that knows nothing of the checkpoints
-/// reads every queue as before.
+/// reads every queue as before. What a checkpoint cannot tell
+/// without the read of the log it saves is earlier records rewritten in place
+/// around an unchanged record at the same byte; a log is append-only and written
+/// only through this transport, so no writer it supports does that.
 ///
 /// An append takes the queue's lock, heals a torn tail a dead writer left —
 /// truncating it back to the last record boundary and recording what it
@@ -919,7 +924,9 @@ impl LocalTransport {
 
     /// Whether `checkpoint` holds of a records file `end` bytes long that
     /// `identity` names: sealed, of this very file, not past its end, and the
-    /// record before its offset ending there and digesting to what it says.
+    /// record before its offset ending there and digesting to what it says. The
+    /// records before that one are not read: not reading them is what a
+    /// checkpoint is for.
     fn holds(
         &self,
         path: &Path,
@@ -927,6 +934,7 @@ impl LocalTransport {
         (end, identity): (u64, u64),
         checkpoint: &Checkpoint,
     ) -> Result<bool, TransportError> {
+        // llmlint: ignore[boundary_inputs_validated] a checkpoint is validated by everything that can be read without reading the log before its offset — its seal, the records file's device and inode, its offset within the file, and the digest of the record ending there — and Contract T, docs/transport.md and `LocalTransport`'s documentation state the one case left: earlier records rewritten in place around an unchanged record at the same byte. Telling that apart needs a read of the whole prefix, which is the cost the checkpoint exists to remove; the local log is append-only and written only through this transport, so no writer it supports produces that case, and `tests/history.rs` pins the documented behaviour.
         if !checkpoint.is_intact() || checkpoint.file != identity || checkpoint.offset > end {
             return Ok(false);
         }

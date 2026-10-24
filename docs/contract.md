@@ -294,7 +294,11 @@ NATS JetStream mapping.
   its start, after which it is replaced whole (written aside, then renamed on).
   Deleting either at any moment, or two processes replacing one at once, changes
   no answer, and the records and cursor files are what they always were, so a
-  reader that knows nothing of the checkpoints reads every queue as before.
+  reader that knows nothing of the checkpoints reads every queue as before. The
+  records before a checkpoint's offset are not read — that is the read it saves
+  — so earlier records rewritten in place around an unchanged record at the
+  same byte go undetected; a local log is append-only and written only through
+  the transport, so no writer it supports does that.
 
 <!-- fixture: transport-layout -->
 ```json
