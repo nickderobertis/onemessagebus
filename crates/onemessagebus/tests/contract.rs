@@ -875,6 +875,22 @@ fn paragraph<'a>(text: &'a str, from: &str) -> Vec<&'a str> {
         .collect()
 }
 
+/// Each `fn` signature in `text`, from `fn` to the `;` or `{` that ends it,
+/// with its whitespace collapsed and a trailing comma dropped.
+fn signatures(text: &str) -> std::collections::BTreeSet<String> {
+    text.split(" fn ")
+        .skip(1)
+        .map(|rest| {
+            let end = rest.find([';', '{']).unwrap_or(rest.len());
+            let words = rest[..end].split_whitespace().collect::<Vec<_>>().join(" ");
+            format!("fn {words}")
+                .replace("( ", "(")
+                .replace(", )", ")")
+                .replace(",)", ")")
+        })
+        .collect()
+}
+
 /// `docs/transport.md` restates Contract T in the repository's own voice, and
 /// is held to it here: its trait block, its method table and Contract T's
 /// method list name the same methods; its local layout table is the layout
@@ -892,6 +908,21 @@ fn the_transport_document_restates_contract_t_methods_and_layout() {
         .filter_map(|line| line.trim().strip_prefix("fn "))
         .filter_map(|line| line.split('(').next())
         .collect();
+    let restated_signatures = signatures(&paragraph(restated, "pub trait Transport").join(" "));
+    let source = include_str!("../src/transport.rs");
+    let source = &source[source.find("pub trait Transport").expect("the trait")..];
+    let source = &source[..source.find("\n}\n").expect("the trait's end")];
+    let declared = signatures(
+        &source
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+    assert_eq!(
+        restated_signatures, declared,
+        "docs/transport.md's trait block does not restate the trait's signatures"
+    );
     let table: BTreeSet<&str> = paragraph(restated, "| method |")
         .iter()
         .skip(2)
