@@ -309,13 +309,20 @@ impl Desk {
     }
 
     /// `text` with this scratch directory's path, the timestamps a queue stamps,
-    /// the correlations `ask` mints, and the projection's seal — a digest over
-    /// the projection, those stamped values among it, whose every other member is
-    /// compared as it is — replaced by placeholders.
+    /// the correlations `ask` mints, the projection's seal — a digest over the
+    /// projection, those stamped values among it, whose every other member is
+    /// compared as it is — and the three members of a record-count checkpoint
+    /// that name this run's file rather than its records — the digest of a
+    /// stamped record, the records file's identity, and the seal over both —
+    /// replaced by placeholders. The checkpoint's count, offset and cursor are
+    /// compared as they are.
     fn normalised(&self, text: &str) -> String {
         let text = text.replace(self.dir.path().to_str().expect("a UTF-8 path"), "<scratch>");
-        let text = digits_after(&text, "\"raised_at\":");
-        let text = digits_after(&text, "\"at\":");
+        let text = digits_after(&text, "\"raised_at\":", "<ms>");
+        let text = digits_after(&text, "\"at\":", "<ms>");
+        let text = digits_after(&text, "\"digest\":", "<digest>");
+        let text = digits_after(&text, "\"file\":", "<file>");
+        let text = digits_after(&text, "\"seal\":", "<seal>");
         let text = seal(&text);
         correlations(&text)
     }
@@ -338,8 +345,8 @@ impl Desk {
 }
 
 /// `text` with the run of digits after each `key` (and any spaces) replaced by
-/// `<ms>`. A key followed by anything but digits is left as it is.
-fn digits_after(text: &str, key: &str) -> String {
+/// `placeholder`. A key followed by anything but digits is left as it is.
+fn digits_after(text: &str, key: &str, placeholder: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = rest.find(key) {
@@ -350,7 +357,7 @@ fn digits_after(text: &str, key: &str) -> String {
         let digits = value.len() - value.trim_start_matches(|c: char| c.is_ascii_digit()).len();
         out.push_str(gap);
         if digits > 0 {
-            out.push_str("<ms>");
+            out.push_str(placeholder);
         }
         rest = &value[digits..];
     }
@@ -517,15 +524,22 @@ fn onepipelines_run_variables_change_no_verbs_behaviour() {
             ".lock/questions.lock",
             "actions.jsonl",
             "answers.jsonl",
+            "answers.jsonl.count",
             "questions.json",
             "questions.jsonl"
         ]
     );
-    let projection = &unset.1[6].1;
+    let projection = &unset.1[7].1;
     assert!(projection.contains("\"seal\": \"<seal>\""), "{projection}");
     let answers = &unset.1[5].1;
     assert!(answers.contains("\"at\":<ms>"), "{answers}");
-    let questions = &unset.1[7].1;
+    let checkpoint = &unset.1[6].1;
+    assert_eq!(
+        checkpoint,
+        "{\"count\":1,\"offset\":74,\"digest\":<digest>,\"file\":<file>,\"cursor\":1,\"seal\":<seal>}",
+        "{checkpoint}"
+    );
+    let questions = &unset.1[8].1;
     assert!(questions.contains("\"raised_at\":<ms>"), "{questions}");
     assert!(
         questions.contains("\"correlation\":\"c-<correlation>\""),
