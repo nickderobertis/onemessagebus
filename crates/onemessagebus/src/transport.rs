@@ -531,8 +531,8 @@ fn unpoisoned<'a, T>(
 /// records, from reading the whole log: each says that so many whole records
 /// end at a byte offset, the last of them digesting to a given value. They are
 /// caches and nothing else. One is used only while its seal holds, the records
-/// file is the one it was kept for (its device and inode, where the host has
-/// them), and the record before its offset reads back with its digest — and a
+/// file is the one it was kept for (its device and inode on
+/// Unix, its volume serial number and file index on Windows), and the record before its offset reads back with its digest — and a
 /// cursor's only while it was kept for the count in the cursor file beside it,
 /// a count past the log's last record included; one that is missing,
 /// unreadable, stale or wrong is passed over for a read of the log from its
@@ -1142,8 +1142,9 @@ fn length(path: &Path, file: &File) -> Result<u64, TransportError> {
 }
 
 /// How long an open records file is, and what tells it from another file put
-/// in its place: its device and inode, where the host has them, so a log
-/// replaced under a checkpoint is one the checkpoint no longer holds of.
+/// in its place: its device and inode on Unix, its volume serial number and
+/// file index on Windows, so a log replaced under a checkpoint is one the
+/// checkpoint no longer holds of.
 fn measure(path: &Path, file: &File) -> Result<(u64, u64), TransportError> {
     let metadata = file
         .metadata()
@@ -1157,7 +1158,17 @@ fn measure(path: &Path, file: &File) -> Result<(u64, u64), TransportError> {
                 .concat(),
         )
     };
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    let identity = {
+        let information = winapi_util::file::information(file)
+            .map_err(|failure| TransportError::io("measure", path, failure))?;
+        digest(
+            &[information.volume_serial_number(), information.file_index()]
+                .map(u64::to_le_bytes)
+                .concat(),
+        )
+    };
+    #[cfg(not(any(unix, windows)))]
     let identity = 0;
     Ok((metadata.len(), identity))
 }
