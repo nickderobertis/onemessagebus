@@ -1137,7 +1137,6 @@ impl LocalTransport {
     }
 }
 
-/// How long an open file is.
 fn length(path: &Path, file: &File) -> Result<u64, TransportError> {
     Ok(measure(path, file)?.0)
 }

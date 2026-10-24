@@ -94,7 +94,6 @@ fn most(costs: &[Reads]) -> Reads {
     }
 }
 
-/// What each operation cost over one history.
 #[derive(Debug)]
 struct Costs {
     history_bytes: u64,
