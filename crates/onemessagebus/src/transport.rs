@@ -518,6 +518,35 @@ fn unpoisoned<'a, T>(
 #[derive(Debug, Clone)]
 pub struct LocalTransport {
     dir: PathBuf,
+    reads: Arc<ReadCounter>,
+}
+
+/// What a [`LocalTransport`] has read off its queues' files since it was
+/// opened: the bytes, and the records it examined to find what it was asked
+/// for. A clone shares its counts with the transport it was cloned from, an
+/// exclusive section's included.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Reads {
+    /// Bytes read from a queue's records, cursor and checkpoint files.
+    pub bytes: u64,
+    /// Records — whole lines and a torn tail — examined in what was read.
+    pub records: u64,
+}
+
+#[derive(Debug, Default)]
+struct ReadCounter {
+    bytes: AtomicU64,
+    records: AtomicU64,
+}
+
+impl ReadCounter {
+    fn bytes(&self, read: usize) {
+        self.bytes.fetch_add(read as u64, Ordering::Relaxed);
+    }
+
+    fn records(&self, examined: usize) {
+        self.records.fetch_add(examined as u64, Ordering::Relaxed);
+    }
 }
 
 /// A byte range of a queue's file: where a line starts, and where it ends.
@@ -535,7 +564,20 @@ impl LocalTransport {
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self, TransportError> {
         let dir = dir.into();
         fs::create_dir_all(&dir).map_err(|failure| TransportError::io("create", &dir, failure))?;
-        Ok(Self { dir })
+        Ok(Self {
+            dir,
+            reads: Arc::default(),
+        })
+    }
+
+    /// What this transport, and every clone of it, has read off its queues'
+    /// files so far.
+    #[must_use]
+    pub fn reads(&self) -> Reads {
+        Reads {
+            bytes: self.reads.bytes.load(Ordering::Relaxed),
+            records: self.reads.records.load(Ordering::Relaxed),
+        }
     }
 
     /// The directory this transport keeps its queues in.
@@ -631,6 +673,7 @@ impl LocalTransport {
     /// record what was discarded beside it. Called with the queue's lock held.
     fn heal(&self, queue: &QueueName, path: &Path, file: &mut File) -> Result<(), TransportError> {
         let bytes = read_all(path, file, 0)?;
+        self.reads.bytes(bytes.len());
         let Some(last) = bytes.last() else {
             return Ok(());
         };
@@ -663,10 +706,15 @@ impl LocalTransport {
 
     /// The whole records of a queue's file, as `(start, end)` byte ranges of the
     /// non-blank lines, and the torn tail after them.
-    fn scan(bytes: &[u8]) -> (Vec<Span>, Option<Span>) {
+    fn scan(&self, bytes: &[u8]) -> (Vec<Span>, Option<Span>) {
         let mut lines = Vec::new();
         let mut start = 0;
-        while start < bytes.len() {
+        let mut examined = 0;
+        let torn = loop {
+            if start >= bytes.len() {
+                break None;
+            }
+            examined += 1;
             match bytes[start..].iter().position(|byte| *byte == b'\n') {
                 Some(offset) => {
                     let end = start + offset;
@@ -675,16 +723,20 @@ impl LocalTransport {
                     }
                     start = end + 1;
                 }
-                None => return (lines, Some((start, bytes.len() - start))),
+                None => break Some((start, bytes.len() - start)),
             }
-        }
-        (lines, None)
+        };
+        self.reads.records(examined);
+        (lines, torn)
     }
 
     fn file_bytes(&self, queue: &QueueName) -> Result<Vec<u8>, TransportError> {
         let path = self.records_path(queue);
         match fs::read(&path) {
-            Ok(bytes) => Ok(bytes),
+            Ok(bytes) => {
+                self.reads.bytes(bytes.len());
+                Ok(bytes)
+            }
             Err(failure) if failure.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
             Err(failure) => Err(TransportError::io("read", &path, failure)),
         }
@@ -748,7 +800,7 @@ impl LocalTransport {
                 position: Position(from as u64),
             });
         }
-        let (lines, torn) = Self::scan(&bytes[from..]);
+        let (lines, torn) = self.scan(&bytes[from..]);
         let mut batch = Batch::default();
         for (start, stop) in lines.iter().take(limit) {
             batch.records.push(Stored {
@@ -802,13 +854,14 @@ impl Transport for LocalTransport {
             Err(failure) if failure.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(failure) => return Err(TransportError::io("read", &path, failure)),
         };
+        self.reads.bytes(text.len());
         // A cursor this build cannot read is a consumer that has read nothing,
         // rather than a queue nobody can claim from again.
         let Ok(count) = serde_json::from_str::<u64>(text.trim()) else {
             return Ok(None);
         };
         let bytes = self.file_bytes(queue)?;
-        let (lines, _) = Self::scan(&bytes);
+        let (lines, _) = self.scan(&bytes);
         let count = usize::try_from(count).unwrap_or(usize::MAX);
         let offset = match count {
             0 => 0,
@@ -842,7 +895,7 @@ impl Transport for LocalTransport {
                 position: *at,
             });
         }
-        let (lines, _) = Self::scan(&bytes);
+        let (lines, _) = self.scan(&bytes);
         let count = lines.iter().filter(|(_, stop)| *stop < offset).count();
         let path = self.cursor_path(queue, consumer);
         let text = serde_json::to_string_pretty(&count).unwrap_or_else(|_| count.to_string());

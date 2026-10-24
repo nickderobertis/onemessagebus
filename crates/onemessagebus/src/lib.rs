@@ -117,7 +117,7 @@ pub use schema::{
 pub use spool::{Spool, SPOOL_SCHEMA_VERSION, SPOOL_WAIT};
 pub use transport::{
     Batch, Changed, ConsumerName, DocumentName, Fingerprint, LocalTransport, MemoryTransport,
-    NameError, Position, ProcessTransport, QueueName, Stored, TornRecord, Transport,
+    NameError, Position, ProcessTransport, QueueName, Reads, Stored, TornRecord, Transport,
     TransportError,
 };
 pub use validate::{
