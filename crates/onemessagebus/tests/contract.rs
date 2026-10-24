@@ -840,6 +840,7 @@ fn the_documented_local_layout_is_the_files_the_local_transport_writes() {
     local
         .exclusive(&queue, &mut |_| Ok(()))
         .expect("the section runs");
+    assert_eq!(local.count(&queue).expect("counts"), 1);
     let mut documented: Vec<String> = layout
         .as_object()
         .expect("an object")

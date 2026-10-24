@@ -127,8 +127,10 @@ fn a_cursor_commit_moves_the_fingerprint_for_the_default_consumer_and_another() 
 }
 
 /// The local transport writes `<queue>.jsonl`, `<queue>-cursor.json` for the
-/// default consumer, `<queue>-cursor.<consumer>.json` for another, documents at
-/// `<dir>/<name>`, and its lock under `.lock/` — and nothing else.
+/// default consumer, `<queue>-cursor.<consumer>.json` for another, each cursor's
+/// offset checkpoint beside it, the queue's record-count checkpoint at
+/// `<queue>.jsonl.count`, documents at `<dir>/<name>`, and its lock under
+/// `.lock/` — and nothing else.
 #[test]
 fn the_local_transport_lays_its_files_out_as_contract_t_states() {
     let dir = tempfile::tempdir().expect("a scratch directory");
@@ -188,14 +190,18 @@ fn the_local_transport_lays_its_files_out_as_contract_t_states() {
     local
         .exclusive(&replies, &mut |_| Ok(()))
         .expect("the section runs");
+    assert_eq!(local.count(&replies).expect("counts"), 2);
     assert_eq!(
         files(&channel),
         vec![
             ".lock",
             "queue.json",
             "replies-cursor.json",
+            "replies-cursor.json.offset",
             "replies-cursor.watcher.json",
-            "replies.jsonl"
+            "replies-cursor.watcher.json.offset",
+            "replies.jsonl",
+            "replies.jsonl.count"
         ],
         "the local transport left a file Contract T does not lay out"
     );
@@ -297,7 +303,9 @@ fn a_name_that_would_escape_or_clobber_a_queue_is_refused() {
     }
     for bad in [
         "questions.jsonl",
+        "questions.jsonl.count",
         "replies-cursor.json",
+        "replies-cursor.json.offset",
         "x.torn",
         ".hidden",
         "queue.json.staging",

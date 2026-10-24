@@ -272,7 +272,10 @@ NATS JetStream mapping.
   inside it), `fingerprint` / `wait_for_change` (a cheap change token and a bounded
   wait for it to move), `document` / `replace_document` (a small named document,
   read whole and replaced atomically; a name is one document across the
-  transport, whichever queue names it).
+  transport, whichever queue names it), and `count` (how many whole records a
+  queue holds, a torn trailing one not among them; its default reads the queue
+  from the start and counts what `read` hands back, so a transport that does not
+  override it answers as one always has, and a plugin serves it through `read`).
 - `Position` and `Fingerprint` are opaque to consumers, serializable, and built
   only through a transport (`Position::from_token`, `Fingerprint::from_parts`).
 - `LocalTransport::open(dir)` lays a queue out as below; a position is the byte
@@ -280,11 +283,23 @@ NATS JetStream mapping.
   modification time; an append heals a torn tail back to its record boundary and
   records the loss in `<queue>.jsonl.torn`. `MemoryTransport::new()` keeps the
   same promises in memory.
+- Beside each cursor file and each queue's records the local transport keeps a
+  **checkpoint** — that so many whole records end at a byte offset, the last of
+  them digesting to a given value — so a cursor read, a commit and a numbered
+  push's `count` read from there rather than from the start of the log. A
+  checkpoint is a cache and nothing else: it is used only once the record before
+  its offset reads back with that digest, and a cursor's only while its count is
+  the cursor file's; one missing, stale or wrong costs one read of the log from
+  its start, after which it is replaced whole (written aside, then renamed on).
+  Deleting either at any moment, or two processes replacing one at once, changes
+  no answer, and the records and cursor files are what they always were, so a
+  reader that knows nothing of the checkpoints reads every queue as before.
 
 <!-- fixture: transport-layout -->
 ```json
 {"records": "<queue>.jsonl", "default cursor": "<queue>-cursor.json", "consumer cursor": "<queue>-cursor.<consumer>.json",
- "document": "<name>", "exclusive section": ".lock/<queue>.lock"}
+ "default cursor offset": "<queue>-cursor.json.offset", "consumer cursor offset": "<queue>-cursor.<consumer>.json.offset",
+ "record count": "<queue>.jsonl.count", "document": "<name>", "exclusive section": ".lock/<queue>.lock"}
 ```
 
 - A transport kind resolves **built-in first** (`local`, `memory`), **then
