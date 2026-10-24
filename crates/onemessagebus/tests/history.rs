@@ -595,6 +595,266 @@ fn a_position_falls_back_to_its_line_cursor_whatever_became_of_its_checkpoint() 
     );
 }
 
+/// What befell a consumer's established position before its next claim.
+#[derive(Clone, Copy, Debug)]
+enum Fault {
+    /// The records file ends in a torn, partly written record.
+    TornTail,
+    /// The offset checkpoint was edited to an earlier record's end, which its
+    /// cursor does not end at.
+    OffsetMismatched,
+    /// A release keeping no checkpoint moved the line cursor past the
+    /// checkpoint kept for it.
+    CursorMovedPastCheckpoint,
+    /// The offset checkpoint is gone.
+    OffsetMissing,
+}
+
+impl Fault {
+    /// Whether the fault leaves the position to be established again from the
+    /// line cursor alone: the one read of the history the bound permits.
+    fn recovers(self) -> bool {
+        !matches!(self, Fault::TornTail)
+    }
+}
+
+/// What one fault cost over one history.
+#[derive(Debug)]
+struct Recovered {
+    history_bytes: u64,
+    /// The first claim after the fault, in a fresh process.
+    first_claim: Reads,
+    /// Every operation after it, named.
+    steady: Vec<(&'static str, Reads)>,
+}
+
+/// A command queue 0.9.3 left with `answered` envelopes claimed and two not
+/// yet, whose position this release establishes and `fault` then befalls; a
+/// fresh process then claims and submits through it. Every claim resumes at
+/// exactly the envelope 0.9.3 would hand out, none is delivered twice, and
+/// each operation's cost is returned.
+fn recovered_from(fault: Fault, answered: usize) -> Recovered {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    answered_history(dir.path(), answered);
+    let records = dir.path().join("commands.jsonl");
+    let cursor = dir.path().join("commands-cursor.json");
+    let offset = dir.path().join("commands-cursor.json.offset");
+    let pending: String = (answered..answered + 2)
+        .map(|id| {
+            let mut record = envelope(id);
+            record["id"] = json!(id);
+            format!("{}\n", line_of(&record))
+        })
+        .collect();
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&records)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, pending.as_bytes()))
+        .expect("the envelopes not yet claimed");
+    if matches!(fault, Fault::CursorMovedPastCheckpoint) {
+        std::fs::write(&cursor, (answered - 2).to_string()).expect("an earlier cursor");
+    }
+    let history_bytes = std::fs::metadata(&records).expect("the records").len();
+    let default = ConsumerName::default_consumer();
+
+    // This release establishes the consumer's position and the queue's count,
+    // keeping a checkpoint for each.
+    let establishing = LocalTransport::open(dir.path()).expect("opens");
+    establishing
+        .cursor(&commands_queue(), &default)
+        .expect("reads");
+    assert_eq!(
+        establishing.count(&commands_queue()).expect("counts"),
+        answered as u64 + 2
+    );
+    assert!(offset.exists(), "{fault:?}: no offset checkpoint was kept");
+    assert!(
+        dir.path().join("commands.jsonl.count").exists(),
+        "{fault:?}: no count checkpoint was kept"
+    );
+
+    match fault {
+        Fault::TornTail => std::fs::OpenOptions::new()
+            .append(true)
+            .open(&records)
+            .and_then(|mut file| {
+                std::io::Write::write_all(
+                    &mut file,
+                    format!("{{\"id\":{},\"torn", answered + 2).as_bytes(),
+                )
+            })
+            .expect("a torn record"),
+        Fault::OffsetMismatched => {
+            let mut kept: Value =
+                serde_json::from_slice(&std::fs::read(&offset).expect("the checkpoint"))
+                    .expect("JSON");
+            // The end of an earlier record: a boundary, but not the cursor's.
+            let earlier = std::fs::read(&records)
+                .expect("the records")
+                .iter()
+                .enumerate()
+                .filter(|(_, byte)| **byte == b'\n')
+                .nth(answered / 2)
+                .map(|(at, _)| at + 1)
+                .expect("an earlier record");
+            kept["offset"] = json!(earlier);
+            std::fs::write(&offset, kept.to_string()).expect("writes");
+        }
+        Fault::CursorMovedPastCheckpoint => std::fs::write(
+            &cursor,
+            serde_json::to_string_pretty(&answered).expect("serializes"),
+        )
+        .expect("0.9.3 moves the cursor"),
+        Fault::OffsetMissing => std::fs::remove_file(&offset).expect("deletes"),
+    }
+
+    // A fresh process: nothing of the position carried in memory.
+    let transport = LocalTransport::open(dir.path()).expect("opens");
+    let queue = commands(&transport);
+    let mut delivered = Vec::new();
+    let mut claim = |what: &'static str, expected: Option<usize>| {
+        let resumes = v0_9_3::cursor(&records, &cursor).and_then(|at| v0_9_3::next(&records, at));
+        let (spent, claimed) = cost(&transport, || queue.claim(&default).expect("claims"));
+        let claimed = claimed.map(|claimed| {
+            delivered.push(claimed.id);
+            (claimed.id, line_of(&claimed.record))
+        });
+        assert_eq!(
+            claimed.as_ref().map(|(id, _)| *id),
+            expected.map(|id| Some(id as u64)),
+            "{fault:?} over {answered}: the {what} did not hand out the next envelope"
+        );
+        assert_eq!(
+            claimed.map(|(_, line)| line),
+            resumes,
+            "{fault:?} over {answered}: the {what} handed out another envelope than 0.9.3 would"
+        );
+        spent
+    };
+    let first_claim = claim("first claim after the fault", Some(answered));
+    let read_cursor = |what: &'static str| {
+        let (spent, at) = cost(&transport, || {
+            transport
+                .cursor(&commands_queue(), &default)
+                .expect("reads")
+        });
+        assert_eq!(
+            at.map(|at| at.token()),
+            v0_9_3::cursor(&records, &cursor),
+            "{fault:?} over {answered}: the {what} disagrees with 0.9.3's line cursor"
+        );
+        spent
+    };
+    let submit = |what: &'static str, id: usize| {
+        let (spent, pushed) = cost(&transport, || queue.push(envelope(id)).expect("submits"));
+        assert_eq!(
+            pushed.id,
+            Some(id as u64),
+            "{fault:?} over {answered}: the {what} took the wrong id"
+        );
+        spent
+    };
+
+    let steady = vec![
+        ("cursor read", read_cursor("cursor read")),
+        ("claim", claim("claim", Some(answered + 1))),
+        (
+            "claim finding nothing",
+            claim("claim finding nothing", None),
+        ),
+        ("submit", submit("submit", answered + 2)),
+        ("second cursor read", read_cursor("second cursor read")),
+        (
+            "claim of a submitted envelope",
+            claim("claim of a submitted envelope", Some(answered + 2)),
+        ),
+        ("second submit", submit("second submit", answered + 3)),
+        (
+            "second claim of a submitted envelope",
+            claim("second claim of a submitted envelope", Some(answered + 3)),
+        ),
+        (
+            "second claim finding nothing",
+            claim("second claim finding nothing", None),
+        ),
+    ];
+    assert_eq!(
+        delivered,
+        (answered..answered + 4)
+            .map(|id| Some(id as u64))
+            .collect::<Vec<_>>(),
+        "{fault:?} over {answered}: an envelope was skipped or delivered twice"
+    );
+    assert_eq!(
+        dir.path().join("commands.jsonl.torn").exists(),
+        matches!(fault, Fault::TornTail),
+        "{fault:?} over {answered}: the torn log does not match whether a torn tail was healed"
+    );
+
+    Recovered {
+        history_bytes,
+        first_claim,
+        steady,
+    }
+}
+
+/// After a torn tail, an offset checkpoint that does not match its line
+/// cursor, and a missing one, a fresh process's claims resume at exactly the
+/// envelope 0.9.3 would hand out, none skipped or delivered twice, over a
+/// history of forty envelopes and of four thousand. The first claim after a
+/// mismatched or missing checkpoint may read the history once to establish
+/// the position from the line cursor; a torn tail needs no such read. Every
+/// cursor read, claim, empty claim and submit after it reads the same bytes
+/// and examines the same records over either history.
+#[test]
+fn after_each_recovery_the_next_envelope_is_claimed_and_every_later_operation_costs_the_same() {
+    for fault in [
+        Fault::TornTail,
+        Fault::OffsetMismatched,
+        Fault::CursorMovedPastCheckpoint,
+        Fault::OffsetMissing,
+    ] {
+        let small = recovered_from(fault, SMALL);
+        let large = recovered_from(fault, LARGE);
+        for (costs, answered) in [(&small, SMALL), (&large, LARGE)] {
+            let first = costs.first_claim;
+            if fault.recovers() {
+                assert!(
+                    first.bytes >= costs.history_bytes && first.records >= answered as u64,
+                    "{fault:?} over {answered}: the first claim read {first:?} of a {}-byte \
+                     history: it did not establish the position from the line cursor",
+                    costs.history_bytes
+                );
+            } else {
+                assert!(
+                    first.bytes <= BOUND.bytes && first.records <= BOUND.records,
+                    "{fault:?} over {answered}: the first claim read {first:?}, past the bound \
+                     of {BOUND:?}, though the position was established"
+                );
+            }
+        }
+        for ((what, small), (_, large)) in small.steady.iter().zip(&large.steady) {
+            assert!(
+                large.bytes <= BOUND.bytes && large.records <= BOUND.records,
+                "{fault:?}: a {what} after {LARGE} answered envelopes read {large:?}, past the \
+                 bound of {BOUND:?}"
+            );
+            assert_eq!(
+                large.records, small.records,
+                "{fault:?}: a {what} examined more records after {LARGE} answered envelopes \
+                 than after {SMALL}"
+            );
+            assert!(
+                large.bytes <= small.bytes + DIGITS,
+                "{fault:?}: a {what} read {} bytes after {LARGE} answered envelopes and {} \
+                 after {SMALL}",
+                large.bytes,
+                small.bytes
+            );
+        }
+    }
+}
+
 /// Every answer the transport gives — each id a numbered push allocates, each
 /// record a claim hands out, each cursor file it writes — is the same whether
 /// its checkpoints hold, are deleted after every operation, or are put back as
