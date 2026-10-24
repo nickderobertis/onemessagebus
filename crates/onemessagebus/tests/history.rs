@@ -1165,8 +1165,8 @@ fn the_transport_counts_each_record_it_examines() {
     let at = at.expect("a position");
     assert_eq!(at.token(), 19);
     assert_eq!(
-        recovered.records, 5,
-        "a recovery examines every line of the log"
+        recovered.records, 3,
+        "a recovery examines the lines up to the cursor's count, and no further"
     );
     assert!(recovered.bytes >= file);
 
@@ -1192,4 +1192,128 @@ fn the_transport_counts_each_record_it_examines() {
         "a read from a position examines the record after it and the torn tail, and reads the \
          byte before it"
     );
+}
+
+/// What a past-end cursor's operations cost, and what they answered.
+#[derive(Debug)]
+struct PastEnd {
+    history_bytes: u64,
+    recovery: Reads,
+    count_recovery: Reads,
+    steady: Vec<(String, Reads)>,
+}
+
+fn past_end_over(answered: usize) -> PastEnd {
+    const PAST: usize = 3;
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    answered_history(dir.path(), answered);
+    let records = dir.path().join("commands.jsonl");
+    std::fs::write(
+        dir.path().join("commands-cursor.json"),
+        serde_json::to_string_pretty(&(answered + PAST)).expect("serializes"),
+    )
+    .expect("a cursor past the end, as 0.9.3 leaves one over a log cut short");
+    let history_bytes = std::fs::metadata(&records).expect("the records").len();
+    let transport = LocalTransport::open(dir.path()).expect("opens");
+    let queue = commands(&transport);
+    let cursor = transport.cursor_path(&commands_queue(), &ConsumerName::default_consumer());
+    let expected = || v0_9_3::cursor(&records, &cursor).map(onemessagebus::Position::from_token);
+
+    let (recovery, at) = cursor_cost(&transport, "default");
+    assert_eq!(
+        at,
+        expected(),
+        "a past-end cursor recovered to another position than 0.9.3's"
+    );
+
+    let mut steady = Vec::new();
+    let observe = |what: &str, steady: &mut Vec<(String, Reads)>| {
+        let (read, at) = cursor_cost(&transport, "default");
+        assert_eq!(at, expected(), "{what}: the position is not 0.9.3's");
+        steady.push((format!("cursor read {what}"), read));
+        let next = at.and_then(|at| v0_9_3::next(&records, at.token()));
+        let (claim, claimed) = cost(&transport, || {
+            queue
+                .claim(&ConsumerName::default_consumer())
+                .expect("claims")
+        });
+        assert_eq!(
+            claimed.as_ref().map(|claimed| line_of(&claimed.record)),
+            next,
+            "{what}: the claim is not the one 0.9.3 makes"
+        );
+        let label = if claimed.is_some() {
+            "claim"
+        } else {
+            "empty claim"
+        };
+        steady.push((format!("{label} {what}"), claim));
+    };
+    observe("before anything arrives", &mut steady);
+    observe("again", &mut steady);
+    let mut count_recovery = Reads::default();
+    for n in 0..=PAST {
+        let (submit, pushed) = cost(&transport, || {
+            queue.push(envelope(answered + n)).expect("submits")
+        });
+        assert_eq!(pushed.id, Some((answered + n) as u64));
+        // The first push recovers the record count, which nothing kept yet.
+        if n == 0 {
+            count_recovery = submit;
+        } else {
+            steady.push((format!("submit {n}"), submit));
+        }
+        observe(&format!("after {} new records", n + 1), &mut steady);
+    }
+    PastEnd {
+        history_bytes,
+        recovery,
+        count_recovery,
+        steady,
+    }
+}
+
+/// A cursor whose line count is past the queue's records — as 0.9.3 leaves
+/// one over a log cut short — is recovered from the whole log once; after that
+/// every cursor read and every claim, empty or not, reads the same bounded
+/// amount over a history of forty envelopes and of four thousand, and each
+/// lands where 0.9.3 lands: at the end of the log while records arrive, until
+/// they reach the cursor's count, and then claiming the first one past it.
+#[test]
+fn a_past_end_cursor_recovers_once_and_follows_new_records_as_0_9_3_does() {
+    let small = past_end_over(SMALL);
+    let large = past_end_over(LARGE);
+    for (costs, answered) in [(&small, SMALL), (&large, LARGE)] {
+        for (what, recovery) in [
+            ("the first read of a past-end cursor", costs.recovery),
+            ("the first submit", costs.count_recovery),
+        ] {
+            assert!(
+                recovery.bytes >= costs.history_bytes && recovery.records >= answered as u64,
+                "{what} did not recover from the log: {recovery:?}"
+            );
+        }
+    }
+    assert_eq!(small.steady.len(), large.steady.len());
+    for ((what, small), (_, large)) in small.steady.iter().zip(&large.steady) {
+        assert!(
+            large.bytes <= BOUND.bytes && large.records <= BOUND.records,
+            "a {what} after {LARGE} answered envelopes read {} bytes and examined {} records, \
+             past the bound of {} and {}",
+            large.bytes,
+            large.records,
+            BOUND.bytes,
+            BOUND.records
+        );
+        assert_eq!(
+            large.records, small.records,
+            "a {what} examined more records after {LARGE} answered envelopes than after {SMALL}"
+        );
+        assert!(
+            large.bytes <= small.bytes + DIGITS,
+            "a {what} read {} bytes after {LARGE} answered envelopes and {} after {SMALL}",
+            large.bytes,
+            small.bytes
+        );
+    }
 }

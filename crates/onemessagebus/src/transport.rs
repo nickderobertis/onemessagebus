@@ -533,8 +533,8 @@ fn unpoisoned<'a, T>(
 /// caches and nothing else. One is used only while its seal holds, the records
 /// file is the one it was kept for (its device and inode, where the host has
 /// them), and the record before its offset reads back with its digest — and a
-/// cursor's only while its
-/// count is the count in the cursor file beside it; one that is missing,
+/// cursor's only while it was kept for the count in the cursor file beside it,
+/// a count past the log's last record included; one that is missing,
 /// unreadable, stale or wrong is passed over for a read of the log from its
 /// start, after which it is replaced. Each is replaced whole — written aside,
 /// then renamed into place — so deleting either at any moment, or two processes
@@ -594,14 +594,17 @@ type Span = (usize, usize);
 const BACKWARD: u64 = 512;
 
 /// That `count` whole records of the records file `file` names end at byte
-/// `offset`, the last of them digesting to `digest`, sealed by `seal`: what a
-/// cursor's or a queue's checkpoint file holds.
+/// `offset`, the last of them digesting to `digest`, kept for a cursor file
+/// holding `cursor` and sealed by `seal`: what a cursor's or a queue's
+/// checkpoint file holds. `cursor` is `count` but for a cursor past the end of
+/// the log, whose count of records is more than the log holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct Checkpoint {
     count: u64,
     offset: u64,
     digest: u64,
     file: u64,
+    cursor: u64,
     seal: u64,
 }
 
@@ -612,21 +615,28 @@ impl Checkpoint {
     }
 
     fn sealed(count: u64, offset: u64, digest: u64, file: u64) -> Self {
-        let mut checkpoint = Self {
+        Self {
             count,
             offset,
             digest,
             file,
+            cursor: count,
             seal: 0,
-        };
-        checkpoint.seal = checkpoint.seal();
-        checkpoint
+        }
+        .for_cursor(count)
+    }
+
+    /// This checkpoint, kept for a cursor file holding `cursor`.
+    fn for_cursor(mut self, cursor: u64) -> Self {
+        self.cursor = cursor;
+        self.seal = self.seal();
+        self
     }
 
     /// The seal over the claims: an integrity check against a checkpoint cut
     /// short or edited by hand, as a projection's is, not a security boundary.
     fn seal(&self) -> u64 {
-        let claims = [self.count, self.offset, self.digest, self.file];
+        let claims = [self.count, self.offset, self.digest, self.file, self.cursor];
         digest(&claims.map(u64::to_le_bytes).concat())
     }
 
@@ -939,7 +949,7 @@ impl LocalTransport {
             return Ok(false);
         }
         if checkpoint.count == 0 {
-            return Ok(*checkpoint == Checkpoint::start(identity));
+            return Ok(checkpoint.offset == 0 && checkpoint.digest == 0);
         }
         Ok(self.record_before(path, file, checkpoint.offset)? == Some(checkpoint.digest))
     }
@@ -989,7 +999,7 @@ impl LocalTransport {
         Ok(serde_json::from_str::<u64>(text.trim()).ok())
     }
 
-    /// A cursor's checkpoint, when it holds of the records file and its count is
+    /// A cursor's checkpoint, when it holds of the records file and was kept for
     /// `count`, the count in the cursor file beside it.
     fn cursor_checkpoint(
         &self,
@@ -1000,7 +1010,7 @@ impl LocalTransport {
         measured: (u64, u64),
     ) -> Result<Option<Checkpoint>, TransportError> {
         match self.checkpoint(&Self::offset_path(cursor)) {
-            Some(checkpoint) if checkpoint.count == count => Ok(self
+            Some(checkpoint) if checkpoint.cursor == count && checkpoint.count <= count => Ok(self
                 .holds(path, file, measured, &checkpoint)?
                 .then_some(checkpoint)),
             _ => Ok(None),
@@ -1187,24 +1197,22 @@ impl Transport for LocalTransport {
         };
         let measured = measure(&path, &file)?;
         let (end, identity) = measured;
-        if let Some(checkpoint) =
-            self.cursor_checkpoint(&cursor, count, &path, &mut file, measured)?
-        {
+        // The position after `count` records — after the last record, for a
+        // count past them — read on from the checkpoint when it holds and from
+        // the start of the log otherwise, and the checkpoint kept where that
+        // read ended, so the next read need not make it again.
+        let base = self.cursor_checkpoint(&cursor, count, &path, &mut file, measured)?;
+        if let Some(checkpoint) = base.filter(|checkpoint| checkpoint.count == count) {
             return Ok(Some(Position(checkpoint.offset)));
         }
-        // Nothing to rely on: the position after `count` records read off the
-        // log from its start — after its last record, for a count past it — and
-        // the checkpoint kept, so the next read need not do this again.
-        let bytes = self.read_span(&path, &mut file, 0, end)?;
-        let (lines, _) = self.scan(&bytes, usize::MAX);
-        let count = usize::try_from(count).unwrap_or(usize::MAX);
-        if count > lines.len() {
-            return Ok(Some(Position(
-                lines.last().map_or(0, |(_, stop)| *stop as u64 + 1),
-            )));
+        let base = base.unwrap_or(Checkpoint::start(identity).for_cursor(count));
+        let bytes = self.read_span(&path, &mut file, base.offset, end)?;
+        let wanted = usize::try_from(count - base.count).unwrap_or(usize::MAX);
+        let (lines, _) = self.scan(&bytes, wanted);
+        let checkpoint = Self::advanced(&bytes, base.offset, &lines, base).for_cursor(count);
+        if checkpoint != base {
+            self.keep(&Self::offset_path(&cursor), &checkpoint);
         }
-        let checkpoint = Self::advanced(&bytes, 0, &lines[..count], Checkpoint::start(identity));
-        self.keep(&Self::offset_path(&cursor), &checkpoint);
         Ok(Some(Position(checkpoint.offset)))
     }
 

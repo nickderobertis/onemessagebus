@@ -89,8 +89,10 @@ up. It serializes as its transport's token, so a cursor survives a process. A
 - A checkpoint is **a cache and nothing else**. It is used only while its seal
   holds, the records file is the one it was kept for (its device and inode,
   where the host has them), and the record before its offset reads back with its
-  digest — and a cursor's only while its count is the count in the cursor file
-  beside it. So a cursor another release moved, a log replaced, rewritten or
+  digest — and a cursor's only while it was kept for the count in the cursor
+  file beside it. A cursor counting more records than the log holds, as one
+  left over a log cut short does, is kept too: it stays at the end of the log
+  as records arrive, as 0.9.3's does, reading only what arrived. So a cursor another release moved, a log replaced, rewritten or
   truncated under it, and a checkpoint missing, unreadable, unwritable or edited
   are each passed over for one read of the log from its start, after
   which the checkpoint is replaced. It is replaced whole, written beside it and
