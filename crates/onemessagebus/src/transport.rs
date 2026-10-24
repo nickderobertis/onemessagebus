@@ -531,19 +531,20 @@ fn unpoisoned<'a, T>(
 /// records, from reading the whole log: each says that so many whole records
 /// end at a byte offset, the last of them digesting to a given value. They are
 /// caches and nothing else. One is used only while its seal holds, the records
-/// file is the one it was kept for (its device and inode on
-/// Unix, its volume serial number and file index on Windows), and the record before its offset reads back with its digest — and a
-/// cursor's only while it was kept for the count in the cursor file beside it,
-/// a count past the log's last record included; one that is missing,
-/// unreadable, stale or wrong is passed over for a read of the log from its
-/// start, after which it is replaced. Each is replaced whole — written aside,
-/// then renamed into place — so deleting either at any moment, or two processes
-/// replacing one at once, changes no answer. The cursor and records files are
-/// what they always were, so a reader that knows nothing of the checkpoints
-/// reads every queue as before. What a checkpoint cannot tell
-/// without the read of the log it saves is earlier records rewritten in place
-/// around an unchanged record at the same byte; a log is append-only and written
-/// only through this transport, so no writer it supports does that.
+/// file is the one it was kept for (its device and inode on Unix, its volume
+/// serial number and file index on Windows), and the record before its offset
+/// reads back with its digest — and a cursor's only while it was kept for the
+/// count in the cursor file beside it, a count past the log's last record
+/// included; one that is missing, unreadable, stale or wrong is passed over for
+/// a read of the log from its start, after which it is replaced. Each is
+/// replaced whole — written aside, then renamed into place — so deleting either
+/// at any moment, or two processes replacing one at once, changes no answer.
+/// The cursor and records files are what they always were, so a reader that
+/// knows nothing of the checkpoints reads every queue as before. What a
+/// checkpoint cannot tell without the read of the log it saves is earlier
+/// records rewritten in place around an unchanged record at the same byte; a
+/// log is append-only and written only through this transport, so no writer it
+/// supports does that.
 ///
 /// An append takes the queue's lock, heals a torn tail a dead writer left —
 /// truncating it back to the last record boundary and recording what it
