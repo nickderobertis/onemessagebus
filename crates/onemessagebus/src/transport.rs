@@ -944,7 +944,7 @@ impl LocalTransport {
         (end, identity): (u64, u64),
         checkpoint: &Checkpoint,
     ) -> Result<bool, TransportError> {
-        // llmlint: ignore[boundary_inputs_validated] a checkpoint is validated by everything that can be read without reading the log before its offset — its seal, the records file's device and inode, its offset within the file, and the digest of the record ending there — and Contract T, docs/transport.md and `LocalTransport`'s documentation state the one case left: earlier records rewritten in place around an unchanged record at the same byte. Telling that apart needs a read of the whole prefix, which is the cost the checkpoint exists to remove; the local log is append-only and written only through this transport, so no writer it supports produces that case, and `tests/history.rs` pins the documented behaviour.
+        // llmlint: ignore[boundary_inputs_validated] the records before the offset are left unread on purpose: the records file is append-only, a property its callers keep, and the limit that follows is the one Contract T and docs/transport.md state and `tests/history.rs` pins.
         if !checkpoint.is_intact() || checkpoint.file != identity || checkpoint.offset > end {
             return Ok(false);
         }
