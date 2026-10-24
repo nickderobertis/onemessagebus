@@ -79,18 +79,20 @@ up. It serializes as its transport's token, so a cursor survives a process. A
   position keeps its meaning. A cursor file that is not a number reads as a
   consumer that has read nothing.
 - A **checkpoint** beside a cursor file, and one beside a queue's records, says
-  that so many whole records end at a byte offset, the last of them digesting
-  to a given value (`{"count": N, "offset": B, "digest": D}`). With them a
+  that so many whole records of that records file end at a byte offset, the
+  last of them digesting to a given value, and is sealed. With them a
   cursor read, a commit and a numbered push's `count` read from that offset —
   the record before it, and what follows — rather than the whole log, so a claim
   and a push cost the same however many records the queue has already had
   claimed and answered; `LocalTransport::reads` counts the bytes and records
   each read, and `crates/onemessagebus/tests/history.rs` holds them to that.
-- A checkpoint is **a cache and nothing else**. It is used only once the record
-  before its offset reads back with its digest, and a cursor's only while its
-  count is the count in the cursor file beside it — so a cursor another release
-  moved, a log replaced or truncated under it, and a checkpoint missing or
-  unreadable are each passed over for one read of the log from its start, after
+- A checkpoint is **a cache and nothing else**. It is used only while its seal
+  holds, the records file is the one it was kept for (its device and inode,
+  where the host has them), and the record before its offset reads back with its
+  digest — and a cursor's only while its count is the count in the cursor file
+  beside it. So a cursor another release moved, a log replaced, rewritten or
+  truncated under it, and a checkpoint missing, unreadable, unwritable or edited
+  are each passed over for one read of the log from its start, after
   which the checkpoint is replaced. It is replaced whole, written beside it and
   renamed on, so a reader never sees part of one, and deleting either at any
   moment, or two processes replacing one at once, changes no answer. The

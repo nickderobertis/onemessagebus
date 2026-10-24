@@ -287,9 +287,10 @@ NATS JetStream mapping.
   **checkpoint** — that so many whole records end at a byte offset, the last of
   them digesting to a given value — so a cursor read, a commit and a numbered
   push's `count` read from there rather than from the start of the log. A
-  checkpoint is a cache and nothing else: it is used only once the record before
-  its offset reads back with that digest, and a cursor's only while its count is
-  the cursor file's; one missing, stale or wrong costs one read of the log from
+  checkpoint is a cache and nothing else: it is used only while it is sealed, is
+  of the records file it was kept for, and the record before its offset reads
+  back with that digest, and a cursor's only while its count is the cursor
+  file's; one missing, stale or wrong costs one read of the log from
   its start, after which it is replaced whole (written aside, then renamed on).
   Deleting either at any moment, or two processes replacing one at once, changes
   no answer, and the records and cursor files are what they always were, so a

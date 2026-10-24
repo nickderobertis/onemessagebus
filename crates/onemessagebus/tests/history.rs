@@ -449,11 +449,11 @@ fn cursor_cost(transport: &LocalTransport, name: &str) -> (Reads, Option<onemess
 }
 
 /// A consumer's position stays where its line cursor puts it when its offset
-/// checkpoint is missing, does not match the cursor, points past a log healed
-/// shorter, or is not a checkpoint at all — each read from the cursor's count,
+/// checkpoint is missing, was edited by hand, is cut short, or no longer
+/// matches a cursor another release moved — each read from the cursor's count,
 /// over the whole log once, after which the checkpoint holds again — and when
 /// the log ends in a torn, partly written record, which no claim hands out
-/// until its writer finishes it.
+/// until its writer finishes it and which an append heals away uncounted.
 #[test]
 fn a_position_falls_back_to_its_line_cursor_whatever_became_of_its_checkpoint() {
     let dir = tempfile::tempdir().expect("a scratch directory");
@@ -492,7 +492,7 @@ fn a_position_falls_back_to_its_line_cursor_whatever_became_of_its_checkpoint() 
     wrong["count"] = json!(SMALL - 1);
     std::fs::write(&offset, wrong.to_string()).expect("writes");
     recovered(
-        "a checkpoint for another count",
+        "a checkpoint edited by hand to another count",
         cursor_cost(&transport, "default"),
     );
 
@@ -500,7 +500,7 @@ fn a_position_falls_back_to_its_line_cursor_whatever_became_of_its_checkpoint() 
     wrong["offset"] = json!(history / 2);
     std::fs::write(&offset, wrong.to_string()).expect("writes");
     recovered(
-        "a checkpoint at another offset",
+        "a checkpoint edited by hand to another offset",
         cursor_cost(&transport, "default"),
     );
 
@@ -508,7 +508,7 @@ fn a_position_falls_back_to_its_line_cursor_whatever_became_of_its_checkpoint() 
     wrong["digest"] = json!(kept["digest"].as_u64().expect("a digest").wrapping_add(1));
     std::fs::write(&offset, wrong.to_string()).expect("writes");
     recovered(
-        "a checkpoint whose record is another",
+        "a checkpoint edited by hand to another record's digest",
         cursor_cost(&transport, "default"),
     );
 
@@ -573,16 +573,12 @@ fn a_position_falls_back_to_its_line_cursor_whatever_became_of_its_checkpoint() 
         Some(finished.position)
     );
 
-    // A torn record an append healed away, under a checkpoint that pointed past
-    // the boundary it was cut back to.
+    // A torn record an append heals away.
     std::fs::OpenOptions::new()
         .append(true)
         .open(&records)
         .and_then(|mut file| std::io::Write::write_all(&mut file, b"{\"id\":41,\"never"))
         .expect("a torn record");
-    let mut past = kept;
-    past["offset"] = json!(std::fs::metadata(&records).expect("the records").len());
-    std::fs::write(&offset, past.to_string()).expect("writes");
     let pushed = queue.push(envelope(41)).expect("the push heals the tail");
     assert_eq!(pushed.id, Some(41), "the torn record was counted");
     assert_eq!(
@@ -756,4 +752,285 @@ fn a_count_is_the_whole_records_a_read_from_the_start_hands_back() {
         .and_then(|mut file| std::io::Write::write_all(&mut file, b"\n{\"torn"))
         .expect("a torn record");
     assert_eq!(local.count(&commands_queue()).expect("counts"), 3);
+}
+
+/// Whether `transport`'s answers about the command queue are the ones a read of
+/// the whole log gives: the default consumer's position as 0.9.3 reads its
+/// cursor, and the next id as the count of records.
+fn answers_as_the_log_does(transport: &LocalTransport, dir: &Path, why: &str) {
+    let records = dir.join("commands.jsonl");
+    let cursor = transport.cursor_path(&commands_queue(), &ConsumerName::default_consumer());
+    assert_eq!(
+        transport
+            .cursor(&commands_queue(), &ConsumerName::default_consumer())
+            .expect("reads"),
+        v0_9_3::cursor(&records, &cursor).map(onemessagebus::Position::from_token),
+        "{why}: the position is not where the line cursor puts it"
+    );
+    let whole = transport
+        .read(&commands_queue(), None, usize::MAX)
+        .expect("reads")
+        .records
+        .len() as u64;
+    assert_eq!(
+        transport.count(&commands_queue()).expect("counts"),
+        whole,
+        "{why}: the count is not the log's"
+    );
+    let pushed = commands(transport).push(envelope(0)).expect("pushes");
+    assert_eq!(
+        pushed.id,
+        Some(whole),
+        "{why}: a push took another id than the log's count"
+    );
+}
+
+/// A transport over `dir` with both checkpoints in place and holding: one
+/// push counted, and the default consumer committed at the end of the log, so a
+/// count and a cursor read after it read none of the history.
+fn checkpointed(dir: &Path) -> LocalTransport {
+    let transport = LocalTransport::open(dir).expect("opens");
+    let end = commands(&transport)
+        .push(envelope(0))
+        .expect("pushes")
+        .position;
+    transport
+        .commit(&commands_queue(), &ConsumerName::default_consumer(), &end)
+        .expect("commits");
+    let (count, _) = cost(&transport, || {
+        transport.count(&commands_queue()).expect("counts")
+    });
+    assert!(
+        count.bytes < end.token(),
+        "the count checkpoint does not hold"
+    );
+    let (cursor, _) = cursor_cost(&transport, "default");
+    assert!(
+        cursor.bytes < end.token(),
+        "the cursor checkpoint does not hold"
+    );
+    transport
+}
+
+/// A checkpoint is of one records file as it stood: once the log is rewritten
+/// in place, replaced by another file holding the very same bytes, or cut
+/// short beneath it — and once the count checkpoint is edited by hand, or made
+/// to claim every id there is — neither checkpoint is relied on, and the
+/// position, the count and the next id are the log's.
+#[test]
+fn a_checkpoint_over_a_log_rewritten_replaced_or_cut_short_is_not_relied_on() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    answered_history(dir.path(), SMALL);
+    let records = dir.path().join("commands.jsonl");
+
+    // Rewritten in place: the same file, other records at the checkpoint.
+    let transport = checkpointed(dir.path());
+    let rewritten: String = (0..SMALL + 1)
+        .map(|n| format!("{{\"id\":{n},\"rewritten\":true}}\n"))
+        .collect();
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&records)
+        .expect("opens");
+    file.set_len(0).expect("truncates");
+    std::io::Write::write_all(&mut file, rewritten.as_bytes()).expect("rewrites");
+    drop(file);
+    answers_as_the_log_does(&transport, dir.path(), "a log rewritten in place");
+
+    // Replaced: another file with every byte the same, renamed over it.
+    let transport = checkpointed(dir.path());
+    let copy = dir.path().join("commands.copy");
+    std::fs::copy(&records, &copy).expect("copies");
+    std::fs::rename(&copy, &records).expect("replaces");
+    let (replaced, _) = cost(&transport, || {
+        transport.count(&commands_queue()).expect("counts")
+    });
+    let history = std::fs::metadata(&records).expect("the records").len();
+    assert!(
+        replaced.bytes >= history,
+        "a checkpoint was relied on over a file it was not kept for"
+    );
+    answers_as_the_log_does(&transport, dir.path(), "a log replaced by a copy");
+
+    // Cut short beneath both checkpoints, at a record boundary.
+    let transport = checkpointed(dir.path());
+    let bytes = std::fs::read(&records).expect("the records");
+    let half = bytes[..bytes.len() / 2]
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .expect("a boundary")
+        + 1;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&records)
+        .and_then(|file| file.set_len(half as u64))
+        .expect("cuts the log short");
+    answers_as_the_log_does(&transport, dir.path(), "a log cut short");
+
+    // The count checkpoint edited by hand.
+    let count = dir.path().join("commands.jsonl.count");
+    for (field, value) in [
+        ("count", json!(3)),
+        ("count", json!(u64::MAX)),
+        ("offset", json!(10)),
+        ("digest", json!(0)),
+        ("seal", json!(0)),
+    ] {
+        let transport = checkpointed(dir.path());
+        let mut edited: Value =
+            serde_json::from_slice(&std::fs::read(&count).expect("the checkpoint")).expect("JSON");
+        edited[field] = value.clone();
+        std::fs::write(&count, edited.to_string()).expect("edits");
+        answers_as_the_log_does(
+            &transport,
+            dir.path(),
+            &format!("a count checkpoint whose {field} was edited to {value}"),
+        );
+    }
+}
+
+/// A checkpoint that cannot be read or written — a directory where its file
+/// would be — costs reads, never an answer: positions, commits, claims and ids
+/// are what they are with no checkpoint at all.
+#[test]
+fn a_checkpoint_that_cannot_be_read_or_written_changes_no_answer() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    answered_history(dir.path(), SMALL);
+    for checkpoint in ["commands.jsonl.count", "commands-cursor.json.offset"] {
+        let blocked = dir.path().join(checkpoint);
+        std::fs::create_dir(&blocked).expect("a directory in its place");
+        std::fs::write(blocked.join("occupied"), "").expect("not empty");
+    }
+    let transport = LocalTransport::open(dir.path()).expect("opens");
+    let queue = commands(&transport);
+    for n in 0..3 {
+        let id = transport
+            .read(&commands_queue(), None, usize::MAX)
+            .expect("reads")
+            .records
+            .len() as u64;
+        assert_eq!(queue.push(envelope(n)).expect("pushes").id, Some(id));
+        let claimed = queue
+            .claim(&ConsumerName::default_consumer())
+            .expect("claims")
+            .expect("the push is claimed");
+        assert_eq!(claimed.id, Some(id));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("commands-cursor.json")).expect("the cursor"),
+            (id + 1).to_string(),
+            "the commit did not write the cursor"
+        );
+        answers_as_the_log_does(&transport, dir.path(), "an unwritable checkpoint");
+        queue
+            .claim(&ConsumerName::default_consumer())
+            .expect("claims")
+            .expect("the push answers_as_the_log_does made is claimed");
+    }
+}
+
+/// A commit behind the consumer's checkpoint — a consumer moved back — writes
+/// the count 0.9.3 writes, resumes there, and keeps a checkpoint that holds.
+#[test]
+fn a_commit_behind_its_checkpoint_writes_the_count_before_it() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    answered_history(dir.path(), SMALL);
+    let records = dir.path().join("commands.jsonl");
+    let transport = checkpointed(dir.path());
+    let cursor = transport.cursor_path(&commands_queue(), &ConsumerName::default_consumer());
+    let third = transport
+        .read(&commands_queue(), None, 3)
+        .expect("reads")
+        .records
+        .pop()
+        .expect("a third record")
+        .after;
+    transport
+        .commit(&commands_queue(), &ConsumerName::default_consumer(), &third)
+        .expect("commits");
+    assert_eq!(std::fs::read_to_string(&cursor).expect("the cursor"), "3");
+    let (read, position) = cursor_cost(&transport, "default");
+    assert_eq!(position, Some(third));
+    assert!(
+        read.records <= BOUND.records,
+        "the checkpoint the commit kept does not hold: {read:?}"
+    );
+    let next = commands(&transport)
+        .claim(&ConsumerName::default_consumer())
+        .expect("claims")
+        .expect("the fourth record");
+    assert_eq!(
+        Some(line_of(&next.record)),
+        v0_9_3::next(&records, third.token())
+    );
+}
+
+/// Records and torn fragments longer than one backward read: a checkpoint
+/// after a record of several kilobytes holds and is read back whole, a torn
+/// fragment of several kilobytes is healed back to the boundary before it, and
+/// a file holding nothing but a torn fragment is healed to empty.
+#[test]
+fn records_and_torn_fragments_longer_than_a_backward_read_are_read_back_whole() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    answered_history(dir.path(), LARGE);
+    let records = dir.path().join("commands.jsonl");
+    let transport = LocalTransport::open(dir.path()).expect("opens");
+    let queue = commands(&transport);
+    let long = json!({"author": "planner", "text": "x".repeat(5000)});
+    let pushed = queue.push(long).expect("pushes");
+    let claimed = queue
+        .claim(&ConsumerName::default_consumer())
+        .expect("claims")
+        .expect("the long record");
+    assert_eq!(claimed.id, pushed.id);
+    let history = std::fs::metadata(&records).expect("the records").len();
+    let (read, position) = cursor_cost(&transport, "default");
+    assert_eq!(position, Some(claimed.position));
+    assert!(
+        read.bytes > 5000 && read.bytes < 2 * 5000 + BOUND.bytes && read.bytes < history,
+        "the record before the checkpoint was not read back whole, alone: {read:?}"
+    );
+    let (count, counted) = cost(&transport, || {
+        transport.count(&commands_queue()).expect("counts")
+    });
+    assert_eq!(counted, LARGE as u64 + 1);
+    assert!(
+        count.bytes < 2 * 5000 + BOUND.bytes,
+        "the count checkpoint after a long record does not hold: {count:?}"
+    );
+
+    let torn = format!("{{\"id\":{},\"torn\":\"{}", LARGE + 1, "y".repeat(3000));
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&records)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, torn.as_bytes()))
+        .expect("a long torn fragment");
+    let healed = queue.push(envelope(0)).expect("the push heals the tail");
+    assert_eq!(
+        healed.id,
+        Some(LARGE as u64 + 1),
+        "the torn fragment was counted"
+    );
+    let loss: Value = serde_json::from_str(
+        std::fs::read_to_string(dir.path().join("commands.jsonl.torn"))
+            .expect("the loss is recorded")
+            .trim(),
+    )
+    .expect("a loss record");
+    assert_eq!(loss["offset"], json!(history));
+    assert_eq!(loss["bytes"], json!(torn.len()));
+
+    let only = tempfile::tempdir().expect("a scratch directory");
+    std::fs::write(only.path().join("commands.jsonl"), "x".repeat(2000)).expect("a torn file");
+    let transport = LocalTransport::open(only.path()).expect("opens");
+    let pushed = commands(&transport).push(envelope(0)).expect("pushes");
+    assert_eq!(
+        pushed.id,
+        Some(0),
+        "a file of nothing but a torn fragment held a record"
+    );
+    assert_eq!(
+        std::fs::read_to_string(only.path().join("commands.jsonl")).expect("the records"),
+        format!("{}\n", line_of(&pushed.record)),
+        "the torn fragment was not healed back to an empty file"
+    );
 }

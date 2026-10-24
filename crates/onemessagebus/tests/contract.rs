@@ -862,6 +862,124 @@ fn the_documented_local_layout_is_the_files_the_local_transport_writes() {
     );
 }
 
+/// The words between each pair of backticks in `text`.
+fn quoted(text: &str) -> Vec<&str> {
+    text.split('`').skip(1).step_by(2).collect()
+}
+
+/// The lines of `text` from the one starting `from` up to the next blank line.
+fn paragraph<'a>(text: &'a str, from: &str) -> Vec<&'a str> {
+    text.lines()
+        .skip_while(|line| !line.starts_with(from))
+        .take_while(|line| !line.trim().is_empty())
+        .collect()
+}
+
+/// `docs/transport.md` restates Contract T in the repository's own voice, and
+/// is held to it here: its trait block, its method table and Contract T's
+/// method list name the same methods; its local layout table is the layout
+/// fixture's files and the healed fragments Contract T names, and nothing
+/// else; and every one of those files is a name the document names it says are
+/// refused cannot take.
+#[test]
+fn the_transport_document_restates_contract_t_methods_and_layout() {
+    use onemessagebus::DocumentName;
+    use std::collections::BTreeSet;
+    let restated = include_str!("../../../docs/transport.md");
+
+    let trait_block: BTreeSet<&str> = paragraph(restated, "pub trait Transport")
+        .iter()
+        .filter_map(|line| line.trim().strip_prefix("fn "))
+        .filter_map(|line| line.split('(').next())
+        .collect();
+    let table: BTreeSet<&str> = paragraph(restated, "| method |")
+        .iter()
+        .skip(2)
+        .filter_map(|row| row.split('|').nth(1))
+        .flat_map(quoted)
+        .collect();
+    let section = &CONTRACT[CONTRACT.find("### Contract T").expect("Contract T")..];
+    let bullet = section
+        .split("\n- ")
+        .find(|bullet| bullet.starts_with("`trait Transport"))
+        .expect("Contract T's method list");
+    let listed: BTreeSet<&str> = bullet
+        .split('`')
+        .collect::<Vec<_>>()
+        .windows(2)
+        .filter(|pair| pair[1].starts_with(" (") || pair[1].starts_with(" / "))
+        .map(|pair| pair[0])
+        .filter(|word| word.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+        .collect();
+    assert_eq!(
+        trait_block, listed,
+        "docs/transport.md's trait block is not Contract T's methods"
+    );
+    assert_eq!(
+        table, listed,
+        "docs/transport.md's method table is not Contract T's methods"
+    );
+
+    let layout: Value = serde_json::from_str(&fixture("transport-layout")).expect("JSON");
+    let fixture: BTreeSet<&str> = layout
+        .as_object()
+        .expect("an object")
+        .values()
+        .map(|pattern| pattern.as_str().expect("a path"))
+        .collect();
+    let laid_out: BTreeSet<&str> = paragraph(restated, "| what | file |")
+        .iter()
+        .skip(2)
+        .filter_map(|row| row.split('|').nth(2))
+        .flat_map(quoted)
+        .map(|path| {
+            path.strip_prefix("<dir>/")
+                .expect("a path in the directory")
+        })
+        .collect();
+    let healed = "<queue>.jsonl.torn";
+    assert!(
+        section.contains(healed),
+        "Contract T no longer names {healed}"
+    );
+    assert_eq!(
+        laid_out,
+        fixture.iter().copied().chain([healed]).collect(),
+        "docs/transport.md's local layout is not the one Contract T lays out"
+    );
+
+    let refused = paragraph(restated, "**Queue, consumer and document names**").join(" ");
+    let refused = &refused[refused.find("may not end in").expect("the reserved names")..];
+    for file in laid_out
+        .iter()
+        .filter(|file| **file != "<name>" && !file.contains('/'))
+    {
+        let file = file
+            .replace("<queue>", "replies")
+            .replace("<consumer>", "watcher");
+        let refusal = file
+            .parse::<DocumentName>()
+            .expect_err("a queue's own file is not a document name");
+        assert!(
+            quoted(refused)
+                .iter()
+                .any(|reserved| file.ends_with(reserved) || file.contains(reserved)),
+            "{file} is refused as a document ({refusal}), and docs/transport.md does not say so"
+        );
+    }
+    for reserved in quoted(refused) {
+        let name = if reserved.ends_with('.') {
+            format!("x{reserved}y")
+        } else {
+            format!("x{reserved}")
+        };
+        assert!(
+            name.parse::<DocumentName>().is_err(),
+            "docs/transport.md says a document name may not hold {reserved}, and {name} is one"
+        );
+    }
+}
+
 #[test]
 fn the_documented_transport_kinds_resolve_in_the_documented_order() {
     use onemessagebus::{MemoryTransport, Transport, TransportKinds};
