@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4](https://github.com/nickderobertis/onemessagebus/compare/v0.9.3...v0.9.4) - 2026-10-24
+
+### Performance
+
+- *(transport)* claim from and submit to a queue at a cost its history does not grow ([#195](https://github.com/nickderobertis/onemessagebus/pull/195))
+
 ## [0.9.3](https://github.com/nickderobertis/onemessagebus/compare/v0.9.2...v0.9.3) - 2026-10-19
 
 ### Added

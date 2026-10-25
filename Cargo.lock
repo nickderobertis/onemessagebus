@@ -1099,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "onemessagebus"
-version = "0.9.3"
+version = "0.9.4"
 dependencies = [
  "getrandom 0.3.4",
  "jsonschema",
@@ -1120,10 +1120,10 @@ dependencies = [
 
 [[package]]
 name = "onemessagebus-cli"
-version = "0.9.3"
+version = "0.9.4"
 dependencies = [
  "clap",
- "onemessagebus 0.9.3",
+ "onemessagebus 0.9.4",
  "schemars",
  "serde",
  "serde_json",
@@ -1133,10 +1133,10 @@ dependencies = [
 
 [[package]]
 name = "onemessagebus-e2e"
-version = "0.9.3"
+version = "0.9.4"
 dependencies = [
  "assert_cmd",
- "onemessagebus 0.9.3",
+ "onemessagebus 0.9.4",
  "onemessagebus-cli",
  "predicates",
  "rcgen",
@@ -1149,7 +1149,7 @@ dependencies = [
 
 [[package]]
 name = "onemessagebus-repo"
-version = "0.9.3"
+version = "0.9.4"
 dependencies = [
  "onevcs",
  "serde_json",
