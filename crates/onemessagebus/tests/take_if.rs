@@ -427,8 +427,10 @@ fn a_take_if_within_on_a_closed_inbox_ends_empty_and_a_close_ends_one_waiting() 
     assert!(turn_end.wait().is_err());
 }
 
-/// The spool at `address` refusing every file created in it, while held: `None`
-/// for a user whom permissions bind nothing, such as root.
+/// Make the spool at `address` refuse every file created or removed in it, or,
+/// with `refuse` false, allow them again. `false` when refusing was asked and
+/// the directory still lets this user write, as it does root: the caller has
+/// nothing to show, and restores the mode itself.
 #[cfg(unix)]
 fn refuse_claims(address: &Path, refuse: bool) -> bool {
     use std::os::unix::fs::PermissionsExt;
