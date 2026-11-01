@@ -354,6 +354,11 @@ pub(crate) trait Gate: Send {
     fn admitted(&mut self) -> Acknowledged;
     /// Claim the message for the receiver as it is taken.
     fn claim(&mut self) -> Claimed;
+    /// Whether a message the receiver is passing over is no longer one to
+    /// take — withdrawn by its sender, or past its sender's deadline, and so
+    /// expired here — and is to be dropped. A live message's claim is never
+    /// contested in deciding it.
+    fn lapsed(&mut self) -> bool;
     /// Give a claimed message back, so its sender can withdraw it again — or,
     /// when its sender is past its deadline, expire it.
     fn release(&mut self) -> Released;
@@ -399,6 +404,40 @@ struct State<M, D> {
 pub(crate) struct Shared<M, D> {
     state: Mutex<State<M, D>>,
     arrived: Condvar,
+    /// Every entry into and return from a wait on `arrived`, in order, beside
+    /// whatever a test's predicate records of its own calls: how a test tells a
+    /// wait that blocks from one that polls.
+    #[cfg(test)]
+    waits: Mutex<Vec<Waited>>,
+}
+
+/// One event of a wait on an inbox's arrival condition, as its test log holds
+/// it.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Waited {
+    /// The waiter entered the wait, to end no later than `until`.
+    Entered { until: Option<Instant> },
+    /// The waiter returned from it at `at`: `timed_out` when the wait was
+    /// reported as reaching its deadline, which the clock decides; a return
+    /// before the deadline, even one the platform's timer ended, is a wake.
+    Returned { timed_out: bool, at: Instant },
+    /// The deadline `until` had passed at `at`, before a wait could begin, so
+    /// none did.
+    Elapsed { until: Instant, at: Instant },
+    /// A test's predicate was asked about a queued message, which it names.
+    Asked(String),
+}
+
+/// How one wait on an inbox's arrival condition ended.
+enum Arrival<'a, M, D> {
+    /// The deadline had passed before the wait began, so there was none.
+    Elapsed,
+    /// Woken before the deadline: by an arrival, a release, a withdrawal, a
+    /// close, or nothing at all.
+    Woke(MutexGuard<'a, State<M, D>>),
+    /// Returned with the deadline passed.
+    TimedOut(MutexGuard<'a, State<M, D>>),
 }
 
 impl<M, D> Shared<M, D> {
@@ -413,6 +452,74 @@ impl<M, D> Shared<M, D> {
                 next: 0,
             }),
             arrived: Condvar::new(),
+            #[cfg(test)]
+            waits: Mutex::new(Vec::new()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record(&self, event: Waited) {
+        self.waits
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(event);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn waits(&self) -> Vec<Waited> {
+        self.waits
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Wait once on the arrival condition, holding `state`'s lock again on
+    /// return, until it is notified or `until` passes; `None` waits without a
+    /// deadline. The one wait every blocking take shares.
+    fn await_arrival<'a>(
+        &'a self,
+        state: MutexGuard<'a, State<M, D>>,
+        until: Option<Instant>,
+    ) -> Arrival<'a, M, D> {
+        let left = match until {
+            Some(until) => {
+                let now = Instant::now();
+                let left = until.saturating_duration_since(now);
+                if left.is_zero() {
+                    #[cfg(test)]
+                    self.record(Waited::Elapsed { until, at: now });
+                    return Arrival::Elapsed;
+                }
+                Some(left)
+            }
+            None => None,
+        };
+        #[cfg(test)]
+        self.record(Waited::Entered { until });
+        // Whether the platform's timer ended the wait is not read: a timed
+        // wait can end before the instant it was asked for (Windows's does),
+        // so only the clock says whether the deadline passed. One that ends
+        // early is a wake, and its caller scans again and waits out the rest.
+        let state = match left {
+            Some(left) => {
+                self.arrived
+                    .wait_timeout(state, left)
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .0
+            }
+            None => self
+                .arrived
+                .wait(state)
+                .unwrap_or_else(PoisonError::into_inner),
+        };
+        let now = Instant::now();
+        let timed_out = until.is_some_and(|until| now >= until);
+        #[cfg(test)]
+        self.record(Waited::Returned { timed_out, at: now });
+        if timed_out {
+            Arrival::TimedOut(state)
+        } else {
+            Arrival::Woke(state)
         }
     }
 
@@ -468,6 +575,8 @@ impl<M, D> Shared<M, D> {
         };
         let withdrawn = state.queue.remove(at);
         drop(state);
+        // The queue changed: a selecting wait looks at it again.
+        self.arrived.notify_all();
         if let Some(withdrawn) = withdrawn {
             withdrawn.reply.forget();
         }
@@ -613,25 +722,110 @@ impl<M: Message + Send + 'static, D: Disposition> Inbox<M, D> {
             if state.closed.is_some() {
                 return None;
             }
-            state = match until {
-                Some(until) => {
-                    let left = until.saturating_duration_since(Instant::now());
-                    if left.is_zero() {
-                        return None;
-                    }
-                    self.shared
-                        .arrived
-                        .wait_timeout(state, left)
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .0
-                }
-                None => self
-                    .shared
-                    .arrived
-                    .wait(state)
-                    .unwrap_or_else(PoisonError::into_inner),
+            state = match self.shared.await_arrival(state, until) {
+                Arrival::Elapsed => return None,
+                Arrival::Woke(state) | Arrival::TimedOut(state) => state,
             };
         }
+    }
+
+    /// Claim the first queued message `predicate` accepts, without waiting:
+    /// for a receiver that takes only what it can present now.
+    ///
+    /// The queue is scanned front to back under the inbox's lock, and the first
+    /// message `predicate` returns `true` for is claimed exactly as
+    /// [`take`](Self::take) claims it. A withdrawn or expired message met on the
+    /// way is dropped, as `take` drops it. A message `predicate` rejects, and
+    /// one whose spool claim nothing could decide now, is left untaken in
+    /// place: its position, its sender's deadline and its sender's ability to
+    /// [`withdraw`](Offer::withdraw) it are unaffected, and the scan goes on
+    /// past it. So a message the receiver would not present is never taken,
+    /// and never blocks a later one. `None` when no queued message is accepted.
+    ///
+    /// `predicate` is asked under the inbox's lock, so it must not use this
+    /// inbox or a sender into it.
+    #[must_use]
+    pub fn take_if(&self, mut predicate: impl FnMut(&M) -> bool) -> Option<Delivered<M, D>> {
+        let mut state = self.shared.lock();
+        self.select(&mut state, &mut predicate)
+    }
+
+    /// As [`take_if`](Self::take_if), blocking up to `timeout` for a message
+    /// `predicate` accepts.
+    ///
+    /// The scan runs again after every wake of the inbox's arrival condition —
+    /// a message arriving, a [`release`](Delivered::release), or a withdrawal
+    /// that changes the queue — and never otherwise: between scans it blocks.
+    /// `None` once `timeout` passes with no message accepted, or once the inbox
+    /// is closed, as [`take_within`](Self::take_within) ends. Every message it
+    /// skipped is left as `take_if` leaves it.
+    #[must_use]
+    pub fn take_if_within(
+        &self,
+        timeout: Duration,
+        mut predicate: impl FnMut(&M) -> bool,
+    ) -> Option<Delivered<M, D>> {
+        let until = Instant::now().checked_add(timeout);
+        let mut state = self.shared.lock();
+        loop {
+            if let Some(delivered) = self.select(&mut state, &mut predicate) {
+                return Some(delivered);
+            }
+            if state.closed.is_some() {
+                return None;
+            }
+            state = match self.shared.await_arrival(state, until) {
+                Arrival::Elapsed | Arrival::TimedOut(_) => return None,
+                Arrival::Woke(state) => state,
+            };
+        }
+    }
+
+    /// Claim the first queued message `predicate` accepts, leaving every one
+    /// it rejects, and every one whose claim is undecided, where it is.
+    fn select(
+        &self,
+        state: &mut State<M, D>,
+        predicate: &mut impl FnMut(&M) -> bool,
+    ) -> Option<Delivered<M, D>> {
+        let mut at = 0;
+        while let Some(queued) = state.queue.get_mut(at) {
+            // Asked before any claim, so a rejected message's sender never
+            // meets one, not even for a moment. One its sender withdrew, or
+            // whose deadline passed, is still dropped as a take drops it.
+            if !predicate(&queued.message) {
+                if queued.gate.as_mut().is_some_and(|gate| gate.lapsed()) {
+                    if let Some(lapsed) = state.queue.remove(at) {
+                        lapsed.reply.forget();
+                    }
+                } else {
+                    at += 1;
+                }
+                continue;
+            }
+            match queued.gate.as_mut().map(|gate| gate.claim()) {
+                None | Some(Claimed::Taken) => {}
+                Some(Claimed::Withdrawn) => {
+                    if let Some(withdrawn) = state.queue.remove(at) {
+                        withdrawn.reply.forget();
+                    }
+                    continue;
+                }
+                Some(Claimed::Undecided) => {
+                    at += 1;
+                    continue;
+                }
+            }
+            let Queued {
+                id,
+                message,
+                reply,
+                gate,
+            } = state.queue.remove(at)?;
+            state.taken.insert(id, Taken { reply, gate });
+            return Some(self.delivered(id, message));
+        }
+        None
     }
 
     fn pop(&self, state: &mut State<M, D>) -> Option<Delivered<M, D>> {
@@ -661,14 +855,18 @@ impl<M: Message + Send + 'static, D: Disposition> Inbox<M, D> {
             state.taken.insert(id, Taken { reply, gate });
             break (id, message);
         };
-        Some(Delivered {
+        Some(self.delivered(id, message))
+    }
+
+    fn delivered(&self, id: u64, message: M) -> Delivered<M, D> {
+        Delivered {
             message,
             claim: Claim {
                 id,
                 shared: Arc::clone(&self.shared),
                 settled: false,
             },
-        })
+        }
     }
 
     pub(crate) fn shared(&self) -> Arc<Shared<M, D>> {
@@ -1214,5 +1412,312 @@ impl<M: Send, D: Send> Pending<D> for Queuing<M, D> {
                 .wait(slot)
                 .unwrap_or_else(PoisonError::into_inner);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! That an idle `take_if_within` blocks on the inbox's arrival condition
+    //! rather than polling it, shown by the log the shared wait keeps of its
+    //! entries and returns beside the predicate's own record of each call. A
+    //! blocking wait and a polling one return the same through the public
+    //! interface, so this one property is read from the wait itself; the take
+    //! it reads is the real one, over both backends.
+
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use serde::{Deserialize, Serialize};
+    use serde_json::{json, Value};
+
+    use super::{Disposition, Inbox, Offer, Sender, Waited};
+    use crate::Spool;
+
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    struct Shown(String);
+
+    impl Disposition for Shown {}
+
+    /// How long a test waits on the log before it calls the take hung: a guard,
+    /// never a measure.
+    const HANG: Duration = Duration::from_secs(30);
+
+    /// A receiver and a sender into it over one backend, with the spool kept
+    /// bound while it is held.
+    struct Pair {
+        inbox: Arc<Inbox<Value, Shown>>,
+        sender: Sender<Value, Shown>,
+        _spool: Option<(tempfile::TempDir, Spool)>,
+    }
+
+    fn in_process() -> Pair {
+        let inbox = Arc::new(Inbox::new());
+        let sender = inbox.sender();
+        Pair {
+            inbox,
+            sender,
+            _spool: None,
+        }
+    }
+
+    fn spool() -> Pair {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let inbox = Arc::new(Inbox::new());
+        let spool = Spool::bind(dir.path().join("notes"), &inbox).expect("binds");
+        let sender = Spool::connect::<Value, Shown>(spool.address());
+        Pair {
+            inbox,
+            sender,
+            _spool: Some((dir, spool)),
+        }
+    }
+
+    impl Pair {
+        fn offer(&self, text: &str) -> Offer<Shown> {
+            self.sender.offer(json!(text)).expect("admitted")
+        }
+
+        /// A predicate accepting only urgent notes, which records each call in
+        /// the wait log.
+        fn urgent(&self) -> impl FnMut(&Value) -> bool + Send + 'static {
+            let shared = self.inbox.shared();
+            move |note: &Value| {
+                let text = note.as_str().expect("a note is a string").to_owned();
+                let urgent = text.starts_with("interrupt");
+                shared.record(Waited::Asked(text));
+                urgent
+            }
+        }
+
+        fn log(&self) -> Vec<Waited> {
+            self.inbox.shared().waits()
+        }
+
+        /// Wait until the log, from `from` on, holds `pattern` in order (not
+        /// necessarily adjacent), answering where it ends.
+        fn until(&self, from: usize, pattern: &[fn(&Waited) -> bool]) -> usize {
+            let gave_up = Instant::now() + HANG;
+            loop {
+                let log = self.log();
+                let mut wanted = pattern.iter().peekable();
+                let mut end = from;
+                for (at, event) in log.iter().enumerate().skip(from) {
+                    if let Some(matches) = wanted.peek() {
+                        if matches(event) {
+                            wanted.next();
+                            end = at + 1;
+                        }
+                    }
+                }
+                if wanted.peek().is_none() {
+                    return end;
+                }
+                assert!(Instant::now() < gave_up, "hung; the log is {log:?}");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+    }
+
+    fn entered(event: &Waited) -> bool {
+        matches!(event, Waited::Entered { .. })
+    }
+
+    fn woke(event: &Waited) -> bool {
+        matches!(
+            event,
+            Waited::Returned {
+                timed_out: false,
+                ..
+            }
+        )
+    }
+
+    fn asked_first(event: &Waited) -> bool {
+        *event == Waited::Asked("turn-end-1".to_owned())
+    }
+
+    fn asked_second(event: &Waited) -> bool {
+        *event == Waited::Asked("turn-end-2".to_owned())
+    }
+
+    /// The log's shape for a wait that blocks: entries and returns alternate,
+    /// no predicate call falls inside a wait, every scan after the first
+    /// directly follows a return that was not a timeout, and no timeout return
+    /// or elapsed deadline is reported before its deadline. A return before
+    /// the deadline is a wake, however the platform's timer ended it. Answers
+    /// the scans, each the notes it asked about.
+    fn assert_blocks_between_scans(log: &[Waited]) -> Vec<Vec<String>> {
+        let mut scans: Vec<Vec<String>> = Vec::new();
+        let mut inside: Option<Option<Instant>> = None;
+        let mut previous: Option<&Waited> = None;
+        for event in log {
+            match event {
+                Waited::Entered { until } => {
+                    assert!(inside.is_none(), "entered a wait twice: {log:?}");
+                    inside = Some(*until);
+                }
+                Waited::Returned { timed_out, at } => {
+                    let until = inside
+                        .take()
+                        .unwrap_or_else(|| panic!("returned from no wait: {log:?}"));
+                    if *timed_out {
+                        let until = until.expect("a timeout has a deadline");
+                        assert!(*at >= until, "timed out before the deadline: {log:?}");
+                    }
+                }
+                Waited::Elapsed { until, at } => {
+                    assert!(inside.is_none(), "elapsed inside a wait: {log:?}");
+                    assert!(at >= until, "elapsed before the deadline: {log:?}");
+                }
+                Waited::Asked(text) => {
+                    assert!(inside.is_none(), "scanned inside a wait: {log:?}");
+                    match previous {
+                        Some(Waited::Asked(_)) => {
+                            scans.last_mut().expect("a scan").push(text.clone());
+                        }
+                        None => scans.push(vec![text.clone()]),
+                        Some(Waited::Returned {
+                            timed_out: false, ..
+                        }) => scans.push(vec![text.clone()]),
+                        Some(other) => {
+                            panic!("a scan began after {other:?}, not a wake: {log:?}")
+                        }
+                    }
+                }
+            }
+            previous = Some(event);
+        }
+        scans
+    }
+
+    fn an_idle_take_if_within_blocks_until_woken_and_rescans_only_on_a_wake(pair: &Pair) {
+        let turn_end = pair.offer("turn-end-1");
+        let waiting = {
+            let inbox = Arc::clone(&pair.inbox);
+            let urgent = pair.urgent();
+            std::thread::spawn(move || inbox.take_if_within(HANG, urgent))
+        };
+        // (1) The initial scan, then into the wait.
+        let mark = pair.until(0, &[asked_first, entered]);
+        // (2) A notification with nothing changed: a return, a fresh scan of
+        // the live queue, and back into the wait.
+        pair.inbox.shared().arrived.notify_all();
+        let mark = pair.until(mark, &[woke, asked_first, entered]);
+        // (3) A rejected arrival: a return, a scan that asks about it, and back
+        // into the wait.
+        let second = pair.offer("turn-end-2");
+        pair.until(mark, &[woke, asked_second, entered]);
+        // (4) An accepted arrival ends it.
+        let urgent = pair.offer("interrupt-1");
+        let claimed = waiting
+            .join()
+            .expect("the wait ends")
+            .expect("the urgent note is claimed");
+        assert_eq!(claimed.message(), &json!("interrupt-1"));
+        claimed.answer(Shown("interrupt-1".to_owned()));
+        assert_eq!(urgent.wait(), Ok(Shown("interrupt-1".to_owned())));
+
+        let log = pair.log();
+        let scans = assert_blocks_between_scans(&log);
+        assert_eq!(scans.first(), Some(&vec!["turn-end-1".to_owned()]));
+        assert!(
+            scans.iter().skip(1).any(|scan| scan == &["turn-end-1"]),
+            "the spurious wake was not followed by a fresh scan: {log:?}"
+        );
+        assert!(
+            scans
+                .iter()
+                .any(|scan| scan == &["turn-end-1", "turn-end-2"]),
+            "the rejected arrival was never asked about: {log:?}"
+        );
+        assert!(
+            !log.iter().any(|event| matches!(
+                event,
+                Waited::Returned {
+                    timed_out: true,
+                    ..
+                }
+            )),
+            "a wait timed out before its deadline: {log:?}"
+        );
+        drop((turn_end, second));
+    }
+
+    /// Whether `event` reports the deadline reached: a wait returning past it,
+    /// or a wait that never began because it had passed.
+    fn reports_the_deadline(event: &Waited) -> bool {
+        matches!(
+            event,
+            Waited::Returned {
+                timed_out: true,
+                ..
+            } | Waited::Elapsed { .. }
+        )
+    }
+
+    /// Left alone over rejected notes. A platform's timed wait may end before
+    /// its deadline (Windows's has), so what is held to the deadline is the
+    /// call's own `None` and when it came, and the log's report of it.
+    fn an_idle_take_if_within_left_alone_times_out_once_at_its_deadline(pair: &Pair) {
+        let turn_end = pair.offer("turn-end-1");
+        let second = pair.offer("turn-end-2");
+        let timeout = Duration::from_millis(300);
+        let answer = pair.inbox.take_if_within(timeout, pair.urgent());
+        let answered_at = Instant::now();
+        assert!(answer.is_none(), "a rejected note was claimed");
+
+        let log = pair.log();
+        assert_blocks_between_scans(&log);
+        let Some(Waited::Entered {
+            until: Some(deadline),
+        }) = log
+            .iter()
+            .find(|event| matches!(event, Waited::Entered { .. }))
+        else {
+            panic!("the call never waited with a deadline: {log:?}");
+        };
+        assert!(
+            answered_at >= *deadline,
+            "the call reported its timeout before its deadline: {log:?}"
+        );
+        let reports = log
+            .iter()
+            .filter(|event| reports_the_deadline(event))
+            .count();
+        assert_eq!(reports, 1, "the deadline not reported once: {log:?}");
+        assert!(
+            log.last().is_some_and(reports_the_deadline),
+            "the wait did not end at its timeout: {log:?}"
+        );
+        // Both still queued, untaken, in order.
+        let left: Vec<Value> = std::iter::from_fn(|| pair.inbox.take())
+            .map(|delivered| {
+                let note = delivered.message().clone();
+                delivered.answer(Shown(String::new()));
+                note
+            })
+            .collect();
+        assert_eq!(left, [json!("turn-end-1"), json!("turn-end-2")]);
+        drop((turn_end, second));
+    }
+
+    #[test]
+    fn an_in_process_idle_take_if_within_blocks_until_woken_and_rescans_only_on_a_wake() {
+        an_idle_take_if_within_blocks_until_woken_and_rescans_only_on_a_wake(&in_process());
+    }
+
+    #[test]
+    fn a_spool_idle_take_if_within_blocks_until_woken_and_rescans_only_on_a_wake() {
+        an_idle_take_if_within_blocks_until_woken_and_rescans_only_on_a_wake(&spool());
+    }
+
+    #[test]
+    fn an_in_process_idle_take_if_within_left_alone_times_out_once_at_its_deadline() {
+        an_idle_take_if_within_left_alone_times_out_once_at_its_deadline(&in_process());
+    }
+
+    #[test]
+    fn a_spool_idle_take_if_within_left_alone_times_out_once_at_its_deadline() {
+        an_idle_take_if_within_left_alone_times_out_once_at_its_deadline(&spool());
     }
 }

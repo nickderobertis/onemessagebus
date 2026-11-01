@@ -1113,7 +1113,19 @@ impl Hold {
     /// this build cannot read, or one on a clock this receiver does not read,
     /// is no deadline: the sender's own withdrawal at it still decides.
     fn expire(&self) -> Expiring {
-        let due = match (
+        if !self.due() {
+            return Expiring::NotDue;
+        }
+        match claim(&self.file(EXPIRED)) {
+            Contest::Won | Contest::Lost => Expiring::Expired,
+            Contest::Refused(_) => Expiring::Refused,
+        }
+    }
+
+    /// Whether the deadline its sender published has passed, read only: what
+    /// [`expire`](Self::expire) decides from.
+    fn due(&self) -> bool {
+        match (
             read_document::<DeadlineDocument>(&self.dir, &self.file(DEADLINE)),
             SharedClock::here(),
         ) {
@@ -1121,13 +1133,6 @@ impl Hold {
                 clock.is(&published.clock) && clock.now() >= published.deadline
             }
             _ => false,
-        };
-        if !due {
-            return Expiring::NotDue;
-        }
-        match claim(&self.file(EXPIRED)) {
-            Contest::Won | Contest::Lost => Expiring::Expired,
-            Contest::Refused(_) => Expiring::Refused,
         }
     }
 
@@ -1204,6 +1209,22 @@ impl Gate for Hold {
             Expiring::Expired => Claimed::Withdrawn,
             Expiring::Refused => Claimed::Undecided,
         }
+    }
+
+    fn lapsed(&mut self) -> bool {
+        // Past its deadline, so no longer live: settled exactly as a take
+        // settles it, while its sender may not be running to.
+        if self.due() {
+            return matches!(self.claim(), Claimed::Withdrawn);
+        }
+        // Live. The receiver claims a message only as it holds it, so a claim
+        // on one it does not hold is its sender's withdrawal: seen, never
+        // contested.
+        let withdrawn = self.holding() == Holding::Unclaimed && self.file(CLAIMED).exists();
+        if withdrawn {
+            discard(&self.dir, &self.id);
+        }
+        withdrawn
     }
 
     fn release(&mut self) -> Released {

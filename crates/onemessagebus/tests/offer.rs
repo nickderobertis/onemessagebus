@@ -1448,6 +1448,105 @@ fn a_first_take_past_the_deadline_of_a_suspended_sender_expires_the_message_unta
     assert_eq!(message_files(&address), Vec::<String>::new());
 }
 
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
+fn a_take_if_rejecting_a_message_past_a_suspended_senders_deadline_still_expires_and_drops_it() {
+    let (_dir, address) = spool_dir();
+    let inbox = Inbox::<Order, Receipt>::new();
+    let _spool = Spool::bind(&address, &inbox).expect("binds");
+    let mut sender = Receiver::start("sender_child", SENDER_SPOOL, &address);
+    assert_eq!(sender.reply(), "admitted");
+    // Never taken: the sender starts waiting and is suspended once its deadline
+    // is published, before it passes.
+    sender.tell("wait 300");
+    published_deadline(&address);
+    sender.signal("-STOP");
+    std::thread::sleep(Duration::from_millis(600));
+    // The receiver would not present it, but it is expired: the scan drops it,
+    // and says so to its sender, though the sender has not run since.
+    assert!(inbox.take_if(|order| order.sku != "late").is_none());
+    assert!(
+        format!("{inbox:?}").contains("queued: 0"),
+        "the scan kept an expired message queued: {inbox:?}"
+    );
+    assert!(
+        message_files(&address)
+            .iter()
+            .any(|name| name.ends_with(".expired")),
+        "the scan did not tell the sender the message expired: {:?}",
+        message_files(&address)
+    );
+    sender.signal("-CONT");
+    assert_eq!(sender.reply(), "expired");
+    assert!(inbox.take().is_none());
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
+#[cfg(unix)]
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
+fn a_take_if_that_cannot_claim_an_overdue_message_it_rejects_leaves_it_and_claims_the_next() {
+    let (_dir, address) = spool_dir();
+    let inbox = Inbox::<Order, Receipt>::new();
+    let _spool = Spool::bind(&address, &inbox).expect("binds");
+    let mut sender = Receiver::start("sender_child", SENDER_SPOOL, &address);
+    assert_eq!(sender.reply(), "admitted");
+    let next = Spool::connect::<Order, Receipt>(&address)
+        .offer(order("next"))
+        .expect("admitted");
+    sender.tell("wait 300");
+    published_deadline(&address);
+    sender.signal("-STOP");
+    std::thread::sleep(Duration::from_millis(600));
+    // The spool refuses every file while the overdue message is looked at, so
+    // its expiry cannot be claimed; it allows them again for the next one.
+    let mut read_only = None;
+    let mut refused = true;
+    let claimed = inbox
+        .take_if(|order| {
+            if order.sku == "late" {
+                read_only = ReadOnly::hold(&address);
+                refused = read_only.is_some();
+                return false;
+            }
+            read_only = None;
+            true
+        })
+        .expect("the message behind the overdue one is claimed");
+    if !refused {
+        eprintln!("skipped: a read-only directory refuses nothing to this user");
+        return;
+    }
+    assert_eq!(claimed.message(), &order("next"));
+    assert!(
+        format!("{inbox:?}").contains("queued: 1"),
+        "the overdue message whose claim was refused left the queue: {inbox:?}"
+    );
+    assert!(
+        message_files(&address)
+            .iter()
+            .all(|name| !name.ends_with(".expired")),
+        "an expiry was recorded with its claim refused"
+    );
+    claimed.answer(filled("next"));
+    assert_eq!(next.wait(), Ok(filled("next")));
+    // Once a claim can be made, the next scan expires and drops it.
+    assert!(inbox.take_if(|order| order.sku != "late").is_none());
+    assert!(
+        format!("{inbox:?}").contains("queued: 0"),
+        "the scan kept an expired message queued: {inbox:?}"
+    );
+    sender.signal("-CONT");
+    assert_eq!(sender.reply(), "expired");
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
 const RACES: usize = 200;
 
 /// Which side of race `race` waits before it moves, and for how long: a sweep

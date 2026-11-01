@@ -13,7 +13,8 @@ a program brings its message and its disposition, and the inbox carries them.
   the message **and** answered it, or the inbox is closed.
 - `Inbox<M, D>` is the receiving end. `take()` hands over the next message if
   one is waiting and never blocks; `take_within(timeout)` blocks up to `timeout`
-  for one; `answered()` lists every message answered so far with its
+  for one; `take_if(predicate)` and `take_if_within(timeout, predicate)` take
+  only a message the receiver can present now (below); `answered()` lists every message answered so far with its
   disposition, oldest first; `close(Closed)` refuses every blocked sender, and
   every later one, with the closer's reason.
 - `Delivered<M, D>` is one taken message: `message()` reads it,
@@ -35,7 +36,7 @@ backend's bounded wait is withdrawn and reported `Undelivered`, exactly as
 `send` reports it — except one a spool courier already holds where the
 receiver's declaration has no file identity, as on Windows, which is read as
 its receiver's at the bound (below). `send` is `offer` followed by `wait`. A message is **taken**
-when `take` or `take_within` returns it.
+when `take`, `take_within`, `take_if` or `take_if_within` returns it.
 
 - `offer.wait()` blocks for the answer, as `send` does after admission.
 - `offer.wait_until(deadline) -> Result<D, Unanswered>` withdraws a message
@@ -73,6 +74,16 @@ when `take` or `take_within` returns it.
   has passed expires the message in the same operation, so no take can find
   it between the release and its sender waking. A message is answered at most once, and one released and
   then withdrawn or expired is never answered by the receiver.
+- `inbox.take_if(predicate)` and `inbox.take_if_within(timeout, predicate)`
+  are for a receiver that can present only some messages now: they claim the
+  first queued message `predicate` accepts, as `take` claims, and the second
+  waits on the inbox's arrivals for one. A live message `predicate` rejects is
+  never claimed, even while it is looked at. It stays untaken in its place,
+  still withdrawable by its sender, so it blocks no later message. One already
+  withdrawn, or past its sender's deadline, is dropped as `take` drops it,
+  whether `predicate` accepts it or not. Their signatures
+  and full contract are the rustdoc of `Inbox::take_if` and
+  `Inbox::take_if_within`.
 - Dropping an `Offer` withdraws nothing. The message stays offered and is still
   taken and answered, and the answer goes to nobody. Over a spool, the dropped
   offer removes its taken file, so the receiver writes no answer file nobody
@@ -175,7 +186,9 @@ A directory a receiver's process binds, for a sender in another process.
   does: a release past it creates `<id>.expired`, drops the message from the
   inbox and keeps its claim, so no take can come before the sender reads it,
   reports `Expired`, and removes the message's files. A take that claims a
-  message past its published deadline does the same. A deadline the file system
+  message past its published deadline does the same, and so does a
+  `take_if` scan passing over one it rejects; it claims no message before its
+  deadline that it rejects. A deadline the file system
   refuses to publish is published at the sender's next look. One the receiver
   cannot read, or one on a clock it does not read, is no deadline, and the
   sender's own withdrawal at it still decides. An `<id>.expired` the file system
@@ -244,7 +257,7 @@ A directory a receiver's process binds, for a sender in another process.
     `<id>.admitted.json` is absent, without which the inbox queues nothing and
     which it writes under its lock before any take; finding it there, the sender gives the claim back and reads the
     message as taken. A take that lost to that claim in the moment before it
-    was given back drops the message, and its sender is told it was lost:
+    was given back, or a `take_if` scan that met it then, drops the message, and its sender is told it was lost:
     never answered, never expired, never withdrawn. That covers a receiver on
     another boot or in another time namespace, one whose `admission.json`
     records no clock or one this build cannot read, either side unable to read
