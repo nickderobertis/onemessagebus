@@ -448,7 +448,6 @@ impl<M, D> Shared<M, D> {
         }
     }
 
-    /// Record `event` in the test log of waits.
     #[cfg(test)]
     pub(crate) fn record(&self, event: Waited) {
         self.waits
@@ -457,7 +456,6 @@ impl<M, D> Shared<M, D> {
             .push(event);
     }
 
-    /// The test log of waits so far.
     #[cfg(test)]
     pub(crate) fn waits(&self) -> Vec<Waited> {
         self.waits
@@ -843,7 +841,6 @@ impl<M: Message + Send + 'static, D: Disposition> Inbox<M, D> {
         Some(self.delivered(id, message))
     }
 
-    /// Taken message `id`, held by the receiver.
     fn delivered(&self, id: u64, message: M) -> Delivered<M, D> {
         Delivered {
             message,
