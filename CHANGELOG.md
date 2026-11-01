@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5](https://github.com/nickderobertis/onemessagebus/compare/v0.9.4...v0.9.5) - 2026-11-01
+
+### Added
+
+- *(inbox)* claim only the first queued message a receiver can present ([#199](https://github.com/nickderobertis/onemessagebus/pull/199))
+
 ## [0.9.4](https://github.com/nickderobertis/onemessagebus/compare/v0.9.3...v0.9.4) - 2026-10-24
 
 ### Performance
