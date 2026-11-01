@@ -409,6 +409,11 @@ pub(crate) struct Shared<M, D> {
     /// wait that blocks from one that polls.
     #[cfg(test)]
     waits: Mutex<Vec<Waited>>,
+    /// Makes the next timed wait on `arrived` end this much before its
+    /// deadline, reporting a timeout, as a platform's timed wait can (Windows's
+    /// does, by up to its timer's granularity).
+    #[cfg(test)]
+    early: Mutex<Option<Duration>>,
 }
 
 /// One event of a wait on an inbox's arrival condition, as its test log holds
@@ -418,9 +423,13 @@ pub(crate) struct Shared<M, D> {
 pub(crate) enum Waited {
     /// The waiter entered the wait, to end no later than `until`.
     Entered { until: Option<Instant> },
-    /// The waiter returned from it at `at`: `timed_out` when the wait's own
-    /// timer ended it, rather than a notification or a spurious wake.
+    /// The waiter returned from it at `at`: `timed_out` when the wait was
+    /// reported as reaching its deadline, which the clock decides; a return
+    /// before the deadline, even one the platform's timer ended, is a wake.
     Returned { timed_out: bool, at: Instant },
+    /// The deadline `until` had passed at `at`, before a wait could begin, so
+    /// none did.
+    Elapsed { until: Instant, at: Instant },
     /// A test's predicate was asked about a queued message, which it names.
     Asked(String),
 }
@@ -450,6 +459,8 @@ impl<M, D> Shared<M, D> {
             arrived: Condvar::new(),
             #[cfg(test)]
             waits: Mutex::new(Vec::new()),
+            #[cfg(test)]
+            early: Mutex::new(None),
         }
     }
 
@@ -459,6 +470,13 @@ impl<M, D> Shared<M, D> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(event);
+    }
+
+    /// Make the next timed wait on `arrived` end `by` before its deadline,
+    /// reporting a timeout, as a platform's timed wait can.
+    #[cfg(test)]
+    pub(crate) fn end_next_timed_wait_early(&self, by: Duration) {
+        *self.early.lock().unwrap_or_else(PoisonError::into_inner) = Some(by);
     }
 
     #[cfg(test)]
@@ -479,8 +497,11 @@ impl<M, D> Shared<M, D> {
     ) -> Arrival<'a, M, D> {
         let left = match until {
             Some(until) => {
-                let left = until.saturating_duration_since(Instant::now());
+                let now = Instant::now();
+                let left = until.saturating_duration_since(now);
                 if left.is_zero() {
+                    #[cfg(test)]
+                    self.record(Waited::Elapsed { until, at: now });
                     return Arrival::Elapsed;
                 }
                 Some(left)
@@ -489,29 +510,36 @@ impl<M, D> Shared<M, D> {
         };
         #[cfg(test)]
         self.record(Waited::Entered { until });
-        let (state, timed_out) = match left {
+        #[cfg(test)]
+        let left = left.map(|left| {
+            let early = self
+                .early
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            early.map_or(left, |early| left.saturating_sub(early))
+        });
+        // Whether the platform's timer ended the wait is not read: a timed
+        // wait can end before the instant it was asked for (Windows's does),
+        // so only the clock says whether the deadline passed. One that ends
+        // early is a wake, and its caller scans again and waits out the rest.
+        let state = match left {
             Some(left) => {
-                let (state, waited) = self
-                    .arrived
-                    .wait_timeout(state, left)
-                    .unwrap_or_else(PoisonError::into_inner);
-                (state, waited.timed_out())
-            }
-            None => (
                 self.arrived
-                    .wait(state)
-                    .unwrap_or_else(PoisonError::into_inner),
-                false,
-            ),
+                    .wait_timeout(state, left)
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .0
+            }
+            None => self
+                .arrived
+                .wait(state)
+                .unwrap_or_else(PoisonError::into_inner),
         };
         let now = Instant::now();
+        let timed_out = until.is_some_and(|until| now >= until);
         #[cfg(test)]
         self.record(Waited::Returned { timed_out, at: now });
-        // Read only by the test log: whether the deadline passed is decided by
-        // the clock, below.
-        #[cfg(not(test))]
-        let _ = timed_out;
-        if until.is_some_and(|until| now >= until) {
+        if timed_out {
             Arrival::TimedOut(state)
         } else {
             Arrival::Woke(state)
@@ -1538,8 +1566,9 @@ mod tests {
     /// The log's shape for a wait that blocks: entries and returns alternate,
     /// no predicate call falls inside a wait, every scan after the first
     /// directly follows a return that was not a timeout, and no timeout return
-    /// comes before its deadline. Answers the scans, each the notes it asked
-    /// about.
+    /// or elapsed deadline is reported before its deadline. A return before
+    /// the deadline is a wake, however the platform's timer ended it. Answers
+    /// the scans, each the notes it asked about.
     fn assert_blocks_between_scans(log: &[Waited]) -> Vec<Vec<String>> {
         let mut scans: Vec<Vec<String>> = Vec::new();
         let mut inside: Option<Option<Instant>> = None;
@@ -1558,6 +1587,10 @@ mod tests {
                         let until = until.expect("a timeout has a deadline");
                         assert!(*at >= until, "timed out before the deadline: {log:?}");
                     }
+                }
+                Waited::Elapsed { until, at } => {
+                    assert!(inside.is_none(), "elapsed inside a wait: {log:?}");
+                    assert!(at >= until, "elapsed before the deadline: {log:?}");
                 }
                 Waited::Asked(text) => {
                     assert!(inside.is_none(), "scanned inside a wait: {log:?}");
@@ -1633,37 +1666,57 @@ mod tests {
         drop((turn_end, second));
     }
 
-    fn an_idle_take_if_within_left_alone_times_out_once_at_its_deadline(pair: &Pair) {
+    /// Whether `event` reports the deadline reached: a wait returning past it,
+    /// or a wait that never began because it had passed.
+    fn reports_the_deadline(event: &Waited) -> bool {
+        matches!(
+            event,
+            Waited::Returned {
+                timed_out: true,
+                ..
+            } | Waited::Elapsed { .. }
+        )
+    }
+
+    /// Left alone over rejected notes, with the platform's first timed wait
+    /// ending `early` before its deadline when that is set.
+    fn an_idle_take_if_within_left_alone_times_out_once_at_its_deadline(
+        pair: &Pair,
+        early: Option<Duration>,
+    ) {
         let turn_end = pair.offer("turn-end-1");
         let second = pair.offer("turn-end-2");
+        if let Some(early) = early {
+            pair.inbox.shared().end_next_timed_wait_early(early);
+        }
         let timeout = Duration::from_millis(300);
         assert!(pair.inbox.take_if_within(timeout, pair.urgent()).is_none());
 
         let log = pair.log();
         assert_blocks_between_scans(&log);
-        let timeouts: Vec<&Waited> = log
+        let reports = log
             .iter()
-            .filter(|event| {
-                matches!(
-                    event,
-                    Waited::Returned {
-                        timed_out: true,
-                        ..
-                    }
-                )
-            })
-            .collect();
-        assert_eq!(timeouts.len(), 1, "not one timeout return: {log:?}");
+            .filter(|event| reports_the_deadline(event))
+            .count();
+        assert_eq!(reports, 1, "the deadline not reported once: {log:?}");
         assert!(
-            matches!(
-                log.last(),
-                Some(Waited::Returned {
-                    timed_out: true,
-                    ..
-                })
-            ),
+            log.last().is_some_and(reports_the_deadline),
             "the wait did not end at its timeout: {log:?}"
         );
+        if early.is_some() {
+            // The platform's timer ended the first wait before the deadline,
+            // and that return was a wake rather than the timeout.
+            let Some(Waited::Entered { until: Some(until) }) = log.get(2) else {
+                panic!("the first wait did not follow the initial scan: {log:?}");
+            };
+            assert!(
+                matches!(
+                    log.get(3),
+                    Some(Waited::Returned { timed_out: false, at }) if at < until
+                ),
+                "the first wait did not end early as a wake: {log:?}"
+            );
+        }
         // Both still queued, untaken, in order.
         let left: Vec<Value> = std::iter::from_fn(|| pair.inbox.take())
             .map(|delivered| {
@@ -1688,11 +1741,29 @@ mod tests {
 
     #[test]
     fn an_in_process_idle_take_if_within_left_alone_times_out_once_at_its_deadline() {
-        an_idle_take_if_within_left_alone_times_out_once_at_its_deadline(&in_process());
+        an_idle_take_if_within_left_alone_times_out_once_at_its_deadline(&in_process(), None);
     }
 
     #[test]
     fn a_spool_idle_take_if_within_left_alone_times_out_once_at_its_deadline() {
-        an_idle_take_if_within_left_alone_times_out_once_at_its_deadline(&spool());
+        an_idle_take_if_within_left_alone_times_out_once_at_its_deadline(&spool(), None);
+    }
+
+    /// How far before its deadline the first timed wait is made to end, as
+    /// Windows's has (by 0.78 ms on CI); an early end like that is never
+    /// reported as the deadline. Wide, so the end is unmistakably early.
+    const EARLY: Duration = Duration::from_millis(100);
+
+    #[test]
+    fn an_in_process_idle_take_if_within_whose_timer_fires_early_still_times_out_at_its_deadline() {
+        an_idle_take_if_within_left_alone_times_out_once_at_its_deadline(
+            &in_process(),
+            Some(EARLY),
+        );
+    }
+
+    #[test]
+    fn a_spool_idle_take_if_within_whose_timer_fires_early_still_times_out_at_its_deadline() {
+        an_idle_take_if_within_left_alone_times_out_once_at_its_deadline(&spool(), Some(EARLY));
     }
 }
