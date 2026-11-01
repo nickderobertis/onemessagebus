@@ -688,3 +688,51 @@ fn a_spool_take_if_drops_a_withdrawn_message_it_rejects_and_clears_its_files() {
     );
     assert!(live.withdraw().is_ok(), "the live note was taken");
 }
+
+#[cfg(unix)]
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
+fn a_spool_take_if_keeps_a_rejected_message_the_receiver_still_holds_until_it_is_overdue() {
+    let pair = Pair::spool();
+    let address = pair.address().to_path_buf();
+    let held = pair.offer("turn-end-held");
+    let delivered = pair.inbox.take().expect("the note is queued");
+    // Released while the spool refuses every removal: back in the queue, with
+    // its claim still the receiver's.
+    if !refuse_claims(&address, true) {
+        refuse_claims(&address, false);
+        eprintln!("skipped: a read-only directory refuses nothing to this user");
+        return;
+    }
+    delivered.release();
+    refuse_claims(&address, false);
+    // Live: a scan rejecting it leaves it queued and still the receiver's.
+    assert!(pair.inbox.take_if(urgent).is_none());
+    assert_eq!(pair.queued(), "1", "a held live note left the queue");
+    let held = held
+        .withdraw()
+        .expect_err("the receiver still holds its claim");
+    // Overdue: its sender, reading it as taken, waits past its deadline; a
+    // scan rejecting it then expires it and drops it.
+    let waiting =
+        std::thread::spawn(move || held.wait_until(Instant::now() + Duration::from_millis(200)));
+    while !pair
+        .message_files()
+        .iter()
+        .any(|name| name.ends_with(".deadline.json"))
+    {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    std::thread::sleep(Duration::from_millis(400));
+    assert!(pair.inbox.take_if(urgent).is_none());
+    assert_eq!(
+        pair.queued(),
+        "0",
+        "the scan kept an overdue held note queued"
+    );
+    assert_eq!(waiting.join().expect("waits"), Err(Unanswered::Expired));
+    assert_eq!(pair.message_files(), Vec::<String>::new());
+}

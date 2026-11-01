@@ -1212,44 +1212,19 @@ impl Gate for Hold {
     }
 
     fn lapsed(&mut self) -> bool {
-        let claimed_now = if self.holding() == Holding::Unclaimed {
-            // The receiver claims a message only as it holds it, so a claim on
-            // one it does not hold is its sender's: withdrawn, at its deadline
-            // or before. Seen, not contested.
-            if self.file(CLAIMED).exists() {
-                discard(&self.dir, &self.id);
-                return true;
-            }
-            // Live, and its sender's to withdraw: nothing contests it.
-            if !self.due() {
-                return false;
-            }
-            // Past its deadline, so no longer live: claimed and expired as a
-            // take would, while its sender may not be running to do it.
-            match claim(&self.file(CLAIMED)) {
-                Contest::Won => self.hold(Holding::Claimed),
-                Contest::Lost => {
-                    discard(&self.dir, &self.id);
-                    return true;
-                }
-                Contest::Refused(_) => return false,
-            }
-            true
-        } else {
-            false
-        };
-        match self.expire() {
-            Expiring::Expired => true,
-            Expiring::NotDue => false,
-            Expiring::Refused => {
-                // Not taken: a claim made only to expire it is given back, so
-                // its sender can still withdraw it.
-                if claimed_now && fs::remove_file(self.file(CLAIMED)).is_ok() {
-                    self.hold(Holding::Unclaimed);
-                }
-                false
-            }
+        // Past its deadline, so no longer live: settled exactly as a take
+        // settles it, while its sender may not be running to.
+        if self.due() {
+            return matches!(self.claim(), Claimed::Withdrawn);
         }
+        // Live. The receiver claims a message only as it holds it, so a claim
+        // on one it does not hold is its sender's withdrawal: seen, never
+        // contested.
+        let withdrawn = self.holding() == Holding::Unclaimed && self.file(CLAIMED).exists();
+        if withdrawn {
+            discard(&self.dir, &self.id);
+        }
+        withdrawn
     }
 
     fn release(&mut self) -> Released {
