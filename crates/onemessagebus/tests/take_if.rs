@@ -306,6 +306,68 @@ fn an_in_process_note_skipped_by_take_if_is_never_claimed_and_its_sender_can_wit
 }
 
 #[test]
+fn an_in_process_withdrawal_issued_while_take_if_asks_about_a_note_succeeds_once_selection_lets_go()
+{
+    // As the predicate is asked about each rejected note, that note's sender
+    // withdraws it from another thread. The in-process predicate runs under the
+    // inbox's lock, which a withdrawal takes too, so the withdrawal is issued
+    // while the note is being looked at and completes only once selection lets
+    // the lock go: then it succeeds, and is never refused as taken.
+    let pair = Pair::in_process();
+    let mut offers: std::collections::HashMap<String, Offer<Shown>> = ["turn-end-1", "turn-end-2"]
+        .into_iter()
+        .map(|text| (text.to_owned(), pair.offer(text)))
+        .collect();
+    let urgent_offer = pair.offer("interrupt-1");
+    let mut withdrawing = Vec::new();
+    let claimed = pair
+        .inbox
+        .take_if(|note: &Note| {
+            if urgent(note) {
+                return true;
+            }
+            let offer = offers
+                .remove(&note.text)
+                .expect("each rejected note is asked about once");
+            let (issued, issuing) = std::sync::mpsc::channel();
+            let (answered, answer) = std::sync::mpsc::channel();
+            let thread = std::thread::spawn(move || {
+                issued.send(()).expect("the predicate listens");
+                answered
+                    .send(offer.withdraw().is_ok())
+                    .expect("the test listens");
+            });
+            issuing.recv().expect("the withdrawal is issued");
+            assert!(
+                answer.try_recv().is_err(),
+                "a withdrawal completed while selection held the inbox's lock"
+            );
+            withdrawing.push((note.text.clone(), thread, answer));
+            false
+        })
+        .expect("an urgent note is queued");
+    assert_eq!(claimed.message(), &note("interrupt-1"));
+    let withdrawn: Vec<(String, bool)> = withdrawing
+        .into_iter()
+        .map(|(text, thread, answer)| {
+            thread.join().expect("withdraws");
+            (text, answer.recv().expect("the withdrawal answered"))
+        })
+        .collect();
+    assert_eq!(
+        withdrawn,
+        [
+            ("turn-end-1".to_owned(), true),
+            ("turn-end-2".to_owned(), true)
+        ],
+        "a note looked at by take_if was refused as taken"
+    );
+    claimed.answer(presented("interrupt-1"));
+    assert_eq!(urgent_offer.wait(), Ok(presented("interrupt-1")));
+    assert_eq!(pair.drain(), Vec::<String>::new());
+}
+
+#[test]
 #[cfg_attr(
     not(target_os = "linux"),
     ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
