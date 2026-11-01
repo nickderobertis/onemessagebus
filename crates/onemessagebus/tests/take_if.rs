@@ -10,7 +10,7 @@
 //! its sender, a wait ends on an accepted arrival or at its timeout, and a note
 //! whose spool claim the file system refuses blocks nothing behind it.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -456,7 +456,7 @@ fn refuse_claims(address: &Path, refuse: bool) -> bool {
 )]
 fn a_spool_note_whose_claim_is_undecided_is_left_in_place_and_blocks_no_accepted_note_behind_it() {
     let pair = Pair::spool();
-    let address: PathBuf = pair.address().to_path_buf();
+    let address = pair.address().to_path_buf();
     let contested = pair.offer("interrupt-contested");
     let behind = pair.offer("interrupt-behind");
     // The receiver would present both; the file system refuses the head's claim
