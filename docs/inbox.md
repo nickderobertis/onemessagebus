@@ -13,7 +13,8 @@ a program brings its message and its disposition, and the inbox carries them.
   the message **and** answered it, or the inbox is closed.
 - `Inbox<M, D>` is the receiving end. `take()` hands over the next message if
   one is waiting and never blocks; `take_within(timeout)` blocks up to `timeout`
-  for one; `answered()` lists every message answered so far with its
+  for one; `take_if(predicate)` and `take_if_within(timeout, predicate)` take
+  only a message the receiver can present now (below); `answered()` lists every message answered so far with its
   disposition, oldest first; `close(Closed)` refuses every blocked sender, and
   every later one, with the closer's reason.
 - `Delivered<M, D>` is one taken message: `message()` reads it,
@@ -35,7 +36,7 @@ backend's bounded wait is withdrawn and reported `Undelivered`, exactly as
 `send` reports it — except one a spool courier already holds where the
 receiver's declaration has no file identity, as on Windows, which is read as
 its receiver's at the bound (below). `send` is `offer` followed by `wait`. A message is **taken**
-when `take` or `take_within` returns it.
+when `take`, `take_within`, `take_if` or `take_if_within` returns it.
 
 - `offer.wait()` blocks for the answer, as `send` does after admission.
 - `offer.wait_until(deadline) -> Result<D, Unanswered>` withdraws a message
@@ -73,6 +74,25 @@ when `take` or `take_within` returns it.
   has passed expires the message in the same operation, so no take can find
   it between the release and its sender waking. A message is answered at most once, and one released and
   then withdrawn or expired is never answered by the receiver.
+- `inbox.take_if(predicate)` is for a receiver that can present only some
+  messages now, such as one that presents an interrupting note mid-turn and
+  holds every note waiting for the turn to end. Under the inbox's lock it scans
+  the queue front to back and claims the first message `predicate` returns
+  `true` for, exactly as `take` claims, or returns `None` without waiting. A
+  withdrawn or expired message met on the way is dropped, as `take` drops it.
+  A message `predicate` rejects is never claimed, not even for the moment it is
+  looked at, and neither is one whose spool claim nothing could decide now.
+  Each stays untaken in its place, with its sender's deadline and its sender's
+  `withdraw` unaffected, and the scan goes on past it, so a message the
+  receiver would not present never blocks a later one. `predicate` runs under
+  the inbox's lock, so it must not use that inbox or a sender into it.
+- `inbox.take_if_within(timeout, predicate)` scans as `take_if` does, and
+  then blocks on the inbox's arrival condition. It scans again after every
+  wake: a message arriving, a release, or a withdrawal that changes the queue.
+  Between scans it waits and does not poll. It returns `None` once `timeout`
+  passes with no message accepted, or once the inbox is closed, as
+  `take_within` ends. Both hold on the in-process and spool backends. `take`,
+  `take_within` and `release` are unchanged by them.
 - Dropping an `Offer` withdraws nothing. The message stays offered and is still
   taken and answered, and the answer goes to nobody. Over a spool, the dropped
   offer removes its taken file, so the receiver writes no answer file nobody
