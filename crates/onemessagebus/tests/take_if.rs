@@ -11,11 +11,10 @@
 //! whose spool claim the file system refuses blocks nothing behind it.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use onemessagebus::{Disposition, Inbox, Message, Offer, SchemaId, Sender, Spool};
+use onemessagebus::{Disposition, Inbox, Message, Offer, SchemaId, Sender, Spool, Unanswered};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -115,24 +114,32 @@ impl Pair {
     }
 }
 
-/// The predicate's own call record: what it has been asked about, counted.
+/// The predicate's own call record: every note it has been asked about, in
+/// order.
 #[derive(Clone, Default)]
-struct Asked(Arc<AtomicUsize>);
+struct Asked(Arc<Mutex<Vec<String>>>);
 
 impl Asked {
     fn urgent(&self) -> impl FnMut(&Note) -> bool + Send + 'static {
         let asked = Arc::clone(&self.0);
         move |note: &Note| {
-            asked.fetch_add(1, Ordering::SeqCst);
+            asked
+                .lock()
+                .expect("the record is readable")
+                .push(note.text.clone());
             urgent(note)
         }
+    }
+
+    fn asked(&self) -> Vec<String> {
+        self.0.lock().expect("the record is readable").clone()
     }
 
     /// Wait until the predicate has been asked at least `times` times; a guard
     /// against a hang, never a measure.
     fn until(&self, times: usize) {
         let gave_up = Instant::now() + TAKE;
-        while self.0.load(Ordering::SeqCst) < times {
+        while self.asked().len() < times {
             assert!(
                 Instant::now() < gave_up,
                 "the predicate was never asked {times} times"
@@ -449,4 +456,164 @@ fn a_spool_note_whose_claim_is_undecided_is_left_in_place_and_blocks_no_accepted
     assert_eq!(again.message(), &note("interrupt-contested"));
     again.answer(presented("contested"));
     assert_eq!(contested.wait(), Ok(presented("contested")));
+}
+
+#[test]
+fn an_in_process_withdrawal_wakes_a_waiting_take_if_within_which_looks_again_without_it() {
+    let pair = Pair::in_process();
+    let withdrawn = pair.offer("turn-end-1");
+    let kept = pair.offer("turn-end-2");
+    let asked = Asked::default();
+    let waiting = {
+        let inbox = Arc::clone(&pair.inbox);
+        let urgent = asked.urgent();
+        std::thread::spawn(move || inbox.take_if_within(TAKE, urgent))
+    };
+    asked.until(2);
+    assert!(withdrawn.withdraw().is_ok());
+    // Nothing else changes the queue: the next look is the withdrawal's.
+    asked.until(3);
+    assert_eq!(asked.asked(), ["turn-end-1", "turn-end-2", "turn-end-2"]);
+    let urgent_offer = pair.offer("interrupt-1");
+    let claimed = waiting.join().expect("the wait ends").expect("claimed");
+    assert_eq!(claimed.message(), &note("interrupt-1"));
+    claimed.answer(presented("interrupt-1"));
+    assert_eq!(urgent_offer.wait(), Ok(presented("interrupt-1")));
+    assert_eq!(pair.drain(), ["turn-end-2"]);
+    assert_eq!(kept.wait(), Ok(presented("turn-end-2")));
+}
+
+fn a_release_wakes_a_waiting_take_if_within_with_the_message_it_hands_back(pair: &Pair) {
+    let held = pair.offer("interrupt-1");
+    let turn_end = pair.offer("turn-end-1");
+    let delivered = pair.inbox.take().expect("the urgent note is queued");
+    assert_eq!(delivered.message(), &note("interrupt-1"));
+    let asked = Asked::default();
+    let waiting = {
+        let inbox = Arc::clone(&pair.inbox);
+        let urgent = asked.urgent();
+        std::thread::spawn(move || inbox.take_if_within(TAKE, urgent))
+    };
+    asked.until(1);
+    delivered.release();
+    let claimed = waiting.join().expect("the wait ends").expect("claimed");
+    assert_eq!(claimed.message(), &note("interrupt-1"));
+    claimed.answer(presented("again"));
+    assert_eq!(held.wait(), Ok(presented("again")));
+    assert!(turn_end.withdraw().is_ok(), "the skipped note was taken");
+}
+
+#[test]
+fn an_in_process_release_wakes_a_waiting_take_if_within_with_the_message_it_hands_back() {
+    a_release_wakes_a_waiting_take_if_within_with_the_message_it_hands_back(&Pair::in_process());
+}
+
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
+fn a_spool_release_wakes_a_waiting_take_if_within_with_the_message_it_hands_back() {
+    a_release_wakes_a_waiting_take_if_within_with_the_message_it_hands_back(&Pair::spool());
+}
+
+fn a_zero_or_unbounded_timeout_still_claims_what_is_queued(pair: &Pair) {
+    // Zero: one look, no wait — an accepted note already queued is claimed,
+    // and with none the take is empty at once and leaves the rest untaken.
+    let turn_end = pair.offer("turn-end-1");
+    assert!(pair.inbox.take_if_within(Duration::ZERO, urgent).is_none());
+    let queued = pair.offer("interrupt-1");
+    let claimed = pair
+        .inbox
+        .take_if_within(Duration::ZERO, urgent)
+        .expect("the queued urgent note is claimed");
+    assert_eq!(claimed.message(), &note("interrupt-1"));
+    claimed.answer(presented("interrupt-1"));
+    assert_eq!(queued.wait(), Ok(presented("interrupt-1")));
+
+    // A timeout past any representable deadline: an accepted note queued is
+    // claimed at once, and one arriving later ends the wait.
+    let queued = pair.offer("interrupt-2");
+    let claimed = pair
+        .inbox
+        .take_if_within(Duration::MAX, urgent)
+        .expect("the queued urgent note is claimed");
+    assert_eq!(claimed.message(), &note("interrupt-2"));
+    claimed.answer(presented("interrupt-2"));
+    assert_eq!(queued.wait(), Ok(presented("interrupt-2")));
+    let asked = Asked::default();
+    let waiting = {
+        let inbox = Arc::clone(&pair.inbox);
+        let urgent = asked.urgent();
+        std::thread::spawn(move || inbox.take_if_within(Duration::MAX, urgent))
+    };
+    asked.until(1);
+    let arriving = pair.offer("interrupt-3");
+    let claimed = waiting.join().expect("the wait ends").expect("claimed");
+    assert_eq!(claimed.message(), &note("interrupt-3"));
+    claimed.answer(presented("interrupt-3"));
+    assert_eq!(arriving.wait(), Ok(presented("interrupt-3")));
+    assert!(turn_end.withdraw().is_ok(), "the skipped note was taken");
+}
+
+#[test]
+fn an_in_process_take_if_within_with_a_zero_or_unbounded_timeout_still_claims_what_is_queued() {
+    a_zero_or_unbounded_timeout_still_claims_what_is_queued(&Pair::in_process());
+}
+
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
+fn a_spool_take_if_within_with_a_zero_or_unbounded_timeout_still_claims_what_is_queued() {
+    a_zero_or_unbounded_timeout_still_claims_what_is_queued(&Pair::spool());
+}
+
+fn an_accepted_note_withdrawn_or_expired_is_dropped_and_the_next_claimed(pair: &Pair) {
+    let withdrawn = pair.offer("interrupt-withdrawn");
+    let expiring = pair.offer("interrupt-expired");
+    let next = pair.offer("interrupt-next");
+    assert!(withdrawn.withdraw().is_ok());
+    assert_eq!(
+        expiring.wait_until(Instant::now() + Duration::from_millis(50)),
+        Err(Unanswered::Expired)
+    );
+    // Both are accepted, and both are their senders' again: the take drops
+    // them as it meets them and goes on to the next.
+    let claimed = pair
+        .inbox
+        .take_if(urgent)
+        .expect("the note behind them is claimed");
+    assert_eq!(claimed.message(), &note("interrupt-next"));
+    claimed.answer(presented("interrupt-next"));
+    assert_eq!(next.wait(), Ok(presented("interrupt-next")));
+    assert_eq!(pair.drain(), Vec::<String>::new());
+}
+
+#[test]
+fn an_in_process_take_if_drops_an_accepted_message_withdrawn_or_expired_and_claims_the_next() {
+    an_accepted_note_withdrawn_or_expired_is_dropped_and_the_next_claimed(&Pair::in_process());
+}
+
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
+fn a_spool_take_if_drops_an_accepted_message_withdrawn_or_expired_and_claims_the_next() {
+    let pair = Pair::spool();
+    an_accepted_note_withdrawn_or_expired_is_dropped_and_the_next_claimed(&pair);
+    let leftover: Vec<String> = std::fs::read_dir(pair.address())
+        .expect("the spool is a directory")
+        .map(|entry| {
+            entry
+                .expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| name.contains('-'))
+        .collect();
+    assert_eq!(leftover, Vec::<String>::new());
 }
