@@ -354,6 +354,11 @@ pub(crate) trait Gate: Send {
     fn admitted(&mut self) -> Acknowledged;
     /// Claim the message for the receiver as it is taken.
     fn claim(&mut self) -> Claimed;
+    /// Whether a message the receiver is passing over is no longer one to
+    /// take — withdrawn by its sender, or past its sender's deadline, and so
+    /// expired here — and is to be dropped. A live message's claim is never
+    /// contested in deciding it.
+    fn lapsed(&mut self) -> bool;
     /// Give a claimed message back, so its sender can withdraw it again — or,
     /// when its sender is past its deadline, expire it.
     fn release(&mut self) -> Released;
@@ -781,9 +786,16 @@ impl<M: Message + Send + 'static, D: Disposition> Inbox<M, D> {
         let mut at = 0;
         while let Some(queued) = state.queue.get_mut(at) {
             // Asked before any claim, so a rejected message's sender never
-            // meets one, not even for a moment.
+            // meets one, not even for a moment. One its sender withdrew, or
+            // whose deadline passed, is still dropped as a take drops it.
             if !predicate(&queued.message) {
-                at += 1;
+                if queued.gate.as_mut().is_some_and(|gate| gate.lapsed()) {
+                    if let Some(lapsed) = state.queue.remove(at) {
+                        lapsed.reply.forget();
+                    }
+                } else {
+                    at += 1;
+                }
                 continue;
             }
             match queued.gate.as_mut().map(|gate| gate.claim()) {

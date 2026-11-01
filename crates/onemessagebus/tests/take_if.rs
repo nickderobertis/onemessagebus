@@ -97,6 +97,46 @@ impl Pair {
             .expect("a spool pair")
     }
 
+    /// The files of the spool that belong to one message rather than to the
+    /// binding: every message's id carries a `-`, and no binding file does.
+    fn message_files(&self) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(self.address())
+            .expect("the spool is a directory")
+            .map(|entry| {
+                entry
+                    .expect("an entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .filter(|name| name.contains('-'))
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// When the spool's directory last had a file created, renamed or removed
+    /// in it.
+    fn touched(&self) -> std::time::SystemTime {
+        std::fs::metadata(self.address())
+            .and_then(|metadata| metadata.modified())
+            .expect("the spool's modification time")
+    }
+
+    /// How many messages the inbox holds queued, as its `Debug` says.
+    fn queued(&self) -> String {
+        let shown = format!("{:?}", self.inbox);
+        let queued = shown
+            .split("queued: ")
+            .nth(1)
+            .expect("the inbox says how many are queued");
+        queued
+            .split(|c: char| !c.is_ascii_digit())
+            .next()
+            .expect("a count")
+            .to_owned()
+    }
+
     fn offer(&self, text: &str) -> Offer<Shown> {
         self.sender.offer(note(text)).expect("admitted")
     }
@@ -313,18 +353,7 @@ fn a_spool_note_skipped_by_take_if_is_never_claimed_and_its_sender_can_withdraw_
     assert_eq!(pair.drain(), Vec::<String>::new());
 
     // Every withdrawal went through the spool's claim contest, and left nothing.
-    let leftover: Vec<String> = std::fs::read_dir(pair.address())
-        .expect("the spool is a directory")
-        .map(|entry| {
-            entry
-                .expect("an entry")
-                .file_name()
-                .to_string_lossy()
-                .into_owned()
-        })
-        .filter(|name| name.contains('-'))
-        .collect();
-    assert_eq!(leftover, Vec::<String>::new());
+    assert_eq!(pair.message_files(), Vec::<String>::new());
 }
 
 fn a_wait_ends_on_an_accepted_arrival_or_at_its_timeout(pair: &Pair) {
@@ -604,16 +633,58 @@ fn an_in_process_take_if_drops_an_accepted_message_withdrawn_or_expired_and_clai
 fn a_spool_take_if_drops_an_accepted_message_withdrawn_or_expired_and_claims_the_next() {
     let pair = Pair::spool();
     an_accepted_note_withdrawn_or_expired_is_dropped_and_the_next_claimed(&pair);
-    let leftover: Vec<String> = std::fs::read_dir(pair.address())
-        .expect("the spool is a directory")
-        .map(|entry| {
-            entry
-                .expect("an entry")
-                .file_name()
-                .to_string_lossy()
-                .into_owned()
-        })
-        .filter(|name| name.contains('-'))
-        .collect();
-    assert_eq!(leftover, Vec::<String>::new());
+    assert_eq!(pair.message_files(), Vec::<String>::new());
+}
+
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
+fn a_spool_take_if_drops_a_withdrawn_message_it_rejects_and_clears_its_files() {
+    let pair = Pair::spool();
+    let withdrawn = pair.offer("turn-end-withdrawn");
+    let live = pair.offer("turn-end-live");
+
+    // Live, one with a deadline published and not yet due: a scan rejecting
+    // them changes nothing in the spool — no claim is made and given back, not
+    // even for a moment, since either would touch the directory.
+    let deadlined = pair.offer("turn-end-deadline");
+    let waiting =
+        std::thread::spawn(move || deadlined.wait_until(Instant::now() + Duration::from_secs(1)));
+    while !pair
+        .message_files()
+        .iter()
+        .any(|name| name.ends_with(".deadline.json"))
+    {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let before = (pair.message_files(), pair.touched());
+    assert!(pair.inbox.take_if(urgent).is_none());
+    assert_eq!(
+        (pair.message_files(), pair.touched()),
+        before,
+        "a scan rejecting live notes wrote to the spool"
+    );
+    assert_eq!(waiting.join().expect("waits"), Err(Unanswered::Expired));
+    assert!(pair.inbox.take_if(urgent).is_none());
+    // Its sender holds its claim now; the receiver's inbox still has it queued
+    // until a scan meets it.
+    assert!(withdrawn.withdraw().is_ok());
+    assert_eq!(pair.queued(), "2");
+    assert!(pair.inbox.take_if(urgent).is_none());
+    // The scan met the withdrawn note, rejected or not, and dropped it with
+    // its files; the live note it rejected is still queued, untaken.
+    assert_eq!(pair.queued(), "1", "the scan kept a withdrawn note queued");
+    let files = pair.message_files();
+    assert!(
+        files.iter().all(|name| !name.contains(".claimed")),
+        "the withdrawn note's files were left behind, or the live note was claimed: {files:?}"
+    );
+    assert_eq!(
+        files.len(),
+        2,
+        "not just the live note's taken and admitted files: {files:?}"
+    );
+    assert!(live.withdraw().is_ok(), "the live note was taken");
 }

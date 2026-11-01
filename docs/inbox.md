@@ -77,9 +77,11 @@ when `take`, `take_within`, `take_if` or `take_if_within` returns it.
 - `inbox.take_if(predicate)` and `inbox.take_if_within(timeout, predicate)`
   are for a receiver that can present only some messages now: they claim the
   first queued message `predicate` accepts, as `take` claims, and the second
-  waits on the inbox's arrivals for one. A message `predicate` rejects is never
-  claimed, even while it is looked at. It stays untaken in its place, still
-  withdrawable by its sender, so it blocks no later message. Their signatures
+  waits on the inbox's arrivals for one. A live message `predicate` rejects is
+  never claimed, even while it is looked at. It stays untaken in its place,
+  still withdrawable by its sender, so it blocks no later message. One already
+  withdrawn, or past its sender's deadline, is dropped as `take` drops it,
+  whether `predicate` accepts it or not. Their signatures
   and full contract are the rustdoc of `Inbox::take_if` and
   `Inbox::take_if_within`.
 - Dropping an `Offer` withdraws nothing. The message stays offered and is still
@@ -184,7 +186,9 @@ A directory a receiver's process binds, for a sender in another process.
   does: a release past it creates `<id>.expired`, drops the message from the
   inbox and keeps its claim, so no take can come before the sender reads it,
   reports `Expired`, and removes the message's files. A take that claims a
-  message past its published deadline does the same. A deadline the file system
+  message past its published deadline does the same, and so does a
+  `take_if` scan passing over one it rejects; it claims no message before its
+  deadline that it rejects. A deadline the file system
   refuses to publish is published at the sender's next look. One the receiver
   cannot read, or one on a clock it does not read, is no deadline, and the
   sender's own withdrawal at it still decides. An `<id>.expired` the file system
@@ -253,7 +257,7 @@ A directory a receiver's process binds, for a sender in another process.
     `<id>.admitted.json` is absent, without which the inbox queues nothing and
     which it writes under its lock before any take; finding it there, the sender gives the claim back and reads the
     message as taken. A take that lost to that claim in the moment before it
-    was given back drops the message, and its sender is told it was lost:
+    was given back, or a `take_if` scan that met it then, drops the message, and its sender is told it was lost:
     never answered, never expired, never withdrawn. That covers a receiver on
     another boot or in another time namespace, one whose `admission.json`
     records no clock or one this build cannot read, either side unable to read

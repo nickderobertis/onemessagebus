@@ -1448,6 +1448,43 @@ fn a_first_take_past_the_deadline_of_a_suspended_sender_expires_the_message_unta
     assert_eq!(message_files(&address), Vec::<String>::new());
 }
 
+#[test]
+#[cfg_attr(
+    not(target_os = "linux"),
+    ignore = "withdrawing an admitted message needs a monotonic clock both sides verify they share, which only Linux identifies"
+)]
+fn a_take_if_rejecting_a_message_past_a_suspended_senders_deadline_still_expires_and_drops_it() {
+    let (_dir, address) = spool_dir();
+    let inbox = Inbox::<Order, Receipt>::new();
+    let _spool = Spool::bind(&address, &inbox).expect("binds");
+    let mut sender = Receiver::start("sender_child", SENDER_SPOOL, &address);
+    assert_eq!(sender.reply(), "admitted");
+    // Never taken: the sender starts waiting and is suspended once its deadline
+    // is published, before it passes.
+    sender.tell("wait 300");
+    published_deadline(&address);
+    sender.signal("-STOP");
+    std::thread::sleep(Duration::from_millis(600));
+    // The receiver would not present it, but it is expired: the scan drops it,
+    // and says so to its sender, though the sender has not run since.
+    assert!(inbox.take_if(|order| order.sku != "late").is_none());
+    assert!(
+        format!("{inbox:?}").contains("queued: 0"),
+        "the scan kept an expired message queued: {inbox:?}"
+    );
+    assert!(
+        message_files(&address)
+            .iter()
+            .any(|name| name.ends_with(".expired")),
+        "the scan did not tell the sender the message expired: {:?}",
+        message_files(&address)
+    );
+    sender.signal("-CONT");
+    assert_eq!(sender.reply(), "expired");
+    assert!(inbox.take().is_none());
+    assert_eq!(message_files(&address), Vec::<String>::new());
+}
+
 const RACES: usize = 200;
 
 /// Which side of race `race` waits before it moves, and for how long: a sweep
