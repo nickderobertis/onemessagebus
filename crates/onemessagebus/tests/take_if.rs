@@ -266,6 +266,45 @@ fn an_in_process_note_skipped_by_take_if_is_never_claimed_and_its_sender_can_wit
 fn a_spool_note_skipped_by_take_if_is_never_claimed_and_its_sender_can_withdraw_it() {
     let pair = Pair::spool();
     a_skipped_note_is_never_claimed_while_selecting(&pair);
+
+    // And in the very moment it is looked at: as the predicate is asked about
+    // each rejected note, that note's sender withdraws it from another thread.
+    // A spool withdrawal is a claim contest on the spool's files and takes no
+    // inbox lock, so a take that claimed a note before asking about it would
+    // win that contest and the withdrawal would be refused as taken.
+    let mut offers: std::collections::HashMap<String, Offer<Shown>> = ["turn-end-6", "turn-end-7"]
+        .into_iter()
+        .map(|text| (text.to_owned(), pair.offer(text)))
+        .collect();
+    let urgent_offer = pair.offer("interrupt-3");
+    let mut withdrawn = Vec::new();
+    let claimed = pair
+        .inbox
+        .take_if(|note: &Note| {
+            if urgent(note) {
+                return true;
+            }
+            let offer = offers
+                .remove(&note.text)
+                .expect("each rejected note is asked about once");
+            let withdrawing = std::thread::spawn(move || offer.withdraw().is_ok());
+            withdrawn.push((note.text.clone(), withdrawing.join().expect("withdraws")));
+            false
+        })
+        .expect("an urgent note is queued");
+    assert_eq!(claimed.message(), &note("interrupt-3"));
+    assert_eq!(
+        withdrawn,
+        [
+            ("turn-end-6".to_owned(), true),
+            ("turn-end-7".to_owned(), true)
+        ],
+        "a note was claimed as it was looked at"
+    );
+    claimed.answer(presented("interrupt-3"));
+    assert_eq!(urgent_offer.wait(), Ok(presented("interrupt-3")));
+    assert_eq!(pair.drain(), Vec::<String>::new());
+
     // Every withdrawal went through the spool's claim contest, and left nothing.
     let leftover: Vec<String> = std::fs::read_dir(pair.address())
         .expect("the spool is a directory")
