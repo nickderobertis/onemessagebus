@@ -461,6 +461,45 @@ fn inbox_md_names_every_file_a_spool_holds() {
     );
 }
 
+#[test]
+fn inbox_md_names_every_way_a_message_becomes_taken() {
+    let inbox_md = include_str!("../../../docs/inbox.md");
+    let inbox_rs = include_str!("../src/inbox.rs");
+    let public: Vec<String> = inbox_rs
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("pub fn "))
+        .filter_map(|rest| rest.split(['(', '<']).next())
+        .filter(|name| name.starts_with("take"))
+        .map(str::to_owned)
+        .collect();
+    let sentence = inbox_md
+        .split("A message is **taken**\nwhen ")
+        .nth(1)
+        .and_then(|rest| rest.split(" returns it.").next())
+        .expect("docs/inbox.md says when a message is taken");
+    let documented: Vec<String> = sentence
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(
+        documented, public,
+        "docs/inbox.md's list of what takes a message is not the inbox's public takes"
+    );
+    let pair = inbox_md
+        .split("## The pair")
+        .nth(1)
+        .and_then(|rest| rest.split("\n## ").next())
+        .expect("docs/inbox.md has a `The pair` section");
+    for take in &public {
+        assert!(
+            pair.contains(&format!("`{take}(")),
+            "docs/inbox.md's `The pair` does not name `{take}`"
+        );
+    }
+}
+
 /// The fields `docs/inbox.md`'s file table gives the document `file` — the
 /// `{a, b}` that leads its description — sorted. Read only by the admission
 /// documents' journey, which runs on Linux.
