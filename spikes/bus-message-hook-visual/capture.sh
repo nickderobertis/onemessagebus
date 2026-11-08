@@ -478,3 +478,14 @@ want="$(sed -n '/"name": "queues"/,/hash/s/.*"hash": "\([0-9a-f]*\)".*/\1/p' "$r
   exit 1
 }
 cp "$repo_root/docs/screenshots/queues.svg" "$docs_dir/queues-before.svg"
+
+# SPIKE: a PNG of each image for the report store, which holds raster assets only,
+# rendered by Playwright's cached headless Chromium at 2x.
+chrome="$(ls -d "$HOME"/.cache/ms-playwright/chromium_headless_shell-*/*/chrome-headless-shell | sort -V | tail -n1)"
+for svg in "$docs_dir"/*.svg; do
+  w="$(grep -o 'width="[0-9.]*"' "$svg" | head -n1 | tr -dc 0-9.)"
+  h="$(grep -o 'height="[0-9.]*"' "$svg" | head -n1 | tr -dc 0-9.)"
+  "$chrome" --no-sandbox --hide-scrollbars --force-device-scale-factor=2 \
+    --window-size="${w%.*},${h%.*}" --screenshot="${svg%.svg}.png" "file://$svg" >/dev/null 2>&1
+done
+echo "spike: wrote $(ls "$docs_dir"/*.png | wc -l) images to $docs_dir" >&2
