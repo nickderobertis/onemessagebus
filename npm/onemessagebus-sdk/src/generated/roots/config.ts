@@ -168,8 +168,14 @@ export interface Config {
       }
     | undefined;
   /**
+   * Hooks running on what is offered to a queue before anything is
+   * appended, in the order each queue runs them (`docs/hooks.md`).
+   */
+  hooks?: HookConfig[] | undefined;
+  /**
    * Validators judging what is offered to a queue before anything is
-   * appended, in the order each queue judges by them.
+   * appended, in the order each queue judges by them — deprecated: declare
+   * `hooks`, which run first, and these judge the records the hooks made.
    */
   validators?: ValidatorConfig[] | undefined;
   /**
@@ -369,6 +375,53 @@ export interface AuthorConfig {
     | undefined;
 }
 /**
+ * One hook of a configuration: a command, which a Rust hook a linking
+ * consumer registers is not — that one is code ([`Bus::with_hook`]).
+ */
+export interface HookConfig {
+  /**
+   * A queue's name: a non-empty run of ASCII letters, digits, `-` and `_`,
+   * starting with a letter or digit — `questions`, `action-outcomes`.
+   */
+  on: string;
+  /**
+   * Which of them it runs on; every one when absent.
+   */
+  when?: When | null | undefined;
+  /**
+   * The command's argv, the program first: the message on its stdin as one
+   * line of JSON, and what it prints the message from then on.
+   */
+  command: string[];
+  /**
+   * The queues it may reroute a message to; it may reroute nowhere when
+   * absent.
+   */
+  routes?: QueueName[] | null | undefined;
+  /**
+   * Where its keeps, changes and drops are recorded; nowhere when absent.
+   * Only for a hook whose outcome depends on nothing but its input and the
+   * fingerprinted bar.
+   */
+  cache?: CacheConfig | null | undefined;
+}
+/**
+ * Where a command validator records its passes.
+ */
+export interface CacheConfig {
+  /**
+   * The directory records are kept in, relative to the working directory
+   * when relative.
+   */
+  dir: string;
+  /**
+   * The argv whose output fingerprints the bar: a pass recorded under one
+   * fingerprint is not a pass under another.
+   */
+  bar_fingerprint: string[];
+}
+/**
+ * @deprecated
  * One validator of a configuration: the external kind, which a Rust
  * validator a linking consumer registers is not — that one is code
  * ([`Bus::with_validator`]).
@@ -397,21 +450,6 @@ export interface ValidatorConfig {
    * Where its passes are recorded; nowhere when absent.
    */
   cache?: CacheConfig | null | undefined;
-}
-/**
- * Where a command validator records its passes.
- */
-export interface CacheConfig {
-  /**
-   * The directory records are kept in, relative to the working directory
-   * when relative.
-   */
-  dir: string;
-  /**
-   * The argv whose output fingerprints the bar: a pass recorded under one
-   * fingerprint is not a pass under another.
-   */
-  bar_fingerprint: string[];
 }
 /**
  * What a host configures for one codec, under its name in the configuration's
@@ -564,11 +602,11 @@ const $OpWord: z.ZodType = z.string();
 
 const $RefusalReason: z.ZodType = z.string().regex(new RegExp(".*\\S.*", "u"));
 
-const $ValidatorConfig: z.ZodType = z.strictObject({
+const $HookConfig: z.ZodType = z.strictObject({
   on: z.lazy(() => $QueueName),
   when: anyOf([z.lazy(() => $When), z.null()]).optional(),
-  kind: z.lazy(() => $ValidatorKind),
   command: z.array(z.string()),
+  routes: anyOf([z.array(z.lazy(() => $QueueName)), z.null()]).optional(),
   cache: anyOf([z.lazy(() => $CacheConfig), z.null()]).optional(),
 });
 
@@ -577,12 +615,20 @@ const $When: z.ZodType = anyOf([
   z.lazy(() => $Predicate),
 ]);
 
-const $ValidatorKind: z.ZodType = oneOf([z.literal("command")]);
-
 const $CacheConfig: z.ZodType = z.strictObject({
   dir: z.string(),
   bar_fingerprint: z.array(z.string()),
 });
+
+const $ValidatorConfig: z.ZodType = z.strictObject({
+  on: z.lazy(() => $QueueName),
+  when: anyOf([z.lazy(() => $When), z.null()]).optional(),
+  kind: z.lazy(() => $ValidatorKind),
+  command: z.array(z.string()),
+  cache: anyOf([z.lazy(() => $CacheConfig), z.null()]).optional(),
+});
+
+const $ValidatorKind: z.ZodType = oneOf([z.literal("command")]);
 
 const $CodecConfig: z.ZodType = z.strictObject({
   queue: anyOf([z.lazy(() => $QueueName), z.null()]).optional(),
@@ -654,6 +700,7 @@ export const ConfigSchema = contract<Config>(
         z.lazy(() => $AuthorConfig),
       )
       .optional(),
+    hooks: z.array(z.lazy(() => $HookConfig)).optional(),
     validators: z.array(z.lazy(() => $ValidatorConfig)).optional(),
     codecs: z
       .record(

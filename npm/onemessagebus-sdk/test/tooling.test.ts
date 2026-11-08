@@ -75,6 +75,7 @@ describe("the zod generator", () => {
   const cases: {
     refusals: { expected: string; refused: boolean; named?: boolean; message?: string }[];
     parses: boolean[];
+    declarations: string;
   } = JSON.parse(run.stdout || "{}");
 
   test("runs its cases cleanly", () => {
@@ -94,8 +95,15 @@ describe("the zod generator", () => {
   test("emits schemas that hold the constraints the Rust validator does", () => {
     // a two-astral-character name passes (code points, not UTF-16 units); then an empty
     // name, a long one, a missing required key, a negative uint, an unknown key, and
-    // a map value outside its enum are each refused
-    expect(cases.parses).toEqual([true, false, false, false, false, false, false]);
+    // a map value outside its enum are each refused; a deprecated field still parses,
+    // and still holds its type
+    expect(cases.parses).toEqual([true, false, false, false, false, false, false, true, false]);
+  });
+
+  test("carries `deprecated` to the declarations as a tag, constraining nothing", () => {
+    expect(cases.declarations).toMatch(
+      /\* @deprecated\n\s*\* Superseded\.\n\s*\*\/\n\s*old\?: string/u,
+    );
   });
 });
 

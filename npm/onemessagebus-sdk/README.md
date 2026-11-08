@@ -62,18 +62,23 @@ lists every one beside its command. Each takes its generated options type
 shapes worth knowing:
 
 ```ts
-await client.send(queue, message, options?);                  // Sent[]
+await client.send(queue, message, options?);                  // Sent[]: each Appended, or Dropped by a hook
 await client.next(queue, { consumer, asker, type });          // Claimed<T> | undefined
-await client.reply(queue, correlation, reply, options?);      // Replied
-await client.validate(queue, message, options?);              // Validated: a refusal is a verdict, not a throw
+await client.reply(queue, correlation, reply, options?);      // Replied: Delivered, or Dropped by a hook ("dropped" in it)
+await client.validate(queue, message, options?);              // Validated: verdict, outcome and records; a refusal is a verdict, not a throw
 const answer = await client.ask(queue, question, { blocking: true, asker: "worker-1", timeout: 300 });
-switch (answer.answer) {                                      // "reply" | "timeout" | "abandoned" | "refused"
+switch (answer.answer) {                                      // "reply" | "timeout" | "abandoned" | "refused" | "dropped"
   case "reply": console.log(answer.reply); break;
 }
 for await (const record of client.subscribe("questions", { until: { field: "event", equals: "answered" }, timeout: 600 })) {
   console.log(record.position, record.record);                // leaving the loop stops the subscription
 }
 ```
+
+A configuration the binary reads can be built from the generated `Config` type —
+its `hooks` entries typed as `HookConfig` — and written with
+`writeConfig(config, path)`, which validates it by the generated schema first and
+rejects with `BusRefused` naming the pointer of a field the binary would refuse.
 
 `client.schema` registers, checks and lists schemas: `register(messageOrSchema, id?)`,
 `check(idOrMessage, payload)` and `list()`.

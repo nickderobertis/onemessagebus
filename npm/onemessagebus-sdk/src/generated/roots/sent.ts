@@ -3,9 +3,14 @@ import { z } from "zod";
 import { anyOf, contract, oneOf } from "../runtime.js";
 
 /**
- * One record `send` or `reply` appended.
+ * One line `send` prints: a record it appended, or one a hook dropped.
  */
-export interface Sent {
+export type Sent = Sent1 | DroppedRecord;
+
+/**
+ * A record appended.
+ */
+export interface Sent1 {
   /**
    * The queue it landed on.
    */
@@ -19,15 +24,35 @@ export interface Sent {
    */
   id?: number | null | undefined;
 }
+/**
+ * A record a hook dropped, recorded in the queue's drop log.
+ */
+export interface DroppedRecord {
+  /**
+   * The queue the dropping hook ran on, whose drop log records it.
+   */
+  queue: string;
+  /**
+   * Always `true`.
+   */
+  dropped: boolean;
+}
+
+const $Sent: z.ZodType = z.strictObject({
+  queue: z.lazy(() => $QueueName),
+  position: z.lazy(() => $Position),
+  id: anyOf([z.int().gte(0), z.null()]).optional(),
+});
 
 const $QueueName: z.ZodType = z.string();
 
 const $Position: z.ZodType = z.int().gte(0);
 
+const $DroppedRecord: z.ZodType = z.strictObject({
+  queue: z.lazy(() => $QueueName),
+  dropped: z.boolean(),
+});
+
 export const SentSchema = contract<Sent>(
-  z.strictObject({
-    queue: z.lazy(() => $QueueName),
-    position: z.lazy(() => $Position),
-    id: anyOf([z.int().gte(0), z.null()]).optional(),
-  }),
+  anyOf([z.lazy(() => $Sent), z.lazy(() => $DroppedRecord)]),
 );

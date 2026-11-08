@@ -2,6 +2,7 @@
 // generator is a build script, not SDK source, so its behaviour is tested from the
 // outside and it never enters the SDK's coverage report. Prints one JSON document.
 import { z } from "zod";
+import { typescriptDeclarations } from "../scripts/typescript-generator.mjs";
 import { expression, UnsupportedSchema, zodDeclarations } from "../scripts/zod-generator.mjs";
 
 /** Schemas the generator must refuse, each by the words it must refuse them in. */
@@ -41,6 +42,7 @@ const module = zodDeclarations(
       any: {},
       tagged: { oneOf: [{ const: "a" }, { const: "b" }] },
       map: { type: "object", additionalProperties: { $ref: "#/$defs/Word" } },
+      old: { type: "string", description: "Superseded.", deprecated: true },
     },
     required: ["name", "any"],
     additionalProperties: false,
@@ -65,6 +67,17 @@ const parses = [
   { name: "a", any: 1, count: -1 },
   { name: "a", any: 1, extra: true },
   { name: "a", any: 1, map: { k: "z" } },
+  { name: "a", any: 1, old: "kept" },
+  { name: "a", any: 1, old: 1 },
 ].map((value) => schema.safeParse(value).success);
 
-process.stdout.write(JSON.stringify({ refusals, parses }));
+// `deprecated` constrains nothing, so it is carried to the declarations as a tag.
+const declarations = await typescriptDeclarations(
+  {
+    type: "object",
+    properties: { old: { type: "string", description: "Superseded.", deprecated: true } },
+  },
+  "Thing",
+);
+
+process.stdout.write(JSON.stringify({ refusals, parses, declarations }));

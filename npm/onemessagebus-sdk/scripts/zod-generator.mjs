@@ -4,8 +4,12 @@
 // by keyword and JSON pointer: a keyword this emitter silently dropped would be a
 // constraint the Rust core enforces and this SDK claims to, but does not.
 
-/** Keywords that describe a schema and constrain nothing. */
-const METADATA = new Set(["$schema", "title", "description", "default", "examples"]);
+/**
+ * Keywords that describe a schema and constrain nothing. `deprecated` is an
+ * annotation: a deprecated field still parses, and the declarations carry it as a
+ * `@deprecated` tag.
+ */
+const METADATA = new Set(["$schema", "title", "description", "default", "examples", "deprecated"]);
 
 /** The integer formats schemars writes for Rust integers. */
 const INTEGER_FORMATS = new Set([

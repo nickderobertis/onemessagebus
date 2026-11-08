@@ -3,13 +3,24 @@ import { z } from "zod";
 import { anyOf, contract, oneOf } from "../runtime.js";
 
 /**
- * What `validate` judged: the queue, and the verdict its validators reached.
+ * What `validate` decided: the queue, the verdict, what the offer became, and
+ * the records a send would append.
  */
 export type Validated = {
   /**
-   * The queue the record was judged for.
+   * The queue the record was offered to.
    */
   queue: string;
+  /**
+   * What the offer became.
+   */
+  outcome: "keep" | "change" | "drop" | "refuse" | "unjudged";
+  /**
+   * Each record a send would append, in order, its bytes as a send would
+   * append them; empty for a drop of the whole offer, a refusal and an
+   * unjudged offer.
+   */
+  records: ValidatedRecord[];
   [k: string]: unknown;
 } & (
   | {
@@ -18,7 +29,7 @@ export type Validated = {
     }
   | {
       /**
-       * Why, in the validator's own words.
+       * Why, in the refusing hook's or validator's own words.
        */
       reason: string;
       verdict: "refuse";
@@ -26,7 +37,7 @@ export type Validated = {
     }
   | {
       /**
-       * Why no judgement could be made.
+       * Why no decision could be made.
        */
       reason: string;
       verdict: "unjudged";
@@ -34,11 +45,44 @@ export type Validated = {
     }
 );
 
+/**
+ * One record `validate` says a send would append.
+ */
+export interface ValidatedRecord {
+  /**
+   * The queue it would land on.
+   */
+  queue: string;
+  /**
+   * The record, its bytes as a send would append them.
+   */
+  record: unknown;
+}
+
 const $QueueName: z.ZodType = z.string();
+
+const $OutcomeWord: z.ZodType = oneOf([
+  z.literal("keep"),
+  z.literal("change"),
+  z.literal("drop"),
+  z.literal("refuse"),
+  z.literal("unjudged"),
+]);
+
+const $ValidatedRecord: z.ZodType = z.strictObject({
+  queue: z.lazy(() => $QueueName),
+  record: z.lazy(() => $RawRecord),
+});
+
+const $RawRecord: z.ZodType = z.unknown();
 
 export const ValidatedSchema = contract<Validated>(
   z.intersection(
-    z.looseObject({ queue: z.lazy(() => $QueueName) }),
+    z.looseObject({
+      queue: z.lazy(() => $QueueName),
+      outcome: z.lazy(() => $OutcomeWord),
+      records: z.array(z.lazy(() => $ValidatedRecord)),
+    }),
     oneOf([
       z.looseObject({ verdict: z.literal("pass") }),
       z.looseObject({ reason: z.string(), verdict: z.literal("refuse") }),

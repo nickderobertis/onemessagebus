@@ -3,16 +3,18 @@ import { z } from "zod";
 import { anyOf, contract, oneOf } from "../runtime.js";
 
 /**
+ * What `reply` prints: what the reply did, or that a hook dropped it.
+ */
+export type Replied = Replied1 | DroppedRecord;
+/**
  * Which question a reply answers: the token the bus minted when it was asked.
  */
 export type Correlation = string;
 
 /**
- * What `reply` did: the pending record it answered, and the records it
- * appended — a reply routed by its halves appends more than one, and one with
- * no verdict answers nothing.
+ * The pending record it answered, and the records it appended.
  */
-export interface Replied {
+export interface Replied1 {
   /**
    * The pending record answered, or `null` when the reply carried nothing
    * for its answer queue.
@@ -65,6 +67,26 @@ export interface Sent {
    */
   id?: number | null | undefined;
 }
+/**
+ * A hook dropped the reply whole: it answers nothing, and the drop is
+ * recorded in the queue's drop log.
+ */
+export interface DroppedRecord {
+  /**
+   * The queue the dropping hook ran on, whose drop log records it.
+   */
+  queue: string;
+  /**
+   * Always `true`.
+   */
+  dropped: boolean;
+}
+
+const $Replied: z.ZodType = z.strictObject({
+  answered: anyOf([z.lazy(() => $ClaimedRecord), z.null()]).optional(),
+  correlation: anyOf([z.lazy(() => $Correlation), z.null()]).optional(),
+  sent: z.array(z.lazy(() => $Sent)),
+});
 
 const $ClaimedRecord: z.ZodType = z.strictObject({
   queue: z.lazy(() => $QueueName),
@@ -87,10 +109,11 @@ const $Sent: z.ZodType = z.strictObject({
   id: anyOf([z.int().gte(0), z.null()]).optional(),
 });
 
+const $DroppedRecord: z.ZodType = z.strictObject({
+  queue: z.lazy(() => $QueueName),
+  dropped: z.boolean(),
+});
+
 export const RepliedSchema = contract<Replied>(
-  z.strictObject({
-    answered: anyOf([z.lazy(() => $ClaimedRecord), z.null()]).optional(),
-    correlation: anyOf([z.lazy(() => $Correlation), z.null()]).optional(),
-    sent: z.array(z.lazy(() => $Sent)),
-  }),
+  anyOf([z.lazy(() => $Replied), z.lazy(() => $DroppedRecord)]),
 );

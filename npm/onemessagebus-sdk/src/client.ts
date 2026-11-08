@@ -75,8 +75,21 @@ export type Reply = Extract<Asked, { answer: "reply" }>;
 export type Timeout = Extract<Asked, { answer: "timeout" }>;
 export type Abandoned = Extract<Asked, { answer: "abandoned" }>;
 export type Refused = Extract<Asked, { answer: "refused" }>;
+/** A hook dropped the question: no reply will come, and the hook that dropped it is named. */
+export type DroppedQuestion = Extract<Asked, { answer: "dropped" }>;
 /** What `ask` answered, named in `answer`; only a reply carries a `reply`. */
-export type Answer = Reply | Timeout | Abandoned | Refused;
+export type Answer = Reply | Timeout | Abandoned | Refused | DroppedQuestion;
+
+/** A record a hook dropped, `send`'s line or `reply`'s answer: `"dropped" in result` tells it apart. */
+export type Dropped = Extract<Sent, { dropped: boolean }>;
+/** A record `send` appended. */
+export type Appended = Exclude<Sent, Dropped>;
+/** What a `reply` a hook kept did: the pending record it answered, and the records it appended. */
+export type Delivered = Exclude<Replied, Dropped>;
+/** What a hook made of a `validate` offer. */
+export type Outcome = Validated["outcome"];
+/** One record `validate` says a send would append. */
+export type ValidatedRecord = Validated["records"][number];
 
 /** A predicate: inline JSON text, a path to a YAML document, or the predicate itself. */
 export type Predicate = string | Readonly<Record<string, unknown>>;
@@ -238,6 +251,7 @@ export class Client {
     return this.#readingLines("inboxCarried", options);
   }
 
+  /** One line per record: the record appended, or the `Dropped` a hook dropped. */
   async send<T>(
     queue: string,
     message: T | undefined,
@@ -283,6 +297,10 @@ export class Client {
     return { ...claimed, record: parsed.data };
   }
 
+  /**
+   * What the reply did, or — when a hook dropped it — a `Dropped`: the reply
+   * answered nothing, and the queue's `-dropped` log holds it.
+   */
   async reply(
     queue: string,
     correlation: string | undefined,
@@ -323,6 +341,10 @@ export class Client {
     return this.#reading("transports", options);
   }
 
+  /**
+   * What `send` would do with `message`: the verdict, the hooks' `outcome`, and the
+   * `records` a send would append. A refusal or an unjudged offer is an answer too.
+   */
   async validate(
     queue: string,
     message: unknown,
@@ -347,7 +369,7 @@ export class Client {
     try {
       return await this.#document("ask", { ...options, queue }, payload(question));
     } catch (error) {
-      // A timeout, an abandoned question and a refusal exit 1 with the answer printed.
+      // A timeout, an abandoned question, a refusal and a drop exit 1 with the answer printed.
       if (error instanceof BusFailed && error.output !== undefined) {
         return parseOutput("ask", error.output);
       }

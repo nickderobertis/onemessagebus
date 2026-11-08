@@ -47,15 +47,45 @@ export type Asked =
       reason: string;
       answer: "refused";
       [k: string]: unknown;
+    }
+  | {
+      /**
+       * The queue the dropping hook ran on.
+       */
+      queue: string;
+      hook: HookRef;
+      answer: "dropped";
+      [k: string]: unknown;
     };
 /**
  * Which question a reply answers: the token the bus minted when it was asked.
  */
 export type Correlation = string;
 
+/**
+ * The hook that dropped it.
+ */
+export interface HookRef {
+  /**
+   * Its position in the chain of the queue it ran on.
+   */
+  index: number;
+  /**
+   * Its argv, for a hook a configuration declares.
+   */
+  command?: string[] | null | undefined;
+}
+
 const $Correlation: z.ZodType = z
   .string()
   .regex(new RegExp("^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$", "u"));
+
+const $QueueName: z.ZodType = z.string();
+
+const $HookRef: z.ZodType = z.strictObject({
+  index: z.int().gte(0),
+  command: anyOf([z.array(z.string()), z.null()]).optional(),
+});
 
 export const AskedSchema = contract<Asked>(
   oneOf([
@@ -70,6 +100,11 @@ export const AskedSchema = contract<Asked>(
       correlation: anyOf([z.lazy(() => $Correlation), z.null()]).optional(),
       reason: z.string(),
       answer: z.literal("refused"),
+    }),
+    z.looseObject({
+      queue: z.lazy(() => $QueueName),
+      hook: z.lazy(() => $HookRef),
+      answer: z.literal("dropped"),
     }),
   ]),
 );

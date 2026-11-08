@@ -3,7 +3,15 @@
 // settings need.
 import { compile } from "json-schema-to-typescript";
 
-const METADATA = new Set(["$defs", "$schema", "description", "default", "examples", "title"]);
+const METADATA = new Set([
+  "$defs",
+  "$schema",
+  "deprecated",
+  "description",
+  "default",
+  "examples",
+  "title",
+]);
 
 /**
  * A schema that says nothing but metadata admits any JSON value; the compiler

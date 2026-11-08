@@ -55,6 +55,10 @@ export interface QueueStatus {
    */
   unread: number;
   /**
+   * How many drops its drop log, `<queue>-dropped`, records.
+   */
+  dropped: number;
+  /**
    * Each declared consumer's cursor, `null` for one that has read nothing.
    */
   cursors: {
@@ -71,6 +75,7 @@ const $QueueStatus: z.ZodType = z.strictObject({
   pending_position: anyOf([z.lazy(() => $Position), z.null()]).optional(),
   abandoned: z.array(z.unknown()),
   unread: z.int().gte(0),
+  dropped: z.int().gte(0),
   cursors: z.record(z.string(), anyOf([z.lazy(() => $Position), z.null()])),
 });
 
