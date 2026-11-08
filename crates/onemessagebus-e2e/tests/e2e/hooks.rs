@@ -2,7 +2,9 @@
 //! receives each offered message before anything is appended, and whose answer
 //! keeps, changes, reroutes, drops or refuses it.
 //!
-//! Every hook here is a real shell script the binary launches as a subprocess.
+//! Every hook here is a real shell script the binary launches as a subprocess,
+//! as `sh <script>`: a shebang launches nothing on Windows, and the Git `sh` is
+//! there beside the `cat` these scripts read their input with.
 //! What a queue and its `-dropped` log hold afterwards is read back from the
 //! transport's files as raw bytes, so a hook's spelling is compared exactly,
 //! never as a parsed value.
@@ -35,23 +37,20 @@ impl Scratch {
         self.dir.path().join(name)
     }
 
-    /// A path inside the scratch directory, as shell text.
+    /// A path inside the scratch directory, as shell text: forward slashes,
+    /// which a Windows `sh` reads as separators and a backslash it would not.
     fn at(&self, name: &str) -> String {
-        self.path(name).to_str().expect("a UTF-8 path").to_owned()
+        self.path(name)
+            .to_str()
+            .expect("a UTF-8 path")
+            .replace('\\', "/")
     }
 
-    /// Write an executable `sh` script named `name` whose body is `body`, and
-    /// answer its path.
+    /// Write an `sh` script named `name` whose body is `body`, and answer its
+    /// path, which [`hook`] makes a command.
     fn script(&self, name: &str, body: &str) -> String {
-        let path = self.path(name);
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("the script is written");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-                .expect("the script is executable");
-        }
-        path.to_str().expect("a UTF-8 path").to_owned()
+        std::fs::write(self.path(name), format!("{body}\n")).expect("the script is written");
+        self.at(name)
     }
 
     /// Write `onemessagebus.yaml` with `rest` after the transport.
@@ -121,6 +120,11 @@ fn argv(words: &[&str]) -> String {
     serde_json::to_string(words).expect("an argv")
 }
 
+/// The command running the script at `path`, as a YAML flow sequence.
+fn hook(path: &str) -> String {
+    argv(&["sh", path])
+}
+
 fn one_line(run: &Run) -> Value {
     let lines = run.lines();
     assert_eq!(
@@ -180,8 +184,8 @@ fn a_hook_echoing_its_input_with_or_without_the_newline_keeps_the_record_byte_fo
     let echo_bare = scratch.script("echo-bare.sh", "IFS= read -r line; printf '%s' \"$line\"");
     scratch.configure(&format!(
         "queues:\n  plain: {{}}\n  newline: {{}}\n  bare: {{}}\nhooks:\n  - {{on: newline, command: {}}}\n  - {{on: bare, command: {}}}\n",
-        argv(&[&echo_newline]),
-        argv(&[&echo_bare]),
+        hook(&echo_newline),
+        hook(&echo_bare),
     ));
     let record = r#"{"text": "a \"quoted\" word",   "n": 1, "nested": {"k": [1, 2.5]}}"#;
     for queue in ["plain", "newline", "bare"] {
@@ -230,7 +234,7 @@ fn a_change_is_appended_and_handed_on_as_the_exact_bytes_the_hook_printed() {
     // The first hook alone: `validate` names it a change, with its bytes.
     scratch.configure(&format!(
         "queues:\n  notes: {{}}\nhooks:\n  - {{on: notes, command: {}}}\n",
-        argv(&[&respell])
+        hook(&respell)
     ));
     let validated = scratch.bus(&["validate", "notes"], Some(record));
     assert_eq!(validated.code, 0, "{}", validated.stderr);
@@ -248,8 +252,8 @@ fn a_change_is_appended_and_handed_on_as_the_exact_bytes_the_hook_printed() {
     // it, so the queue holds exactly those bytes.
     scratch.configure(&format!(
         "queues:\n  notes: {{}}\nhooks:\n  - {{on: notes, command: {}}}\n  - {{on: notes, command: {}}}\n",
-        argv(&[&respell]),
-        argv(&[&capture])
+        hook(&respell),
+        hook(&capture)
     ));
     let sent = scratch.bus(&["send", "notes"], Some(record));
     assert_eq!(sent.code, 0, "{}", sent.stderr);
@@ -277,8 +281,8 @@ fn a_change_a_stamping_preparation_rewrites_is_written_from_its_value_and_carrie
     scratch.configure(&format!(
         "{}hooks:\n  - {{on: notes, command: {}}}\n  - {{on: notes, command: {}}}\n",
         scratch.stamped(),
-        argv(&[&respell]),
-        argv(&[&capture])
+        hook(&respell),
+        hook(&capture)
     ));
     let sent = scratch.bus(&["send", "notes"], Some(r#"{"text":"hello","n":1}"#));
     assert_eq!(sent.code, 0, "{}", sent.stderr);
@@ -312,7 +316,7 @@ fn a_multi_line_change_is_unjudged_because_a_record_is_one_line() {
     );
     scratch.configure(&format!(
         "queues:\n  notes: {{}}\nhooks:\n  - {{on: notes, command: {}}}\n",
-        argv(&[&indented])
+        hook(&indented)
     ));
     let sent = scratch.bus(&["send", "notes"], Some(r#"{"text":"hello"}"#));
     assert_eq!(sent.code, 1, "{}", sent.stdout);
@@ -333,7 +337,7 @@ fn a_change_breaking_the_queues_schema_or_the_authors_grants_is_refused_with_not
     scratch.configure(&format!(
         "{}hooks:\n  - {{on: typed, command: {}}}\n",
         scratch.stamped(),
-        argv(&[&untexted])
+        hook(&untexted)
     ));
     let sent = scratch.bus(&["send", "typed"], Some(r#"{"text":"hello"}"#));
     assert_eq!(sent.code, 1, "{}", sent.stdout);
@@ -361,7 +365,7 @@ fn a_change_breaking_the_queues_schema_or_the_authors_grants_is_refused_with_not
     other.configure(&format!(
         "{}hooks:\n  - {{on: answers, command: {}}}\n",
         other.desk(),
-        argv(&[&promoted])
+        hook(&promoted)
     ));
     let sent = other.bus(&["send", "answers"], Some(r#"{"message":"hi"}"#));
     assert_eq!(sent.code, 1, "{}", sent.stdout);
@@ -381,8 +385,8 @@ fn a_hook_printing_nothing_drops_the_record_into_the_drop_log_exactly_as_the_que
     let keep = scratch.script("keep.sh", "cat");
     scratch.configure(&format!(
         "queues:\n  inbox: {{}}\n  kept: {{}}\nhooks:\n  - {{on: inbox, command: {}}}\n  - {{on: kept, command: {}}}\n",
-        argv(&[&drop]),
-        argv(&[&keep])
+        hook(&drop),
+        hook(&keep)
     ));
     // A credential-shaped value, which `events emit` would redact: a queue
     // record is not, and neither is its drop.
@@ -400,7 +404,7 @@ fn a_hook_printing_nothing_drops_the_record_into_the_drop_log_exactly_as_the_que
     let lines = scratch.raw_lines("inbox-dropped");
     assert_eq!(lines.len(), 1);
     let line: Value = serde_json::from_str(&lines[0]).expect("a JSON line");
-    assert_drop_shape(&line, "inbox", 0, &[&drop]);
+    assert_drop_shape(&line, "inbox", 0, &["sh", &drop]);
     assert!(line.get("correlation").is_none(), "{line}");
     assert_eq!(
         dropped_message_bytes(&lines[0]),
@@ -448,13 +452,13 @@ fn an_ask_whose_question_a_hook_drops_returns_at_once_saying_no_reply_will_come(
     );
     scratch.configure(&format!(
         "queues:\n  questions: {{policy: {{hold_pending: true}}, answers: replies}}\n  replies: {{}}\nhooks:\n  - {{on: questions, command: {}}}\n",
-        argv(&[&drop])
+        hook(&drop)
     ));
     let asked = scratch.bus(&["ask", "questions"], Some(r#"{"message":"anyone?"}"#));
     assert_eq!(asked.code, 1, "{}", asked.stderr);
     assert_eq!(
         one_line(&asked),
-        json!({"answer": "dropped", "queue": "questions", "hook": {"index": 0, "command": [drop]}})
+        json!({"answer": "dropped", "queue": "questions", "hook": {"index": 0, "command": ["sh", drop]}})
     );
     assert_eq!(asked.stderr.lines().count(), 1, "{}", asked.stderr);
     assert!(
@@ -465,7 +469,7 @@ fn an_ask_whose_question_a_hook_drops_returns_at_once_saying_no_reply_will_come(
     assert_eq!(scratch.raw("questions"), "");
     let dropped = scratch.dropped("questions");
     assert_eq!(dropped.len(), 1);
-    assert_drop_shape(&dropped[0], "questions", 0, &[&drop]);
+    assert_drop_shape(&dropped[0], "questions", 0, &["sh", &drop]);
     assert!(
         dropped[0]["correlation"]
             .as_str()
@@ -487,7 +491,7 @@ fn a_hook_printing_only_whitespace_is_unjudged_and_drops_nothing() {
     let blank = scratch.script("blank.sh", "cat > /dev/null\nprintf '  \\n'");
     scratch.configure(&format!(
         "queues:\n  inbox: {{}}\nhooks:\n  - {{on: inbox, command: {}}}\n",
-        argv(&[&blank])
+        hook(&blank)
     ));
     let sent = scratch.bus(&["send", "inbox"], Some(r#"{"text":"x"}"#));
     assert_eq!(sent.code, 1, "{}", sent.stdout);
@@ -507,8 +511,8 @@ fn a_refusing_hook_returns_its_stderr_unaltered_and_appends_nothing_anywhere() {
     let keep = scratch.script("keep.sh", "cat");
     scratch.configure(&format!(
         "queues:\n  inbox: {{}}\nhooks:\n  - {{on: inbox, command: {}}}\n  - {{on: inbox, command: {}}}\n",
-        argv(&[&keep]),
-        argv(&[&refuse])
+        hook(&keep),
+        hook(&refuse)
     ));
     let reason = "not on my watch: inbox\n";
     let sent = scratch.bus(&["send", "inbox"], Some(r#"{"text":"x"}"#));
@@ -517,7 +521,7 @@ fn a_refusing_hook_returns_its_stderr_unaltered_and_appends_nothing_anywhere() {
     assert_eq!(sent.stderr.lines().count(), 1, "{}", sent.stderr);
     let line = sent.stderr.trim_end();
     assert!(line.starts_with("onemessagebus: inbox: "), "{line}");
-    assert!(line.contains(&format!("hook 1 (`{refuse}`)")), "{line}");
+    assert!(line.contains(&format!("hook 1 (`sh {refuse}`)")), "{line}");
     assert!(line.ends_with(reason.trim_end()), "{line}");
 
     let validated = scratch.bus(&["validate", "inbox"], Some(r#"{"text":"x"}"#));
@@ -542,7 +546,7 @@ fn a_refusing_hook_returns_its_stderr_unaltered_and_appends_nothing_anywhere() {
     let empty = scratch.script("silent-refuse.sh", "cat > /dev/null\nexit 1");
     scratch.configure(&format!(
         "queues:\n  inbox: {{}}\nhooks:\n  - {{on: inbox, command: {}}}\n",
-        argv(&[&empty])
+        hook(&empty)
     ));
     let silent = scratch.bus(&["send", "inbox"], Some(r#"{"text":"x"}"#));
     assert_eq!(silent.code, 1);
@@ -562,18 +566,22 @@ fn a_hook_exiting_two_killed_by_a_signal_missing_or_printing_no_json_appends_not
         "two.sh",
         "cat > /dev/null\necho 'no quota left' >&2\nexit 2",
     );
-    let killed = scratch.script("killed.sh", "cat > /dev/null\nkill -9 $$");
     let prose = scratch.script("prose.sh", "cat > /dev/null\necho 'looks fine to me'");
     let missing = scratch.at("no-such-hook");
-    for (command, why) in [
-        (two.as_str(), "exited 2"),
-        (killed.as_str(), "ended by a signal"),
-        (missing.as_str(), "could not be run"),
-        (prose.as_str(), "not exactly one JSON value"),
-    ] {
+    let cases = [
+        (hook(&two), "exited 2"),
+        (argv(&[&missing]), "could not be run"),
+        (hook(&prose), "not exactly one JSON value"),
+        // Only a unix process can end by a signal: Windows has no such ending.
+        #[cfg(unix)]
+        (
+            hook(&scratch.script("killed.sh", "cat > /dev/null\nkill -9 $$")),
+            "ended by a signal",
+        ),
+    ];
+    for (command, why) in cases {
         scratch.configure(&format!(
-            "queues:\n  inbox: {{}}\nhooks:\n  - {{on: inbox, command: {}}}\n",
-            argv(&[command])
+            "queues:\n  inbox: {{}}\nhooks:\n  - {{on: inbox, command: {command}}}\n",
         ));
         let sent = scratch.bus(&["send", "inbox"], Some(r#"{"text":"x"}"#));
         assert_eq!(sent.code, 1, "{why}: {}", sent.stdout);
@@ -603,9 +611,9 @@ fn a_chain_hands_each_change_on_and_a_drop_ends_it() {
     );
     scratch.configure(&format!(
         "queues:\n  steps: {{}}\nhooks:\n  - {{on: steps, command: {}}}\n  - {{on: steps, command: {}}}\n  - {{on: steps, command: {}}}\n",
-        argv(&[&first]),
-        argv(&[&second]),
-        argv(&[&third])
+        hook(&first),
+        hook(&second),
+        hook(&third)
     ));
     let sent = scratch.bus(&["send", "steps"], Some(r#"{"step":1}"#));
     assert_eq!(sent.code, 0, "{}", sent.stderr);
@@ -618,9 +626,9 @@ fn a_chain_hands_each_change_on_and_a_drop_ends_it() {
     let drop = scratch.script("drop.sh", "cat > /dev/null");
     scratch.configure(&format!(
         "queues:\n  steps: {{}}\nhooks:\n  - {{on: steps, command: {}}}\n  - {{on: steps, command: {}}}\n  - {{on: steps, command: {}}}\n",
-        argv(&[&drop]),
-        argv(&[&second]),
-        argv(&[&third])
+        hook(&drop),
+        hook(&second),
+        hook(&third)
     ));
     let sent = scratch.bus(&["send", "steps"], Some(r#"{"step":1}"#));
     assert_eq!(sent.code, 0, "{}", sent.stderr);
@@ -636,7 +644,7 @@ fn a_when_the_message_does_not_satisfy_skips_the_hook() {
     let drop = scratch.script("drop.sh", "cat > /dev/null");
     scratch.configure(&format!(
         "queues:\n  inbox: {{}}\nhooks:\n  - {{on: inbox, when: {{carries: spam}}, command: {}}}\n",
-        argv(&[&drop])
+        hook(&drop)
     ));
     assert_eq!(
         scratch
@@ -707,13 +715,13 @@ impl Cached {
         };
         scratch.configure(&format!(
             "queues:\n  k: {{}}\n  c: {{}}\n  d: {{}}\n  r: {{}}\nhooks:\n  - {{on: k, command: {}, {}}}\n  - {{on: c, command: {}, {}}}\n  - {{on: d, command: {}, {}}}\n  - {{on: r, command: {}, {}}}\n",
-            argv(&[&keep]),
+            hook(&keep),
             cache("cache-k"),
-            argv(&[&change]),
+            hook(&change),
             cache("cache-c"),
-            argv(&[&drop]),
+            hook(&drop),
             cache("cache-d"),
-            argv(&[&refuse]),
+            hook(&refuse),
             cache("cache-r"),
         ));
         Self {
@@ -774,7 +782,7 @@ fn a_cached_keep_change_and_drop_are_not_run_again_until_the_bar_moves() {
     let drops = scratch.dropped("d");
     assert_eq!(drops.len(), 2);
     for line in &drops {
-        assert_drop_shape(line, "d", 0, &[&cached.drop]);
+        assert_drop_shape(line, "d", 0, &["sh", &cached.drop]);
     }
 
     let validated = scratch.bus(&["validate", "c"], Some(record));
@@ -799,7 +807,7 @@ fn a_cached_keep_change_and_drop_are_not_run_again_until_the_bar_moves() {
         let record = &records[0];
         assert_eq!(record["schema_version"], json!(2), "{record}");
         assert_eq!(record["outcome"], json!(outcome), "{record}");
-        assert_eq!(record["command"], json!([command]), "{record}");
+        assert_eq!(record["command"], json!(["sh", command]), "{record}");
         assert_eq!(record["fingerprint"], json!("bar-1"), "{record}");
         if outcome == "change" {
             assert_eq!(record["output"], json!(changed[0]), "{record}");
@@ -856,7 +864,7 @@ fn a_pass_a_validator_recorded_for_the_same_argv_and_content_is_read_as_a_keep()
     let record = r#"{"text":"judged once"}"#;
     scratch.configure(&format!(
         "queues:\n  inbox: {{}}\nvalidators:\n  - {{on: inbox, kind: command, command: {}, {cache}}}\n",
-        argv(&[&counted])
+        hook(&counted)
     ));
     assert_eq!(scratch.bus(&["send", "inbox"], Some(record)).code, 0);
     assert_eq!(scratch.marker("ran"), 1);
@@ -872,7 +880,7 @@ fn a_pass_a_validator_recorded_for_the_same_argv_and_content_is_read_as_a_keep()
 
     scratch.configure(&format!(
         "queues:\n  inbox: {{}}\nhooks:\n  - {{on: inbox, command: {}, {cache}}}\n",
-        argv(&[&counted])
+        hook(&counted)
     ));
     let sent = scratch.bus(&["send", "inbox"], Some(record));
     assert_eq!(sent.code, 0, "{}", sent.stderr);
@@ -894,7 +902,7 @@ fn a_cached_hook_that_reroutes_runs_on_every_offer_and_obeys_the_routes_as_they_
     let configure = |routes: &str| {
         scratch.configure(&format!(
             "queues:\n  source: {{}}\n  target: {{}}\n  other: {{}}\nhooks:\n  - {{on: source, command: {}, routes: {routes}, cache: {{dir: {}, bar_fingerprint: {}}}}}\n",
-            argv(&[&reroute]),
+            hook(&reroute),
             serde_json::to_string(&scratch.path("cache")).expect("a path"),
             argv(&["cat", &scratch.at("bar")])
         ));
@@ -940,8 +948,8 @@ fn a_reroute_goes_through_the_target_queues_preparation_and_hooks_once() {
     scratch.configure(&format!(
         "{}hooks:\n  - {{on: elsewhere, command: {}, routes: [notes]}}\n  - {{on: notes, command: {}}}\n",
         scratch.stamped(),
-        argv(&[&reroute]),
-        argv(&[&capture])
+        hook(&reroute),
+        hook(&capture)
     ));
     let sent = scratch.bus(&["send", "elsewhere"], Some(r#"{"text":"moved"}"#));
     assert_eq!(sent.code, 0, "{}", sent.stderr);
@@ -969,7 +977,7 @@ fn a_reroute_outside_its_routes_or_a_second_reroute_is_unjudged_with_nothing_app
     scratch.configure(&format!(
         "{}hooks:\n  - {{on: elsewhere, command: {}, routes: [notes]}}\n",
         scratch.stamped(),
-        argv(&[&to_typed])
+        hook(&to_typed)
     ));
     let outside = scratch.bus(&["send", "elsewhere"], Some(r#"{"text":"x"}"#));
     assert_eq!(outside.code, 1, "{}", outside.stdout);
@@ -990,8 +998,8 @@ fn a_reroute_outside_its_routes_or_a_second_reroute_is_unjudged_with_nothing_app
     scratch.configure(&format!(
         "{}hooks:\n  - {{on: elsewhere, command: {}, routes: [notes]}}\n  - {{on: notes, command: {}, routes: [elsewhere]}}\n",
         scratch.stamped(),
-        argv(&[&to_notes]),
-        argv(&[&back])
+        hook(&to_notes),
+        hook(&back)
     ));
     let twice = scratch.bus(&["send", "elsewhere"], Some(r#"{"text":"x"}"#));
     assert_eq!(twice.code, 1, "{}", twice.stdout);
@@ -1012,7 +1020,7 @@ fn a_reroute_outside_its_routes_or_a_second_reroute_is_unjudged_with_nothing_app
     scratch.configure(&format!(
         "{}hooks:\n  - {{on: elsewhere, command: {}}}\n",
         scratch.stamped(),
-        argv(&[&no_routes])
+        hook(&no_routes)
     ));
     let plain = scratch.bus(&["send", "elsewhere"], Some(r#"{"text":"x"}"#));
     assert_eq!(plain.code, 0, "{}", plain.stderr);
@@ -1026,20 +1034,17 @@ fn a_configuration_naming_an_undeclared_route_or_hook_queue_is_refused_by_key() 
         (
             format!(
                 "[{{on: inbox, command: {}, routes: [inbox, nowhere]}}]",
-                argv(&[&keep])
+                hook(&keep)
             ),
             "hooks[0].routes[1]",
         ),
         (
-            format!("[{{on: nowhere, command: {}}}]", argv(&[&keep])),
+            format!("[{{on: nowhere, command: {}}}]", hook(&keep)),
             "hooks[0].on",
         ),
         ("[{on: inbox, command: []}]".to_owned(), "hooks[0].command"),
         (
-            format!(
-                "[{{on: inbox, kind: command, command: {}}}]",
-                argv(&[&keep])
-            ),
+            format!("[{{on: inbox, kind: command, command: {}}}]", hook(&keep)),
             "unknown field `kind`",
         ),
     ] {
@@ -1061,7 +1066,7 @@ fn an_offer_the_layout_splits_is_refused_whole_when_one_routed_records_hook_refu
     scratch.configure(&format!(
         "{}hooks:\n  - {{on: actions, command: {}}}\n",
         scratch.desk(),
-        argv(&[&refuse])
+        hook(&refuse)
     ));
     let envelope = r#"{"version":3,"completion":false,"message":"go on","actions":[{"op":"add","id":"n","task":"write it down"}]}"#;
     let sent = scratch.bus(&["send", "answers"], Some(envelope));
@@ -1127,7 +1132,7 @@ fn validators_are_deprecated_on_stderr_and_judge_the_record_a_hook_changed() {
     let judge = scratch.script("judge.sh", &format!("cat > {}", scratch.at("judged")));
     scratch.configure(&format!(
         "queues:\n  inbox: {{}}\nvalidators:\n  - {{on: inbox, kind: command, command: {}}}\n",
-        argv(&[&judge])
+        hook(&judge)
     ));
     let sent = scratch.bus(&["send", "inbox"], Some(r#"{"text":"x"}"#));
     assert_eq!(sent.code, 0, "{}", sent.stderr);
@@ -1147,8 +1152,8 @@ fn validators_are_deprecated_on_stderr_and_judge_the_record_a_hook_changed() {
     );
     scratch.configure(&format!(
         "queues:\n  inbox: {{}}\nhooks:\n  - {{on: inbox, command: {}}}\nvalidators:\n  - {{on: inbox, kind: command, command: {}}}\n",
-        argv(&[&tag]),
-        argv(&[&judge])
+        hook(&tag),
+        hook(&judge)
     ));
     let both = scratch.bus(&["send", "inbox"], Some(r#"{"text":"x"}"#));
     assert_eq!(both.code, 0, "{}", both.stderr);
@@ -1168,7 +1173,7 @@ fn validators_are_deprecated_on_stderr_and_judge_the_record_a_hook_changed() {
 
     scratch.configure(&format!(
         "queues:\n  inbox: {{}}\nhooks:\n  - {{on: inbox, command: {}}}\n",
-        argv(&[&tag])
+        hook(&tag)
     ));
     assert_eq!(
         scratch
@@ -1184,7 +1189,7 @@ fn a_reply_a_hook_drops_answers_nothing_and_is_recorded_in_the_answer_queues_dro
     let drop = scratch.script("drop.sh", "cat > /dev/null");
     scratch.configure(&format!(
         "queues:\n  questions: {{policy: {{hold_pending: true}}, answers: replies}}\n  replies: {{}}\nhooks:\n  - {{on: replies, command: {}}}\n",
-        argv(&[&drop])
+        hook(&drop)
     ));
     let asked = scratch.bus(
         &["ask", "questions", "--timeout", "1"],
@@ -1207,7 +1212,7 @@ fn a_reply_a_hook_drops_answers_nothing_and_is_recorded_in_the_answer_queues_dro
     assert_eq!(scratch.raw("replies"), "");
     let dropped = scratch.dropped("replies");
     assert_eq!(dropped.len(), 1);
-    assert_drop_shape(&dropped[0], "replies", 0, &[&drop]);
+    assert_drop_shape(&dropped[0], "replies", 0, &["sh", &drop]);
     assert_eq!(dropped[0]["correlation"], json!(correlation));
     assert_eq!(dropped[0]["message"], json!({"message": "me"}));
 }
@@ -1226,7 +1231,7 @@ fn an_ask_a_hook_refuses_or_cannot_decide_prints_nothing_and_raises_nothing() {
     for (command, says) in [(&refuse, "not that question"), (&undecided, "exited 2")] {
         scratch.configure(&format!(
             "queues:\n  questions: {{policy: {{hold_pending: true}}, answers: replies}}\n  replies: {{}}\nhooks:\n  - {{on: questions, command: {}}}\n",
-            argv(&[command])
+            hook(command)
         ));
         let asked = scratch.bus(
             &["ask", "questions", "--timeout", "30"],
@@ -1241,7 +1246,7 @@ fn an_ask_a_hook_refuses_or_cannot_decide_prints_nothing_and_raises_nothing() {
         let line = asked.stderr.trim_end();
         assert!(
             line.starts_with("onemessagebus: questions: ")
-                && line.contains(&format!("hook 0 (`{command}`)"))
+                && line.contains(&format!("hook 0 (`sh {command}`)"))
                 && line.contains(says),
             "{line}"
         );
@@ -1261,9 +1266,9 @@ fn an_event_queue_splices_its_event_and_id_in_front_of_a_hooks_bytes() {
     let empty = scratch.script("empty.sh", "cat > /dev/null\necho '{ }'");
     scratch.configure(&format!(
         "queues:\n  spelled: {{policy: {{hold_pending: true}}}}\n  renumbered: {{policy: {{hold_pending: true}}}}\n  bare: {{policy: {{hold_pending: true}}}}\nhooks:\n  - {{on: spelled, command: {}}}\n  - {{on: renumbered, command: {}}}\n  - {{on: bare, command: {}}}\n",
-        argv(&[&respell]),
-        argv(&[&numbered]),
-        argv(&[&empty])
+        hook(&respell),
+        hook(&numbered),
+        hook(&empty)
     ));
     for queue in ["spelled", "renumbered", "bare"] {
         let sent = scratch.bus(&["send", queue], Some(r#"{"text":"offered"}"#));
@@ -1318,13 +1323,13 @@ fn a_hook_cache_that_cannot_be_read_or_written_or_keyed_costs_a_run_never_anothe
     };
     scratch.configure(&format!(
         "queues:\n  kept: {{}}\n  blocked: {{}}\n  unkeyed: {{}}\n  undecided: {{}}\nhooks:\n  - {{on: kept, command: {}, {}}}\n  - {{on: blocked, command: {}, {}}}\n  - {{on: unkeyed, command: {}, {}}}\n  - {{on: undecided, command: {}, {}}}\n",
-        argv(&[&counted]),
+        hook(&counted),
         cache("cache", &["echo", "bar-1"]),
-        argv(&[&counted]),
+        hook(&counted),
         cache("blocked", &["echo", "bar-1"]),
-        argv(&[&unkeyed]),
+        hook(&unkeyed),
         cache("unkeyed-cache", &["false"]),
-        argv(&[&undecided]),
+        hook(&undecided),
         cache("undecided-cache", &["echo", "bar-1"]),
     ));
     let record = r#"{"text":"same"}"#;
@@ -1392,7 +1397,7 @@ fn a_record_the_layout_routes_elsewhere_is_changed_dropped_or_rerouted_by_that_q
     scratch.configure(&format!(
         "{}hooks:\n  - {{on: actions, command: {}}}\n",
         scratch.desk(),
-        argv(&[&retitle])
+        hook(&retitle)
     ));
     let changed = scratch.bus(&["send", "answers"], Some(ENVELOPE));
     assert_eq!(changed.code, 0, "{}", changed.stderr);
@@ -1411,7 +1416,7 @@ fn a_record_the_layout_routes_elsewhere_is_changed_dropped_or_rerouted_by_that_q
     scratch.configure(&format!(
         "{}hooks:\n  - {{on: actions, command: {}}}\n",
         scratch.desk(),
-        argv(&[&demoted])
+        hook(&demoted)
     ));
     let refused = scratch.bus(&["send", "answers"], Some(ENVELOPE));
     assert_eq!(refused.code, 1, "{}", refused.stdout);
@@ -1434,7 +1439,7 @@ fn a_record_the_layout_routes_elsewhere_is_changed_dropped_or_rerouted_by_that_q
     scratch.configure(&format!(
         "{}hooks:\n  - {{on: actions, command: {}}}\n",
         scratch.desk(),
-        argv(&[&drop])
+        hook(&drop)
     ));
     let validated = scratch.bus(&["validate", "answers"], Some(ENVELOPE));
     assert_eq!(validated.code, 0, "{}", validated.stderr);
@@ -1473,8 +1478,8 @@ fn a_record_the_layout_routes_elsewhere_is_changed_dropped_or_rerouted_by_that_q
     scratch.configure(&format!(
         "{}queues:\n  audit: {{}}\nhooks:\n  - {{on: actions, command: {}, routes: [audit]}}\n  - {{on: audit, command: {}}}\n",
         scratch.desk(),
-        argv(&[&aside]),
-        argv(&[&mark])
+        hook(&aside),
+        hook(&mark)
     ));
     let moved = scratch.bus(&["send", "answers"], Some(ENVELOPE));
     assert_eq!(moved.code, 0, "{}", moved.stderr);
@@ -1500,7 +1505,7 @@ fn a_split_offer_one_of_whose_records_breaks_its_schema_appends_nothing_and_drop
     scratch.configure(&format!(
         "profile: split\nschemas:\n  - {}\nhooks:\n  - {{on: left, command: {}}}\n",
         serde_json::to_string(&format!("{}@1", hooks_bundle().display())).expect("a path"),
-        argv(&[&drop])
+        hook(&drop)
     ));
     let broken = scratch.bus(&["send", "inbox"], Some(r#"{"l":1,"r":2}"#));
     assert_eq!(broken.code, 1, "{}", broken.stdout);
@@ -1532,7 +1537,7 @@ fn a_cache_record_that_is_json_but_not_this_hooks_outcome_is_run_again_and_rewri
     );
     scratch.configure(&format!(
         "queues:\n  notes: {{}}\nhooks:\n  - {{on: notes, command: {}, cache: {{dir: {}, bar_fingerprint: [echo, bar-1]}}}}\n",
-        argv(&[&change]),
+        hook(&change),
         serde_json::to_string(&scratch.path("cache")).expect("a path")
     ));
     let record = r#"{"text":"same"}"#;
@@ -1610,8 +1615,8 @@ fn relayed(turn_body: &str, sink_body: &str) -> (Scratch, String) {
     scratch.configure(&format!(
         "profile: relay\nschemas:\n  - {}\nhooks:\n  - {{on: relay, command: {}}}\n  - {{on: sink, command: {}}}\n",
         serde_json::to_string(&format!("{}@1", hooks_bundle().display())).expect("a path"),
-        argv(&[&turn]),
-        argv(&[&sink])
+        hook(&turn),
+        hook(&sink)
     ));
     (scratch, sink)
 }
@@ -1706,7 +1711,7 @@ fn a_reply_a_hook_refuses_or_cannot_decide_prints_nothing_and_leaves_the_questio
     let configure = |command: &str| {
         scratch.configure(&format!(
             "queues:\n  questions: {{policy: {{hold_pending: true}}, answers: replies}}\n  replies: {{}}\nhooks:\n  - {{on: replies, command: {}}}\n",
-            argv(&[command])
+            hook(command)
         ));
     };
     configure(&refuse);
@@ -1735,7 +1740,7 @@ fn a_reply_a_hook_refuses_or_cannot_decide_prints_nothing_and_leaves_the_questio
         let line = replied.stderr.trim_end();
         assert!(
             line.starts_with("onemessagebus: replies: ")
-                && line.contains(&format!("hook 0 (`{command}`)"))
+                && line.contains(&format!("hook 0 (`sh {command}`)"))
                 && line.contains(says),
             "{line}"
         );
@@ -1765,8 +1770,8 @@ fn a_hook_writing_more_than_a_pipe_holds_before_reading_or_never_reading_answers
     let deaf = scratch.script("deaf.sh", "echo '{\"heard\":false}'");
     scratch.configure(&format!(
         "queues:\n  loud: {{}}\n  deaf: {{}}\nhooks:\n  - {{on: loud, command: {}}}\n  - {{on: deaf, command: {}}}\n",
-        argv(&[&loud]),
-        argv(&[&deaf])
+        hook(&loud),
+        hook(&deaf)
     ));
     let large = json!({"text": "y".repeat(300_000)}).to_string();
     let sent = scratch.bus(&["send", "loud"], Some(&large));
@@ -1805,7 +1810,7 @@ fn output_that_is_not_utf8_or_a_route_file_the_hook_took_away_is_unjudged() {
     ] {
         scratch.configure(&format!(
             "queues:\n  inbox: {{}}\n  elsewhere: {{}}\nhooks:\n  - {{on: inbox, command: {}{routes}}}\n",
-            argv(&[command])
+            hook(command)
         ));
         let sent = scratch.bus(&["send", "inbox"], Some(r#"{"text":"x"}"#));
         assert_eq!(sent.code, 1, "{says}: {}", sent.stdout);
@@ -1828,7 +1833,7 @@ fn a_question_a_hook_changes_is_asked_as_changed_and_one_it_reroutes_is_asked_no
     let configure = |command: &str, routes: &str| {
         scratch.configure(&format!(
             "queues:\n  questions: {{policy: {{hold_pending: true}}, answers: replies}}\n  replies: {{}}\n  other: {{}}\nhooks:\n  - {{on: questions, command: {}{routes}}}\n",
-            argv(&[command])
+            hook(command)
         ));
     };
     configure(&triage, "");
@@ -1882,7 +1887,7 @@ fn a_reply_a_hook_changes_or_reroutes_is_stamped_and_bound_as_the_queue_holds_it
     let configure = |command: &str, routes: &str| {
         scratch.configure(&format!(
             "queues:\n  questions: {{policy: {{hold_pending: true}}, answers: replies}}\n  replies: {{}}\n  other: {{}}\nhooks:\n  - {{on: replies, command: {}{routes}}}\n",
-            argv(&[command])
+            hook(command)
         ));
     };
     configure(&edit, "");
@@ -1931,7 +1936,7 @@ fn a_split_reply_whose_actions_a_hook_drops_still_answers_with_its_verdict() {
     scratch.configure(&format!(
         "{}hooks:\n  - {{on: actions, command: {}}}\n",
         scratch.desk(),
-        argv(&[&drop])
+        hook(&drop)
     ));
     let asked = scratch.bus(
         &["ask", "questions", "--timeout", "1"],
@@ -1969,7 +1974,7 @@ fn a_question_the_layout_routes_off_its_queue_is_asked_nowhere_even_beside_a_dro
     scratch.configure(&format!(
         "profile: deflecting\nschemas:\n  - {}\nhooks:\n  - {{on: aside, command: {}}}\n",
         serde_json::to_string(&format!("{}@1", hooks_bundle().display())).expect("a path"),
-        argv(&[&drop])
+        hook(&drop)
     ));
     let asked = scratch.bus(
         &["ask", "asks", "--timeout", "1"],
@@ -2001,7 +2006,7 @@ fn a_drop_beside_a_route_file_naming_a_route_is_a_drop_and_routes_nothing() {
     );
     scratch.configure(&format!(
         "queues:\n  inbox: {{}}\n  elsewhere: {{}}\nhooks:\n  - {{on: inbox, command: {}, routes: [elsewhere]}}\n",
-        argv(&[&both])
+        hook(&both)
     ));
     let sent = scratch.bus(&["send", "inbox"], Some(r#"{"text":"x"}"#));
     assert_eq!(sent.code, 0, "{}", sent.stderr);
@@ -2019,8 +2024,8 @@ fn what_send_and_reply_print_for_a_drop_reads_back_as_a_drop_and_a_false_one_doe
     let drop = scratch.script("drop.sh", "cat > /dev/null");
     scratch.configure(&format!(
         "queues:\n  questions: {{policy: {{hold_pending: true}}, answers: replies}}\n  replies: {{}}\n  inbox: {{}}\n  kept: {{}}\nhooks:\n  - {{on: inbox, command: {}}}\n  - {{on: replies, command: {}}}\n",
-        argv(&[&drop]),
-        argv(&[&drop])
+        hook(&drop),
+        hook(&drop)
     ));
     let sent = scratch.bus(&["send", "inbox"], Some(r#"{"text":"x"}"#));
     let line: SentLine = serde_json::from_str(sent.stdout.trim_end()).expect("a send line");
@@ -2079,7 +2084,7 @@ fn the_dry_run_checks_the_id_a_numbered_queue_will_give_as_its_send_does() {
     scratch.configure(&format!(
         "{}hooks:\n  - {{on: capped, command: {}}}\n",
         scratch.stamped(),
-        argv(&[&keep])
+        hook(&keep)
     ));
     for id in 0..2 {
         let validated = scratch.bus(&["validate", "capped"], Some(r#"{"text":"x"}"#));
@@ -2116,8 +2121,8 @@ fn a_drop_after_a_change_records_the_changed_bytes_and_names_the_hook_that_dropp
     let drop = scratch.script("drop.sh", &format!("cat > {}", scratch.at("drop-read")));
     scratch.configure(&format!(
         "queues:\n  steps: {{}}\nhooks:\n  - {{on: steps, command: {}}}\n  - {{on: steps, command: {}}}\n",
-        argv(&[&change]),
-        argv(&[&drop])
+        hook(&change),
+        hook(&drop)
     ));
 
     let sent = scratch.bus(&["send", "steps"], Some(r#"{"step":1}"#));
@@ -2132,7 +2137,7 @@ fn a_drop_after_a_change_records_the_changed_bytes_and_names_the_hook_that_dropp
     let lines = scratch.raw_lines("steps-dropped");
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert_eq!(dropped_message_bytes(&lines[0]), changed);
-    assert_drop_shape(&scratch.dropped("steps")[0], "steps", 1, &[&drop]);
+    assert_drop_shape(&scratch.dropped("steps")[0], "steps", 1, &["sh", &drop]);
 }
 
 #[test]

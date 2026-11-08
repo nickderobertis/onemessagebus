@@ -5,8 +5,10 @@
 use std::collections::BTreeSet;
 
 use onemessagebus::{
-    Config, Dropped, HookRef, Layouts, QueueConfig, QueueName, RawRecord, TransportKinds, When,
+    CommandHook, Config, Dropped, HookCache, HookContext, HookOutcome, HookRef, Layouts,
+    QueueConfig, QueueName, RawRecord, TransportKinds, When, HOOK_RECORD_VERSION,
 };
+use serde_json::Value;
 
 const HOOKS: &str = include_str!("../../../docs/hooks.md");
 
@@ -161,13 +163,8 @@ fn the_documented_drop_line_is_what_a_drop_reads_and_writes() {
     assert_eq!(Dropped::parse(written.as_bytes()), Ok(spelled));
 }
 
-// The hook is an `sh` command, which only a unix build can rely on.
-#[cfg(unix)]
 #[test]
 fn the_documented_hook_record_is_what_a_cached_change_writes() {
-    use onemessagebus::{CommandHook, HookCache, HookContext, HookOutcome, HOOK_RECORD_VERSION};
-    use serde_json::Value;
-
     let documented: Value = serde_json::from_str(&fixture("hook-record")).expect("JSON");
     let keys = |record: &Value| -> Vec<String> {
         record
@@ -184,13 +181,17 @@ fn the_documented_hook_record_is_what_a_cached_change_writes() {
 
     let dir = tempfile::tempdir().expect("a temp dir");
     let cache = HookCache::new(dir.path().join("outcomes"), ["echo", "bar-1"]).expect("a bar");
-    let hook = CommandHook::new([
-        "sh",
-        "-c",
-        r#"cat > /dev/null; echo '{"kind":"report","text":"all quiet"}'"#,
-    ])
-    .expect("an argv")
-    .with_cache(cache);
+    // A script file, not `sh -c`: Windows quotes an argument's own double
+    // quotes for its own C runtime, not for `sh`.
+    let script = dir.path().join("report.sh");
+    std::fs::write(
+        &script,
+        "cat > /dev/null\necho '{\"kind\":\"report\",\"text\":\"all quiet\"}'\n",
+    )
+    .expect("written");
+    let hook = CommandHook::new(["sh", script.to_str().expect("a UTF-8 path")])
+        .expect("an argv")
+        .with_cache(cache);
     let outcome = hook.run(br#"{"kind":"report"}"#, &HookContext::new(queue("reports")));
     assert!(matches!(outcome, HookOutcome::Change(_)), "{outcome:?}");
     let records: Vec<_> = std::fs::read_dir(dir.path().join("outcomes"))

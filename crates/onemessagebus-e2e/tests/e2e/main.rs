@@ -8,8 +8,6 @@
 mod ask;
 mod configuration;
 mod events;
-// Every hook here is a `#!/bin/sh` script, which only a unix build can launch.
-#[cfg(unix)]
 mod hooks;
 mod inbox;
 mod layouts;

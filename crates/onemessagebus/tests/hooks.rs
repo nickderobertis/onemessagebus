@@ -370,10 +370,8 @@ fn a_typed_change_or_reroute_that_cannot_be_written_is_unjudged_with_nothing_app
 }
 
 /// A hook recording what it was handed, then keeping it.
-#[cfg(unix)]
 struct Records(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
 
-#[cfg(unix)]
 impl Hook<RawRecord> for Records {
     fn run(&self, message: &RawRecord, _: &HookContext) -> HookOutcome<RawRecord> {
         self.0
@@ -384,14 +382,17 @@ impl Hook<RawRecord> for Records {
     }
 }
 
-// The configured hook is an `sh` command, which only a unix build can rely on.
-#[cfg(unix)]
 #[test]
 fn registered_hooks_run_after_the_configured_ones_and_receive_their_output() {
     let dir = tempfile::tempdir().expect("a temp dir");
+    // A script file, not `sh -c`: Windows quotes an argument's own double
+    // quotes for its own C runtime, not for `sh`.
+    let first = dir.path().join("first.sh");
+    std::fs::write(&first, "cat > /dev/null\necho '{ \"first\" : 1 }'\n").expect("written");
     let config = Config::parse(&format!(
-        "version: 1\ntransport: {{kind: local, dir: {}}}\nqueues: {{notes: {{}}}}\nhooks:\n  - {{on: notes, command: [sh, -c, \"cat > /dev/null; echo '{{ \\\"first\\\" : 1 }}'\"]}}\n",
-        serde_json::to_string(dir.path()).expect("a path")
+        "version: 1\ntransport: {{kind: local, dir: {}}}\nqueues: {{notes: {{}}}}\nhooks:\n  - {{on: notes, command: {}}}\n",
+        serde_json::to_string(dir.path()).expect("a path"),
+        serde_json::to_string(&["sh", first.to_str().expect("a UTF-8 path")]).expect("an argv")
     ))
     .expect("loads");
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
