@@ -282,9 +282,14 @@ export function zodDeclarations(document, { exportName, typeName, at }) {
       );
     }
     seen.set(identifier, name);
-    lines.push(
-      `const ${identifier}: z.ZodType = ${expression(defs[name], pointer(`${at}/$defs`, name))};`,
-    );
+    let defined = expression(defs[name], pointer(`${at}/$defs`, name));
+    // A definition admitting any JSON value still admits no `undefined`, which is
+    // no JSON value: so a required member referring to it is required, while an
+    // optional one stays optional through its own `.optional()`.
+    if (defined === "z.unknown()") {
+      defined += `.refine((value) => value !== undefined, { message: "required" })`;
+    }
+    lines.push(`const ${identifier}: z.ZodType = ${defined};`);
   }
   const { $defs: _defs, ...root } = document;
   lines.push(`export const ${exportName} = contract<${typeName}>(${expression(root, at)});`);

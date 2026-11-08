@@ -76,7 +76,9 @@ const $ValidatedRecord: z.ZodType = z.strictObject({
   record: z.lazy(() => $RawRecord),
 });
 
-const $RawRecord: z.ZodType = z.unknown();
+const $RawRecord: z.ZodType = z
+  .unknown()
+  .refine((value) => value !== undefined, { message: "required" });
 
 export const ValidatedSchema = contract<Validated>(
   z.intersection(

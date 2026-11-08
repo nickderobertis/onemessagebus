@@ -71,6 +71,32 @@ const parses = [
   { name: "a", any: 1, old: 1 },
 ].map((value) => schema.safeParse(value).success);
 
+// A member referring to a definition that admits anything is still required when
+// the schema requires it, and still optional when it does not.
+const referring = zodDeclarations(
+  {
+    type: "object",
+    properties: { raw: { $ref: "#/$defs/Anything" }, maybe: { $ref: "#/$defs/Anything" } },
+    required: ["raw"],
+    additionalProperties: false,
+    $defs: { Anything: { description: "Any JSON value." } },
+  },
+  { exportName: "ReferringSchema", typeName: "unknown", at: "referring" },
+);
+const referringSchema = new Function(
+  "z",
+  "anyOf",
+  "oneOf",
+  "contract",
+  `${referring
+    .replace("export const", "const")
+    .replaceAll(": z.ZodType =", " =")
+    .replace("contract<unknown>(", "contract(")}\nreturn ReferringSchema;`,
+)(z, union, union, contract);
+const references = [{ raw: null }, { raw: 1, maybe: "x" }, { maybe: 1 }, { raw: "x" }].map(
+  (value) => referringSchema.safeParse(value).success,
+);
+
 // `deprecated` constrains nothing, so it is carried to the declarations as a tag.
 const declarations = await typescriptDeclarations(
   {
@@ -80,4 +106,4 @@ const declarations = await typescriptDeclarations(
   "Thing",
 );
 
-process.stdout.write(JSON.stringify({ refusals, parses, declarations }));
+process.stdout.write(JSON.stringify({ refusals, parses, references, declarations }));

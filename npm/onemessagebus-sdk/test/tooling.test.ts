@@ -75,6 +75,7 @@ describe("the zod generator", () => {
   const cases: {
     refusals: { expected: string; refused: boolean; named?: boolean; message?: string }[];
     parses: boolean[];
+    references: boolean[];
     declarations: string;
   } = JSON.parse(run.stdout || "{}");
 
@@ -98,6 +99,9 @@ describe("the zod generator", () => {
     // a map value outside its enum are each refused; a deprecated field still parses,
     // and still holds its type
     expect(cases.parses).toEqual([true, false, false, false, false, false, false, true, false]);
+    // A required member referring to an unconstrained definition refuses a missing
+    // key, and an optional one admits it.
+    expect(cases.references).toEqual([true, true, false, true]);
   });
 
   test("carries `deprecated` to the declarations as a tag, constraining nothing", () => {
