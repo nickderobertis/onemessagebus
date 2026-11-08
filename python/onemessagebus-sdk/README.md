@@ -61,14 +61,39 @@ configuration's transport: a queue verb given no `config` is refused.
 
 A few answers are data rather than exceptions:
 
-- `ask(...)` answers `Reply | Timeout | Abandoned | Refused`, told apart by
-  `answer`; only a question the bus refuses as input raises.
-- `validate(...)` answers `ValidatedPass | ValidatedRefuse | ValidatedUnjudged`;
-  a refusal verdict is returned, not raised.
+- `ask(...)` answers `Reply | Timeout | Abandoned | Refused | DroppedQuestion`,
+  told apart by `answer`; only a question the bus refuses as input raises. A
+  question a hook drops answers `DroppedQuestion` at once: no reply will come.
+- `send(...)` answers one `SentLine` per line, a `Sent` or, for a record a hook
+  dropped, a `Dropped`; `reply(...)` answers `Replied`, or `Dropped` when a hook
+  dropped the reply, which then answered nothing.
+- `validate(...)` answers `ValidatedPass | ValidatedRefuse | ValidatedUnjudged`,
+  each with the `outcome` the hooks made of the offer and the `records` a send
+  would append; a refusal verdict is returned, not raised.
 - `next(...)` answers `None` when the queue has nothing to claim.
 - `subscribe(queue, until=...)` is an async iterator of `LogRecord`s that ends
   when the predicate holds. Close it early (`contextlib.aclosing`, or `aclose()`)
   and the stream stops: the resident is told to cancel, a spawned process ends.
+
+## Configuration files
+
+`Config` is the generated model of a configuration file, and `write_config(config,
+path)` writes one where a call's `config` can name it. Its `hooks` are
+`HookConfig` entries (`docs/hooks.md`):
+
+```python
+from onemessagebus import Carries, Config, HookConfig, QueueConfig, TransportConfig, write_config
+
+write_config(
+    Config(
+        version=1,
+        transport=TransportConfig(kind="local", dir="runs/r1/bus"),
+        queues={"notes": QueueConfig()},
+        hooks=[HookConfig(on="notes", when=Carries(carries="draft"), command=["./drop-drafts"])],
+    ),
+    "onemessagebus.yaml",
+)
+```
 
 ## Message types
 

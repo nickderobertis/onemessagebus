@@ -1,13 +1,31 @@
-"""What a client is configured with: where the binary is, and the defaults every call takes."""
+"""What a client is configured with, and the bus configuration file it hands the binary.
+
+`ClientConfig` is where the binary is and the defaults every call takes;
+`write_config` writes a typed `Config` — the generated model of a configuration
+file, `hooks` and all — to the file a call's `config` names.
+"""
 
 from __future__ import annotations
 
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 from ._pin import resolve_binary
-from ._types import StrPath
+from ._types import Config, StrPath
+
+
+def write_config(config: Config, path: StrPath) -> Path:
+    """Write `config` to `path` as the binary reads a configuration file, and answer the path.
+
+    The file is JSON, which is YAML too, keyed as the configuration keys it, with
+    every `None` member omitted; the binary checks what the model cannot.
+    """
+    written = Path(path)
+    text = config.model_dump_json(by_alias=True, exclude_none=True, indent=2)
+    written.write_text(f"{text}\n", encoding="utf-8")
+    return written
 
 
 @dataclass(frozen=True)
