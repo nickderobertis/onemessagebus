@@ -30,7 +30,7 @@ Every capability of the `onemessagebus` binary, and how each consumer surface re
 | `subscribe` | `onemessagebus subscribe` | jsonl `log_record` | `onemessagebus::RawQueue::wait_for_change` | yes, `subscribe` | yes, `subscribe` | yes, `subscribe` |
 | `status` | `onemessagebus status` | json `queue_statuses` | `onemessagebus::RawQueue::status` | yes, `status` | yes, `status` | yes, `status` |
 | `transports` | `onemessagebus transports` | json `transport_kinds` | `onemessagebus::TransportKinds::kinds` | yes, `transports` | yes, `transports` | yes, `transports` |
-| `validate` | `onemessagebus validate` | json `validated` | `onemessagebus::Bus::validate` | yes, `validate` | yes, `validate` | yes, `validate` |
+| `validate` | `onemessagebus validate` | json `validated` | `onemessagebus::Bus::hooked` | yes, `validate` | yes, `validate` | yes, `validate` |
 | `ask` | `onemessagebus ask` | json `asked` | `onemessagebus::Bus::ask` | yes, `ask` | yes, `ask` | yes, `ask` |
 | `serve` | `onemessagebus serve` | jsonl `codec_response` | `onemessagebus::Bus::serve` | yes, `serve` | yes, `serve` | yes, `serve` |
 | `schemas` | `onemessagebus schemas` | json `schema_cache` | `onemessagebus::LinkResolver::cached` | yes, `schemas` | yes, `schemas` | yes, `schemas` |
