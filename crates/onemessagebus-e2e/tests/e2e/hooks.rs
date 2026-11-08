@@ -1951,3 +1951,63 @@ fn a_drop_beside_a_route_file_naming_a_route_is_a_drop_and_routes_nothing() {
     assert_eq!(scratch.dropped("inbox").len(), 1);
     assert!(scratch.dropped("elsewhere").is_empty());
 }
+
+#[test]
+fn what_send_and_reply_print_for_a_drop_reads_back_as_a_drop_and_a_false_one_does_not() {
+    use onemessagebus::sdk_schema::{ReplyLine, SentLine};
+    let scratch = Scratch::new();
+    let drop = scratch.script("drop.sh", "cat > /dev/null");
+    scratch.configure(&format!(
+        "queues:\n  questions: {{policy: {{hold_pending: true}}, answers: replies}}\n  replies: {{}}\n  inbox: {{}}\n  kept: {{}}\nhooks:\n  - {{on: inbox, command: {}}}\n  - {{on: replies, command: {}}}\n",
+        argv(&[&drop]),
+        argv(&[&drop])
+    ));
+    let sent = scratch.bus(&["send", "inbox"], Some(r#"{"text":"x"}"#));
+    let line: SentLine = serde_json::from_str(sent.stdout.trim_end()).expect("a send line");
+    assert!(
+        matches!(&line, SentLine::Dropped(dropped) if dropped.queue.as_str() == "inbox"),
+        "{line:?}"
+    );
+    let kept = scratch.bus(&["send", "kept"], Some(r#"{"text":"x"}"#));
+    let line: SentLine = serde_json::from_str(kept.stdout.trim_end()).expect("a send line");
+    assert!(matches!(line, SentLine::Sent(_)), "{line:?}");
+
+    let asked = scratch.bus(
+        &["ask", "questions", "--timeout", "1"],
+        Some(r#"{"message":"?"}"#),
+    );
+    let correlation = one_line(&asked)["correlation"]
+        .as_str()
+        .expect("a correlation")
+        .to_owned();
+    let replied = scratch.bus(
+        &["reply", "questions", "--correlation", &correlation],
+        Some(r#"{"message":"me"}"#),
+    );
+    let line: ReplyLine = serde_json::from_str(replied.stdout.trim_end()).expect("a reply line");
+    assert!(
+        matches!(&line, ReplyLine::Dropped(dropped) if dropped.queue.as_str() == "replies"),
+        "{line:?}"
+    );
+
+    // A line saying it was not dropped is neither a drop nor an append.
+    for refused in [
+        r#"{"queue":"inbox","dropped":false}"#,
+        r#"{"queue":"inbox","dropped":"yes"}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<SentLine>(refused).is_err(),
+            "{refused}"
+        );
+        assert!(
+            serde_json::from_str::<ReplyLine>(refused).is_err(),
+            "{refused}"
+        );
+        assert!(
+            serde_json::from_str::<onemessagebus::sdk_schema::DroppedRecord>(refused)
+                .is_err_and(|failure| refused.contains("false")
+                    == failure.to_string().contains("`dropped` is `true`")),
+            "{refused}"
+        );
+    }
+}
