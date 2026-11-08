@@ -298,3 +298,115 @@ fn append_hooked_stops_at_the_first_append_that_fails_keeping_what_came_before()
         2
     );
 }
+
+/// A note whose serialization fails for the text `unwritable`.
+#[derive(Debug, Clone, PartialEq, Deserialize, JsonSchema)]
+struct Fragile {
+    text: String,
+}
+
+impl Serialize for Fragile {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.text == "unwritable" {
+            return Err(serde::ser::Error::custom("this note cannot be written"));
+        }
+        use serde::ser::SerializeStruct as _;
+        let mut fields = serializer.serialize_struct("Fragile", 1)?;
+        fields.serialize_field("text", &self.text)?;
+        fields.end()
+    }
+}
+
+impl Message for Fragile {
+    const SCHEMA: SchemaId = SchemaId::literal("test", "fragile", 1);
+}
+
+/// A typed hook answering a change it cannot write, or a reroute of one.
+struct Unwritable {
+    reroute: bool,
+}
+
+impl Hook<Fragile> for Unwritable {
+    fn run(&self, _: &Fragile, _: &HookContext) -> HookOutcome<Fragile> {
+        let message = Fragile {
+            text: "unwritable".to_owned(),
+        };
+        if self.reroute {
+            HookOutcome::Reroute {
+                queue: queue("manager"),
+                message,
+            }
+        } else {
+            HookOutcome::Change(message)
+        }
+    }
+}
+
+#[test]
+fn a_typed_change_or_reroute_that_cannot_be_written_is_unjudged_with_nothing_appended() {
+    for reroute in [false, true] {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let mut config = Config::local(dir.path(), None);
+        for name in ["notes", "manager"] {
+            config.queues.insert(queue(name), QueueConfig::default());
+        }
+        let bus = config
+            .resolve(&Layouts::new(), &TransportKinds::builtin())
+            .expect("resolves")
+            .with_hook(&queue("notes"), Unwritable { reroute })
+            .expect("a declared queue");
+        let refused = bus
+            .send(&queue("notes"), json!({"text": "fine"}))
+            .expect_err("unjudged");
+        assert!(
+            matches!(&refused, onemessagebus::BusError::HookUnjudged { reason, .. }
+                if reason.contains("could not be written as JSON") && reason.contains("this note cannot be written")),
+            "{refused}"
+        );
+        for name in ["notes", "manager", "notes-dropped"] {
+            assert!(!dir.path().join(format!("{name}.jsonl")).exists(), "{name}");
+        }
+    }
+}
+
+/// A hook recording what it was handed, then keeping it.
+struct Records(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+impl Hook<RawRecord> for Records {
+    fn run(&self, message: &RawRecord, _: &HookContext) -> HookOutcome<RawRecord> {
+        self.0
+            .lock()
+            .expect("the record")
+            .push(message.bytes().to_owned());
+        HookOutcome::Keep
+    }
+}
+
+#[test]
+fn registered_hooks_run_after_the_configured_ones_and_receive_their_output() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let config = Config::parse(&format!(
+        "version: 1\ntransport: {{kind: local, dir: {}}}\nqueues: {{notes: {{}}}}\nhooks:\n  - {{on: notes, command: [sh, -c, \"cat > /dev/null; echo '{{ \\\"first\\\" : 1 }}'\"]}}\n",
+        serde_json::to_string(dir.path()).expect("a path")
+    ))
+    .expect("loads");
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let bus = config
+        .resolve(&Layouts::new(), &TransportKinds::builtin())
+        .expect("resolves")
+        .with_hook(&queue("notes"), Records(std::sync::Arc::clone(&seen)))
+        .expect("a declared queue")
+        .with_hook(&queue("notes"), Records(std::sync::Arc::clone(&seen)))
+        .expect("a declared queue");
+    bus.send(&queue("notes"), json!({"text": "offered"}))
+        .expect("sent");
+    assert_eq!(
+        *seen.lock().expect("the record"),
+        ["{ \"first\" : 1 }", "{ \"first\" : 1 }"],
+        "a registered hook did not receive the configured hook's output, in order"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("notes.jsonl")).expect("landed"),
+        "{ \"first\" : 1 }\n"
+    );
+}
