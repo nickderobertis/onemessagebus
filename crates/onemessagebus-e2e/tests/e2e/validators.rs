@@ -307,9 +307,20 @@ fn validate_prints_each_verdict_the_scripted_command_reaches_and_appends_nothing
     );
     let refused = scratch.bus(&["validate", "findings"], Some(record));
     assert_eq!(refused.code, 1, "{}", refused.stderr);
+    let refused_verdict = verdict(&refused);
     assert_eq!(
-        verdict(&refused),
-        json!({"queue": "findings", "verdict": "refuse", "reason": reason}),
+        (
+            &refused_verdict["queue"],
+            &refused_verdict["verdict"],
+            &refused_verdict["reason"],
+            &refused_verdict["outcome"]
+        ),
+        (
+            &json!("findings"),
+            &json!("refuse"),
+            &json!(reason),
+            &json!("refuse")
+        ),
         "the reason on stdout is not the validator's, unaltered"
     );
     assert!(
