@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "The layouts the hook journeys link: one whose preparation stamps a record, and one that splits an offer onto a plain queue and a typed one.",
+  "description": "The layouts the hook journeys link: one whose preparation stamps a record, one that splits an offer onto a plain queue and a typed one, and one whose relay queue routes on what it is offered.",
   "schemas": [
     {
       "id": "hooks.note@1",
@@ -91,6 +91,66 @@
                   "take": [
                     "r",
                     "text"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "relay",
+      "description": "An inbox routing what it carries under `m` to a relay, whose own preparation sends a record carrying `n` on to a sink.",
+      "queues": [
+        {
+          "name": "inbox"
+        },
+        {
+          "name": "relay"
+        },
+        {
+          "name": "sink"
+        }
+      ],
+      "prepare": {
+        "inbox": [
+          {
+            "route": {
+              "routes": [
+                {
+                  "queue": "relay",
+                  "on": [
+                    "m"
+                  ],
+                  "take": [
+                    "m"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "relay": [
+          {
+            "route": {
+              "routes": [
+                {
+                  "queue": "relay",
+                  "on": [
+                    "m"
+                  ],
+                  "take": [
+                    "m"
+                  ]
+                },
+                {
+                  "queue": "sink",
+                  "on": [
+                    "n"
+                  ],
+                  "take": [
+                    "n"
                   ]
                 }
               ]

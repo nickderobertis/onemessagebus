@@ -83,6 +83,9 @@ unjudged nor a refused message is appended anywhere.
 4. A rerouted message runs its new queue's hooks once; a second reroute is
    unjudged.
 5. Each record the layout routes to another queue then runs that queue's hooks.
+   A record one of them changes is prepared again for that queue; what that
+   preparation routes to yet another queue is appended without running hooks
+   again, so no layout can carry an offer round a loop.
 6. Validators, deprecated, judge last, over the records the hooks produced.
 
 Everything is decided before anything is appended. A refusal or an unjudged
@@ -143,7 +146,7 @@ A record is one file, `<dir>/<content>.<bar>.pass.json`:
 
 <!-- fixture: hook-record -->
 ```json
-{"schema_version": 2, "content": "<sha-256 hex>", "bar": "<sha-256 hex>", "fingerprint": "<what the bar printed>", "command": ["<argv>"], "outcome": "change", "output": "{\"kind\":\"report\",\"text\":\"all quiet\"}"}
+{"outcome": "change", "schema_version": 2, "content": "<sha-256 hex>", "bar": "<sha-256 hex>", "fingerprint": "<what the bar printed>", "command": ["<argv>"], "output": "{\"kind\":\"report\",\"text\":\"all quiet\"}"}
 ```
 
 `outcome` is `keep`, `change` or `drop`, and only a change carries `output`. A

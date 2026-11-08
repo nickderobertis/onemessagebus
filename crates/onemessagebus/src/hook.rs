@@ -798,27 +798,64 @@ struct HookKey {
     command: Vec<String>,
 }
 
-/// The outcome a hook record holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum CachedOutcome {
-    Keep,
-    Change,
-    Drop,
-}
-
-/// The document one outcome is recorded as, `<dir>/<content>.<bar>.pass.json`.
+/// What a hook record is keyed by.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct HookRecord {
+struct RecordKey {
     schema_version: u32,
     content: String,
     bar: String,
     fingerprint: String,
     command: Vec<String>,
-    outcome: CachedOutcome,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    output: Option<String>,
+}
+
+/// A recorded change: its key, and the output the hook printed.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChangeRecord {
+    schema_version: u32,
+    content: String,
+    bar: String,
+    fingerprint: String,
+    command: Vec<String>,
+    output: String,
+}
+
+/// The document one outcome is recorded as, `<dir>/<content>.<bar>.pass.json`:
+/// a change, and only a change, carries its output.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "lowercase")]
+enum HookRecord {
+    Keep(RecordKey),
+    Change(ChangeRecord),
+    Drop(RecordKey),
+}
+
+impl HookRecord {
+    /// Whether this is a record of this version under exactly `key`.
+    fn keyed(&self, key: &HookKey) -> bool {
+        let (version, content, bar, fingerprint, command) = match self {
+            Self::Keep(record) | Self::Drop(record) => (
+                record.schema_version,
+                &record.content,
+                &record.bar,
+                &record.fingerprint,
+                &record.command,
+            ),
+            Self::Change(record) => (
+                record.schema_version,
+                &record.content,
+                &record.bar,
+                &record.fingerprint,
+                &record.command,
+            ),
+        };
+        version == HOOK_RECORD_VERSION
+            && content == &key.content
+            && bar == &key.bar
+            && fingerprint == &key.fingerprint
+            && command == &key.command
+    }
 }
 
 impl HookCache {
@@ -891,31 +928,37 @@ impl HookCache {
                 .then_some(HookOutcome::Keep);
         }
         let record: HookRecord = serde_json::from_value(document).ok()?;
-        if record.schema_version != HOOK_RECORD_VERSION
-            || record.content != key.content
-            || record.bar != key.bar
-            || record.fingerprint != key.fingerprint
-            || record.command != key.command
-        {
+        if !record.keyed(key) {
             return None;
         }
-        match (record.outcome, record.output) {
-            (CachedOutcome::Keep, None) => Some(HookOutcome::Keep),
-            (CachedOutcome::Drop, None) => Some(HookOutcome::Drop),
-            (CachedOutcome::Change, Some(output)) => {
-                RawRecord::parse(output).ok().map(HookOutcome::Change)
-            }
-            _ => None,
+        match record {
+            HookRecord::Keep(_) => Some(HookOutcome::Keep),
+            HookRecord::Drop(_) => Some(HookOutcome::Drop),
+            HookRecord::Change(change) => RawRecord::parse(change.output)
+                .ok()
+                .map(HookOutcome::Change),
         }
     }
 
     fn record(&self, key: &HookKey, outcome: &HookOutcome<RawRecord>) -> std::io::Result<()> {
-        let (outcome, output) = match outcome {
-            HookOutcome::Keep => (CachedOutcome::Keep, None),
-            HookOutcome::Drop => (CachedOutcome::Drop, None),
-            HookOutcome::Change(changed) => {
-                (CachedOutcome::Change, Some(changed.bytes().to_owned()))
-            }
+        let keyed = || RecordKey {
+            schema_version: HOOK_RECORD_VERSION,
+            content: key.content.clone(),
+            bar: key.bar.clone(),
+            fingerprint: key.fingerprint.clone(),
+            command: key.command.clone(),
+        };
+        let record = match outcome {
+            HookOutcome::Keep => HookRecord::Keep(keyed()),
+            HookOutcome::Drop => HookRecord::Drop(keyed()),
+            HookOutcome::Change(changed) => HookRecord::Change(ChangeRecord {
+                schema_version: HOOK_RECORD_VERSION,
+                content: key.content.clone(),
+                bar: key.bar.clone(),
+                fingerprint: key.fingerprint.clone(),
+                command: key.command.clone(),
+                output: changed.bytes().to_owned(),
+            }),
             // A refusal, an unjudged answer and a reroute are never recorded:
             // the next offer runs the command again, and a destination is
             // always decided by the routes and the layout as they stand.
@@ -924,15 +967,6 @@ impl HookCache {
             | HookOutcome::Unjudged { .. } => return Ok(()),
         };
         std::fs::create_dir_all(&self.dir)?;
-        let record = HookRecord {
-            schema_version: HOOK_RECORD_VERSION,
-            content: key.content.clone(),
-            bar: key.bar.clone(),
-            fingerprint: key.fingerprint.clone(),
-            command: key.command.clone(),
-            outcome,
-            output,
-        };
         let bytes = serde_json::to_vec_pretty(&record).map_err(std::io::Error::other)?;
         let path = self.path(key);
         // Written beside its name and moved into place, so a reader never
@@ -1143,6 +1177,7 @@ pub enum HookedOutcome {
 
 /// What an offer becomes once every hook has run: the records a send appends,
 /// in order, and the drops it records.
+// llmlint: ignore[invalid_states_unrepresentable] `Hooked { outcome, records, dropped }` with public fields is the agreed library surface (docs/hooks.md, "The library surface") that onepipeline's envelope reviewer builds against, so its shape is the contract owner's to change, not this type's. `Bus::hooked` is the one producer and never makes a contradictory value, and the one consumer that acts on a hand-made one, `Bus::append_hooked`, appends nothing for a refusal or an unjudged outcome whatever its lists hold, and checks every record and every drop's queue before it appends any.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hooked {
     /// The offer's outcome as a whole.
@@ -1582,8 +1617,10 @@ impl Bus {
     ///
     /// # Errors
     ///
-    /// A record its queue refuses — nothing is appended then — or the first
-    /// append that failed, when what was appended before it stays appended.
+    /// [`BusError::UnknownQueue`] for a record or a drop naming a queue this bus
+    /// does not declare, or a record its queue refuses — nothing is appended
+    /// then — or the first append that failed, when what was appended before it
+    /// stays appended.
     pub fn append_hooked(
         &self,
         hooked: &Hooked,
@@ -1596,6 +1633,9 @@ impl Bus {
         }
         for (target, record) in &hooked.records {
             self.queue(target)?.admits(record.value())?;
+        }
+        for dropped in &hooked.dropped {
+            self.declared(&dropped.queue)?;
         }
         let mut pushed = Vec::new();
         for (target, record) in &hooked.records {

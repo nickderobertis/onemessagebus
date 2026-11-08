@@ -205,3 +205,36 @@ fn a_chain_of_typed_hooks_is_run_cloned_and_described_as_one() {
         "{ \"a\" : 1 }"
     );
 }
+
+#[test]
+fn append_hooked_refuses_a_drop_naming_an_undeclared_queue_appending_nothing() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let bus = bus(dir.path());
+    let record = RawRecord::from_value(&json!({"text": "kept"}));
+    let made = onemessagebus::Hooked {
+        outcome: HookedOutcome::Change,
+        records: vec![(queue("reports"), record.clone())],
+        dropped: vec![onemessagebus::Dropped {
+            at: 1,
+            queue: queue("nowhere"),
+            hook: onemessagebus::HookRef {
+                index: 0,
+                command: None,
+            },
+            message: record,
+            correlation: None,
+        }],
+    };
+    let refused = bus
+        .append_hooked(&made)
+        .expect_err("an undeclared drop log");
+    assert!(
+        matches!(refused, onemessagebus::BusError::UnknownQueue { .. }),
+        "{refused}"
+    );
+    assert!(
+        !dir.path().join("reports.jsonl").exists(),
+        "a record was appended"
+    );
+    assert!(!dir.path().join("nowhere-dropped.jsonl").exists());
+}

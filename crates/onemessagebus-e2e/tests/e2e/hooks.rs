@@ -1511,3 +1511,176 @@ fn a_split_offer_one_of_whose_records_breaks_its_schema_appends_nothing_and_drop
     assert_eq!(scratch.raw("left"), "");
     assert_eq!(scratch.dropped("left").len(), 1);
 }
+
+#[test]
+fn a_cache_record_that_is_json_but_not_this_hooks_outcome_is_run_again_and_rewritten() {
+    let scratch = Scratch::new();
+    let change = scratch.script(
+        "change.sh",
+        &format!(
+            "echo ran >> {}\ncat > /dev/null\necho '{{\"changed\":true}}'",
+            scratch.at("ran")
+        ),
+    );
+    scratch.configure(&format!(
+        "queues:\n  notes: {{}}\nhooks:\n  - {{on: notes, command: {}, cache: {{dir: {}, bar_fingerprint: [echo, bar-1]}}}}\n",
+        argv(&[&change]),
+        serde_json::to_string(&scratch.path("cache")).expect("a path")
+    ));
+    let record = r#"{"text":"same"}"#;
+    assert_eq!(scratch.bus(&["send", "notes"], Some(record)).code, 0);
+    let path = std::fs::read_dir(scratch.path("cache"))
+        .expect("the cache")
+        .next()
+        .expect("one record")
+        .expect("an entry")
+        .path();
+    let good: Value = serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("JSON");
+    assert_eq!(good["outcome"], json!("change"));
+    let altered = |edit: &dyn Fn(&mut Value)| {
+        let mut record = good.clone();
+        edit(&mut record);
+        record
+    };
+    let variants = [
+        (
+            "a later version",
+            altered(&|r| r["schema_version"] = json!(3)),
+        ),
+        (
+            "a change without its output",
+            altered(&|r| {
+                r.as_object_mut().expect("an object").remove("output");
+            }),
+        ),
+        (
+            "a keep carrying an output",
+            altered(&|r| r["outcome"] = json!("keep")),
+        ),
+        (
+            "an output that is no record",
+            altered(&|r| r["output"] = json!("{\n}")),
+        ),
+        (
+            "another bar's fingerprint",
+            altered(&|r| r["fingerprint"] = json!("bar-0")),
+        ),
+        (
+            "an outcome no hook answers",
+            altered(&|r| r["outcome"] = json!("reroute")),
+        ),
+    ];
+    for (runs, (what, variant)) in variants.iter().enumerate() {
+        std::fs::write(&path, variant.to_string()).expect("written");
+        let sent = scratch.bus(&["send", "notes"], Some(record));
+        assert_eq!(sent.code, 0, "{what}: {}", sent.stderr);
+        assert_eq!(
+            scratch.marker("ran"),
+            runs + 2,
+            "{what} was read as an outcome"
+        );
+        let rewritten: Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("JSON");
+        assert_eq!(rewritten, good, "{what} was not recorded again");
+    }
+    assert!(
+        scratch
+            .raw_lines("notes")
+            .iter()
+            .all(|line| line == r#"{"changed":true}"#),
+        "{}",
+        scratch.raw("notes")
+    );
+}
+
+#[test]
+fn a_routed_change_its_queue_prepares_onto_another_queue_is_appended_without_that_queues_hooks() {
+    let scratch = Scratch::new();
+    let turn = scratch.script("turn.sh", "cat > /dev/null\necho '{\"n\":1}'");
+    let sink = scratch.script(
+        "sink.sh",
+        &format!("echo ran >> {}\ncat", scratch.at("sink-ran")),
+    );
+    scratch.configure(&format!(
+        "profile: relay\nschemas:\n  - {}\nhooks:\n  - {{on: relay, command: {}}}\n  - {{on: sink, command: {}}}\n",
+        serde_json::to_string(&format!("{}@1", hooks_bundle().display())).expect("a path"),
+        argv(&[&turn]),
+        argv(&[&sink])
+    ));
+    let sent = scratch.bus(&["send", "inbox"], Some(r#"{"m":1}"#));
+    assert_eq!(sent.code, 0, "{}", sent.stderr);
+    assert_eq!(one_line(&sent)["queue"], json!("sink"));
+    assert_eq!(scratch.raw("sink"), "{\"n\":1}\n");
+    assert_eq!(scratch.raw("relay"), "");
+    assert_eq!(scratch.raw("inbox"), "");
+    assert_eq!(
+        scratch.marker("sink-ran"),
+        0,
+        "a record a routed change was prepared onto ran its queue's hooks again"
+    );
+
+    // Offered to the sink itself, its hooks run.
+    assert_eq!(scratch.bus(&["send", "sink"], Some(r#"{"n":2}"#)).code, 0);
+    assert_eq!(scratch.marker("sink-ran"), 1);
+}
+
+#[test]
+fn a_reply_a_hook_refuses_or_cannot_decide_prints_nothing_and_leaves_the_question_pending() {
+    let scratch = Scratch::new();
+    let refuse = scratch.script(
+        "refuse.sh",
+        "cat > /dev/null\necho 'not that answer' >&2\nexit 1",
+    );
+    let undecided = scratch.script(
+        "undecided.sh",
+        "cat > /dev/null\necho 'out of quota' >&2\nexit 2",
+    );
+    let configure = |command: &str| {
+        scratch.configure(&format!(
+            "queues:\n  questions: {{policy: {{hold_pending: true}}, answers: replies}}\n  replies: {{}}\nhooks:\n  - {{on: replies, command: {}}}\n",
+            argv(&[command])
+        ));
+    };
+    configure(&refuse);
+    let asked = scratch.bus(
+        &["ask", "questions", "--timeout", "1"],
+        Some(r#"{"message":"anyone?"}"#),
+    );
+    let correlation = one_line(&asked)["correlation"]
+        .as_str()
+        .expect("a correlation")
+        .to_owned();
+    for (command, says) in [(&refuse, "not that answer"), (&undecided, "exited 2")] {
+        configure(command);
+        let replied = scratch.bus(
+            &["reply", "questions", "--correlation", &correlation],
+            Some(r#"{"message":"me"}"#),
+        );
+        assert_eq!(replied.code, 1, "{says}: {}", replied.stderr);
+        assert_eq!(replied.stdout, "", "{says}");
+        assert_eq!(
+            replied.stderr.lines().count(),
+            1,
+            "{says}: {}",
+            replied.stderr
+        );
+        let line = replied.stderr.trim_end();
+        assert!(
+            line.starts_with("onemessagebus: replies: ")
+                && line.contains(&format!("hook 0 (`{command}`)"))
+                && line.contains(says),
+            "{line}"
+        );
+    }
+    assert_eq!(scratch.raw("replies"), "");
+    assert_eq!(scratch.raw("replies-dropped"), "");
+    // The question still stands: a reply that lets the hook through answers it.
+    let keep = scratch.script("keep.sh", "cat");
+    configure(&keep);
+    let answered = scratch.bus(
+        &["reply", "questions", "--correlation", &correlation],
+        Some(r#"{"message":"me"}"#),
+    );
+    assert_eq!(answered.code, 0, "{}", answered.stderr);
+    assert_eq!(one_line(&answered)["correlation"], json!(correlation));
+}
