@@ -1,0 +1,32 @@
+{
+  "version": "1.0",
+  "description": "The layouts the hook journeys link: one whose preparation stamps a record, and one whose queue checks a schema a change can break.",
+  "schemas": [
+    {
+      "id": "hooks.note@1",
+      "schema": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "text": {"type": "string"},
+          "n": {"type": "number"},
+          "noted_at": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  ],
+  "layouts": [
+    {
+      "name": "stamped",
+      "description": "A notebook whose notes are stamped when they are offered, beside a typed queue and a plain one.",
+      "queues": [
+        {"name": "notes", "schema": "hooks.note@1"},
+        {"name": "typed", "schema": "hooks.note@1"},
+        {"name": "elsewhere"}
+      ],
+      "prepare": {
+        "notes": [{"stamp": {"member": "noted_at"}}]
+      }
+    }
+  ]
+}

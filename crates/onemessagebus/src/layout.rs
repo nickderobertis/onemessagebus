@@ -738,6 +738,13 @@ impl LayoutDocument {
     fn check(&self) -> Result<(), String> {
         let mut declared: BTreeMap<&QueueName, usize> = BTreeMap::new();
         for (index, queue) in self.queues.iter().enumerate() {
+            if crate::hook::dropped_from(&queue.name).is_some() {
+                return Err(format!(
+                    "queues[{index}].name: `{}` ends in `{}`, the suffix reserved for a queue's drop log; name the queue otherwise",
+                    queue.name,
+                    crate::hook::DROPPED_SUFFIX
+                ));
+            }
             if let Some(first) = declared.insert(&queue.name, index) {
                 return Err(format!(
                     "queues[{index}].name: `{}` is already declared by queues[{first}]",
