@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "The layouts the hook journeys link: one whose preparation stamps a record, one that splits an offer onto a plain queue and a typed one, and one whose relay queue routes on what it is offered.",
+  "description": "The layouts the hook journeys link: one whose preparation stamps a record, one that splits an offer onto a plain queue and a typed one, one whose relay queue routes on what it is offered, and one that deflects every question asked of it.",
   "schemas": [
     {
       "id": "hooks.note@1",
@@ -151,6 +151,57 @@
                   ],
                   "take": [
                     "n"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "deflecting",
+      "description": "A queue questions are asked on whose preparation routes every question off it: its message to an aside, and the message with its correlation to another queue.",
+      "queues": [
+        {
+          "name": "asks",
+          "policy": {
+            "hold_pending": true
+          },
+          "answers": "replies"
+        },
+        {
+          "name": "replies"
+        },
+        {
+          "name": "aside"
+        },
+        {
+          "name": "other"
+        }
+      ],
+      "prepare": {
+        "asks": [
+          {
+            "route": {
+              "routes": [
+                {
+                  "queue": "aside",
+                  "on": [
+                    "message"
+                  ],
+                  "take": [
+                    "message"
+                  ]
+                },
+                {
+                  "queue": "other",
+                  "on": [
+                    "message"
+                  ],
+                  "take": [
+                    "message",
+                    "correlation"
                   ]
                 }
               ]

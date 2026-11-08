@@ -1266,15 +1266,19 @@ impl Decision {
         }
     }
 
-    /// The drop to name for an offer to `queue` that left nothing there: the
-    /// one recorded on `queue` itself, else — the message having been rerouted
-    /// before it was dropped — the first the offer recorded anywhere.
-    pub(crate) fn ending_drop(&self, queue: &QueueName) -> Option<&Dropped> {
+    /// The drop recorded on `queue` itself, when the offer recorded one there.
+    pub(crate) fn dropped_on(&self, queue: &QueueName) -> Option<&Dropped> {
         self.hooked
             .dropped
             .iter()
             .find(|dropped| &dropped.queue == queue)
-            .or_else(|| self.hooked.dropped.first())
+    }
+
+    /// The drop that ended an offer dropped whole: the first it recorded.
+    pub(crate) fn whole_drop(&self) -> Option<&Dropped> {
+        (self.hooked.outcome == HookedOutcome::Drop)
+            .then(|| self.hooked.dropped.first())
+            .flatten()
     }
 }
 
@@ -1520,7 +1524,8 @@ impl Bus {
     /// # Errors
     ///
     /// As [`prepare`](Self::prepare): an unknown queue, or the layout's refusal
-    /// of the offer or of what a hook made of it.
+    /// of the offer or of what a hook made of it; and a record its queue's
+    /// schema refuses, as a send would refuse it.
     pub fn hooked(&self, queue: &QueueName, record: RawRecord) -> Result<Hooked, BusError> {
         Ok(self.decide(queue, record, None, None)?.hooked)
     }
@@ -1594,6 +1599,11 @@ impl Bus {
                 }));
             }
         }
+        // Every record is checked against its queue's schema as a send checks
+        // it, so a dry run never answers a record its send would refuse.
+        for (target, record) in &settling.records {
+            self.queue(target)?.admits(record.value())?;
+        }
         let outcome = if settling.records.is_empty() && !settling.dropped.is_empty() {
             HookedOutcome::Drop
         } else if settling.changed {
@@ -1634,6 +1644,7 @@ impl Bus {
             return Ok(Vec::new());
         }
         for (target, record) in &hooked.records {
+            self.declared(target)?;
             self.queue(target)?.admits(record.value())?;
         }
         for dropped in &hooked.dropped {
