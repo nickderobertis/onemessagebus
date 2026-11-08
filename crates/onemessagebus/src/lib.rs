@@ -57,6 +57,8 @@ pub mod transport;
 mod validate;
 mod vocabulary;
 
+#[doc(hidden)]
+pub use ask::AskOffered;
 /// The ask contract's refusal, named apart from the allowlist's [`Refusal`]
 /// where both are in scope.
 pub use ask::Refusal as AskRefusal;

@@ -28,12 +28,12 @@ use onemessagebus::sdk_schema::{
     SchemaCache, SchemaEntry, SchemasCleared, SchemasFetched, Sent, Validated,
 };
 use onemessagebus::{
-    Address, Admits, Answer, AskOptions, Asker, BackendError, Bus, BusError, Carry, CheckError,
-    CodecName, Config, ConfiguredCodec, ConsumerName, Correlation, Emitter, Filter, Freshness,
-    Layouts, Lifetime, LinkError, LinkResolver, Merge, Open, Outcome, Pending, Position, Predicate,
-    QueueError, QueueName, QueueStatus, RawRecord, Redactor, Resolved, SchemaId, SchemaLink,
-    ServeError, ServeOptions, Served, Spool, Subscription, TransportKinds, Undelivered, Vocabulary,
-    DEFAULT_REPLY_WINDOW, SPOOL_WAIT, VALIDATORS_DEPRECATED,
+    Address, Admits, Answer, AskOffered, AskOptions, Asker, BackendError, Bus, BusError, Carry,
+    CheckError, CodecName, Config, ConfiguredCodec, ConsumerName, Correlation, Dropped, Emitter,
+    Filter, Freshness, Layouts, Lifetime, LinkError, LinkResolver, Merge, Open, Outcome, Pending,
+    Position, Predicate, QueueError, QueueName, QueueStatus, RawRecord, Redactor, Resolved,
+    SchemaId, SchemaLink, ServeError, ServeOptions, Served, Spool, Subscription, TransportKinds,
+    Undelivered, Vocabulary, DEFAULT_REPLY_WINDOW, SPOOL_WAIT, VALIDATORS_DEPRECATED,
 };
 use serde_json::{Map, Value};
 
@@ -1664,7 +1664,7 @@ fn reply(args: ReplyArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), 
         Ok(bound) => bound,
         // A reply a hook dropped answers nothing, and that is what was asked
         // of it: the drop is recorded, and nothing else is appended.
-        Err(BusError::Dropped { queue, .. }) => {
+        Err(BusError::Dropped { queue }) => {
             return emit_text(
                 out,
                 &json_line(&DroppedRecord {
@@ -1744,11 +1744,13 @@ fn ask(args: AskArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refu
                 asker,
                 about,
             };
-            match bus.ask::<Value, Value>(&queue, question, options) {
-                Ok(pending) => (pending, true),
+            match bus.ask_offered::<Value, Value>(&queue, question, options) {
+                Ok(AskOffered::Raised(pending)) => (*pending, true),
                 // A question a hook dropped is never queued, so no reply will
                 // come: that is said at once rather than waited out.
-                Err(BusError::Dropped { queue: on, hook }) => {
+                Ok(AskOffered::Dropped(Dropped {
+                    queue: on, hook, ..
+                })) => {
                     emit_text(
                         out,
                         &json_line(&Asked::Dropped {

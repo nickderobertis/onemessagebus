@@ -856,10 +856,18 @@ fn hook_surface() -> Vec<Exercise> {
                         onemessagebus::AskOptions::default(),
                     )
                     .expect_err("dropped");
-                assert!(
-                    matches!(&asked, BusError::Dropped { queue: on, hook } if on == &queue("questions") && hook.index == 0),
-                    "{asked}"
+                // No `..`: a field added to this variant stops this compiling.
+                match &asked {
+                    BusError::Dropped { queue: on } => assert_eq!(on, &queue("questions")),
+                    other => panic!("not a drop: {other}"),
+                }
+                assert_eq!(
+                    asked.to_string(),
+                    "questions: dropped by a hook; it is recorded in questions-dropped and appended nowhere else"
                 );
+                let recorded = bus.dropped(&queue("questions")).expect("read");
+                assert_eq!(recorded.len(), 1);
+                assert_eq!(recorded[0].hook.index, 0);
                 let (_dir, bus) = asking_bus();
                 let pending = bus
                     .ask::<serde_json::Value, serde_json::Value>(
@@ -878,10 +886,10 @@ fn hook_surface() -> Vec<Exercise> {
                         json!({"message": "me"}),
                     )
                     .expect_err("dropped");
-                assert!(
-                    matches!(&replied, BusError::Dropped { queue: on, .. } if on == &queue("replies")),
-                    "{replied}"
-                );
+                match &replied {
+                    BusError::Dropped { queue: on } => assert_eq!(on, &queue("replies")),
+                    other => panic!("not a drop: {other}"),
+                }
                 assert_eq!(bus.dropped(&queue("replies")).expect("read").len(), 1);
             }),
         ),

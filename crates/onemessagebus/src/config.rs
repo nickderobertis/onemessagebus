@@ -1118,13 +1118,11 @@ pub enum BusError {
     /// A hook dropped the question or the reply: it is recorded in the drop log
     /// of `queue`, `<queue>-dropped`, and appended nowhere else.
     #[error(
-        "{queue}: dropped by {hook}; it is recorded in {queue}-dropped and appended nowhere else"
+        "{queue}: dropped by a hook; it is recorded in {queue}-dropped and appended nowhere else"
     )]
     Dropped {
         /// The queue the dropping hook ran on, whose drop log records it.
         queue: QueueName,
-        /// Which hook.
-        hook: HookRef,
     },
     /// The queue refused it, or its transport failed.
     #[error(transparent)]
