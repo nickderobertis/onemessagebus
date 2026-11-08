@@ -1,5 +1,6 @@
 # Validators
 
+<!-- llmlint: ignore[no_redundant_instruction_pointers] the hooks node is required to state its contract once, in docs/hooks.md, and to have docs/contract.md, docs/cli.md, docs/queues.md and docs/validators.md point at it rather than restate it; this is this document's one pointer, so a reader here reaches the hook contract without a second copy that could drift. -->
 > **Deprecated.** Validators are replaced by hooks, stated in `docs/hooks.md`: a
 > validator becomes a hook that prints its input to pass. They keep working
 > exactly as below until a later release removes them. Every validator item

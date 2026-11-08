@@ -259,6 +259,7 @@ Reading it is two steps, and the types keep them apart:
    its kind refuses. What it answers, a `Bus`, is the one type that opens a queue
    or authors a record.
 
+<!-- llmlint: ignore[no_redundant_instruction_pointers] the hooks node is required to state its contract once, in docs/hooks.md, and to have docs/contract.md, docs/cli.md, docs/queues.md and docs/validators.md point at it rather than restate it; this is this document's one pointer, so a reader here reaches the hook contract without a second copy that could drift. -->
 Four more blocks sit beside these: `hooks`, what a queue makes of a message
 before anything is appended — kept, changed, rerouted, dropped into its
 `<queue>-dropped` log, or refused — stated in `docs/hooks.md`; `validators`, the

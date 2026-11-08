@@ -536,6 +536,7 @@ recorded here so the adopting nodes read them where they read the contract:
 
 ### Contract H — hooks
 
+<!-- llmlint: ignore[no_redundant_instruction_pointers] the hooks node is required to state its contract once, in docs/hooks.md, and to have docs/contract.md, docs/cli.md, docs/queues.md and docs/validators.md point at it rather than restate it; this is this document's one pointer, so a reader here reaches the hook contract without a second copy that could drift. -->
 A hook is a configured command — or a Rust `Hook<M>` a linking consumer registers
 with `Bus::with_hook` — that receives each offered message before anything is
 appended, and whose answer keeps, changes, reroutes, drops or refuses it; every
