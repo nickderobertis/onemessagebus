@@ -576,7 +576,8 @@ fn file(dir: &std::path::Path, queue: &str) -> String {
     std::fs::read_to_string(dir.join(format!("{queue}.jsonl"))).unwrap_or_default()
 }
 
-/// An executable `sh` script in `dir`.
+/// An executable `sh` script in `dir`, which only a unix build can launch.
+#[cfg(unix)]
 fn script(dir: &std::path::Path, name: &str, body: &str) -> String {
     let path = dir.join(name);
     std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("written");
@@ -646,57 +647,62 @@ fn hook_surface() -> Vec<Exercise> {
         (
             "onemessagebus::CommandHook::run",
             Box::new(|| {
-                let dir = tempfile::tempdir().expect("a temp dir");
                 let context = HookContext::new(queue("notes"));
                 let keep = CommandHook::new(["cat"]).expect("an argv");
                 assert_eq!(keep.command(), ["cat"]);
                 assert!(keep.cache().is_none() && keep.routes().is_none());
                 assert_eq!(keep.run(br#"{"a":1}"#, &context), HookOutcome::Keep);
-                let respell = script(
-                    dir.path(),
-                    "respell.sh",
-                    "echo ran >> \"$(dirname \"$0\")/ran\"\ncat > /dev/null\necho '{ \"a\" : 1.0 }'",
-                );
-                let bar = script(dir.path(), "bar.sh", "echo bar-1");
-                let cache =
-                    HookCache::new(dir.path().join("cache"), [bar.as_str()]).expect("a bar");
-                assert_eq!(cache.dir(), dir.path().join("cache"));
-                assert_eq!(cache.bar_fingerprint(), [bar.as_str()]);
-                assert_eq!(cache.fingerprint().as_deref(), Some("bar-1"));
-                let cached = CommandHook::new([respell.as_str()])
-                    .expect("an argv")
-                    .with_cache(cache.clone());
-                assert_eq!(cached.cache(), Some(&cache));
-                for _ in 0..2 {
+                // The cache and the route file, over scripts only a unix build
+                // can launch.
+                #[cfg(unix)]
+                {
+                    let dir = tempfile::tempdir().expect("a temp dir");
+                    let respell = script(
+                        dir.path(),
+                        "respell.sh",
+                        "echo ran >> \"$(dirname \"$0\")/ran\"\ncat > /dev/null\necho '{ \"a\" : 1.0 }'",
+                    );
+                    let bar = script(dir.path(), "bar.sh", "echo bar-1");
+                    let cache =
+                        HookCache::new(dir.path().join("cache"), [bar.as_str()]).expect("a bar");
+                    assert_eq!(cache.dir(), dir.path().join("cache"));
+                    assert_eq!(cache.bar_fingerprint(), [bar.as_str()]);
+                    assert_eq!(cache.fingerprint().as_deref(), Some("bar-1"));
+                    let cached = CommandHook::new([respell.as_str()])
+                        .expect("an argv")
+                        .with_cache(cache.clone());
+                    assert_eq!(cached.cache(), Some(&cache));
+                    for _ in 0..2 {
+                        assert_eq!(
+                            cached.run(br#"{"a":1}"#, &context),
+                            HookOutcome::Change(RawRecord::parse("{ \"a\" : 1.0 }").expect("JSON"))
+                        );
+                    }
                     assert_eq!(
-                        cached.run(br#"{"a":1}"#, &context),
-                        HookOutcome::Change(RawRecord::parse("{ \"a\" : 1.0 }").expect("JSON"))
+                        std::fs::read_to_string(dir.path().join("ran"))
+                            .expect("ran")
+                            .lines()
+                            .count(),
+                        1,
+                        "a cached change ran again"
+                    );
+                    let reroute = script(
+                        dir.path(),
+                        "reroute.sh",
+                        "cat\nprintf there > \"$ONEMESSAGEBUS_HOOK_ROUTE\"",
+                    );
+                    let routed = CommandHook::new([reroute.as_str()])
+                        .expect("an argv")
+                        .with_routes([queue("there")]);
+                    assert_eq!(routed.routes(), Some([queue("there")].as_slice()));
+                    assert_eq!(
+                        routed.run(br#"{"a":1}"#, &context),
+                        HookOutcome::Reroute {
+                            queue: queue("there"),
+                            message: RawRecord::parse(r#"{"a":1}"#).expect("JSON"),
+                        }
                     );
                 }
-                assert_eq!(
-                    std::fs::read_to_string(dir.path().join("ran"))
-                        .expect("ran")
-                        .lines()
-                        .count(),
-                    1,
-                    "a cached change ran again"
-                );
-                let reroute = script(
-                    dir.path(),
-                    "reroute.sh",
-                    "cat\nprintf there > \"$ONEMESSAGEBUS_HOOK_ROUTE\"",
-                );
-                let routed = CommandHook::new([reroute.as_str()])
-                    .expect("an argv")
-                    .with_routes([queue("there")]);
-                assert_eq!(routed.routes(), Some([queue("there")].as_slice()));
-                assert_eq!(
-                    routed.run(br#"{"a":1}"#, &context),
-                    HookOutcome::Reroute {
-                        queue: queue("there"),
-                        message: RawRecord::parse(r#"{"a":1}"#).expect("JSON"),
-                    }
-                );
                 assert_eq!(
                     CommandHook::new(Vec::<String>::new()),
                     Err(HookError::NoCommand)

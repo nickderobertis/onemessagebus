@@ -370,8 +370,10 @@ fn a_typed_change_or_reroute_that_cannot_be_written_is_unjudged_with_nothing_app
 }
 
 /// A hook recording what it was handed, then keeping it.
+#[cfg(unix)]
 struct Records(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
 
+#[cfg(unix)]
 impl Hook<RawRecord> for Records {
     fn run(&self, message: &RawRecord, _: &HookContext) -> HookOutcome<RawRecord> {
         self.0
@@ -382,6 +384,8 @@ impl Hook<RawRecord> for Records {
     }
 }
 
+// The configured hook is an `sh` command, which only a unix build can rely on.
+#[cfg(unix)]
 #[test]
 fn registered_hooks_run_after_the_configured_ones_and_receive_their_output() {
     let dir = tempfile::tempdir().expect("a temp dir");

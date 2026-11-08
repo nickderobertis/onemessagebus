@@ -5,10 +5,8 @@
 use std::collections::BTreeSet;
 
 use onemessagebus::{
-    CommandHook, Config, Dropped, HookCache, HookContext, HookOutcome, HookRef, Layouts,
-    QueueConfig, QueueName, RawRecord, TransportKinds, When, HOOK_RECORD_VERSION,
+    Config, Dropped, HookRef, Layouts, QueueConfig, QueueName, RawRecord, TransportKinds, When,
 };
-use serde_json::Value;
 
 const HOOKS: &str = include_str!("../../../docs/hooks.md");
 
@@ -163,8 +161,13 @@ fn the_documented_drop_line_is_what_a_drop_reads_and_writes() {
     assert_eq!(Dropped::parse(written.as_bytes()), Ok(spelled));
 }
 
+// The hook is an `sh` command, which only a unix build can rely on.
+#[cfg(unix)]
 #[test]
 fn the_documented_hook_record_is_what_a_cached_change_writes() {
+    use onemessagebus::{CommandHook, HookCache, HookContext, HookOutcome, HOOK_RECORD_VERSION};
+    use serde_json::Value;
+
     let documented: Value = serde_json::from_str(&fixture("hook-record")).expect("JSON");
     let keys = |record: &Value| -> Vec<String> {
         record
