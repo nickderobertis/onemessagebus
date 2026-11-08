@@ -33,8 +33,9 @@ serde = { version = "1", features = ["derive"] }
 # `preserve_order` keeps JSON object keys in insertion order, so an envelope
 # read off a stream re-serializes in the order its producer wrote rather than in
 # whatever order a hash map happened to yield — the byte identity the recorded
-# streams are held to.
-serde_json = { version = "1", features = ["preserve_order"] }
+# streams are held to. `raw_value` reads a hook's message back out of a drop
+# log line as the bytes it was written with, never re-spelled.
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
 # Every wire type carries a JSON Schema, which is what the registry records for
 # a Rust message and what the SDK generators consume.
 schemars = { version = "1", features = ["preserve_order"] }

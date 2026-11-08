@@ -7,6 +7,11 @@
 //! says. A test rewrites the script between sends to move the bar or change the
 //! answer, and counts the log to see whether the command ran.
 
+#![expect(
+    deprecated,
+    reason = "Contract V's own tests exercise the deprecated validators, which keep working until a later release removes them"
+)]
+
 use std::io::{Read as _, Write as _};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};

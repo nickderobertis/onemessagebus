@@ -12,15 +12,54 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { ROOT, schemaBundle } from "../crates/onemessagebus-cli/sdk-bundle.mjs";
-import { CLIENTS, definedMethods, pythonName } from "./sdk-coverage.mjs";
+import { CLIENTS, definedMethods, ENTRIES, exportedNames, pythonName } from "./sdk-coverage.mjs";
 
 const OUTPUT = "docs/sdk-parity.md";
+
+/**
+ * The hook surface each SDK exposes (`docs/hooks.md`, "The SDKs"): each item,
+ * and the names each package exports for it.
+ */
+export const HOOK_SURFACE = Object.freeze([
+  {
+    item: "the configuration's `hooks` entry, and writing a typed configuration for the binary",
+    typescript: ["HookConfig", "writeConfig"],
+    python: ["HookConfig", "write_config"],
+  },
+  {
+    item: "`validate`'s `outcome` and `records`",
+    typescript: ["Outcome", "ValidatedRecord"],
+    python: ["ValidatedPass", "ValidatedRecord"],
+  },
+  { item: "`send`'s dropped result", typescript: ["Dropped"], python: ["Dropped", "SentLine"] },
+  {
+    item: "`reply`'s dropped result",
+    typescript: ["Dropped", "Delivered"],
+    python: ["Dropped", "ReplyLine"],
+  },
+  {
+    item: "`ask`'s `dropped` answer",
+    typescript: ["DroppedQuestion"],
+    python: ["DroppedQuestion"],
+  },
+]);
+
+/** Each hook item a package's `exported` names lack, as `<language>: <name>`. */
+export function hookGaps(exported) {
+  return HOOK_SURFACE.flatMap((entry) =>
+    ["typescript", "python"].flatMap((language) =>
+      entry[language]
+        .filter((name) => !exported[language].has(name))
+        .map((name) => `${language}: ${name} (${entry.item})`),
+    ),
+  );
+}
 
 const code = (text) => `\`${text}\``;
 const cell = (text) => String(text).replaceAll("|", "\\|").replaceAll("\n", " ");
 
 /** The document for `capabilities`, with each client's defined methods beside them. */
-export function render(capabilities, typescript, python) {
+export function render(capabilities, typescript, python, exported = null) {
   const out = [];
   const line = (text = "") => out.push(text);
   line("# SDK parity");
@@ -62,6 +101,24 @@ export function render(capabilities, typescript, python) {
       `| ${code(capability.method)} | ${code(`onemessagebus ${capability.verb.join(" ")}`)} | ${output} | ${code(capability.library_entry)} | ${typescript.has(capability.method) ? `yes, ${code(capability.method)}` : "**missing**"} | ${python.has(py) ? `yes, ${code(py)}` : "**missing**"} | yes, ${code(capability.method)} |`,
     );
   }
+  if (exported) {
+    line();
+    line("## Hooks");
+    line();
+    line(
+      "What each SDK exports for the hook surface `docs/hooks.md` states, read from `npm/onemessagebus-sdk/src/index.ts` and `python/onemessagebus-sdk/src/onemessagebus/__init__.py`, so each name below is one the package exports, and one it stops exporting fails the audit.",
+    );
+    line();
+    line("| Item | TypeScript | Python |");
+    line("| --- | --- | --- |");
+    const names = (language, entry) =>
+      entry[language]
+        .map((name) => (exported[language].has(name) ? code(name) : `**missing** ${code(name)}`))
+        .join(", ");
+    for (const entry of HOOK_SURFACE) {
+      line(`| ${entry.item} | ${names("typescript", entry)} | ${names("python", entry)} |`);
+    }
+  }
   line();
   line("## Options, flag by flag");
   line();
@@ -98,15 +155,24 @@ function main() {
   const { capabilities } = schemaBundle({ script: "parity-audit", rerun: "just parity-audit" });
   let text;
   try {
+    const exported = {
+      typescript: exportedNames("typescript", ENTRIES.typescript),
+      python: exportedNames("python", ENTRIES.python),
+    };
+    const gaps = hookGaps(exported);
+    if (gaps.length > 0) {
+      throw new Error(`a package exports nothing for a hook item: ${gaps.join("; ")}`);
+    }
     text = render(
       capabilities,
       definedMethods("typescript", CLIENTS.typescript),
       definedMethods("python", CLIENTS.python),
+      exported,
     );
   } catch (error) {
     console.error(`parity-audit: ${error.message}`);
     console.error(
-      `  fix: restore the client the message names (${CLIENTS.typescript} or ${CLIENTS.python}), then rerun \`just parity-audit\``,
+      `  fix: restore the client or export the message names (${CLIENTS.typescript}, ${CLIENTS.python}, ${ENTRIES.typescript} or ${ENTRIES.python}), then rerun \`just parity-audit\``,
     );
     process.exit(1);
   }

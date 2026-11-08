@@ -9,6 +9,10 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+#[expect(
+    deprecated,
+    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
+)]
 use onemessagebus::{
     Answer, AskOptions, Asker, Bus, BusError, Config, Correlation, Layouts, Lifetime, Message,
     Position, QueueError, QueueName, RefusalKind, SchemaId, TransportKinds, ValidationContext,
@@ -441,6 +445,10 @@ fn a_reply_binds_by_correlation_is_refused_unbound_and_binds_the_one_pending_ask
 }
 
 #[test]
+#[expect(
+    deprecated,
+    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
+)]
 fn a_record_that_is_not_an_object_is_refused_before_it_is_bound_judged_or_appended() {
     let rig = Rig::new();
     let bus = rig.bus();
@@ -687,6 +695,10 @@ type Seen = Arc<Mutex<Vec<(String, Option<Correlation>)>>>;
 /// question whose message is `refuse me`.
 struct Recording(Seen);
 
+#[expect(
+    deprecated,
+    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
+)]
 impl Validator<Value> for Recording {
     fn validate(&self, message: &Value, context: &ValidationContext) -> Verdict {
         self.0
@@ -704,6 +716,10 @@ impl Validator<Value> for Recording {
 }
 
 #[test]
+#[expect(
+    deprecated,
+    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
+)]
 fn validators_judge_a_question_and_a_reply_before_anything_is_appended_knowing_the_correlation() {
     let rig = Rig::new();
     let seen = Arc::new(Mutex::new(Vec::new()));

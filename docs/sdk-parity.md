@@ -30,12 +30,24 @@ Every capability of the `onemessagebus` binary, and how each consumer surface re
 | `subscribe` | `onemessagebus subscribe` | jsonl `log_record` | `onemessagebus::RawQueue::wait_for_change` | yes, `subscribe` | yes, `subscribe` | yes, `subscribe` |
 | `status` | `onemessagebus status` | json `queue_statuses` | `onemessagebus::RawQueue::status` | yes, `status` | yes, `status` | yes, `status` |
 | `transports` | `onemessagebus transports` | json `transport_kinds` | `onemessagebus::TransportKinds::kinds` | yes, `transports` | yes, `transports` | yes, `transports` |
-| `validate` | `onemessagebus validate` | json `validated` | `onemessagebus::Bus::validate` | yes, `validate` | yes, `validate` | yes, `validate` |
+| `validate` | `onemessagebus validate` | json `validated` | `onemessagebus::Bus::hooked` | yes, `validate` | yes, `validate` | yes, `validate` |
 | `ask` | `onemessagebus ask` | json `asked` | `onemessagebus::Bus::ask` | yes, `ask` | yes, `ask` | yes, `ask` |
 | `serve` | `onemessagebus serve` | jsonl `codec_response` | `onemessagebus::Bus::serve` | yes, `serve` | yes, `serve` | yes, `serve` |
 | `schemas` | `onemessagebus schemas` | json `schema_cache` | `onemessagebus::LinkResolver::cached` | yes, `schemas` | yes, `schemas` | yes, `schemas` |
 | `schemasClear` | `onemessagebus schemas clear` | json `schemas_cleared` | `onemessagebus::LinkResolver::clear` | yes, `schemasClear` | yes, `schemas_clear` | yes, `schemasClear` |
 | `schemasFetch` | `onemessagebus schemas fetch` | json `schemas_fetched` | `onemessagebus::LinkResolver::resolve` | yes, `schemasFetch` | yes, `schemas_fetch` | yes, `schemasFetch` |
+
+## Hooks
+
+What each SDK exports for the hook surface `docs/hooks.md` states, read from `npm/onemessagebus-sdk/src/index.ts` and `python/onemessagebus-sdk/src/onemessagebus/__init__.py`, so each name below is one the package exports, and one it stops exporting fails the audit.
+
+| Item | TypeScript | Python |
+| --- | --- | --- |
+| the configuration's `hooks` entry, and writing a typed configuration for the binary | `HookConfig`, `writeConfig` | `HookConfig`, `write_config` |
+| `validate`'s `outcome` and `records` | `Outcome`, `ValidatedRecord` | `ValidatedPass`, `ValidatedRecord` |
+| `send`'s dropped result | `Dropped` | `Dropped`, `SentLine` |
+| `reply`'s dropped result | `Dropped`, `Delivered` | `Dropped`, `ReplyLine` |
+| `ask`'s `dropped` answer | `DroppedQuestion` | `DroppedQuestion` |
 
 ## Options, flag by flag
 

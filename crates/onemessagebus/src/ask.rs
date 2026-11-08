@@ -26,10 +26,10 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::config::{Bus, BusError};
+use crate::hook::{Dropped, RawRecord};
 use crate::queue::{shape_word, Asker, Claimed, Lifetime, Pushed, QueueError, RawQueue};
 use crate::schema::{CheckError, Message, Registry};
 use crate::transport::{Position, QueueName};
-use crate::validate::Verdict;
 
 /// The field a question and a reply carry their correlation in.
 pub const CORRELATION: &str = "correlation";
@@ -617,7 +617,17 @@ fn a_reply_object(answers: &RawQueue, reply: &Value) -> Result<(), QueueError> {
     })
 }
 
-fn stamped(record: Value, correlation: &Correlation) -> Value {
+/// What [`Bus::ask_offered`] made of a question. Not part of the library surface.
+#[doc(hidden)]
+#[derive(Debug)]
+pub enum AskOffered<R: Message> {
+    /// The question was asked, and this waits for its reply.
+    Raised(Box<Pending<R>>),
+    /// A hook dropped it; this is the line its drop log records.
+    Dropped(Dropped),
+}
+
+pub(crate) fn stamped(record: Value, correlation: &Correlation) -> Value {
     match record {
         Value::Object(mut fields) => {
             fields.insert(
@@ -708,12 +718,36 @@ impl Bus {
     /// queue ([`BusError::NotAskable`]); a question that is not a JSON object
     /// or does not satisfy `Q`'s schema or the queue's; the layout's refusal; a
     /// validator's refusal or an unjudged verdict. Nothing is appended.
+    /// [`BusError::Dropped`] when a hook drops the question: only its drop is
+    /// recorded.
     pub fn ask<Q: Message, R: Message>(
         &self,
         queue: &QueueName,
         question: Q,
         options: AskOptions,
     ) -> Result<Pending<R>, BusError> {
+        match self.ask_offered(queue, question, options)? {
+            AskOffered::Raised(pending) => Ok(*pending),
+            AskOffered::Dropped(dropped) => Err(BusError::Dropped {
+                queue: dropped.queue,
+            }),
+        }
+    }
+
+    /// [`ask`](Self::ask), answering a dropped question with its whole drop
+    /// line rather than an error, so the binary can name the dropping hook on
+    /// the `dropped` answer it prints. Not part of the library surface.
+    ///
+    /// # Errors
+    ///
+    /// As [`ask`](Self::ask), but for the drop.
+    #[doc(hidden)]
+    pub fn ask_offered<Q: Message, R: Message>(
+        &self,
+        queue: &QueueName,
+        question: Q,
+        options: AskOptions,
+    ) -> Result<AskOffered<R>, BusError> {
         let (questions, answers) = self.askable(queue)?;
         let value = serde_json::to_value(&question).map_err(|failure| QueueError::Shape {
             queue: queue.clone(),
@@ -759,14 +793,35 @@ impl Bus {
             Value::String(correlation.as_str().to_owned()),
         );
         let offered = Value::Object(fields);
-        let routed = self.prepare(queue, offered.clone())?;
-        QueueError::of_verdict(
+        let decision = self.decide(
             queue,
-            self.judge(queue, &offered, &routed, Some(&correlation)),
+            RawRecord::from_value(&offered),
+            Some(&correlation),
+            None,
         )?;
+        decision.appendable()?;
+        let lands = decision
+            .hooked
+            .records
+            .iter()
+            .any(|(target, _)| target == queue);
+        if !lands {
+            // A question a hook dropped on the queue it was asked on is
+            // recorded in that queue's drop log, and answers that it was
+            // dropped. One the layout or a hook sent elsewhere can never be
+            // answered there, so none of it is appended.
+            let Some(dropped) = decision.dropped_on(queue) else {
+                return Err(BusError::NotAskable {
+                    queue: queue.clone(),
+                    why: "the layout or a hook routed the question to no record on the queue it was asked on, so nothing was appended".to_owned(),
+                });
+            };
+            let dropped = dropped.clone();
+            self.append_hooked(&decision.hooked)?;
+            return Ok(AskOffered::Dropped(dropped));
+        }
         let mut raised = None;
-        for (target, record) in routed {
-            let pushed = self.queue(&target)?.push_judged(record)?;
+        for (target, pushed) in self.append_hooked(&decision.hooked)? {
             if &target == queue {
                 raised = Some(pushed);
             }
@@ -777,7 +832,7 @@ impl Bus {
                 why: "the layout routed the question to no record with an id on the queue it was asked on".to_owned(),
             });
         };
-        Ok(Pending {
+        Ok(AskOffered::Raised(Box::new(Pending {
             correlation,
             questions,
             answers,
@@ -785,7 +840,7 @@ impl Bus {
             id,
             asker: options.asker,
             reply: PhantomData,
-        })
+        })))
     }
 
     /// Listen again for the question `correlation` minted on `queue`, raising
@@ -993,28 +1048,23 @@ impl Bus {
         reply: Value,
     ) -> Result<(Appended, Option<Position>), BusError> {
         let answer_queue = answers.name().clone();
-        let routed: Vec<(QueueName, Value)> = self
-            .prepare(&answer_queue, reply.clone())?
-            .into_iter()
-            .map(|(target, record)| match correlation {
-                Some(correlation) if target == answer_queue => {
-                    let stamped = stamped(record, correlation);
-                    (target, stamped)
-                }
-                _ => (target, record),
-            })
-            .collect();
-        let verdict: Verdict = self.judge(&answer_queue, &reply, &routed, correlation);
-        QueueError::of_verdict(&answer_queue, verdict)?;
-        let mut sent = Vec::new();
-        let mut at = None;
-        for (target, record) in routed {
-            let pushed = self.queue(&target)?.push_judged(record)?;
-            if target == answer_queue {
-                at = Some(pushed.position);
-            }
-            sent.push((target, pushed));
+        let decision = self.decide(
+            &answer_queue,
+            RawRecord::from_value(&reply),
+            correlation,
+            Some(&answer_queue),
+        )?;
+        decision.appendable()?;
+        let sent = self.append_hooked(&decision.hooked)?;
+        if let Some(dropped) = decision.whole_drop() {
+            return Err(BusError::Dropped {
+                queue: dropped.queue.clone(),
+            });
         }
+        let at = sent
+            .iter()
+            .find(|(target, _)| *target == answer_queue)
+            .map(|(_, pushed)| pushed.position);
         Ok((sent, at))
     }
 }

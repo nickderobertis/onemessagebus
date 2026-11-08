@@ -4,8 +4,12 @@
 // by keyword and JSON pointer: a keyword this emitter silently dropped would be a
 // constraint the Rust core enforces and this SDK claims to, but does not.
 
-/** Keywords that describe a schema and constrain nothing. */
-const METADATA = new Set(["$schema", "title", "description", "default", "examples"]);
+/**
+ * Keywords that describe a schema and constrain nothing. `deprecated` is an
+ * annotation: a deprecated field still parses, and the declarations carry it as a
+ * `@deprecated` tag.
+ */
+const METADATA = new Set(["$schema", "title", "description", "default", "examples", "deprecated"]);
 
 /** The integer formats schemars writes for Rust integers. */
 const INTEGER_FORMATS = new Set([
@@ -278,9 +282,14 @@ export function zodDeclarations(document, { exportName, typeName, at }) {
       );
     }
     seen.set(identifier, name);
-    lines.push(
-      `const ${identifier}: z.ZodType = ${expression(defs[name], pointer(`${at}/$defs`, name))};`,
-    );
+    let defined = expression(defs[name], pointer(`${at}/$defs`, name));
+    // A definition admitting any JSON value still admits no `undefined`, which is
+    // no JSON value: so a required member referring to it is required, while an
+    // optional one stays optional through its own `.optional()`.
+    if (defined === "z.unknown()") {
+      defined += `.refine((value) => value !== undefined, { message: "required" })`;
+    }
+    lines.push(`const ${identifier}: z.ZodType = ${defined};`);
   }
   const { $defs: _defs, ...root } = document;
   lines.push(`export const ${exportName} = contract<${typeName}>(${expression(root, at)});`);

@@ -582,7 +582,7 @@ export const CAPABILITIES = {
     output: "validated",
     stdout: "json",
     stdin: true,
-    library_entry: "onemessagebus::Bus::validate",
+    library_entry: "onemessagebus::Bus::hooked",
     bindings: [
       {
         option: "queue",

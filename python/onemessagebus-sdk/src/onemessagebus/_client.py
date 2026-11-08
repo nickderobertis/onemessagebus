@@ -35,12 +35,12 @@ from ._types import (
     LogRecord,
     Payload,
     QueueStatus,
-    Replied,
+    ReplyLine,
     SchemaCache,
     SchemaEntry,
     SchemasCleared,
     SchemasFetched,
-    Sent,
+    SentLine,
     StrPath,
     Validated,
 )
@@ -440,8 +440,8 @@ class Client:
         config: StrPath | None = None,
         transport_dir: StrPath | None = None,
         registry: StrPath | None = None,
-    ) -> list[Sent]:
-        """Append a record to `queue`, and answer every record appended."""
+    ) -> list[SentLine]:
+        """Append a record to `queue`, and answer each line: a `Sent`, or a hook's `Dropped`."""
         values = {
             "queue": queue,
             "file": file,
@@ -449,7 +449,7 @@ class Client:
             "transport_dir": transport_dir,
             "registry": registry,
         }
-        return _read(list[Sent], await self._call("send", values, _encode(message)), "send")
+        return _read(list[SentLine], await self._call("send", values, _encode(message)), "send")
 
     @overload
     async def next(
@@ -523,8 +523,12 @@ class Client:
         config: StrPath | None = None,
         transport_dir: StrPath | None = None,
         registry: StrPath | None = None,
-    ) -> Replied:
-        """Answer a pending ask of `queue`: by `correlation`, by `position`, or the one pending."""
+    ) -> ReplyLine:
+        """Answer a pending ask of `queue`: by `correlation`, by `position`, or the one pending.
+
+        A reply a hook dropped answers `Dropped`: it answered nothing, and the
+        answers queue's drop log holds it.
+        """
         values = {
             "queue": queue,
             "position": position,
@@ -534,7 +538,7 @@ class Client:
             "transport_dir": transport_dir,
             "registry": registry,
         }
-        return _read(Replied, await self._call("reply", values, _encode(reply)), "reply")
+        return _read(ReplyLine, await self._call("reply", values, _encode(reply)), "reply")
 
     @overload
     def subscribe(
@@ -657,7 +661,11 @@ class Client:
         transport_dir: StrPath | None = None,
         registry: StrPath | None = None,
     ) -> Validated:
-        """Judge a record as `send` would, appending nothing; a refusal verdict is returned."""
+        """Judge a record as `send` would, appending nothing; a refusal verdict is returned.
+
+        `outcome` is what the hooks made of the offer — keep, change, drop, refuse or
+        unjudged — and `records` each record a send would append.
+        """
         values = {
             "queue": queue,
             "file": file,
@@ -688,7 +696,10 @@ class Client:
         transport_dir: StrPath | None = None,
         registry: StrPath | None = None,
     ) -> Answer:
-        """Ask on `queue` and wait: a Reply, or the Timeout, Abandoned or Refused answer."""
+        """Ask on `queue` and wait: a Reply, or the Timeout, Abandoned, Refused or Dropped answer.
+
+        A question a hook dropped answers `DroppedQuestion` at once: no reply will come.
+        """
         values = {
             "queue": queue,
             "blocking": blocking,

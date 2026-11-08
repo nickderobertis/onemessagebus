@@ -197,7 +197,8 @@ for (const transport of TRANSPORTS) {
     test("send appends a typed record, and the core refuses a violation naming the id and pointer", async () => {
       const [sent] = await client.send("greetings", Greeting.parse({ text: "hello" }));
       expect(sent?.queue).toBe("greetings");
-      expect(typeof sent?.position).toBe("number");
+      // no hook runs on `greetings`, so the line is an appended record, never a drop
+      expect(sent !== undefined && "position" in sent && typeof sent.position).toBe("number");
       const typed = await client.send("greetings", { text: "again" }, { type: Greeting });
       expect(typed).toHaveLength(1);
 
@@ -219,10 +220,13 @@ for (const transport of TRANSPORTS) {
       expect(await client.validate("judged", { say: "quiet please" })).toEqual({
         queue: "judged",
         verdict: "pass",
+        outcome: "keep",
+        records: [{ queue: "judged", record: { say: "quiet please" } }],
       });
       const refused = await client.validate("judged", { say: "LOUD" });
       expect(refused.verdict).toBe("refuse");
       expect(refused.reason).toContain("too loud");
+      expect([refused.outcome, refused.records]).toEqual(["refuse", []]);
       await refusedWith(BusRefused, () => client.validate("nowhere", {}));
     });
 
@@ -329,6 +333,9 @@ for (const transport of TRANSPORTS) {
         completion: true,
         reason: "main",
       });
+      // no hook runs on `answers`, so the reply was delivered, never dropped
+      if ("dropped" in replied)
+        throw new Error(`the reply was dropped: ${JSON.stringify(replied)}`);
       expect(replied.correlation).toBe(correlation);
       expect(replied.sent.map((sent) => sent.queue)).toEqual(["answers"]);
       const answer: Answer = await asked;

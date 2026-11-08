@@ -15,6 +15,14 @@
 //! under an unchanged bar is not judged twice, and moving the bar invalidates
 //! every record made under the one before. Only a pass is ever recorded.
 //! `docs/validators.md` states the contract.
+//!
+//! Every item here is deprecated in favour of the hooks of `crate::hook`,
+//! and keeps working until a later release removes it.
+
+#![expect(
+    deprecated,
+    reason = "the deprecated validators' own implementation names the items it deprecates"
+)]
 
 use std::fmt;
 use std::io::Write as _;
@@ -49,6 +57,7 @@ pub const PASS_RECORD_VERSION: u32 = 1;
 /// `{"verdict": "unjudged", "reason": ...}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "verdict", rename_all = "lowercase")]
+#[deprecated(note = "validators are deprecated: a hook answers a `HookOutcome` (`docs/hooks.md`)")]
 pub enum Verdict {
     /// The message may be sent.
     Pass,
@@ -112,12 +121,18 @@ impl ValidationContext {
 }
 
 /// One judgement a queue makes of a message before it is appended.
+#[deprecated(
+    note = "validators are deprecated: implement `Hook<M>`, whose `Keep` is a pass (`docs/hooks.md`)"
+)]
 pub trait Validator<M: Message>: Send + Sync {
     /// Judge `message`, offered in `context`.
     fn validate(&self, message: &M, context: &ValidationContext) -> Verdict;
 }
 
 /// An ordered list of validators, judged together.
+#[deprecated(
+    note = "validators are deprecated: use `Hooks<M>`, the ordered chain of hooks (`docs/hooks.md`)"
+)]
 pub struct Validators<M> {
     each: Vec<Arc<dyn Validator<M>>>,
 }
@@ -358,6 +373,9 @@ pub enum ValidatorError {
 /// one a signal ended are unjudged. Its stdout is discarded. The queue the
 /// message is offered to is in [`VALIDATE_QUEUE_ENV`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[deprecated(
+    note = "validators are deprecated: use `CommandHook`, a command that prints its input to keep it (`docs/hooks.md`)"
+)]
 pub struct CommandValidator {
     command: Vec<String>,
     cache: Option<PassCache>,
@@ -557,6 +575,9 @@ impl<M: Message> Validator<M> for CommandValidator {
 /// read — the command fails, or prints nothing — keys nothing: the message is
 /// judged by the command and nothing is recorded.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[deprecated(
+    note = "validators are deprecated: use `HookCache`, which reads the passes this one recorded as keeps (`docs/hooks.md`)"
+)]
 pub struct PassCache {
     dir: PathBuf,
     bar_fingerprint: Vec<String>,
@@ -570,15 +591,68 @@ struct PassKey {
     command: Vec<String>,
 }
 
-/// The document one pass is recorded as, `<dir>/<content>.<bar>.pass.json`.
+/// The document one pass is recorded as, `<dir>/<content>.<bar>.pass.json`:
+/// what a hook cache also reads as a keep.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PassRecord {
+pub(crate) struct PassRecord {
     schema_version: u32,
     content: String,
     bar: String,
     fingerprint: String,
     command: Vec<String>,
+}
+
+impl PassRecord {
+    /// Whether this is a pass of this version under exactly this key.
+    pub(crate) fn keys(
+        &self,
+        content: &str,
+        bar: &str,
+        fingerprint: &str,
+        command: &[String],
+    ) -> bool {
+        self.schema_version == PASS_RECORD_VERSION
+            && self.content == content
+            && self.bar == bar
+            && self.fingerprint == fingerprint
+            && self.command == command
+    }
+}
+
+/// The content half of a cache key: the SHA-256 of the message's bytes.
+pub(crate) fn content_digest(content: &[u8]) -> String {
+    hex(&Sha256::digest(content))
+}
+
+/// The bar half of a cache key: the SHA-256 of the command's argv and the
+/// fingerprint its bar printed.
+pub(crate) fn bar_digest(command: &[String], fingerprint: &str) -> String {
+    let mut bar = Sha256::new();
+    for word in command {
+        bar.update(word.as_bytes());
+        bar.update([0]);
+    }
+    bar.update([0xff]);
+    bar.update(fingerprint.as_bytes());
+    hex(&bar.finalize())
+}
+
+/// What `argv` prints as a bar's fingerprint: its stdout with surrounding
+/// whitespace removed, when it exits 0 having printed something.
+pub(crate) fn read_fingerprint(argv: &[String]) -> Option<String> {
+    let (program, arguments) = argv.split_first()?;
+    let output = Command::new(program)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let printed = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (!printed.is_empty()).then_some(printed)
 }
 
 impl PassCache {
@@ -620,18 +694,7 @@ impl PassCache {
     /// surrounding whitespace removed, when it exits 0 having printed something.
     #[must_use]
     pub fn fingerprint(&self) -> Option<String> {
-        let (program, arguments) = self.bar_fingerprint.split_first()?;
-        let output = Command::new(program)
-            .args(arguments)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let printed = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        (!printed.is_empty()).then_some(printed)
+        read_fingerprint(&self.bar_fingerprint)
     }
 
     /// Whether a pass of `content` by `command` under the bar as it stands now
@@ -644,16 +707,9 @@ impl PassCache {
 
     fn key(&self, command: &[String], content: &[u8]) -> Option<PassKey> {
         let fingerprint = self.fingerprint()?;
-        let mut bar = Sha256::new();
-        for word in command {
-            bar.update(word.as_bytes());
-            bar.update([0]);
-        }
-        bar.update([0xff]);
-        bar.update(fingerprint.as_bytes());
         Some(PassKey {
-            content: hex(&Sha256::digest(content)),
-            bar: hex(&bar.finalize()),
+            content: content_digest(content),
+            bar: bar_digest(command, &fingerprint),
             fingerprint,
             command: command.to_vec(),
         })
@@ -668,13 +724,8 @@ impl PassCache {
         let Ok(bytes) = std::fs::read(self.path(key)) else {
             return false;
         };
-        serde_json::from_slice::<PassRecord>(&bytes).is_ok_and(|record| {
-            record.schema_version == PASS_RECORD_VERSION
-                && record.content == key.content
-                && record.bar == key.bar
-                && record.fingerprint == key.fingerprint
-                && record.command == key.command
-        })
+        serde_json::from_slice::<PassRecord>(&bytes)
+            .is_ok_and(|record| record.keys(&key.content, &key.bar, &key.fingerprint, &key.command))
     }
 
     fn record(&self, key: &PassKey) -> std::io::Result<()> {

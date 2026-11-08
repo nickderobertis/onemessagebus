@@ -1,0 +1,302 @@
+{
+  "version": "1.0",
+  "description": "The layouts the hook journeys link: one whose preparation stamps a record, one that splits an offer onto a plain queue and a typed one, one whose relay queue routes on what it is offered, one that deflects every question asked of it, and one that splits an offer into two records on one numbered queue.",
+  "schemas": [
+    {
+      "id": "hooks.note@1",
+      "schema": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "n": {
+            "type": "number"
+          },
+          "noted_at": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "r": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    {
+      "id": "hooks.capped@1",
+      "schema": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "maximum": 1
+          }
+        }
+      }
+    }
+  ],
+  "layouts": [
+    {
+      "name": "stamped",
+      "description": "A notebook whose notes are stamped when they are offered, beside a typed queue, a plain one, and a numbered one whose schema caps the ids it gives.",
+      "queues": [
+        {
+          "name": "notes",
+          "schema": "hooks.note@1"
+        },
+        {
+          "name": "typed",
+          "schema": "hooks.note@1"
+        },
+        {
+          "name": "elsewhere"
+        },
+        {
+          "name": "capped",
+          "schema": "hooks.capped@1",
+          "numbered": true
+        }
+      ],
+      "prepare": {
+        "notes": [
+          {
+            "stamp": {
+              "member": "noted_at"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "split",
+      "description": "An inbox whose offers are split: what a record carries under `l` goes to a plain queue, and `r` with the text beside it to a typed one.",
+      "queues": [
+        {
+          "name": "inbox"
+        },
+        {
+          "name": "left"
+        },
+        {
+          "name": "right",
+          "schema": "hooks.note@1"
+        }
+      ],
+      "prepare": {
+        "inbox": [
+          {
+            "route": {
+              "routes": [
+                {
+                  "queue": "left",
+                  "on": [
+                    "l"
+                  ],
+                  "take": [
+                    "l"
+                  ]
+                },
+                {
+                  "queue": "right",
+                  "on": [
+                    "r"
+                  ],
+                  "take": [
+                    "r",
+                    "text"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "relay",
+      "description": "An inbox routing what it carries under `m` to a relay, whose own preparation sends a record carrying `n` on to a sink, whose own sends a record carrying `m` back to the relay.",
+      "queues": [
+        {
+          "name": "inbox"
+        },
+        {
+          "name": "relay"
+        },
+        {
+          "name": "sink"
+        }
+      ],
+      "prepare": {
+        "inbox": [
+          {
+            "route": {
+              "routes": [
+                {
+                  "queue": "relay",
+                  "on": [
+                    "m"
+                  ],
+                  "take": [
+                    "m"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "relay": [
+          {
+            "route": {
+              "routes": [
+                {
+                  "queue": "relay",
+                  "on": [
+                    "m"
+                  ],
+                  "take": [
+                    "m"
+                  ]
+                },
+                {
+                  "queue": "sink",
+                  "on": [
+                    "n"
+                  ],
+                  "take": [
+                    "n"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "sink": [
+          {
+            "route": {
+              "routes": [
+                {
+                  "queue": "sink",
+                  "on": [
+                    "n"
+                  ],
+                  "take": [
+                    "n"
+                  ]
+                },
+                {
+                  "queue": "relay",
+                  "on": [
+                    "m"
+                  ],
+                  "take": [
+                    "m"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "deflecting",
+      "description": "A queue questions are asked on whose preparation routes every question off it: its message to an aside, and the message with its correlation to another queue.",
+      "queues": [
+        {
+          "name": "asks",
+          "policy": {
+            "hold_pending": true
+          },
+          "answers": "replies"
+        },
+        {
+          "name": "replies"
+        },
+        {
+          "name": "aside"
+        },
+        {
+          "name": "other"
+        }
+      ],
+      "prepare": {
+        "asks": [
+          {
+            "route": {
+              "routes": [
+                {
+                  "queue": "aside",
+                  "on": [
+                    "message"
+                  ],
+                  "take": [
+                    "message"
+                  ]
+                },
+                {
+                  "queue": "other",
+                  "on": [
+                    "message"
+                  ],
+                  "take": [
+                    "message",
+                    "correlation"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "doubled",
+      "description": "An inbox whose offers become two records on one numbered queue whose schema caps the ids it gives.",
+      "queues": [
+        {
+          "name": "inbox"
+        },
+        {
+          "name": "capped",
+          "schema": "hooks.capped@1",
+          "numbered": true
+        }
+      ],
+      "prepare": {
+        "inbox": [
+          {
+            "route": {
+              "routes": [
+                {
+                  "queue": "capped",
+                  "on": [
+                    "a"
+                  ],
+                  "take": [
+                    "a"
+                  ]
+                },
+                {
+                  "queue": "capped",
+                  "on": [
+                    "b"
+                  ],
+                  "take": [
+                    "b"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

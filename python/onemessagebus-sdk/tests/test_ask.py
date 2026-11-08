@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from onemessagebus import Abandoned, BusFailed, BusRefused, Client, Reply, Timeout
+from onemessagebus import Abandoned, BusFailed, BusRefused, Client, Replied, Reply, Timeout
 
 QUESTION = {"message": "which base?", "source": "proposal"}
 VERDICT = {"completion": True, "reason": "main"}
@@ -30,6 +30,7 @@ async def test_an_ask_answers_the_reply_a_concurrent_reply_gives(client: Client)
     await queued(client)
     replied = await client.reply("questions", None, VERDICT)
     answer = await asyncio.wait_for(asking, 30)
+    assert isinstance(replied, Replied)
     assert isinstance(answer, Reply)
     assert answer.reply == {"id": 0, **VERDICT, "correlation": answer.correlation}
     assert replied.correlation is not None
@@ -54,6 +55,7 @@ async def test_an_unanswered_ask_times_out_and_a_listener_again_finds_it_abandon
     assert isinstance(again, (Abandoned, Timeout))
     assert again.correlation == timed.correlation
     replied = await client.reply("questions", timed.correlation, VERDICT)
+    assert isinstance(replied, Replied)
     assert replied.correlation is not None
     assert replied.correlation.root == timed.correlation
     with pytest.raises(

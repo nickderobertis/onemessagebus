@@ -45,11 +45,13 @@ commands, and every flag it names beside a verb, to the binary itself.
 A queue is a log a transport keeps, under a layout that says how its records are
 shaped, who may write them and what happens to one that is claimed. `send`
 appends, `next` claims, `subscribe` tails as it grows — the GIF above is
-`subscribe` on this queue — `status` reports, `validate` judges without appending
-and `transports` lists the kinds this build can open. `docs/queues.md`,
-`docs/validators.md` and `docs/transport.md` are those stories.
+`subscribe` on this queue — `status` reports, `validate` decides without appending
+and `transports` lists the kinds this build can open. A queue's hooks keep,
+change, reroute, drop or refuse each offered message before anything is
+appended. `docs/queues.md`, `docs/hooks.md`, `docs/validators.md` (deprecated in
+favour of hooks) and `docs/transport.md` are those stories.
 
-![A send printing the queue, byte position and id its record landed at; a claim printing that record back; then one counts line per queue — records, waiting, pending, abandoned, unread — each with its consumers' cursors indented beneath it](docs/screenshots/queues.svg)
+![A send printing the queue, byte position and id its record landed at; a claim printing that record back; then one counts line per queue — records, waiting, pending, abandoned, unread, dropped — each with its consumers' cursors indented beneath it](docs/screenshots/queues.svg)
 
 ## Ask, and the answer that echoes the correlation
 

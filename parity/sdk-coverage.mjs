@@ -31,6 +31,36 @@ export const CLIENTS = Object.freeze({
   python: "python/onemessagebus-sdk/src/onemessagebus/_client.py",
 });
 
+/** The two packages' public entries, relative to the repository root. */
+export const ENTRIES = Object.freeze({
+  typescript: "npm/onemessagebus-sdk/src/index.ts",
+  python: "python/onemessagebus-sdk/src/onemessagebus/__init__.py",
+});
+
+/**
+ * The names a package entry exports: every name in the TypeScript entry's
+ * `export { ... }` lists, less `type`, and every name in the Python entry's
+ * `__all__`.
+ */
+export function exportedNames(language, file) {
+  const source = readFileSync(resolve(ROOT, file), "utf8");
+  if (language === "typescript") {
+    return new Set(
+      [...source.matchAll(/^export \{([^}]*)\}/gmu)].flatMap((match) =>
+        match[1]
+          .split(",")
+          .map((name) => name.trim().replace(/^type\s+/u, ""))
+          .filter((name) => name.length > 0),
+      ),
+    );
+  }
+  const all = /^__all__ = \[([^\]]*)\]/mu.exec(source);
+  if (!all) {
+    throw new Error(`${file} declares no \`__all__\`; the parity gate reads the exports there`);
+  }
+  return new Set([...all[1].matchAll(/"([A-Za-z_][A-Za-z0-9_]*)"/gu)].map((match) => match[1]));
+}
+
 /** The Python spelling of a capability's camelCase method. */
 export const pythonName = (method) =>
   method.replace(/[A-Z]/gu, (upper) => `_${upper.toLowerCase()}`);

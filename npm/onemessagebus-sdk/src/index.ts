@@ -9,10 +9,15 @@ export {
 export {
   type Abandoned,
   type Answer,
+  type Appended,
   type Claimed,
   Client,
   type ClientOptions,
+  type Delivered,
+  type Dropped,
+  type DroppedQuestion,
   type MessageTypeLike,
+  type Outcome,
   type Predicate,
   type QueueStatus,
   type AsJson,
@@ -21,7 +26,9 @@ export {
   type Reply,
   SchemaApi,
   type Timeout,
+  type ValidatedRecord,
 } from "./client.js";
+export { type HookConfig, writeConfig } from "./config.js";
 export {
   BusError,
   BusFailed,

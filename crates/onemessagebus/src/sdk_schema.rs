@@ -7,6 +7,11 @@
 //! the registry holds. Language packages may add client behaviour, but must
 //! not restate these wire shapes by hand.
 
+#![expect(
+    deprecated,
+    reason = "`validate` keeps printing the deprecated verdict beside the hook outcome until a later release removes it"
+)]
+
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::num::NonZeroU64;
@@ -22,6 +27,7 @@ use crate::codec::CodecName;
 use crate::config::Config;
 use crate::envelope::Envelope;
 use crate::filter::{Filter, Matcher};
+use crate::hook::{HookRef, Hooked, HookedOutcome, RawRecord};
 use crate::kinds::KindEntry;
 use crate::layout::LayoutDocument;
 use crate::link::{BundleVersion, CachedBundle, SchemaBundle, SchemaLink};
@@ -496,17 +502,197 @@ pub enum Asked {
         /// Why.
         reason: String,
     },
+    /// A hook dropped the question, so no reply will come: it is recorded in
+    /// the drop log of `queue`.
+    Dropped {
+        /// The queue the dropping hook ran on.
+        queue: QueueName,
+        /// The hook that dropped it.
+        hook: HookRef,
+    },
 }
 
-/// What `validate` judged: the queue, and the verdict its validators reached.
+/// What `validate` decided: the queue, the verdict, what the offer became, and
+/// the records a send would append.
+// llmlint: ignore[invalid_states_unrepresentable] `{queue, verdict, reason, outcome, records}` is the agreed `validate` line (docs/hooks.md, "The command line"), which onepipeline and ai-orchestrator build against: `verdict` stays beside `outcome` so a reader of the validator-era line reads it unchanged, and `Validated::of` — the one constructor the binary prints from — derives `verdict`, `outcome` and `records` from a single `HookedOutcome`, so the binary never writes a contradictory line; reshaping the wire into per-outcome variants is a contract change for its owner, not this type's.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Validated {
-    /// The queue the record was judged for.
+    /// The queue the record was offered to.
     pub queue: QueueName,
-    /// The verdict: `pass`, `refuse` or `unjudged`, with the reason beside a
-    /// verdict that is not a pass.
+    /// The verdict: `pass` for a keep, a change and a drop, `refuse` or
+    /// `unjudged` otherwise, with the reason beside a verdict that is not a
+    /// pass.
     #[serde(flatten)]
+    #[schemars(with = "VerdictWire")]
     pub verdict: Verdict,
+    /// What the offer became.
+    pub outcome: OutcomeWord,
+    /// Each record a send would append, in order, its bytes as a send would
+    /// append them; empty for a drop of the whole offer, a refusal and an
+    /// unjudged offer.
+    pub records: Vec<ValidatedRecord>,
+}
+
+impl Validated {
+    /// What `validate` prints for an offer to `queue` that became `hooked`.
+    #[must_use]
+    pub fn of(queue: QueueName, hooked: &Hooked) -> Self {
+        let (verdict, outcome) = match &hooked.outcome {
+            HookedOutcome::Keep => (Verdict::Pass, OutcomeWord::Keep),
+            HookedOutcome::Change => (Verdict::Pass, OutcomeWord::Change),
+            HookedOutcome::Drop => (Verdict::Pass, OutcomeWord::Drop),
+            HookedOutcome::Refuse { reason } => (
+                Verdict::Refuse {
+                    reason: reason.clone(),
+                },
+                OutcomeWord::Refuse,
+            ),
+            HookedOutcome::Unjudged { reason } => (
+                Verdict::Unjudged {
+                    reason: reason.clone(),
+                },
+                OutcomeWord::Unjudged,
+            ),
+        };
+        Self {
+            queue,
+            verdict,
+            outcome,
+            records: hooked
+                .records
+                .iter()
+                .map(|(queue, record)| ValidatedRecord {
+                    queue: queue.clone(),
+                    record: record.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// `validate`'s verdict on the wire: the deprecated [`Verdict`]'s own shape,
+/// stated here so the `validated` root is not itself marked deprecated. The
+/// unit test below holds the two schemas to one shape.
+#[derive(JsonSchema)]
+#[serde(tag = "verdict", rename_all = "lowercase")]
+#[expect(
+    dead_code,
+    reason = "a schema-only mirror of the deprecated verdict's wire shape"
+)]
+enum VerdictWire {
+    /// The offer may be sent: a keep, a change or a drop.
+    Pass,
+    /// The offer is refused.
+    Refuse {
+        /// Why, in the refusing hook's or validator's own words.
+        reason: String,
+    },
+    /// The offer could not be decided, so it is not sent either.
+    Unjudged {
+        /// Why no decision could be made.
+        reason: String,
+    },
+}
+
+/// What an offer became, as `validate` names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum OutcomeWord {
+    /// Every record as offered.
+    Keep,
+    /// A record changed, rerouted, or dropped beside one that was not.
+    Change,
+    /// The whole offer dropped.
+    Drop,
+    /// Refused by a hook or a validator.
+    Refuse,
+    /// Not decided.
+    Unjudged,
+}
+
+/// One record `validate` says a send would append.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ValidatedRecord {
+    /// The queue it would land on.
+    pub queue: QueueName,
+    /// The record, its bytes as a send would append them: any JSON value,
+    /// because a record is whatever its queue keeps, and the queue's own
+    /// schema, where it declares one, is what constrains it.
+    pub record: RawRecord,
+}
+
+/// One line `send` prints: a record it appended, or one a hook dropped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum SentLine {
+    /// A record appended.
+    Sent(Sent),
+    /// A record a hook dropped, recorded in the queue's drop log.
+    Dropped(DroppedRecord),
+}
+
+/// A record a hook dropped: what `send` prints for it, and what `reply` prints
+/// for a reply a hook dropped whole.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DroppedRecord {
+    /// The queue the dropping hook ran on, whose drop log records it.
+    pub queue: QueueName,
+    /// `true`, and nothing else: what tells this line from a record appended.
+    pub dropped: DroppedFlag,
+}
+
+/// The `dropped: true` of a [`DroppedRecord`]: a value that is `true` alone, so
+/// a line saying `false` is not read as a drop.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DroppedFlag;
+
+impl Serialize for DroppedFlag {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bool(true)
+    }
+}
+
+impl<'de> Deserialize<'de> for DroppedFlag {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        if bool::deserialize(deserializer)? {
+            Ok(Self)
+        } else {
+            Err(serde::de::Error::custom(
+                "`dropped` is `true` on a dropped record, and nothing else",
+            ))
+        }
+    }
+}
+
+impl JsonSchema for DroppedFlag {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("DroppedFlag")
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "Always `true`: the record was dropped.",
+            "type": "boolean",
+            "const": true
+        })
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+}
+
+/// What `reply` prints: what the reply did, or that a hook dropped it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ReplyLine {
+    /// The pending record it answered, and the records it appended.
+    Replied(Replied),
+    /// A hook dropped the reply whole: it answers nothing, and the drop is
+    /// recorded in the queue's drop log.
+    Dropped(DroppedRecord),
 }
 
 /// One record `send` or `reply` appended.
@@ -826,9 +1012,9 @@ pub fn bundle<V: Vocabulary>(registry: &Registry) -> Bundle {
         config: schema_for!(Config),
         schema_bundle: schema_for!(SchemaBundle),
         layout: schema_for!(LayoutDocument),
-        sent: schema_for!(Sent),
+        sent: schema_for!(SentLine),
         claimed: schema_for!(ClaimedRecord),
-        replied: schema_for!(Replied),
+        replied: schema_for!(ReplyLine),
         log_record: schema_for!(LogRecord),
         queue_statuses: schema_for!(Vec<QueueStatus>),
         transport_kinds: schema_for!(Vec<KindEntry>),
@@ -1429,5 +1615,41 @@ impl Bundle {
         let mut out = serde_json::to_string_pretty(self).unwrap_or_default();
         let _ = writeln!(out);
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A schema with what does not decide its shape removed: prose, titles and
+    /// the deprecation annotation.
+    fn shape(value: Value) -> Value {
+        match value {
+            Value::Object(fields) => Value::Object(
+                fields
+                    .into_iter()
+                    .filter(|(key, _)| {
+                        !matches!(
+                            key.as_str(),
+                            "description" | "title" | "deprecated" | "$schema"
+                        )
+                    })
+                    .map(|(key, value)| (key, shape(value)))
+                    .collect(),
+            ),
+            Value::Array(items) => Value::Array(items.into_iter().map(shape).collect()),
+            other => other,
+        }
+    }
+
+    #[test]
+    fn the_validated_verdicts_mirror_is_the_deprecated_verdicts_shape() {
+        let verdict = schemars::schema_for!(Verdict).to_value();
+        assert_eq!(verdict["deprecated"], Value::Bool(true));
+        assert_eq!(
+            shape(schemars::schema_for!(VerdictWire).to_value()),
+            shape(verdict)
+        );
     }
 }

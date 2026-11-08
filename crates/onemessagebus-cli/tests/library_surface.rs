@@ -13,10 +13,12 @@ use std::time::Duration;
 
 use onemessagebus::sdk_schema::{self, Lang};
 use onemessagebus::{
-    Carried, Carry, Changed, Config, ConsumerName, Disposition, Emitter, Freshness, Inbox, Layouts,
-    LinkResolver, MemoryTransport, Merge, Message, Open, Outcome, Policy, QueueConfig, QueueName,
-    QueueSpec, RawQueue, Reader, Reading, Redactor, Registry, SchemaId, SchemaLink, Source, Spool,
-    TransportKinds, CAPABILITIES,
+    drop_log, dropped_from, BusError, Carried, Carry, Changed, CommandHook, Config, ConsumerName,
+    Disposition, Dropped, Emitter, Freshness, Hook, HookCache, HookContext, HookError, HookOutcome,
+    HookRef, Hooked, HookedOutcome, Hooks, Inbox, Layouts, LinkResolver, MemoryTransport, Merge,
+    Message, Open, Outcome, Policy, QueueConfig, QueueName, QueueSpec, RawQueue, RawRecord,
+    RawRecordError, Reader, Reading, Redactor, Registry, SchemaId, SchemaLink, Source, Spool,
+    TransportKinds, CAPABILITIES, DROPPED_SUFFIX,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -337,7 +339,7 @@ fn exercised() -> Vec<Exercise> {
             }),
         ),
         (
-            "onemessagebus::Bus::validate",
+            "onemessagebus::Bus::hooked",
             Box::new(|| {
                 let dir = tempfile::tempdir().expect("a temp dir");
                 let mut config = Config::local(dir.path(), None);
@@ -347,28 +349,63 @@ fn exercised() -> Vec<Exercise> {
                 let bus = config
                     .resolve(&Layouts::new(), &TransportKinds::builtin())
                     .expect("resolves")
-                    .with_validator(&queue("findings"), SaysSomething)
+                    .with_hook(&queue("findings"), RefusesSilence)
                     .expect("a declared queue");
-                assert!(bus
-                    .validate(&queue("findings"), json!({ "what": "the base moved" }))
-                    .expect("judged")
-                    .passes());
+                let kept = bus
+                    .hooked(
+                        &queue("findings"),
+                        RawRecord::from_value(&json!({ "what": "the base moved" })),
+                    )
+                    .expect("decided");
+                assert_eq!(kept.outcome, HookedOutcome::Keep);
+                assert_eq!(kept.records.len(), 1);
                 let refused = bus
-                    .validate(&queue("findings"), json!({ "what": "" }))
-                    .expect("judged");
-                assert_eq!(refused.reason(), Some("a finding says what it found"));
+                    .hooked(
+                        &queue("findings"),
+                        RawRecord::from_value(&json!({ "what": "" })),
+                    )
+                    .expect("decided");
+                assert_eq!(
+                    refused.outcome,
+                    HookedOutcome::Refuse {
+                        reason: "a finding says what it found".to_owned()
+                    }
+                );
+                assert!(refused.records.is_empty());
                 assert!(
                     !dir.path().join("findings.jsonl").exists(),
-                    "validate appended"
+                    "hooked appended"
                 );
             }),
         ),
     ]
 }
 
+/// A hook refusing a finding that says nothing.
+struct RefusesSilence;
+
+impl Hook<serde_json::Value> for RefusesSilence {
+    fn run(&self, message: &serde_json::Value, _: &HookContext) -> HookOutcome<serde_json::Value> {
+        if message["what"]
+            .as_str()
+            .is_some_and(|what| !what.is_empty())
+        {
+            HookOutcome::Keep
+        } else {
+            HookOutcome::Refuse {
+                reason: "a finding says what it found".to_owned(),
+            }
+        }
+    }
+}
+
 /// A deterministic validator: a finding says what it found.
 struct SaysSomething;
 
+#[expect(
+    deprecated,
+    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
+)]
 impl onemessagebus::Validator<serde_json::Value> for SaysSomething {
     fn validate(
         &self,
@@ -439,6 +476,492 @@ fn every_named_library_entry_is_exercised_and_every_exercised_entry_is_named() {
         assert!(
             entry.starts_with("onemessagebus::"),
             "{entry} is not a path into the core"
+        );
+    }
+}
+
+#[test]
+#[expect(
+    deprecated,
+    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
+)]
+fn the_deprecated_validate_entry_still_judges_by_a_registered_validator() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut config = Config::local(dir.path(), None);
+    config
+        .queues
+        .insert(queue("findings"), QueueConfig::default());
+    let bus = config
+        .resolve(&Layouts::new(), &TransportKinds::builtin())
+        .expect("resolves")
+        .with_validator(&queue("findings"), SaysSomething)
+        .expect("a declared queue");
+    assert!(bus
+        .validate(&queue("findings"), json!({ "what": "the base moved" }))
+        .expect("judged")
+        .passes());
+    let refused = bus
+        .validate(&queue("findings"), json!({ "what": "" }))
+        .expect("judged");
+    assert_eq!(refused.reason(), Some("a finding says what it found"));
+    assert!(
+        !dir.path().join("findings.jsonl").exists(),
+        "validate appended"
+    );
+}
+
+/// A note on a typed queue, as a Rust consumer declares it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+struct Note {
+    text: String,
+    n: u64,
+}
+
+impl Message for Note {
+    const SCHEMA: SchemaId = SchemaId::literal("test", "note", 1);
+}
+
+/// A typed hook: a note saying `drop me` is dropped, and any other is shouted.
+struct Shouts;
+
+impl Hook<Note> for Shouts {
+    fn run(&self, note: &Note, _: &HookContext) -> HookOutcome<Note> {
+        if note.text == "drop me" {
+            HookOutcome::Drop
+        } else {
+            HookOutcome::Change(Note {
+                text: note.text.to_uppercase(),
+                n: note.n + 1,
+            })
+        }
+    }
+}
+
+/// A hook over records, answering one fixed outcome.
+struct Answers(HookOutcome<RawRecord>);
+
+impl Hook<RawRecord> for Answers {
+    fn run(&self, _: &RawRecord, _: &HookContext) -> HookOutcome<RawRecord> {
+        self.0.clone()
+    }
+}
+
+/// A bus over a local transport in `dir` declaring `queues`, plain unless
+/// named `typed` (whose schema is [`Note`]'s) or `numbered`.
+fn hooked_bus(dir: &std::path::Path, queues: &[&str]) -> onemessagebus::Bus {
+    let mut config = Config::local(dir, None);
+    for name in queues {
+        let declared = match *name {
+            "typed" => QueueConfig {
+                schema: Some(Note::SCHEMA),
+                ..QueueConfig::default()
+            },
+            "numbered" => QueueConfig {
+                numbered: Some(true),
+                ..QueueConfig::default()
+            },
+            _ => QueueConfig::default(),
+        };
+        config.queues.insert(queue(name), declared);
+    }
+    let mut registry = Registry::new();
+    registry.register::<Note>().expect("registers");
+    config
+        .resolve_with_registry(&Layouts::new(), &TransportKinds::builtin(), &registry)
+        .expect("resolves")
+}
+
+/// The raw bytes of `queue`'s file under `dir`.
+fn file(dir: &std::path::Path, queue: &str) -> String {
+    std::fs::read_to_string(dir.join(format!("{queue}.jsonl"))).unwrap_or_default()
+}
+
+/// An `sh` script in `dir`, run as `sh <path>` because a shebang launches
+/// nothing on Windows. Its path has forward slashes, which a Windows `sh` reads
+/// as separators.
+fn script(dir: &std::path::Path, name: &str, body: &str) -> String {
+    let path = dir.join(name);
+    std::fs::write(&path, format!("{body}\n")).expect("written");
+    path.to_str().expect("a UTF-8 path").replace('\\', "/")
+}
+
+/// Each entry of the hook surface `docs/hooks.md` states, and the call that
+/// exercises it.
+fn hook_surface() -> Vec<Exercise> {
+    vec![
+        (
+            "onemessagebus::RawRecord::parse",
+            Box::new(|| {
+                let record = RawRecord::parse("{ \"a\" : 1.0 }\n").expect("one record");
+                assert_eq!(record.bytes(), "{ \"a\" : 1.0 }");
+                assert_eq!(record.value(), &json!({"a": 1.0}));
+                for (bytes, refused) in [
+                    ("{\n\"a\": 1\n}", RawRecordError::MultiLine { lines: 3 }),
+                    ("  ", RawRecordError::Empty),
+                ] {
+                    assert_eq!(RawRecord::parse(bytes), Err(refused));
+                }
+                assert!(matches!(
+                    RawRecord::parse("{} {}"),
+                    Err(RawRecordError::NotJson { .. })
+                ));
+            }),
+        ),
+        (
+            "onemessagebus::RawRecord::from_value",
+            Box::new(|| {
+                let record = RawRecord::from_value(&json!({"a": 1, "b": [true]}));
+                assert_eq!(record.bytes(), r#"{"a":1,"b":[true]}"#);
+                assert_eq!(record.into_value(), json!({"a": 1, "b": [true]}));
+            }),
+        ),
+        (
+            "onemessagebus::Hooks::run",
+            Box::new(|| {
+                let context = HookContext::new(queue("notes"))
+                    .with_correlation("c-1".parse().expect("a correlation"));
+                assert_eq!(
+                    context.correlation.as_ref().map(|c| c.as_str()),
+                    Some("c-1")
+                );
+                let changed = RawRecord::from_value(&json!({"changed": true}));
+                let mut hooks = Hooks::<RawRecord>::new()
+                    .with(Answers(HookOutcome::Keep))
+                    .with(Answers(HookOutcome::Change(changed.clone())));
+                assert_eq!((hooks.len(), hooks.is_empty()), (2, false));
+                let offered = RawRecord::from_value(&json!({}));
+                assert_eq!(hooks.run(&offered, &context), HookOutcome::Change(changed));
+                hooks.push(Arc::new(Answers(HookOutcome::Drop)));
+                hooks.push(Arc::new(Answers(HookOutcome::Refuse {
+                    reason: "never reached".to_owned(),
+                })));
+                assert_eq!(hooks.run(&offered, &context), HookOutcome::Drop);
+                assert!(Hooks::<RawRecord>::new().is_empty());
+            }),
+        ),
+        (
+            "onemessagebus::CommandHook::run",
+            Box::new(|| {
+                let dir = tempfile::tempdir().expect("a temp dir");
+                let context = HookContext::new(queue("notes"));
+                let keep = CommandHook::new(["cat"]).expect("an argv");
+                assert_eq!(keep.command(), ["cat"]);
+                assert!(keep.cache().is_none() && keep.routes().is_none());
+                assert_eq!(keep.run(br#"{"a":1}"#, &context), HookOutcome::Keep);
+                let respell = script(
+                    dir.path(),
+                    "respell.sh",
+                    "echo ran >> \"$(dirname \"$0\")/ran\"\ncat > /dev/null\necho '{ \"a\" : 1.0 }'",
+                );
+                let bar = script(dir.path(), "bar.sh", "echo bar-1");
+                let cache =
+                    HookCache::new(dir.path().join("cache"), ["sh", bar.as_str()]).expect("a bar");
+                assert_eq!(cache.dir(), dir.path().join("cache"));
+                assert_eq!(cache.bar_fingerprint(), ["sh", bar.as_str()]);
+                assert_eq!(cache.fingerprint().as_deref(), Some("bar-1"));
+                let cached = CommandHook::new(["sh", respell.as_str()])
+                    .expect("an argv")
+                    .with_cache(cache.clone());
+                assert_eq!(cached.cache(), Some(&cache));
+                for _ in 0..2 {
+                    assert_eq!(
+                        cached.run(br#"{"a":1}"#, &context),
+                        HookOutcome::Change(RawRecord::parse("{ \"a\" : 1.0 }").expect("JSON"))
+                    );
+                }
+                assert_eq!(
+                    std::fs::read_to_string(dir.path().join("ran"))
+                        .expect("ran")
+                        .lines()
+                        .count(),
+                    1,
+                    "a cached change ran again"
+                );
+                let reroute = script(
+                    dir.path(),
+                    "reroute.sh",
+                    "cat\nprintf there > \"$ONEMESSAGEBUS_HOOK_ROUTE\"",
+                );
+                let routed = CommandHook::new(["sh", reroute.as_str()])
+                    .expect("an argv")
+                    .with_routes([queue("there")]);
+                assert_eq!(routed.routes(), Some([queue("there")].as_slice()));
+                assert_eq!(
+                    routed.run(br#"{"a":1}"#, &context),
+                    HookOutcome::Reroute {
+                        queue: queue("there"),
+                        message: RawRecord::parse(r#"{"a":1}"#).expect("JSON"),
+                    }
+                );
+                assert_eq!(
+                    CommandHook::new(Vec::<String>::new()),
+                    Err(HookError::NoCommand)
+                );
+                assert_eq!(
+                    HookCache::new("cache", Vec::<String>::new()),
+                    Err(HookError::NoBar)
+                );
+            }),
+        ),
+        (
+            "onemessagebus::Bus::with_hook",
+            Box::new(|| {
+                let dir = tempfile::tempdir().expect("a temp dir");
+                let bus = hooked_bus(dir.path(), &["typed"])
+                    .with_hook(&queue("typed"), Shouts)
+                    .expect("a declared queue");
+                let sent = bus
+                    .send(&queue("typed"), json!({"text": "hello", "n": 1}))
+                    .expect("sent");
+                assert_eq!(sent.len(), 1);
+                assert_eq!(file(dir.path(), "typed"), "{\"text\":\"HELLO\",\"n\":2}\n");
+                let dropped = bus
+                    .send(&queue("typed"), json!({"text": "drop me", "n": 1}))
+                    .expect("sent");
+                assert!(dropped.is_empty(), "a dropped record was answered as sent");
+                assert_eq!(file(dir.path(), "typed").lines().count(), 1);
+                let refused = bus
+                    .send(&queue("typed"), json!({"text": 3}))
+                    .expect_err("not a note");
+                assert!(
+                    matches!(&refused, BusError::HookRefused { hook, .. } if hook.index == 0 && hook.command.is_none()),
+                    "{refused}"
+                );
+                assert!(
+                    hooked_bus(dir.path(), &["typed"])
+                        .with_hook(&queue("nowhere"), Shouts)
+                        .is_err(),
+                    "a hook on an undeclared queue was registered"
+                );
+            }),
+        ),
+        (
+            "onemessagebus::Bus::dropped",
+            Box::new(|| {
+                let dir = tempfile::tempdir().expect("a temp dir");
+                let bus = hooked_bus(dir.path(), &["typed"])
+                    .with_hook(&queue("typed"), Shouts)
+                    .expect("a declared queue");
+                let offered = bus
+                    .offer(&queue("typed"), json!({"text": "drop me", "n": 7}))
+                    .expect("offered");
+                assert!(offered.pushed.is_empty());
+                let [dropped]: [Dropped; 1] = bus
+                    .dropped(&queue("typed"))
+                    .expect("read")
+                    .try_into()
+                    .expect("one drop");
+                assert_eq!(offered.dropped, std::slice::from_ref(&dropped));
+                assert_eq!(dropped.queue, queue("typed"));
+                assert_eq!(
+                    dropped.hook,
+                    HookRef {
+                        index: 0,
+                        command: None
+                    }
+                );
+                assert_eq!(dropped.message.bytes(), r#"{"text":"drop me","n":7}"#);
+                assert_eq!(Dropped::parse(dropped.line().as_bytes()), Ok(dropped));
+                assert_eq!(drop_log(&queue("typed")), queue("typed-dropped"));
+                assert_eq!(dropped_from(&queue("typed-dropped")), Some(queue("typed")));
+                assert_eq!(DROPPED_SUFFIX, "-dropped");
+                let status = bus
+                    .queue(&queue("typed"))
+                    .expect("declared")
+                    .status()
+                    .expect("status");
+                assert_eq!(status.dropped, 1);
+            }),
+        ),
+        (
+            "onemessagebus::Bus::append_hooked",
+            Box::new(|| {
+                let dir = tempfile::tempdir().expect("a temp dir");
+                let respelled = RawRecord::parse("{ \"a\" : 1.0 }").expect("JSON");
+                let bus = hooked_bus(dir.path(), &["numbered", "plain"])
+                    .with_hook(
+                        &queue("numbered"),
+                        Answers(HookOutcome::Change(respelled.clone())),
+                    )
+                    .expect("a declared queue")
+                    .with_hook(
+                        &queue("plain"),
+                        Answers(HookOutcome::Reroute {
+                            queue: queue("numbered"),
+                            message: respelled.clone(),
+                        }),
+                    )
+                    .expect("a declared queue");
+                let hooked: Hooked = bus
+                    .hooked(&queue("numbered"), RawRecord::from_value(&json!({"a": 1})))
+                    .expect("decided");
+                assert_eq!(hooked.outcome, HookedOutcome::Change);
+                assert_eq!(hooked.records, [(queue("numbered"), respelled.clone())]);
+                assert!(file(dir.path(), "numbered").is_empty(), "hooked appended");
+                let pushed = bus.append_hooked(&hooked).expect("appended");
+                assert_eq!(pushed[0].1.id, Some(0));
+                // The queue's own id is spliced in front of the hook's bytes.
+                assert_eq!(file(dir.path(), "numbered"), "{\"id\":0, \"a\" : 1.0 }\n");
+                // A reroute lands where it was sent, through that queue's hooks.
+                let rerouted = bus
+                    .hooked(&queue("plain"), RawRecord::from_value(&json!({"b": 2})))
+                    .expect("decided");
+                assert_eq!(rerouted.outcome, HookedOutcome::Change);
+                assert_eq!(rerouted.records[0].0, queue("numbered"));
+                let refused = Hooked {
+                    outcome: HookedOutcome::Refuse {
+                        reason: "no".to_owned(),
+                    },
+                    records: Vec::new(),
+                    dropped: Vec::new(),
+                };
+                assert!(bus.append_hooked(&refused).expect("nothing").is_empty());
+                let unjudged = bus
+                    .clone()
+                    .with_hook(
+                        &queue("numbered"),
+                        Answers(HookOutcome::Unjudged {
+                            reason: "?".to_owned(),
+                        }),
+                    )
+                    .expect("declared")
+                    .hooked(&queue("numbered"), RawRecord::from_value(&json!({})))
+                    .expect("decided");
+                // The change before it is handed on, and the unjudged answer
+                // after it ends the chain with nothing to append.
+                assert_eq!(
+                    unjudged.outcome,
+                    HookedOutcome::Unjudged {
+                        reason: "?".to_owned()
+                    }
+                );
+                assert!(unjudged.records.is_empty());
+            }),
+        ),
+        (
+            "onemessagebus::BusError::Dropped",
+            Box::new(|| {
+                let (_dir, bus) = asking_bus();
+                let bus = bus
+                    .with_hook(&queue("questions"), Answers(HookOutcome::Drop))
+                    .expect("declared");
+                let asked = bus
+                    .ask::<serde_json::Value, serde_json::Value>(
+                        &queue("questions"),
+                        json!({"message": "anyone?"}),
+                        onemessagebus::AskOptions::default(),
+                    )
+                    .expect_err("dropped");
+                // No `..`: a field added to this variant stops this compiling.
+                match &asked {
+                    BusError::Dropped { queue: on } => assert_eq!(on, &queue("questions")),
+                    other => panic!("not a drop: {other}"),
+                }
+                assert_eq!(
+                    asked.to_string(),
+                    "questions: dropped by a hook; it is recorded in questions-dropped and appended nowhere else"
+                );
+                let recorded = bus.dropped(&queue("questions")).expect("read");
+                assert_eq!(recorded.len(), 1);
+                assert_eq!(recorded[0].hook.index, 0);
+                let (_dir, bus) = asking_bus();
+                let pending = bus
+                    .ask::<serde_json::Value, serde_json::Value>(
+                        &queue("questions"),
+                        json!({"message": "anyone?"}),
+                        onemessagebus::AskOptions::default(),
+                    )
+                    .expect("asked");
+                let bus = bus
+                    .with_hook(&queue("replies"), Answers(HookOutcome::Drop))
+                    .expect("declared");
+                let replied = bus
+                    .reply(
+                        &queue("questions"),
+                        Some(pending.correlation()),
+                        json!({"message": "me"}),
+                    )
+                    .expect_err("dropped");
+                match &replied {
+                    BusError::Dropped { queue: on } => assert_eq!(on, &queue("replies")),
+                    other => panic!("not a drop: {other}"),
+                }
+                assert_eq!(bus.dropped(&queue("replies")).expect("read").len(), 1);
+            }),
+        ),
+        (
+            "onemessagebus::HookConfig",
+            Box::new(|| {
+                let config = Config::parse(
+                    "version: 1\ntransport: {kind: local, dir: bus}\nqueues: {a: {}, b: {}}\nhooks:\n  - {on: a, when: {carries: x}, command: [cat], routes: [b], cache: {dir: c, bar_fingerprint: [echo, one]}}\n",
+                )
+                .expect("loads");
+                let [hook]: [onemessagebus::HookConfig; 1] =
+                    config.hooks.clone().try_into().expect("one hook");
+                assert_eq!(hook.on, queue("a"));
+                assert_eq!(hook.routes, Some(vec![queue("b")]));
+                assert_eq!(hook.command, ["cat"]);
+                assert!(hook.when.is_some() && hook.cache.is_some());
+                assert!(onemessagebus::VALIDATORS_DEPRECATED.contains("`hooks:`"));
+                assert_eq!(onemessagebus::HOOK_RECORD_VERSION, 2);
+                assert_eq!(onemessagebus::DROP_LOG_VERSION, 1);
+                assert_eq!(
+                    [
+                        onemessagebus::HOOK_QUEUE_ENV,
+                        onemessagebus::HOOK_CORRELATION_ENV,
+                        onemessagebus::HOOK_ROUTE_ENV
+                    ],
+                    [
+                        "ONEMESSAGEBUS_HOOK_QUEUE",
+                        "ONEMESSAGEBUS_HOOK_CORRELATION",
+                        "ONEMESSAGEBUS_HOOK_ROUTE"
+                    ]
+                );
+            }),
+        ),
+    ]
+}
+
+#[test]
+fn every_entry_of_the_hook_surface_is_exercised() {
+    let surface = hook_surface();
+    let named: BTreeSet<&str> = surface.iter().map(|(entry, _)| *entry).collect();
+    assert_eq!(named.len(), surface.len(), "an entry is named twice");
+    for (entry, exercise) in surface {
+        assert!(entry.starts_with("onemessagebus::"), "{entry}");
+        exercise();
+    }
+}
+
+#[test]
+fn every_deprecated_validator_item_names_its_hook_replacement() {
+    let validate = include_str!("../../onemessagebus/src/validate.rs");
+    let config = include_str!("../../onemessagebus/src/config.rs");
+    for (source, declaration, replacement) in [
+        (validate, "pub enum Verdict {", "`HookOutcome`"),
+        (validate, "pub trait Validator<M: Message>", "`Hook<M>`"),
+        (validate, "pub struct Validators<M> {", "`Hooks<M>`"),
+        (validate, "pub struct CommandValidator {", "`CommandHook`"),
+        (validate, "pub struct PassCache {", "`HookCache`"),
+        (config, "pub struct ValidatorConfig {", "`HookConfig`"),
+        (config, "pub fn with_validator<", "`Bus::with_hook`"),
+        (config, "pub fn validate(&self", "`Bus::hooked`"),
+    ] {
+        let at = source
+            .find(declaration)
+            .unwrap_or_else(|| panic!("{declaration} is not declared"));
+        let before = &source[..at];
+        let attribute = &before[before
+            .rfind("#[deprecated(")
+            .unwrap_or_else(|| panic!("{declaration} carries no #[deprecated]"))..];
+        let note = &attribute[..attribute.find(")]").expect("the attribute closes")];
+        assert!(
+            note.contains(replacement),
+            "{declaration}'s deprecation does not name {replacement}: {note}"
+        );
+        assert!(
+            !attribute[note.len()..].contains("pub "),
+            "{declaration}'s nearest #[deprecated] belongs to another item"
         );
     }
 }

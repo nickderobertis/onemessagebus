@@ -39,6 +39,7 @@ pub mod conformance;
 mod emit;
 mod envelope;
 mod filter;
+mod hook;
 mod inbox;
 mod kinds;
 mod layout;
@@ -56,6 +57,8 @@ pub mod transport;
 mod validate;
 mod vocabulary;
 
+#[doc(hidden)]
+pub use ask::AskOffered;
 /// The ask contract's refusal, named apart from the allowlist's [`Refusal`]
 /// where both are in scope.
 pub use ask::Refusal as AskRefusal;
@@ -78,13 +81,24 @@ pub use codec::{
     FieldEquals, FrameConfig, NameRefused, ServeError, ServeOptions, ServeSession, Served,
     DEFAULT_REPLY_WINDOW,
 };
+#[expect(
+    deprecated,
+    reason = "the deprecated validator items stay exported until a later release removes them"
+)]
+pub use config::ValidatorConfig;
 pub use config::{
-    AuthorConfig, Bus, BusError, CacheConfig, Config, ConfigError, Layout, Layouts, PolicyConfig,
-    QueueConfig, RefusalReason, Router, ValidatorConfig, ValidatorKind, CONFIG_VERSION, NARROWED,
+    AuthorConfig, Bus, BusError, CacheConfig, Config, ConfigError, HookConfig, Layout, Layouts,
+    Offered, PolicyConfig, QueueConfig, RefusalReason, Router, ValidatorKind, CONFIG_VERSION,
+    NARROWED, VALIDATORS_DEPRECATED,
 };
 pub use emit::{Emitter, EmitterError, Unrecorded};
 pub use envelope::{ArtifactRef, Envelope, Kind, Labels, NoDimensions, Source};
 pub use filter::{glob, Filter, FilterError, LabelMatch, Matcher};
+pub use hook::{
+    drop_log, dropped_from, CommandHook, Dropped, Hook, HookCache, HookContext, HookError,
+    HookOutcome, HookRef, Hooked, HookedOutcome, Hooks, RawRecord, RawRecordError, DROPPED_SUFFIX,
+    DROP_LOG_VERSION, HOOK_CORRELATION_ENV, HOOK_QUEUE_ENV, HOOK_RECORD_VERSION, HOOK_ROUTE_ENV,
+};
 pub use inbox::{
     Answered, BackendError, Carried, Closed, Delivered, Disposition, InProcess, Inbox,
     InboxBackend, Offer, Sender, Unanswered, Undelivered,
@@ -120,6 +134,10 @@ pub use transport::{
     NameError, Position, ProcessTransport, QueueName, Reads, Stored, TornRecord, Transport,
     TransportError,
 };
+#[expect(
+    deprecated,
+    reason = "the deprecated validator items stay exported until a later release removes them"
+)]
 pub use validate::{
     CommandValidator, OnRecords, PassCache, ValidationContext, Validator, ValidatorError,
     Validators, Verdict, When, PASS_RECORD_VERSION, VALIDATE_CORRELATION_ENV, VALIDATE_QUEUE_ENV,

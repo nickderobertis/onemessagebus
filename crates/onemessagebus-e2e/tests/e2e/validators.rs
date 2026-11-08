@@ -278,11 +278,19 @@ fn validate_prints_each_verdict_the_scripted_command_reaches_and_appends_nothing
 
     let passed = scratch.bus(&["validate", "findings"], Some(record));
     assert_eq!(passed.code, 0, "{}", passed.stderr);
+    let passed_verdict = verdict(&passed);
     assert_eq!(
-        verdict(&passed),
-        json!({"queue": "findings", "verdict": "pass"})
+        (
+            &passed_verdict["queue"],
+            &passed_verdict["verdict"],
+            &passed_verdict["outcome"]
+        ),
+        (&json!("findings"), &json!("pass"), &json!("keep"))
     );
-    assert_eq!(passed.stderr, "");
+    assert_eq!(
+        passed.stderr,
+        format!("onemessagebus: {}\n", onemessagebus::VALIDATORS_DEPRECATED)
+    );
     let ran = scratch.ran("validate");
     assert_eq!(ran.len(), 1);
     assert_eq!(ran[0]["queue"], json!("findings"));
@@ -299,9 +307,20 @@ fn validate_prints_each_verdict_the_scripted_command_reaches_and_appends_nothing
     );
     let refused = scratch.bus(&["validate", "findings"], Some(record));
     assert_eq!(refused.code, 1, "{}", refused.stderr);
+    let refused_verdict = verdict(&refused);
     assert_eq!(
-        verdict(&refused),
-        json!({"queue": "findings", "verdict": "refuse", "reason": reason}),
+        (
+            &refused_verdict["queue"],
+            &refused_verdict["verdict"],
+            &refused_verdict["reason"],
+            &refused_verdict["outcome"]
+        ),
+        (
+            &json!("findings"),
+            &json!("refuse"),
+            &json!(reason),
+            &json!("refuse")
+        ),
         "the reason on stdout is not the validator's, unaltered"
     );
     assert!(

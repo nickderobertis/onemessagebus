@@ -536,7 +536,9 @@ fn onepipelines_run_variables_change_no_verbs_behaviour() {
     let checkpoint = &unset.1[6].1;
     assert_eq!(
         checkpoint,
-        "{\"count\":1,\"offset\":74,\"digest\":<digest>,\"file\":<file>,\"cursor\":1,\"seal\":<seal>}",
+        // A send onto a typed numbered queue reads the id it will give before
+        // it appends, which refreshes the count checkpoint over both records.
+        "{\"count\":2,\"offset\":203,\"digest\":<digest>,\"file\":<file>,\"cursor\":2,\"seal\":<seal>}",
         "{checkpoint}"
     );
     let questions = &unset.1[8].1;

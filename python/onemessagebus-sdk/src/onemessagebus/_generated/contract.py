@@ -125,6 +125,28 @@ class FieldPath(RootModel[str]):
     """
 
 
+class HookRef(BaseModel):
+    """
+    Which hook of a queue's chain did something: its position in the chain,
+    and its command when it is one a configuration declares.
+
+    On the wire `{"index": 0, "command": ["<argv>"]}`, `command` absent for a
+    hook registered in code.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    command: list[str] | None = None
+    """
+    Its argv, for a hook a configuration declares.
+    """
+    index: int = Field(..., ge=0)
+    """
+    Its position in the chain of the queue it ran on.
+    """
+
+
 class InboxCarriedOptions(BaseModel):
     """
     The options of `inbox carried`.
@@ -232,6 +254,10 @@ class QueueStatus(BaseModel):
     cursors: dict[str, Position | None]
     """
     Each declared consumer's cursor, `null` for one that has read nothing.
+    """
+    dropped: int = Field(..., ge=0)
+    """
+    How many drops its drop log, `<queue>-dropped`, records.
     """
     events: bool
     """
@@ -692,46 +718,74 @@ class ValidateOptions(BaseModel):
     """
 
 
-class ValidatedPass(BaseModel):
+class ValidatedRecord(BaseModel):
     """
-    The message may be sent.
+    One record `validate` says a send would append.
     """
 
+    model_config = ConfigDict(
+        extra="forbid",
+    )
     queue: str
     """
-    The queue the record was judged for.
+    The queue it would land on.
     """
-    verdict: Literal["pass"]
+    record: Any
+    """
+    The record, its bytes as a send would append them: any JSON value,
+    because a record is whatever its queue keeps, and the queue's own
+    schema, where it declares one, is what constrains it.
+    """
 
 
 class ValidatedRefuse(BaseModel):
     """
-    The message is refused.
+    The offer is refused.
     """
 
+    outcome: Literal["keep", "change", "drop", "refuse", "unjudged"]
+    """
+    What the offer became.
+    """
     queue: str
     """
-    The queue the record was judged for.
+    The queue the record was offered to.
     """
     reason: str
     """
-    Why, in the validator's own words.
+    Why, in the refusing hook's or validator's own words.
+    """
+    records: list[ValidatedRecord]
+    """
+    Each record a send would append, in order, its bytes as a send would
+    append them; empty for a drop of the whole offer, a refusal and an
+    unjudged offer.
     """
     verdict: Literal["refuse"]
 
 
 class ValidatedUnjudged(BaseModel):
     """
-    The message could not be judged, so it is not sent either.
+    The offer could not be decided, so it is not sent either.
     """
 
+    outcome: Literal["keep", "change", "drop", "refuse", "unjudged"]
+    """
+    What the offer became.
+    """
     queue: str
     """
-    The queue the record was judged for.
+    The queue the record was offered to.
     """
     reason: str
     """
-    Why no judgement could be made.
+    Why no decision could be made.
+    """
+    records: list[ValidatedRecord]
+    """
+    Each record a send would append, in order, its bytes as a send would
+    append them; empty for a drop of the whole offer, a refusal and an
+    unjudged offer.
     """
     verdict: Literal["unjudged"]
 
@@ -817,6 +871,23 @@ class AskedAbandoned(BaseModel):
     correlation: str = Field(..., pattern="^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
     """
     The question's correlation.
+    """
+
+
+class AskedDropped(BaseModel):
+    """
+    A hook dropped the question, so no reply will come: it is recorded in
+    the drop log of `queue`.
+    """
+
+    answer: Literal["dropped"]
+    hook: HookRef
+    """
+    The hook that dropped it.
+    """
+    queue: str
+    """
+    The queue the dropping hook ran on.
     """
 
 
@@ -956,6 +1027,25 @@ class ClaimedRecord(BaseModel):
     record: Any
     """
     The record.
+    """
+
+
+class DroppedRecord(BaseModel):
+    """
+    A record a hook dropped: what `send` prints for it, and what `reply` prints
+    for a reply a hook dropped whole.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    dropped: Literal[True]
+    """
+    `true`, and nothing else: what tells this line from a record appended.
+    """
+    queue: str
+    """
+    The queue the dropping hook ran on, whose drop log records it.
     """
 
 
@@ -1430,6 +1520,13 @@ class Replied(BaseModel):
     """
 
 
+class ReplyLine(RootModel[Replied | DroppedRecord]):
+    root: Replied | DroppedRecord = Field(..., title="ReplyLine")
+    """
+    What `reply` prints: what the reply did, or that a hook dropped it.
+    """
+
+
 class RouteStep(BaseModel):
     """
     `route`: the records the offer becomes — the last step of its queue. Each route whose `on` members the
@@ -1567,6 +1664,13 @@ class SchemaGenOptions(BaseModel):
     """
 
 
+class SentLine(RootModel[Sent | DroppedRecord]):
+    root: Sent | DroppedRecord = Field(..., title="SentLine")
+    """
+    One line `send` prints: a record it appended, or one a hook dropped.
+    """
+
+
 class StampStep(BaseModel):
     """
     `stamp`: set `member` to the current time, in milliseconds since the Unix
@@ -1630,11 +1734,26 @@ class TransportConfig(BaseModel):
     """
 
 
-class Validated(RootModel[ValidatedPass | ValidatedRefuse | ValidatedUnjudged]):
-    root: ValidatedPass | ValidatedRefuse | ValidatedUnjudged = Field(..., title="Validated")
+class ValidatedPass(BaseModel):
     """
-    What `validate` judged: the queue, and the verdict its validators reached.
+    The offer may be sent: a keep, a change or a drop.
     """
+
+    outcome: Literal["keep", "change", "drop", "refuse", "unjudged"]
+    """
+    What the offer became.
+    """
+    queue: str
+    """
+    The queue the record was offered to.
+    """
+    records: list[ValidatedRecord]
+    """
+    Each record a send would append, in order, its bytes as a send would
+    append them; empty for a drop of the whole offer, a refusal and an
+    unjudged offer.
+    """
+    verdict: Literal["pass"]
 
 
 class VersionStep(BaseModel):
@@ -1682,8 +1801,10 @@ class ArrayOfSchemaEntry(RootModel[list[SchemaEntry]]):
     root: list[SchemaEntry] = Field(..., title="Array_of_SchemaEntry")
 
 
-class Asked(RootModel[AskedReply | AskedTimeout | AskedAbandoned | AskedRefused]):
-    root: AskedReply | AskedTimeout | AskedAbandoned | AskedRefused = Field(..., title="Asked")
+class Asked(RootModel[AskedReply | AskedTimeout | AskedAbandoned | AskedRefused | AskedDropped]):
+    root: AskedReply | AskedTimeout | AskedAbandoned | AskedRefused | AskedDropped = Field(
+        ..., title="Asked"
+    )
     """
     What `ask` answered. Every answer names itself in `answer`, and only a
     reply carries a `reply`: a caller reading the reply member of a timeout, an
@@ -1879,6 +2000,41 @@ class GrantStep(BaseModel):
     word: str | None = None
     """
     One op word checked outright. Exclusive of `each` and `op`.
+    """
+
+
+class HookConfig(BaseModel):
+    """
+    One hook of a configuration: a command, which a Rust hook a linking
+    consumer registers is not — that one is code ([`Bus::with_hook`]).
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    cache: CacheConfig | None = None
+    """
+    Where its keeps, changes and drops are recorded; nowhere when absent.
+    Only for a hook whose outcome depends on nothing but its input and the
+    fingerprinted bar.
+    """
+    command: list[str]
+    """
+    The command's argv, the program first: the message on its stdin as one
+    line of JSON, and what it prints the message from then on.
+    """
+    on: str
+    """
+    The queue whose offered messages it runs on.
+    """
+    routes: list[str] | None = None
+    """
+    The queues it may reroute a message to; it may reroute nowhere when
+    absent.
+    """
+    when: When1 | Predicate | None = None
+    """
+    Which of them it runs on; every one when absent.
     """
 
 
@@ -2132,6 +2288,14 @@ class SchemasFetched(BaseModel):
     """
 
 
+class Validated(RootModel[ValidatedPass | ValidatedRefuse | ValidatedUnjudged]):
+    root: ValidatedPass | ValidatedRefuse | ValidatedUnjudged = Field(..., title="Validated")
+    """
+    What `validate` decided: the queue, the verdict, what the offer became, and
+    the records a send would append.
+    """
+
+
 class ValidatorConfig(BaseModel):
     """
     One validator of a configuration: the external kind, which a Rust
@@ -2335,6 +2499,11 @@ class Config(BaseModel):
     Which names there are is the binary's: one no linked codec answers to is
     refused where `serve` resolves it.
     """
+    hooks: list[HookConfig] | None = None
+    """
+    Hooks running on what is offered to a queue before anything is
+    appended, in the order each queue runs them (`docs/hooks.md`).
+    """
     profile: str | None = None
     """
     A layout by name — one the program links as code, or one a bundle the
@@ -2360,7 +2529,8 @@ class Config(BaseModel):
     validators: list[ValidatorConfig] | None = None
     """
     Validators judging what is offered to a queue before anything is
-    appended, in the order each queue judges by them.
+    appended, in the order each queue judges by them — deprecated: declare
+    `hooks`, which run first, and these judge the records the hooks made.
     """
     version: int = Field(..., ge=0)
     """

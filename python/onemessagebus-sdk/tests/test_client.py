@@ -28,6 +28,7 @@ from onemessagebus import (
     ClientConfig,
     Envelope,
     FetchedLinkFetched,
+    Sent,
     ValidatedPass,
     ValidatedRefuse,
     ValidatedUnjudged,
@@ -200,11 +201,14 @@ async def test_the_queue_verbs(client: Client, scratch: Path) -> None:
     with pytest.raises(BusRefused, match="invalid value 'bogus'"):
         await client.transports(format=bogus)
 
-    sent = await client.send("questions", QUESTION)
-    assert [(record.queue, record.id) for record in sent] == [("questions", 0)]
+    [sent] = await client.send("questions", QUESTION)
+    assert isinstance(sent, Sent)
+    assert (sent.queue, sent.id) == ("questions", 0)
     record = scratch / "question.json"
     record.write_text(json.dumps(QUESTION), encoding="utf-8")
-    assert (await client.send("questions", None, file=record))[0].id == 1
+    [again] = await client.send("questions", None, file=record)
+    assert isinstance(again, Sent)
+    assert again.id == 1
     with pytest.raises(BusRefused, match="`nosuch` is not a queue this configuration declares"):
         await client.send("nosuch", QUESTION)
 
