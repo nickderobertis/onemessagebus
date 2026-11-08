@@ -173,8 +173,6 @@ fn assert_drop_shape(line: &Value, queue: &str, index: u64, command: &[&str]) {
     );
 }
 
-// ---------------------------------------------------------------- (a) keep
-
 #[test]
 fn a_hook_echoing_its_input_with_or_without_the_newline_keeps_the_record_byte_for_byte() {
     let scratch = Scratch::new();
@@ -214,8 +212,6 @@ fn a_hook_echoing_its_input_with_or_without_the_newline_keeps_the_record_byte_fo
     }
     assert!(scratch.dropped("newline").is_empty() && scratch.dropped("bare").is_empty());
 }
-
-// -------------------------------------------------------------- (b) change
 
 /// The re-formatted but equivalent spelling the first hook prints: other
 /// spacing, `1.0` for `1`, and the keys in another order.
@@ -370,8 +366,6 @@ fn a_change_breaking_the_queues_schema_or_the_authors_grants_is_refused_with_not
     assert_eq!(other.raw("actions"), "");
 }
 
-// ---------------------------------------------------------------- (c) drop
-
 #[test]
 fn a_hook_printing_nothing_drops_the_record_into_the_drop_log_exactly_as_the_queue_would_hold_it() {
     let scratch = Scratch::new();
@@ -437,7 +431,13 @@ fn a_hook_printing_nothing_drops_the_record_into_the_drop_log_exactly_as_the_que
 #[test]
 fn an_ask_whose_question_a_hook_drops_returns_at_once_saying_no_reply_will_come() {
     let scratch = Scratch::new();
-    let drop = scratch.script("drop.sh", "cat > /dev/null");
+    let drop = scratch.script(
+        "drop.sh",
+        &format!(
+            "printf '%s' \"$ONEMESSAGEBUS_HOOK_CORRELATION\" > {}\ncat > /dev/null",
+            scratch.at("told")
+        ),
+    );
     scratch.configure(&format!(
         "queues:\n  questions: {{policy: {{hold_pending: true}}, answers: replies}}\n  replies: {{}}\nhooks:\n  - {{on: questions, command: {}}}\n",
         argv(&[&drop])
@@ -466,6 +466,11 @@ fn an_ask_whose_question_a_hook_drops_returns_at_once_saying_no_reply_will_come(
         dropped[0]
     );
     assert_eq!(dropped[0]["message"]["message"], json!("anyone?"));
+    assert_eq!(
+        json!(std::fs::read_to_string(scratch.path("told")).expect("the hook ran")),
+        dropped[0]["correlation"],
+        "the hook was not told the question's correlation"
+    );
 }
 
 #[test]
@@ -483,8 +488,6 @@ fn a_hook_printing_only_whitespace_is_unjudged_and_drops_nothing() {
     assert_eq!(scratch.raw("inbox"), "");
     assert_eq!(scratch.raw("inbox-dropped"), "");
 }
-
-// -------------------------------------------------------------- (d) refuse
 
 #[test]
 fn a_refusing_hook_returns_its_stderr_unaltered_and_appends_nothing_anywhere() {
@@ -544,8 +547,6 @@ fn a_refusing_hook_returns_its_stderr_unaltered_and_appends_nothing_anywhere() {
     assert_eq!(scratch.raw("inbox-dropped"), "");
 }
 
-// ------------------------------------------------------------ (e) unjudged
-
 #[test]
 fn a_hook_exiting_two_killed_by_a_signal_missing_or_printing_no_json_appends_nothing() {
     let scratch = Scratch::new();
@@ -578,8 +579,6 @@ fn a_hook_exiting_two_killed_by_a_signal_missing_or_printing_no_json_appends_not
     assert_eq!(scratch.raw("inbox"), "");
     assert_eq!(scratch.raw("inbox-dropped"), "");
 }
-
-// --------------------------------------------------------------- (f) chain
 
 #[test]
 fn a_chain_hands_each_change_on_and_a_drop_ends_it() {
@@ -646,8 +645,6 @@ fn a_when_the_message_does_not_satisfy_skips_the_hook() {
     assert_eq!(scratch.raw("inbox"), "{\"text\":\"x\"}\n");
     assert_eq!(scratch.dropped("inbox").len(), 1);
 }
-
-// ------------------------------------------------------ (g) cached outcomes
 
 /// The scripts of the cache journey: each counts its runs in a marker and
 /// answers by the bar fingerprint it reads, so a stale cached outcome would be
@@ -924,8 +921,6 @@ fn a_cached_hook_that_reroutes_runs_on_every_offer_and_obeys_the_routes_as_they_
     );
 }
 
-// ------------------------------------------------------------- (h) reroute
-
 #[test]
 fn a_reroute_goes_through_the_target_queues_preparation_and_hooks_once() {
     let scratch = Scratch::new();
@@ -1048,8 +1043,6 @@ fn a_configuration_naming_an_undeclared_route_or_hook_queue_is_refused_by_key() 
     assert_eq!(scratch.raw("inbox"), "");
 }
 
-// ------------------------------------------------- a split offer, refused
-
 #[test]
 fn an_offer_the_layout_splits_is_refused_whole_when_one_routed_records_hook_refuses() {
     let scratch = Scratch::new();
@@ -1083,8 +1076,6 @@ fn an_offer_the_layout_splits_is_refused_whole_when_one_routed_records_hook_refu
     assert_eq!(verdict.code, 0, "{}", verdict.stderr);
     assert_eq!(scratch.raw_lines("answers").len(), 1);
 }
-
-// ---------------------------------------------------- the reserved suffix
 
 #[test]
 fn a_queue_whose_name_ends_in_dropped_is_refused_naming_it() {
@@ -1121,8 +1112,6 @@ fn a_queue_whose_name_ends_in_dropped_is_refused_naming_it() {
         refused.stderr
     );
 }
-
-// ------------------------------------------------- validators, deprecated
 
 #[test]
 fn validators_are_deprecated_on_stderr_and_judge_the_record_a_hook_changed() {
@@ -1181,8 +1170,6 @@ fn validators_are_deprecated_on_stderr_and_judge_the_record_a_hook_changed() {
     );
 }
 
-// ------------------------------------------------------- replies dropped
-
 #[test]
 fn a_reply_a_hook_drops_answers_nothing_and_is_recorded_in_the_answer_queues_drop_log() {
     let scratch = Scratch::new();
@@ -1215,4 +1202,312 @@ fn a_reply_a_hook_drops_answers_nothing_and_is_recorded_in_the_answer_queues_dro
     assert_drop_shape(&dropped[0], "replies", 0, &[&drop]);
     assert_eq!(dropped[0]["correlation"], json!(correlation));
     assert_eq!(dropped[0]["message"], json!({"message": "me"}));
+}
+
+#[test]
+fn an_ask_a_hook_refuses_or_cannot_decide_prints_nothing_and_raises_nothing() {
+    let scratch = Scratch::new();
+    let refuse = scratch.script(
+        "refuse.sh",
+        "cat > /dev/null\necho 'not that question' >&2\nexit 1",
+    );
+    let undecided = scratch.script(
+        "undecided.sh",
+        "cat > /dev/null\necho 'out of quota' >&2\nexit 2",
+    );
+    for (command, says) in [(&refuse, "not that question"), (&undecided, "exited 2")] {
+        scratch.configure(&format!(
+            "queues:\n  questions: {{policy: {{hold_pending: true}}, answers: replies}}\n  replies: {{}}\nhooks:\n  - {{on: questions, command: {}}}\n",
+            argv(&[command])
+        ));
+        let asked = scratch.bus(
+            &["ask", "questions", "--timeout", "30"],
+            Some(r#"{"message":"anyone?"}"#),
+        );
+        assert_eq!(asked.code, 1, "{says}: {}", asked.stderr);
+        assert_eq!(
+            asked.stdout, "",
+            "{says}: an ask a hook stopped printed an answer"
+        );
+        assert_eq!(asked.stderr.lines().count(), 1, "{says}: {}", asked.stderr);
+        let line = asked.stderr.trim_end();
+        assert!(
+            line.starts_with("onemessagebus: questions: ")
+                && line.contains(&format!("hook 0 (`{command}`)"))
+                && line.contains(says),
+            "{line}"
+        );
+    }
+    assert_eq!(scratch.raw("questions"), "");
+    assert_eq!(scratch.raw("questions-dropped"), "");
+}
+
+#[test]
+fn an_event_queue_splices_its_event_and_id_in_front_of_a_hooks_bytes() {
+    let scratch = Scratch::new();
+    let respell = scratch.script("respell.sh", "cat > /dev/null\necho '{ \"text\" : \"x\" }'");
+    let numbered = scratch.script(
+        "numbered.sh",
+        "cat > /dev/null\necho '{ \"id\" : 7, \"text\" : \"y\" }'",
+    );
+    let empty = scratch.script("empty.sh", "cat > /dev/null\necho '{ }'");
+    scratch.configure(&format!(
+        "queues:\n  spelled: {{policy: {{hold_pending: true}}}}\n  renumbered: {{policy: {{hold_pending: true}}}}\n  bare: {{policy: {{hold_pending: true}}}}\nhooks:\n  - {{on: spelled, command: {}}}\n  - {{on: renumbered, command: {}}}\n  - {{on: bare, command: {}}}\n",
+        argv(&[&respell]),
+        argv(&[&numbered]),
+        argv(&[&empty])
+    ));
+    for queue in ["spelled", "renumbered", "bare"] {
+        let sent = scratch.bus(&["send", queue], Some(r#"{"text":"offered"}"#));
+        assert_eq!(sent.code, 0, "{queue}: {}", sent.stderr);
+        assert_eq!(one_line(&sent)["id"], json!(0), "{queue}");
+    }
+    assert_eq!(
+        scratch.raw("spelled"),
+        "{\"event\":\"queued\",\"id\":0, \"text\" : \"x\" }\n"
+    );
+    assert_eq!(scratch.raw("bare"), "{\"event\":\"queued\",\"id\":0 }\n");
+    // A record carrying the id the queue sets is written from its value, its id
+    // the queue's.
+    assert_eq!(
+        scratch.raw("renumbered"),
+        "{\"event\":\"queued\",\"id\":0,\"text\":\"y\"}\n"
+    );
+    let claimed = scratch.bus(&["next", "spelled"], None);
+    assert_eq!(claimed.code, 0, "{}", claimed.stderr);
+    assert_eq!(one_line(&claimed)["record"], json!({"id": 0, "text": "x"}));
+}
+
+#[test]
+fn a_hook_cache_that_cannot_be_read_or_written_or_keyed_costs_a_run_never_another_outcome() {
+    let scratch = Scratch::new();
+    let counted = scratch.script(
+        "counted.sh",
+        &format!("echo ran >> {}\ncat", scratch.at("ran")),
+    );
+    let unkeyed = scratch.script(
+        "unkeyed.sh",
+        &format!("echo ran >> {}\ncat", scratch.at("unkeyed-ran")),
+    );
+    let undecided = scratch.script(
+        "undecided.sh",
+        &format!(
+            "echo ran >> {}\ncat > /dev/null\nexit 2",
+            scratch.at("undecided-ran")
+        ),
+    );
+    std::fs::write(
+        scratch.path("blocked"),
+        "a file where the cache directory would be",
+    )
+    .expect("written");
+    let cache = |dir: &str, bar: &[&str]| {
+        format!(
+            "cache: {{dir: {}, bar_fingerprint: {}}}",
+            serde_json::to_string(&scratch.path(dir)).expect("a path"),
+            argv(bar)
+        )
+    };
+    scratch.configure(&format!(
+        "queues:\n  kept: {{}}\n  blocked: {{}}\n  unkeyed: {{}}\n  undecided: {{}}\nhooks:\n  - {{on: kept, command: {}, {}}}\n  - {{on: blocked, command: {}, {}}}\n  - {{on: unkeyed, command: {}, {}}}\n  - {{on: undecided, command: {}, {}}}\n",
+        argv(&[&counted]),
+        cache("cache", &["echo", "bar-1"]),
+        argv(&[&counted]),
+        cache("blocked", &["echo", "bar-1"]),
+        argv(&[&unkeyed]),
+        cache("unkeyed-cache", &["false"]),
+        argv(&[&undecided]),
+        cache("undecided-cache", &["echo", "bar-1"]),
+    ));
+    let record = r#"{"text":"same"}"#;
+
+    // A record corrupted on disk is no record: the command runs, and records
+    // again.
+    assert_eq!(scratch.bus(&["send", "kept"], Some(record)).code, 0);
+    let recorded: Vec<PathBuf> = std::fs::read_dir(scratch.path("cache"))
+        .expect("the cache")
+        .map(|entry| entry.expect("an entry").path())
+        .collect();
+    assert_eq!(recorded.len(), 1);
+    std::fs::write(&recorded[0], "{ not a record").expect("corrupted");
+    assert_eq!(scratch.bus(&["send", "kept"], Some(record)).code, 0);
+    assert_eq!(
+        scratch.marker("ran"),
+        2,
+        "a corrupt record was read as an outcome"
+    );
+    let rewritten: Value =
+        serde_json::from_slice(&std::fs::read(&recorded[0]).expect("read")).expect("rewritten");
+    assert_eq!(rewritten["outcome"], json!("keep"));
+    assert_eq!(scratch.bus(&["send", "kept"], Some(record)).code, 0);
+    assert_eq!(scratch.marker("ran"), 2);
+
+    // A cache that cannot be written runs the command each time and keeps.
+    for _ in 0..2 {
+        assert_eq!(scratch.bus(&["send", "blocked"], Some(record)).code, 0);
+    }
+    assert_eq!(scratch.marker("ran"), 4);
+    assert_eq!(scratch.raw_lines("blocked").len(), 2);
+
+    // A fingerprint that cannot be read keys nothing.
+    for _ in 0..2 {
+        assert_eq!(scratch.bus(&["send", "unkeyed"], Some(record)).code, 0);
+    }
+    assert_eq!(scratch.marker("unkeyed-ran"), 2);
+    assert!(
+        !scratch.path("unkeyed-cache").exists(),
+        "an unkeyed outcome was recorded"
+    );
+
+    // An unjudged answer is never recorded.
+    for _ in 0..2 {
+        assert_eq!(scratch.bus(&["send", "undecided"], Some(record)).code, 1);
+    }
+    assert_eq!(scratch.marker("undecided-ran"), 2);
+    assert!(
+        !scratch.path("undecided-cache").exists(),
+        "an unjudged answer was recorded"
+    );
+    assert_eq!(scratch.raw("undecided"), "");
+}
+
+/// The desk's split offer: a verdict for `answers`, and an action for `actions`.
+const ENVELOPE: &str = r#"{"version":3,"completion":false,"message":"go on","actions":[{"op":"add","id":"n","task":"write it down"}]}"#;
+
+#[test]
+fn a_record_the_layout_routes_elsewhere_is_changed_dropped_or_rerouted_by_that_queues_hook() {
+    let scratch = Scratch::new();
+    let retitle = scratch.script(
+        "retitle.sh",
+        "cat > /dev/null\necho '{\"actions\":[{\"op\":\"add\",\"id\":\"n\",\"task\":\"written\"}]}'",
+    );
+    scratch.configure(&format!(
+        "{}hooks:\n  - {{on: actions, command: {}}}\n",
+        scratch.desk(),
+        argv(&[&retitle])
+    ));
+    let changed = scratch.bus(&["send", "answers"], Some(ENVELOPE));
+    assert_eq!(changed.code, 0, "{}", changed.stderr);
+    assert_eq!(scratch.raw_lines("answers").len(), 1);
+    assert_eq!(
+        scratch.raw("actions"),
+        "{\"id\":0,\"actions\":[{\"op\":\"add\",\"id\":\"n\",\"task\":\"written\"}]}\n",
+        "the routed change was not what was appended"
+    );
+
+    // What the hook made is prepared again: the author's grants apply to it.
+    let demoted = scratch.script(
+        "demoted.sh",
+        "cat > /dev/null\necho '{\"author\":\"bot\",\"actions\":[{\"op\":\"drop\",\"id\":\"n\"}]}'",
+    );
+    scratch.configure(&format!(
+        "{}hooks:\n  - {{on: actions, command: {}}}\n",
+        scratch.desk(),
+        argv(&[&demoted])
+    ));
+    let refused = scratch.bus(&["send", "answers"], Some(ENVELOPE));
+    assert_eq!(refused.code, 1, "{}", refused.stdout);
+    assert!(
+        refused
+            .stderr
+            .contains("'drop' is not an op the bot may raise at the desk"),
+        "{}",
+        refused.stderr
+    );
+    assert_eq!(
+        scratch.raw_lines("answers").len(),
+        1,
+        "the verdict half of a refused offer landed"
+    );
+    assert_eq!(scratch.raw_lines("actions").len(), 1);
+
+    // A drop of one half leaves the other.
+    let drop = scratch.script("drop.sh", "cat > /dev/null");
+    scratch.configure(&format!(
+        "{}hooks:\n  - {{on: actions, command: {}}}\n",
+        scratch.desk(),
+        argv(&[&drop])
+    ));
+    let validated = scratch.bus(&["validate", "answers"], Some(ENVELOPE));
+    assert_eq!(validated.code, 0, "{}", validated.stderr);
+    let judged = one_line(&validated);
+    assert_eq!(judged["outcome"], json!("change"), "{judged}");
+    assert_eq!(
+        judged["records"].as_array().map(Vec::len),
+        Some(1),
+        "{judged}"
+    );
+    assert_eq!(judged["records"][0]["queue"], json!("answers"), "{judged}");
+    let halved = scratch.bus(&["send", "answers"], Some(ENVELOPE));
+    assert_eq!(halved.code, 0, "{}", halved.stderr);
+    let printed = halved.lines();
+    assert_eq!(printed.len(), 2, "{}", halved.stdout);
+    assert_eq!(printed[0]["queue"], json!("answers"));
+    assert_eq!(printed[1], json!({"queue": "actions", "dropped": true}));
+    assert_eq!(scratch.raw_lines("answers").len(), 2);
+    assert_eq!(scratch.raw_lines("actions").len(), 1);
+    let dropped = scratch.dropped("actions");
+    assert_eq!(dropped.len(), 1);
+    assert_eq!(
+        dropped[0]["message"]["actions"][0]["task"],
+        json!("write it down")
+    );
+
+    // A reroute of one half sends it on, through its new queue's hooks.
+    let aside = scratch.script(
+        "aside.sh",
+        "cat\nprintf audit > \"$ONEMESSAGEBUS_HOOK_ROUTE\"",
+    );
+    let mark = scratch.script(
+        "mark.sh",
+        &format!("echo ran >> {}\ncat", scratch.at("audit-ran")),
+    );
+    scratch.configure(&format!(
+        "{}queues:\n  audit: {{}}\nhooks:\n  - {{on: actions, command: {}, routes: [audit]}}\n  - {{on: audit, command: {}}}\n",
+        scratch.desk(),
+        argv(&[&aside]),
+        argv(&[&mark])
+    ));
+    let moved = scratch.bus(&["send", "answers"], Some(ENVELOPE));
+    assert_eq!(moved.code, 0, "{}", moved.stderr);
+    assert_eq!(scratch.raw_lines("answers").len(), 3);
+    assert_eq!(
+        scratch.raw_lines("actions").len(),
+        1,
+        "a rerouted half landed where it was routed"
+    );
+    assert_eq!(
+        scratch.marker("audit-ran"),
+        1,
+        "the new queue's hooks did not run"
+    );
+    let audited: Value = serde_json::from_str(&scratch.raw_lines("audit")[0]).expect("JSON");
+    assert_eq!(audited["actions"][0]["op"], json!("add"));
+}
+
+#[test]
+fn a_split_offer_one_of_whose_records_breaks_its_schema_appends_nothing_and_drops_nothing() {
+    let scratch = Scratch::new();
+    let drop = scratch.script("drop.sh", "cat > /dev/null");
+    scratch.configure(&format!(
+        "profile: split\nschemas:\n  - {}\nhooks:\n  - {{on: left, command: {}}}\n",
+        serde_json::to_string(&format!("{}@1", hooks_bundle().display())).expect("a path"),
+        argv(&[&drop])
+    ));
+    let broken = scratch.bus(&["send", "inbox"], Some(r#"{"l":1,"r":2}"#));
+    assert_eq!(broken.code, 1, "{}", broken.stdout);
+    assert!(
+        broken.stderr.contains("right: the record is not a"),
+        "{}",
+        broken.stderr
+    );
+    for queue in ["inbox", "left", "right", "left-dropped"] {
+        assert_eq!(scratch.raw(queue), "", "{queue}");
+    }
+
+    let whole = scratch.bus(&["send", "inbox"], Some(r#"{"l":1,"r":2,"text":"t"}"#));
+    assert_eq!(whole.code, 0, "{}", whole.stderr);
+    assert_eq!(scratch.raw("right"), "{\"r\":2,\"text\":\"t\"}\n");
+    assert_eq!(scratch.raw("left"), "");
+    assert_eq!(scratch.dropped("left").len(), 1);
 }

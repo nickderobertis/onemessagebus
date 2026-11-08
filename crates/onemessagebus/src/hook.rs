@@ -197,8 +197,10 @@ impl JsonSchema for RawRecord {
     }
 
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // No `type`: a record is whatever JSON value its queue keeps, and the
+        // queue's own schema, where it declares one, is what constrains it.
         schemars::json_schema!({
-            "description": "Any JSON record, as one line of JSON."
+            "description": "Any JSON value, as one line of JSON: a record carries whatever its queue keeps, so it has no payload schema of its own, and the queue's schema, where it declares one, is what constrains it. Its bytes are written as they arrived."
         })
     }
 }
@@ -509,11 +511,9 @@ impl RouteFile {
         Ok(Self(path))
     }
 
-    fn read(&self) -> String {
-        std::fs::read_to_string(&self.0)
-            .unwrap_or_default()
-            .trim()
-            .to_owned()
+    /// The queue name the hook wrote, trimmed: empty when it wrote none.
+    fn read(&self) -> std::io::Result<String> {
+        std::fs::read_to_string(&self.0).map(|named| named.trim().to_owned())
     }
 }
 
@@ -718,7 +718,14 @@ impl CommandHook {
                 }
             }
         };
-        let named = route.as_ref().map(RouteFile::read).unwrap_or_default();
+        let named = match route.as_ref().map(RouteFile::read).transpose() {
+            Ok(named) => named.unwrap_or_default(),
+            Err(failure) => {
+                return self.unjudged(format_args!(
+                    "left a route file that cannot be read as a queue name: {failure}"
+                ))
+            }
+        };
         if named.is_empty() {
             return message.map_or(HookOutcome::Keep, HookOutcome::Change);
         }
@@ -1147,6 +1154,15 @@ pub struct Hooked {
     pub dropped: Vec<Dropped>,
 }
 
+/// How a hook ended an offer it did not let through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Ending {
+    /// It refused the message.
+    Refused,
+    /// It could not decide.
+    Unjudged,
+}
+
 /// What ended a decision before anything could be appended.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Halt {
@@ -1156,8 +1172,8 @@ pub(crate) enum Halt {
         queue: QueueName,
         /// Which hook.
         hook: HookRef,
-        /// Whether it refused, rather than not deciding.
-        refused: bool,
+        /// Whether it refused or could not decide.
+        ending: Ending,
         /// Why.
         reason: String,
     },
@@ -1191,7 +1207,7 @@ impl Decision {
             Some(Halt::Hook {
                 queue,
                 hook,
-                refused: true,
+                ending: Ending::Refused,
                 reason,
             }) => Err(BusError::HookRefused {
                 queue: queue.clone(),
@@ -1201,7 +1217,7 @@ impl Decision {
             Some(Halt::Hook {
                 queue,
                 hook,
-                refused: false,
+                ending: Ending::Unjudged,
                 reason,
             }) => Err(BusError::HookUnjudged {
                 queue: queue.clone(),
@@ -1283,14 +1299,14 @@ impl Settling<'_> {
         });
     }
 
-    fn halted(queue: &QueueName, ran: Ran, refused: bool, reason: String) -> Halt {
+    fn halted(queue: &QueueName, ran: Ran, ending: Ending, reason: String) -> Halt {
         Halt::Hook {
             queue: queue.clone(),
             hook: ran.by.unwrap_or(HookRef {
                 index: 0,
                 command: None,
             }),
-            refused,
+            ending,
             reason,
         }
     }
@@ -1351,7 +1367,7 @@ impl Settling<'_> {
             } => {
                 self.changed = true;
                 if let Some(why) = self.reroute_target(queue, &ran, &to, rerouted) {
-                    return Ok(Err(Self::halted(queue, ran, false, why)));
+                    return Ok(Err(Self::halted(queue, ran, Ending::Unjudged, why)));
                 }
                 return self.settle(&to, moved, true, top);
             }
@@ -1360,10 +1376,10 @@ impl Settling<'_> {
                 return Ok(Ok(()));
             }
             HookOutcome::Refuse { reason } => {
-                return Ok(Err(Self::halted(queue, ran, true, reason)))
+                return Ok(Err(Self::halted(queue, ran, Ending::Refused, reason)))
             }
             HookOutcome::Unjudged { reason } => {
-                return Ok(Err(Self::halted(queue, ran, false, reason)))
+                return Ok(Err(Self::halted(queue, ran, Ending::Unjudged, reason)))
             }
         };
         if top {
@@ -1404,12 +1420,23 @@ impl Settling<'_> {
             HookOutcome::Keep => self.records.push((queue.clone(), record)),
             HookOutcome::Change(changed) => {
                 self.changed = true;
-                self.records.push((queue.clone(), changed));
+                // What the hook made is prepared again for the queue it is on,
+                // so that queue's grants, checks and schema apply to it. What
+                // that preparation routes elsewhere is not run through hooks
+                // again, so a layout routing between two queues cannot loop.
+                for (target, value) in self.prepared(queue, changed.value().clone())? {
+                    let record = if &value == changed.value() {
+                        changed.clone()
+                    } else {
+                        RawRecord::from_value(&value)
+                    };
+                    self.records.push((target, record));
+                }
             }
             HookOutcome::Reroute { queue: to, message } => {
                 self.changed = true;
                 if let Some(why) = self.reroute_target(queue, &ran, &to, rerouted) {
-                    return Ok(Err(Self::halted(queue, ran, false, why)));
+                    return Ok(Err(Self::halted(queue, ran, Ending::Unjudged, why)));
                 }
                 return self.settle(&to, message, true, false);
             }
@@ -1418,10 +1445,10 @@ impl Settling<'_> {
                 self.drop_on(queue, ran.by, ran.received);
             }
             HookOutcome::Refuse { reason } => {
-                return Ok(Err(Self::halted(queue, ran, true, reason)))
+                return Ok(Err(Self::halted(queue, ran, Ending::Refused, reason)))
             }
             HookOutcome::Unjudged { reason } => {
-                return Ok(Err(Self::halted(queue, ran, false, reason)))
+                return Ok(Err(Self::halted(queue, ran, Ending::Unjudged, reason)))
             }
         }
         Ok(Ok(()))
@@ -1481,7 +1508,7 @@ impl Bus {
         let refused = |halt: Halt| {
             let outcome = match &halt {
                 Halt::Hook {
-                    refused: true,
+                    ending: Ending::Refused,
                     reason,
                     ..
                 } => HookedOutcome::Refuse {

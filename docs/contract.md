@@ -552,8 +552,7 @@ the SDKs — and nothing of it is restated here.
 Deprecated in favour of Contract H's hooks, and still working exactly as stated
 below: every validator item carries `#[deprecated]` naming its hook replacement,
 a configuration declaring `validators:` is said so on stderr, and where both are
-declared, hooks run first and validators judge the records the hooks made
-(`docs/hooks.md`).
+declared, hooks run first and validators judge the records the hooks made.
 
 - `trait Validator<M: Message>: Send + Sync { fn validate(&self, message: &M,
   context: &ValidationContext) -> Verdict; }` and `enum Verdict { Pass, Refuse {

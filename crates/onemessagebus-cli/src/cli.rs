@@ -24,8 +24,8 @@ use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use onemessagebus::sdk_schema::{
-    self, Asked, ClaimedRecord, DroppedRecord, FetchedLink, Lang, LogRecord, Replied, SchemaCache,
-    SchemaEntry, SchemasCleared, SchemasFetched, Sent, Validated,
+    self, Asked, ClaimedRecord, DroppedFlag, DroppedRecord, FetchedLink, Lang, LogRecord, Replied,
+    SchemaCache, SchemaEntry, SchemasCleared, SchemasFetched, Sent, Validated,
 };
 use onemessagebus::{
     Address, Admits, Answer, AskOptions, Asker, BackendError, Bus, BusError, Carry, CheckError,
@@ -1586,7 +1586,7 @@ fn send(args: SendArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Re
     for dropped in offered.dropped {
         text.push_str(&json_line(&DroppedRecord {
             queue: dropped.queue,
-            dropped: true,
+            dropped: DroppedFlag,
         })?);
     }
     emit_text(out, &text)
@@ -1669,7 +1669,7 @@ fn reply(args: ReplyArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), 
                 out,
                 &json_line(&DroppedRecord {
                     queue,
-                    dropped: true,
+                    dropped: DroppedFlag,
                 })?,
             )
         }
@@ -1761,8 +1761,11 @@ fn ask(args: AskArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refu
                          drop is recorded in {on}-dropped"
                     )));
                 }
-                // A hook's refusal is said on stderr alone.
-                Err(failure @ BusError::HookRefused { .. }) => return Err(bus_refusal(failure)),
+                // A hook's refusal, or its failure to decide, is said on
+                // stderr alone.
+                Err(failure @ (BusError::HookRefused { .. } | BusError::HookUnjudged { .. })) => {
+                    return Err(bus_refusal(failure))
+                }
                 Err(failure) => {
                     let refusal = bus_refusal(failure);
                     if matches!(refusal.verdict, Verdict::Failed) {

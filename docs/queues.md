@@ -268,9 +268,9 @@ schema bundles another program publishes, each pinned to a version, whose
 documents the command line registers beside the layout's.
 Each refuses an unknown key by name at `Config::load` — `schemas` a malformed
 link, resolving none — and `validators[<index>].on` naming no declared queue is
-refused by `Config::resolve`, as `hooks:` keys are by the rules `docs/hooks.md`
-gives. A queue whose name ends in `-dropped` is refused wherever it is declared:
-the suffix is a drop log's.
+refused by `Config::resolve`, as `hooks[<index>].on` and
+`hooks[<index>].routes[<j>]` are. A queue whose name ends in `-dropped` is refused
+wherever it is declared: the suffix is a drop log's.
 
 The binary reads the file from `--config <path>` or `ONEMESSAGEBUS_CONFIG` — a
 queue verb given neither is refused naming `--config` — and `--transport-dir

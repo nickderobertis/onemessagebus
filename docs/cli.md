@@ -274,9 +274,9 @@ record that is not JSON, or not a JSON object on a queue whose records are
 objects — one that keeps events or numbers its records — is refused with exit 2
 with nothing appended; a record its author may not write, its schema refuses, or a validator refuses or cannot
 judge (`validate`) exits 1 with nothing appended anywhere, the validator's reason
-on stderr unaltered. A queue's hooks run on the offer first; what `send` prints
-for a record a hook dropped, and how a hook's refusal or unjudged answer exits,
-is `docs/hooks.md`'s.
+on stderr unaltered. A queue's hooks run on the offer first: a record a hook
+drops prints `{"queue": "<q>", "dropped": true}` in its place, and a hook's
+refusal or unjudged answer exits 1 with nothing appended anywhere.
 
 ```bash
 $ echo '{"kind":"finding","message":"the base moved","source":"proposal","blocking":true}' | onemessagebus send questions --config onemessagebus.yaml
@@ -310,7 +310,7 @@ without one, `{"answer": "abandoned", "correlation"}` when the question is
 abandoned and nobody re-attended it, and `{"answer": "refused", "reason"}` when
 the bus refused the question or the reply, each exit 1 with the reason on stderr.
 Only a reply carries a `reply` member. A question a hook drops answers
-`dropped` at once, exit 1 (`docs/hooks.md`). Without `--timeout` it waits for as long as
+`{"answer": "dropped", "queue", "hook"}` at once, exit 1. Without `--timeout` it waits for as long as
 it runs. An `ask` that ends without its answer abandons its question — kept, and
 still answerable — for a later listener of its asker to take back.
 
@@ -340,8 +340,8 @@ correlation, and a question held pending is released. It prints `{answered,
 correlation, sent}`: the question answered, its correlation, and every record
 appended. A reply the layout routes only to another queue — under `desk`, one
 carrying only actions — answers nothing: `answered` is `null`, and the ask stays
-pending. A reply a hook drops is printed as `docs/hooks.md` says and answers
-nothing. A correlation nothing pending holds (unknown,
+pending. A reply a hook drops prints `{"queue": "<q>", "dropped": true}`, exits 0
+and answers nothing. A correlation nothing pending holds (unknown,
 or already answered) exits 1 naming it, as do a reply naming neither when no ask
 or more than one is pending and a position the pending record was not claimed at,
 each with nothing appended. `--correlation` beside `<position>` is a usage error,
@@ -373,8 +373,8 @@ Report `<queue>`, or every declared queue, as a JSON list of `{queue, events,
 records, waiting, pending, pending_position, abandoned, unread, dropped,
 cursors}`: the records waiting to be claimed, the record pending an answer and
 where it was claimed, the records nobody is listening for any more, how many
-waiting records are still owed a reading, how many drops its drop log records
-(`docs/hooks.md`), and each declared consumer's cursor. It is the read a
+waiting records are still owed a reading, how many drops its `<queue>-dropped`
+log records, and each declared consumer's cursor. It is the read a
 wrapper otherwise takes from the queue's projection document by hand. Text is one line per queue,
 `<queue> records=<n> waiting=<n> pending=<id|-> abandoned=<n> unread=<n> dropped=<n>`, and one
 `cursor <consumer>=<position|->` line per consumer.
@@ -387,12 +387,12 @@ $ onemessagebus status questions --format text --config onemessagebus.yaml
 
 Decide the record on stdin (or in `--file`) exactly as `send` would, and
 append nothing: by the hooks the configuration declares for `<queue>` and each
-record the layout routes to another queue by that queue's (`docs/hooks.md`),
-then by the deprecated validators (`docs/validators.md`). It prints `{queue,
-verdict, reason, outcome, records}` — `verdict` is `pass`, `refuse` or
-`unjudged`, `reason`, beside a verdict that is not a pass, is the refusing hook's
-or validator's own words, unaltered, and `outcome` and `records` are as
-`docs/hooks.md` states them — and exits 0 for a pass and 1 for
+record the layout routes to another queue by that queue's, then by the
+deprecated validators. It prints `{queue, verdict, reason, outcome, records}` —
+`verdict` is `pass`, `refuse` or `unjudged`, `reason`, beside a verdict that is
+not a pass, is the refusing hook's or validator's own words, unaltered,
+`outcome` is `keep`, `change`, `drop`, `refuse` or `unjudged`, and `records` are
+the `{queue, record}`s a send would append — and exits 0 for a pass and 1 for
 either other verdict, saying the reason on stderr as well. An unjudged record is
 never a pass. A queue the configuration does not declare is refused with exit 2
 before stdin is read, and a record that is not JSON, or not a JSON object on a

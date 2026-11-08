@@ -6,7 +6,7 @@
 > carries `#[deprecated]` naming its hook replacement, a configuration declaring
 > `validators:` is said so in one line on stderr, and where both are declared,
 > hooks run first and validators judge the records the hooks made. A hook cache
-> reads a validator's pass records as keeps (`docs/hooks.md`).
+> reads a validator's pass records as keeps.
 
 A validator is a judgement a queue makes of a message **before anything is
 appended**.
@@ -40,7 +40,7 @@ one is; with neither, the message passes.
   layout splits into a verdict and actions is refused whole, not half-sent.
 - `Bus::validate` judges an offer exactly as a send would, and appends nothing.
   The command line's `validate` now decides an offer by its hooks and its
-  validators both, through `Bus::hooked` (`docs/hooks.md`).
+  validators both, through `Bus::hooked`.
 
 ## Deterministic validators
 

@@ -33,9 +33,9 @@ export interface DroppedRecord {
    */
   queue: string;
   /**
-   * Always `true`.
+   * `true`, and nothing else: what tells this line from a record appended.
    */
-  dropped: boolean;
+  dropped: true;
 }
 
 const $Sent: z.ZodType = z.strictObject({
@@ -50,7 +50,7 @@ const $Position: z.ZodType = z.int().gte(0);
 
 const $DroppedRecord: z.ZodType = z.strictObject({
   queue: z.lazy(() => $QueueName),
-  dropped: z.boolean(),
+  dropped: z.literal(true),
 });
 
 export const SentSchema = contract<Sent>(

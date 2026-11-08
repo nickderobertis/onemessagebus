@@ -514,6 +514,7 @@ pub enum Asked {
 
 /// What `validate` decided: the queue, the verdict, what the offer became, and
 /// the records a send would append.
+// llmlint: ignore[invalid_states_unrepresentable] `{queue, verdict, reason, outcome, records}` is the agreed `validate` line (docs/hooks.md, "The command line"), which onepipeline and ai-orchestrator build against: `verdict` stays beside `outcome` so a reader of the validator-era line reads it unchanged, and `Validated::of` — the one constructor the binary prints from — derives `verdict`, `outcome` and `records` from a single `HookedOutcome`, so the binary never writes a contradictory line; reshaping the wire into per-outcome variants is a contract change for its owner, not this type's.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Validated {
     /// The queue the record was offered to.
@@ -570,7 +571,8 @@ impl Validated {
 }
 
 /// `validate`'s verdict on the wire: the deprecated [`Verdict`]'s own shape,
-/// stated here so the `validated` root is not itself marked deprecated.
+/// stated here so the `validated` root is not itself marked deprecated. The
+/// unit test below holds the two schemas to one shape.
 #[derive(JsonSchema)]
 #[serde(tag = "verdict", rename_all = "lowercase")]
 #[expect(
@@ -614,7 +616,9 @@ pub enum OutcomeWord {
 pub struct ValidatedRecord {
     /// The queue it would land on.
     pub queue: QueueName,
-    /// The record, its bytes as a send would append them.
+    /// The record, its bytes as a send would append them: any JSON value,
+    /// because a record is whatever its queue keeps, and the queue's own
+    /// schema, where it declares one, is what constrains it.
     pub record: RawRecord,
 }
 
@@ -635,8 +639,49 @@ pub enum SentLine {
 pub struct DroppedRecord {
     /// The queue the dropping hook ran on, whose drop log records it.
     pub queue: QueueName,
-    /// Always `true`.
-    pub dropped: bool,
+    /// `true`, and nothing else: what tells this line from a record appended.
+    pub dropped: DroppedFlag,
+}
+
+/// The `dropped: true` of a [`DroppedRecord`]: a value that is `true` alone, so
+/// a line saying `false` is not read as a drop.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DroppedFlag;
+
+impl Serialize for DroppedFlag {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bool(true)
+    }
+}
+
+impl<'de> Deserialize<'de> for DroppedFlag {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        if bool::deserialize(deserializer)? {
+            Ok(Self)
+        } else {
+            Err(serde::de::Error::custom(
+                "`dropped` is `true` on a dropped record, and nothing else",
+            ))
+        }
+    }
+}
+
+impl JsonSchema for DroppedFlag {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("DroppedFlag")
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "Always `true`: the record was dropped.",
+            "type": "boolean",
+            "const": true
+        })
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
 }
 
 /// What `reply` prints: what the reply did, or that a hook dropped it.
@@ -1570,5 +1615,41 @@ impl Bundle {
         let mut out = serde_json::to_string_pretty(self).unwrap_or_default();
         let _ = writeln!(out);
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A schema with what does not decide its shape removed: prose, titles and
+    /// the deprecation annotation.
+    fn shape(value: Value) -> Value {
+        match value {
+            Value::Object(fields) => Value::Object(
+                fields
+                    .into_iter()
+                    .filter(|(key, _)| {
+                        !matches!(
+                            key.as_str(),
+                            "description" | "title" | "deprecated" | "$schema"
+                        )
+                    })
+                    .map(|(key, value)| (key, shape(value)))
+                    .collect(),
+            ),
+            Value::Array(items) => Value::Array(items.into_iter().map(shape).collect()),
+            other => other,
+        }
+    }
+
+    #[test]
+    fn the_validated_verdicts_mirror_is_the_deprecated_verdicts_shape() {
+        let verdict = schemars::schema_for!(Verdict).to_value();
+        assert_eq!(verdict["deprecated"], Value::Bool(true));
+        assert_eq!(
+            shape(schemars::schema_for!(VerdictWire).to_value()),
+            shape(verdict)
+        );
     }
 }

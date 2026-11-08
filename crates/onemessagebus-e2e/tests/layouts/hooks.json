@@ -1,16 +1,28 @@
 {
   "version": "1.0",
-  "description": "The layouts the hook journeys link: one whose preparation stamps a record, and one whose queue checks a schema a change can break.",
+  "description": "The layouts the hook journeys link: one whose preparation stamps a record, and one that splits an offer onto a plain queue and a typed one.",
   "schemas": [
     {
       "id": "hooks.note@1",
       "schema": {
         "type": "object",
-        "required": ["text"],
+        "required": [
+          "text"
+        ],
         "properties": {
-          "text": {"type": "string"},
-          "n": {"type": "number"},
-          "noted_at": {"type": "integer", "minimum": 0}
+          "text": {
+            "type": "string"
+          },
+          "n": {
+            "type": "number"
+          },
+          "noted_at": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "r": {
+            "type": "number"
+          }
         }
       }
     }
@@ -20,12 +32,71 @@
       "name": "stamped",
       "description": "A notebook whose notes are stamped when they are offered, beside a typed queue and a plain one.",
       "queues": [
-        {"name": "notes", "schema": "hooks.note@1"},
-        {"name": "typed", "schema": "hooks.note@1"},
-        {"name": "elsewhere"}
+        {
+          "name": "notes",
+          "schema": "hooks.note@1"
+        },
+        {
+          "name": "typed",
+          "schema": "hooks.note@1"
+        },
+        {
+          "name": "elsewhere"
+        }
       ],
       "prepare": {
-        "notes": [{"stamp": {"member": "noted_at"}}]
+        "notes": [
+          {
+            "stamp": {
+              "member": "noted_at"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "split",
+      "description": "An inbox whose offers are split: what a record carries under `l` goes to a plain queue, and `r` with the text beside it to a typed one.",
+      "queues": [
+        {
+          "name": "inbox"
+        },
+        {
+          "name": "left"
+        },
+        {
+          "name": "right",
+          "schema": "hooks.note@1"
+        }
+      ],
+      "prepare": {
+        "inbox": [
+          {
+            "route": {
+              "routes": [
+                {
+                  "queue": "left",
+                  "on": [
+                    "l"
+                  ],
+                  "take": [
+                    "l"
+                  ]
+                },
+                {
+                  "queue": "right",
+                  "on": [
+                    "r"
+                  ],
+                  "take": [
+                    "r",
+                    "text"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
       }
     }
   ]

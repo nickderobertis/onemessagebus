@@ -54,7 +54,9 @@ export interface ValidatedRecord {
    */
   queue: string;
   /**
-   * The record, its bytes as a send would append them.
+   * The record, its bytes as a send would append them: any JSON value,
+   * because a record is whatever its queue keeps, and the queue's own
+   * schema, where it declares one, is what constrains it.
    */
   record: unknown;
 }

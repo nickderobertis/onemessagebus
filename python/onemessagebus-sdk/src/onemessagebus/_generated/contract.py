@@ -732,7 +732,9 @@ class ValidatedRecord(BaseModel):
     """
     record: Any
     """
-    The record, its bytes as a send would append them.
+    The record, its bytes as a send would append them: any JSON value,
+    because a record is whatever its queue keeps, and the queue's own
+    schema, where it declares one, is what constrains it.
     """
 
 
@@ -1037,9 +1039,9 @@ class DroppedRecord(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    dropped: bool
+    dropped: Literal[True]
     """
-    Always `true`.
+    `true`, and nothing else: what tells this line from a record appended.
     """
     queue: str
     """
