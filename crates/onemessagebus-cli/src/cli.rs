@@ -24,16 +24,16 @@ use std::time::{Duration, Instant};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use onemessagebus::sdk_schema::{
-    self, Asked, ClaimedRecord, FetchedLink, Lang, LogRecord, Replied, SchemaCache, SchemaEntry,
-    SchemasCleared, SchemasFetched, Sent, Validated,
+    self, Asked, ClaimedRecord, DroppedRecord, FetchedLink, Lang, LogRecord, Replied, SchemaCache,
+    SchemaEntry, SchemasCleared, SchemasFetched, Sent, Validated,
 };
 use onemessagebus::{
     Address, Admits, Answer, AskOptions, Asker, BackendError, Bus, BusError, Carry, CheckError,
     CodecName, Config, ConfiguredCodec, ConsumerName, Correlation, Emitter, Filter, Freshness,
     Layouts, Lifetime, LinkError, LinkResolver, Merge, Open, Outcome, Pending, Position, Predicate,
-    QueueError, QueueName, QueueStatus, Redactor, Resolved, SchemaId, SchemaLink, ServeError,
-    ServeOptions, Served, Spool, Subscription, TransportKinds, Undelivered, Vocabulary,
-    DEFAULT_REPLY_WINDOW, SPOOL_WAIT,
+    QueueError, QueueName, QueueStatus, RawRecord, Redactor, Resolved, SchemaId, SchemaLink,
+    ServeError, ServeOptions, Served, Spool, Subscription, TransportKinds, Undelivered, Vocabulary,
+    DEFAULT_REPLY_WINDOW, SPOOL_WAIT, VALIDATORS_DEPRECATED,
 };
 use serde_json::{Map, Value};
 
@@ -777,7 +777,7 @@ fn parse_id(text: &str) -> Result<SchemaId, Refusal> {
 fn load_registry(registry: &RegistryArgs) -> Result<RegistryDir, Refusal> {
     let linked = match &registry.config {
         Some(path) => {
-            let config = Config::load(path).map_err(|failure| invalid(failure.to_string()))?;
+            let config = load_config(path)?;
             linked(&config, Freshness::Window)?
         }
         None => Vec::new(),
@@ -968,9 +968,7 @@ fn schemas(args: SchemasArgs, out: &mut impl std::io::Write) -> Result<(), Refus
                          ONEMESSAGEBUS_CONFIG) to fetch every link it names",
                     ));
                 };
-                Config::load(&config)
-                    .map_err(|failure| invalid(failure.to_string()))?
-                    .schemas
+                load_config(&config)?.schemas
             } else {
                 named
             };
@@ -1508,11 +1506,21 @@ fn configuration(args: &BusArgs) -> Result<Config, Refusal> {
              --transport-dir only moves a configuration's transport",
         ));
     };
-    let config = Config::load(path).map_err(|failure| invalid(failure.to_string()))?;
+    let config = load_config(path)?;
     Ok(match &args.transport_dir {
         Some(dir) => config.with_transport_dir(dir),
         None => config,
     })
+}
+
+/// The configuration file at `path`, loaded and checked: one declaring
+/// `validators` is said so on stderr, in one line naming `hooks`.
+fn load_config(path: &Path) -> Result<Config, Refusal> {
+    let config = Config::load(path).map_err(|failure| invalid(failure.to_string()))?;
+    if !config.validators.is_empty() {
+        eprintln!("onemessagebus: {VALIDATORS_DEPRECATED}");
+    }
+    Ok(config)
 }
 
 fn parse_queue(text: &str) -> Result<QueueName, Refusal> {
@@ -1536,7 +1544,14 @@ fn queue_refusal(failure: QueueError) -> Refusal {
 fn bus_refusal(failure: BusError) -> Refusal {
     match failure {
         BusError::UnknownQueue { .. } | BusError::NotAskable { .. } => invalid(failure.to_string()),
-        BusError::Refused { .. } | BusError::Unbound { .. } => failed(failure.to_string()),
+        BusError::Refused { .. } | BusError::Unbound { .. } | BusError::Dropped { .. } => {
+            failed(failure.to_string())
+        }
+        // One line: the hook's reason as it wrote it, less the newline it ended
+        // with.
+        BusError::HookRefused { .. } | BusError::HookUnjudged { .. } => {
+            failed(failure.to_string().trim_end_matches(['\n', '\r']))
+        }
         BusError::Queue(failure) => queue_refusal(failure),
     }
 }
@@ -1559,12 +1574,19 @@ fn send(args: SendArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Re
     // Refused before stdin is read, so a mistyped queue costs nothing.
     bus.queue(&queue).map_err(bus_refusal)?;
     let record = read_payload(args.file.as_deref(), io)?;
+    let offered = bus.offer(&queue, record).map_err(bus_refusal)?;
     let mut text = String::new();
-    for (landed_on, pushed) in bus.send(&queue, record).map_err(bus_refusal)? {
+    for (landed_on, pushed) in offered.pushed {
         text.push_str(&json_line(&Sent {
             queue: landed_on,
             position: pushed.position,
             id: pushed.id,
+        })?);
+    }
+    for dropped in offered.dropped {
+        text.push_str(&json_line(&DroppedRecord {
+            queue: dropped.queue,
+            dropped: true,
         })?);
     }
     emit_text(out, &text)
@@ -1635,11 +1657,24 @@ fn reply(args: ReplyArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), 
         queue.pending_at(position).map_err(queue_refusal)?;
     }
     let record = read_payload(args.file.as_deref(), io)?;
-    let bound = match &position {
+    let bound = match match &position {
         Some(position) => bus.reply_at(&queue_name, position, record),
         None => bus.reply(&queue_name, correlation.as_ref(), record),
-    }
-    .map_err(bus_refusal)?;
+    } {
+        Ok(bound) => bound,
+        // A reply a hook dropped answers nothing, and that is what was asked
+        // of it: the drop is recorded, and nothing else is appended.
+        Err(BusError::Dropped { queue, .. }) => {
+            return emit_text(
+                out,
+                &json_line(&DroppedRecord {
+                    queue,
+                    dropped: true,
+                })?,
+            )
+        }
+        Err(failure) => return Err(bus_refusal(failure)),
+    };
     let answered = bound.answered.then(|| ClaimedRecord {
         queue: queue_name,
         position: bound.question.position,
@@ -1711,6 +1746,23 @@ fn ask(args: AskArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refu
             };
             match bus.ask::<Value, Value>(&queue, question, options) {
                 Ok(pending) => (pending, true),
+                // A question a hook dropped is never queued, so no reply will
+                // come: that is said at once rather than waited out.
+                Err(BusError::Dropped { queue: on, hook }) => {
+                    emit_text(
+                        out,
+                        &json_line(&Asked::Dropped {
+                            queue: on.clone(),
+                            hook: hook.clone(),
+                        })?,
+                    )?;
+                    return Err(failed(format!(
+                        "{on}: the question was dropped by {hook}, so no reply will come; the \
+                         drop is recorded in {on}-dropped"
+                    )));
+                }
+                // A hook's refusal is said on stderr alone.
+                Err(failure @ BusError::HookRefused { .. }) => return Err(bus_refusal(failure)),
                 Err(failure) => {
                     let refusal = bus_refusal(failure);
                     if matches!(refusal.verdict, Verdict::Failed) {
@@ -1858,13 +1910,14 @@ fn status(args: StatusArgs, out: &mut impl std::io::Write, io: &Io) -> Result<()
                     .map_or_else(|| "-".to_owned(), ToString::to_string);
                 let _ = writeln!(
                     text,
-                    "{} records={} waiting={} pending={} abandoned={} unread={}",
+                    "{} records={} waiting={} pending={} abandoned={} unread={} dropped={}",
                     status.queue,
                     status.records,
                     status.waiting.len(),
                     pending,
                     status.abandoned.len(),
-                    status.unread
+                    status.unread,
+                    status.dropped
                 );
                 for (consumer, cursor) in &status.cursors {
                     let _ = writeln!(
@@ -2083,20 +2136,18 @@ fn validate(args: ValidateArgs, out: &mut impl std::io::Write, io: &Io) -> Resul
     // Refused before stdin is read, so a mistyped queue costs nothing.
     bus.queue(&queue).map_err(bus_refusal)?;
     let record = read_payload(args.file.as_deref(), io)?;
-    let verdict = bus.validate(&queue, record).map_err(bus_refusal)?;
-    let judged = Validated {
-        queue: queue.clone(),
-        verdict,
-    };
-    emit_text(out, &json_line(&judged)?)?;
-    match judged.verdict.reason() {
-        None => Ok(()),
-        Some(reason) => Err(failed(match judged.verdict {
-            onemessagebus::Verdict::Unjudged { .. } => {
-                format!("{queue}: could not be judged, so it would not be sent: {reason}")
-            }
-            _ => format!("{queue}: refused, so it would not be sent: {reason}"),
-        })),
+    let hooked = bus
+        .hooked(&queue, RawRecord::from_value(&record))
+        .map_err(bus_refusal)?;
+    emit_text(out, &json_line(&Validated::of(queue.clone(), &hooked))?)?;
+    match hooked.outcome {
+        onemessagebus::HookedOutcome::Unjudged { reason } => Err(failed(format!(
+            "{queue}: could not be judged, so it would not be sent: {reason}"
+        ))),
+        onemessagebus::HookedOutcome::Refuse { reason } => Err(failed(format!(
+            "{queue}: refused, so it would not be sent: {reason}"
+        ))),
+        _ => Ok(()),
     }
 }
 

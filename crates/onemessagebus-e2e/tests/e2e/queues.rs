@@ -841,7 +841,7 @@ fn status_reports_every_declared_queue_and_transports_lists_the_kinds() {
     assert_eq!(
         text.stdout,
         format!(
-            "answers records=2 waiting=1 pending=- abandoned=0 unread=1\n  cursor default={}\n",
+            "answers records=2 waiting=1 pending=- abandoned=0 unread=1 dropped=0\n  cursor default={}\n",
             answers["cursors"]["default"]
         )
     );

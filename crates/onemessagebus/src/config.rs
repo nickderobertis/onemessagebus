@@ -1131,6 +1131,15 @@ pub enum BusError {
     Queue(#[from] QueueError),
 }
 
+/// What [`Bus::offer`] did: the records it appended and the drops it recorded.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Offered {
+    /// Every record appended, in order, with the queue it landed on.
+    pub pushed: Vec<(QueueName, Pushed<Value>)>,
+    /// Every drop recorded, each in its queue's drop log.
+    pub dropped: Vec<crate::hook::Dropped>,
+}
+
 /// A resolved configuration: its transport open, its queues declared, its
 /// authors' grants narrowed, and its schemas registered. The one type that
 /// opens a queue or authors a record.
@@ -1359,6 +1368,16 @@ impl Bus {
         queue: &QueueName,
         record: Value,
     ) -> Result<Vec<(QueueName, Pushed<Value>)>, BusError> {
+        Ok(self.offer(queue, record)?.pushed)
+    }
+
+    /// [`send`](Self::send), answering the drops it recorded beside the
+    /// records it appended.
+    ///
+    /// # Errors
+    ///
+    /// As [`send`](Self::send).
+    pub fn offer(&self, queue: &QueueName, record: Value) -> Result<Offered, BusError> {
         let decision = self.decide(
             queue,
             crate::hook::RawRecord::from_value(&record),
@@ -1366,6 +1385,10 @@ impl Bus {
             None,
         )?;
         decision.appendable()?;
-        self.append_hooked(&decision.hooked)
+        let pushed = self.append_hooked(&decision.hooked)?;
+        Ok(Offered {
+            pushed,
+            dropped: decision.hooked.dropped,
+        })
     }
 }

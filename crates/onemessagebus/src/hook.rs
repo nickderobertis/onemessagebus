@@ -175,9 +175,13 @@ impl RawRecord {
     }
 }
 
+/// Written as its bytes: the spelling it arrived in, verbatim.
 impl Serialize for RawRecord {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.value.serialize(serializer)
+        match RawValue::from_string(self.bytes.clone()) {
+            Ok(raw) => raw.serialize(serializer),
+            Err(_) => self.value.serialize(serializer),
+        }
     }
 }
 

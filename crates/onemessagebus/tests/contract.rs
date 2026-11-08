@@ -1196,7 +1196,10 @@ fn the_documented_configuration_loads_and_an_unknown_key_in_it_is_refused_by_nam
 }
 
 #[test]
-#[expect(deprecated, reason = "the deprecated validators keep working until a later release removes them, and this exercises them")]
+#[expect(
+    deprecated,
+    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
+)]
 fn the_documented_verdicts_are_the_verdict_type_on_the_wire() {
     use onemessagebus::Verdict;
     let documented: Value = serde_json::from_str(&fixture("verdicts")).expect("JSON");
@@ -1222,7 +1225,10 @@ fn the_documented_verdicts_are_the_verdict_type_on_the_wire() {
 }
 
 #[test]
-#[expect(deprecated, reason = "the deprecated validators keep working until a later release removes them, and this exercises them")]
+#[expect(
+    deprecated,
+    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
+)]
 fn the_documented_validators_block_loads_into_the_config_and_an_unknown_key_in_it_is_refused_by_name(
 ) {
     use onemessagebus::{Config, ValidatorKind, When};

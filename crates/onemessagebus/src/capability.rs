@@ -427,7 +427,7 @@ pub const CAPABILITIES: &[Capability] = &[
         options: Some("validate_options"),
         stdout: StdoutShape::Json("validated"),
         stdin: true,
-        library_entry: "onemessagebus::Bus::validate",
+        library_entry: "onemessagebus::Bus::hooked",
         bindings: &[
             bind("queue", FlagKind::Positional),
             bind("file", FlagKind::Value("--file")),

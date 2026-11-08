@@ -369,7 +369,12 @@ fn the_resident_answers_every_capability_as_the_one_shot_verb_does() {
     let validated = client.call(9, "validate", json!({"queue": "greetings"}), Some(greeting));
     assert_eq!(
         ok(&validated),
-        &json!({"queue": "greetings", "verdict": "pass"})
+        &json!({
+            "queue": "greetings",
+            "verdict": "pass",
+            "outcome": "keep",
+            "records": [{"queue": "greetings", "record": {"text": "hello"}}]
+        })
     );
     answered.insert("validate");
 

@@ -86,8 +86,8 @@ pub use codec::{
 pub use config::ValidatorConfig;
 pub use config::{
     AuthorConfig, Bus, BusError, CacheConfig, Config, ConfigError, HookConfig, Layout, Layouts,
-    PolicyConfig, QueueConfig, RefusalReason, Router, ValidatorKind, CONFIG_VERSION, NARROWED,
-    VALIDATORS_DEPRECATED,
+    Offered, PolicyConfig, QueueConfig, RefusalReason, Router, ValidatorKind, CONFIG_VERSION,
+    NARROWED, VALIDATORS_DEPRECATED,
 };
 pub use emit::{Emitter, EmitterError, Unrecorded};
 pub use envelope::{ArtifactRef, Envelope, Kind, Labels, NoDimensions, Source};

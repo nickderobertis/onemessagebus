@@ -13,10 +13,10 @@ use std::time::Duration;
 
 use onemessagebus::sdk_schema::{self, Lang};
 use onemessagebus::{
-    Carried, Carry, Changed, Config, ConsumerName, Disposition, Emitter, Freshness, Inbox, Layouts,
-    LinkResolver, MemoryTransport, Merge, Message, Open, Outcome, Policy, QueueConfig, QueueName,
-    QueueSpec, RawQueue, Reader, Reading, Redactor, Registry, SchemaId, SchemaLink, Source, Spool,
-    TransportKinds, CAPABILITIES,
+    Carried, Carry, Changed, Config, ConsumerName, Disposition, Emitter, Freshness, Hook,
+    HookContext, HookOutcome, HookedOutcome, Inbox, Layouts, LinkResolver, MemoryTransport, Merge,
+    Message, Open, Outcome, Policy, QueueConfig, QueueName, QueueSpec, RawQueue, RawRecord, Reader,
+    Reading, Redactor, Registry, SchemaId, SchemaLink, Source, Spool, TransportKinds, CAPABILITIES,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -337,7 +337,7 @@ fn exercised() -> Vec<Exercise> {
             }),
         ),
         (
-            "onemessagebus::Bus::validate",
+            "onemessagebus::Bus::hooked",
             Box::new(|| {
                 let dir = tempfile::tempdir().expect("a temp dir");
                 let mut config = Config::local(dir.path(), None);
@@ -347,28 +347,63 @@ fn exercised() -> Vec<Exercise> {
                 let bus = config
                     .resolve(&Layouts::new(), &TransportKinds::builtin())
                     .expect("resolves")
-                    .with_validator(&queue("findings"), SaysSomething)
+                    .with_hook(&queue("findings"), RefusesSilence)
                     .expect("a declared queue");
-                assert!(bus
-                    .validate(&queue("findings"), json!({ "what": "the base moved" }))
-                    .expect("judged")
-                    .passes());
+                let kept = bus
+                    .hooked(
+                        &queue("findings"),
+                        RawRecord::from_value(&json!({ "what": "the base moved" })),
+                    )
+                    .expect("decided");
+                assert_eq!(kept.outcome, HookedOutcome::Keep);
+                assert_eq!(kept.records.len(), 1);
                 let refused = bus
-                    .validate(&queue("findings"), json!({ "what": "" }))
-                    .expect("judged");
-                assert_eq!(refused.reason(), Some("a finding says what it found"));
+                    .hooked(
+                        &queue("findings"),
+                        RawRecord::from_value(&json!({ "what": "" })),
+                    )
+                    .expect("decided");
+                assert_eq!(
+                    refused.outcome,
+                    HookedOutcome::Refuse {
+                        reason: "a finding says what it found".to_owned()
+                    }
+                );
+                assert!(refused.records.is_empty());
                 assert!(
                     !dir.path().join("findings.jsonl").exists(),
-                    "validate appended"
+                    "hooked appended"
                 );
             }),
         ),
     ]
 }
 
+/// A hook refusing a finding that says nothing.
+struct RefusesSilence;
+
+impl Hook<serde_json::Value> for RefusesSilence {
+    fn run(&self, message: &serde_json::Value, _: &HookContext) -> HookOutcome<serde_json::Value> {
+        if message["what"]
+            .as_str()
+            .is_some_and(|what| !what.is_empty())
+        {
+            HookOutcome::Keep
+        } else {
+            HookOutcome::Refuse {
+                reason: "a finding says what it found".to_owned(),
+            }
+        }
+    }
+}
+
 /// A deterministic validator: a finding says what it found.
 struct SaysSomething;
 
+#[expect(
+    deprecated,
+    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
+)]
 impl onemessagebus::Validator<serde_json::Value> for SaysSomething {
     fn validate(
         &self,
@@ -441,4 +476,34 @@ fn every_named_library_entry_is_exercised_and_every_exercised_entry_is_named() {
             "{entry} is not a path into the core"
         );
     }
+}
+
+#[test]
+#[expect(
+    deprecated,
+    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
+)]
+fn the_deprecated_validate_entry_still_judges_by_a_registered_validator() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut config = Config::local(dir.path(), None);
+    config
+        .queues
+        .insert(queue("findings"), QueueConfig::default());
+    let bus = config
+        .resolve(&Layouts::new(), &TransportKinds::builtin())
+        .expect("resolves")
+        .with_validator(&queue("findings"), SaysSomething)
+        .expect("a declared queue");
+    assert!(bus
+        .validate(&queue("findings"), json!({ "what": "the base moved" }))
+        .expect("judged")
+        .passes());
+    let refused = bus
+        .validate(&queue("findings"), json!({ "what": "" }))
+        .expect("judged");
+    assert_eq!(refused.reason(), Some("a finding says what it found"));
+    assert!(
+        !dir.path().join("findings.jsonl").exists(),
+        "validate appended"
+    );
 }

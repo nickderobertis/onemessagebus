@@ -27,6 +27,7 @@ use crate::codec::CodecName;
 use crate::config::Config;
 use crate::envelope::Envelope;
 use crate::filter::{Filter, Matcher};
+use crate::hook::{HookRef, Hooked, HookedOutcome, RawRecord};
 use crate::kinds::KindEntry;
 use crate::layout::LayoutDocument;
 use crate::link::{BundleVersion, CachedBundle, SchemaBundle, SchemaLink};
@@ -501,17 +502,128 @@ pub enum Asked {
         /// Why.
         reason: String,
     },
+    /// A hook dropped the question, so no reply will come: it is recorded in
+    /// the drop log of `queue`.
+    Dropped {
+        /// The queue the dropping hook ran on.
+        queue: QueueName,
+        /// The hook that dropped it.
+        hook: HookRef,
+    },
 }
 
-/// What `validate` judged: the queue, and the verdict its validators reached.
+/// What `validate` decided: the queue, the verdict, what the offer became, and
+/// the records a send would append.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Validated {
-    /// The queue the record was judged for.
+    /// The queue the record was offered to.
     pub queue: QueueName,
-    /// The verdict: `pass`, `refuse` or `unjudged`, with the reason beside a
-    /// verdict that is not a pass.
+    /// The verdict: `pass` for a keep, a change and a drop, `refuse` or
+    /// `unjudged` otherwise, with the reason beside a verdict that is not a
+    /// pass.
     #[serde(flatten)]
     pub verdict: Verdict,
+    /// What the offer became.
+    pub outcome: OutcomeWord,
+    /// Each record a send would append, in order, its bytes as a send would
+    /// append them; empty for a drop of the whole offer, a refusal and an
+    /// unjudged offer.
+    pub records: Vec<ValidatedRecord>,
+}
+
+impl Validated {
+    /// What `validate` prints for an offer to `queue` that became `hooked`.
+    #[must_use]
+    pub fn of(queue: QueueName, hooked: &Hooked) -> Self {
+        let (verdict, outcome) = match &hooked.outcome {
+            HookedOutcome::Keep => (Verdict::Pass, OutcomeWord::Keep),
+            HookedOutcome::Change => (Verdict::Pass, OutcomeWord::Change),
+            HookedOutcome::Drop => (Verdict::Pass, OutcomeWord::Drop),
+            HookedOutcome::Refuse { reason } => (
+                Verdict::Refuse {
+                    reason: reason.clone(),
+                },
+                OutcomeWord::Refuse,
+            ),
+            HookedOutcome::Unjudged { reason } => (
+                Verdict::Unjudged {
+                    reason: reason.clone(),
+                },
+                OutcomeWord::Unjudged,
+            ),
+        };
+        Self {
+            queue,
+            verdict,
+            outcome,
+            records: hooked
+                .records
+                .iter()
+                .map(|(queue, record)| ValidatedRecord {
+                    queue: queue.clone(),
+                    record: record.clone(),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// What an offer became, as `validate` names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum OutcomeWord {
+    /// Every record as offered.
+    Keep,
+    /// A record changed, rerouted, or dropped beside one that was not.
+    Change,
+    /// The whole offer dropped.
+    Drop,
+    /// Refused by a hook or a validator.
+    Refuse,
+    /// Not decided.
+    Unjudged,
+}
+
+/// One record `validate` says a send would append.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ValidatedRecord {
+    /// The queue it would land on.
+    pub queue: QueueName,
+    /// The record, its bytes as a send would append them.
+    pub record: RawRecord,
+}
+
+/// One line `send` prints: a record it appended, or one a hook dropped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum SentLine {
+    /// A record appended.
+    Sent(Sent),
+    /// A record a hook dropped, recorded in the queue's drop log.
+    Dropped(DroppedRecord),
+}
+
+/// A record a hook dropped: what `send` prints for it, and what `reply` prints
+/// for a reply a hook dropped whole.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DroppedRecord {
+    /// The queue the dropping hook ran on, whose drop log records it.
+    pub queue: QueueName,
+    /// Always `true`.
+    pub dropped: bool,
+}
+
+/// What `reply` prints: what the reply did, or that a hook dropped it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ReplyLine {
+    /// The pending record it answered, and the records it appended.
+    Replied(Replied),
+    /// A hook dropped the reply whole: it answers nothing, and the drop is
+    /// recorded in the queue's drop log.
+    Dropped(DroppedRecord),
 }
 
 /// One record `send` or `reply` appended.
@@ -831,9 +943,9 @@ pub fn bundle<V: Vocabulary>(registry: &Registry) -> Bundle {
         config: schema_for!(Config),
         schema_bundle: schema_for!(SchemaBundle),
         layout: schema_for!(LayoutDocument),
-        sent: schema_for!(Sent),
+        sent: schema_for!(SentLine),
         claimed: schema_for!(ClaimedRecord),
-        replied: schema_for!(Replied),
+        replied: schema_for!(ReplyLine),
         log_record: schema_for!(LogRecord),
         queue_statuses: schema_for!(Vec<QueueStatus>),
         transport_kinds: schema_for!(Vec<KindEntry>),
