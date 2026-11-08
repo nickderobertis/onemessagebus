@@ -2011,3 +2011,36 @@ fn what_send_and_reply_print_for_a_drop_reads_back_as_a_drop_and_a_false_one_doe
         );
     }
 }
+
+#[test]
+fn the_dry_run_checks_the_id_a_numbered_queue_will_give_as_its_send_does() {
+    let scratch = Scratch::new();
+    let keep = scratch.script("keep.sh", "cat");
+    scratch.configure(&format!(
+        "{}hooks:\n  - {{on: capped, command: {}}}\n",
+        scratch.stamped(),
+        argv(&[&keep])
+    ));
+    for id in 0..2 {
+        let validated = scratch.bus(&["validate", "capped"], Some(r#"{"text":"x"}"#));
+        assert_eq!(validated.code, 0, "{id}: {}", validated.stderr);
+        let sent = scratch.bus(&["send", "capped"], Some(r#"{"text":"x"}"#));
+        assert_eq!(sent.code, 0, "{id}: {}", sent.stderr);
+        assert_eq!(one_line(&sent)["id"], json!(id));
+    }
+    // The queue's schema caps its ids at 1: the third would be 2.
+    let validated = scratch.bus(&["validate", "capped"], Some(r#"{"text":"x"}"#));
+    assert_eq!(
+        validated.code, 1,
+        "the dry run passed what the send refuses: {}",
+        validated.stdout
+    );
+    assert!(
+        validated.stderr.contains("capped: the record is not a"),
+        "{}",
+        validated.stderr
+    );
+    let sent = scratch.bus(&["send", "capped"], Some(r#"{"text":"x"}"#));
+    assert_eq!(sent.code, 1, "{}", sent.stdout);
+    assert_eq!(scratch.raw_lines("capped").len(), 2);
+}

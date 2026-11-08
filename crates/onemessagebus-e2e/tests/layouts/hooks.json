@@ -25,12 +25,27 @@
           }
         }
       }
+    },
+    {
+      "id": "hooks.capped@1",
+      "schema": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "maximum": 1
+          }
+        }
+      }
     }
   ],
   "layouts": [
     {
       "name": "stamped",
-      "description": "A notebook whose notes are stamped when they are offered, beside a typed queue and a plain one.",
+      "description": "A notebook whose notes are stamped when they are offered, beside a typed queue, a plain one, and a numbered one whose schema caps the ids it gives.",
       "queues": [
         {
           "name": "notes",
@@ -42,6 +57,11 @@
         },
         {
           "name": "elsewhere"
+        },
+        {
+          "name": "capped",
+          "schema": "hooks.capped@1",
+          "numbered": true
         }
       ],
       "prepare": {

@@ -17,6 +17,7 @@
 //! [`Dropped`] line. `docs/hooks.md` states the contract.
 
 use std::any::Any;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::io::Write as _;
 use std::marker::PhantomData;
@@ -1601,9 +1602,7 @@ impl Bus {
         }
         // Every record is checked against its queue's schema as a send checks
         // it, so a dry run never answers a record its send would refuse.
-        for (target, record) in &settling.records {
-            self.queue(target)?.admits(record.value())?;
-        }
+        self.admit_all(&settling.records)?;
         let outcome = if settling.records.is_empty() && !settling.dropped.is_empty() {
             HookedOutcome::Drop
         } else if settling.changed {
@@ -1643,10 +1642,10 @@ impl Bus {
         ) {
             return Ok(Vec::new());
         }
-        for (target, record) in &hooked.records {
+        for (target, _) in &hooked.records {
             self.declared(target)?;
-            self.queue(target)?.admits(record.value())?;
         }
+        self.admit_all(&hooked.records)?;
         for dropped in &hooked.dropped {
             self.declared(&dropped.queue)?;
         }
@@ -1661,6 +1660,28 @@ impl Bus {
                 .map_err(QueueError::from)?;
         }
         Ok(pushed)
+    }
+
+    /// Check each of `records` against its queue's schema as its push will,
+    /// with the id its queue will give it: the next id the queue gives, moved on
+    /// past each earlier record of the same offer on the same queue. A writer
+    /// appending between this check and the push is caught by the push's own.
+    fn admit_all(&self, records: &[(QueueName, RawRecord)]) -> Result<(), BusError> {
+        let mut next: BTreeMap<&QueueName, Option<u64>> = BTreeMap::new();
+        for (target, record) in records {
+            let queue = self.queue(target)?;
+            if queue.spec().schema.is_none() {
+                // Nothing to check a record against, so no id to look up.
+                continue;
+            }
+            let id = match next.get(target) {
+                Some(id) => *id,
+                None => queue.next_id()?,
+            };
+            queue.admits(record.value(), id)?;
+            next.insert(target, id.map(|id| id.saturating_add(1)));
+        }
+        Ok(())
     }
 
     /// Every drop `queue`'s drop log records, oldest first; a line this build

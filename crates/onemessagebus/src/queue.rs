@@ -1490,15 +1490,30 @@ impl RawQueue {
         self.push_judged(record)
     }
 
-    /// Whether this queue keeps `record`, checked as a push would check it —
-    /// against the schema, with an id where the queue gives one — and nothing
-    /// appended: how an offer is checked whole before any of it is.
-    pub(crate) fn admits(&self, record: &Value) -> Result<(), QueueError> {
-        if self.spec.policy.keeps_events() || self.spec.numbered {
-            let numbered = self.reshape(self.with_id(record.clone(), 0)?)?;
-            return self.check(&numbered);
+    /// The id the next record pushed onto this queue is given, on a queue
+    /// that gives one: one past the highest an event queue has queued, or the
+    /// number of records before it on a numbered one.
+    pub(crate) fn next_id(&self) -> Result<Option<u64>, QueueError> {
+        if self.spec.policy.keeps_events() {
+            return Ok(Some(self.snapshot()?.next_id));
         }
-        self.check(&self.reshape(record.clone())?)
+        if self.spec.numbered {
+            return Ok(Some(self.transport.count(&self.spec.name)?));
+        }
+        Ok(None)
+    }
+
+    /// Whether this queue keeps `record`, checked as a push would check it —
+    /// against the schema, with the id `id` where the queue gives one — and
+    /// nothing appended: how an offer is checked whole before any of it is.
+    pub(crate) fn admits(&self, record: &Value, id: Option<u64>) -> Result<(), QueueError> {
+        match id {
+            Some(id) if self.spec.policy.keeps_events() || self.spec.numbered => {
+                let numbered = self.reshape(self.with_id(record.clone(), id)?)?;
+                self.check(&numbered)
+            }
+            _ => self.check(&self.reshape(record.clone())?),
+        }
     }
 
     /// Append `record` as its bytes spell it, checked against the schema as
