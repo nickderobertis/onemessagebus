@@ -129,3 +129,79 @@ fn the_drop_log_is_read_back_passing_over_a_line_this_build_cannot_read() {
         .expect("read");
     assert_eq!(raw.len(), 4);
 }
+
+/// A hook over records sending every message to a queue nobody declared.
+struct Astray;
+
+impl Hook<RawRecord> for Astray {
+    fn run(&self, message: &RawRecord, _: &HookContext) -> HookOutcome<RawRecord> {
+        HookOutcome::Reroute {
+            queue: queue("nowhere"),
+            message: message.clone(),
+        }
+    }
+}
+
+#[test]
+fn a_reroute_to_a_queue_nobody_declared_is_unjudged_and_appends_nothing() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let bus = bus(dir.path())
+        .with_hook(&queue("manager"), Astray)
+        .expect("a declared queue");
+    let hooked = bus
+        .hooked(
+            &queue("manager"),
+            RawRecord::from_value(&json!({"text": "x"})),
+        )
+        .expect("decided");
+    let HookedOutcome::Unjudged { reason } = &hooked.outcome else {
+        panic!("{hooked:?}");
+    };
+    assert!(
+        reason.contains("`nowhere`, which is not a queue this configuration declares"),
+        "{reason}"
+    );
+    assert!(hooked.records.is_empty() && hooked.dropped.is_empty());
+    let refused = bus
+        .send(&queue("manager"), json!({"text": "x"}))
+        .expect_err("unjudged");
+    assert!(
+        matches!(refused, onemessagebus::BusError::HookUnjudged { .. }),
+        "{refused}"
+    );
+    assert!(!dir.path().join("manager.jsonl").exists());
+}
+
+#[test]
+fn a_chain_of_typed_hooks_is_run_cloned_and_described_as_one() {
+    let chain = onemessagebus::Hooks::<Report>::default().with(Triage);
+    let copy = chain.clone();
+    assert_eq!(format!("{copy:?}"), "Hooks { count: 1 }");
+    let context = HookContext::new(queue("reports"));
+    assert_eq!(
+        copy.run(
+            &Report {
+                text: "quiet".to_owned()
+            },
+            &context
+        ),
+        HookOutcome::Drop
+    );
+    assert_eq!(
+        chain.run(
+            &Report {
+                text: "fine".to_owned()
+            },
+            &context
+        ),
+        HookOutcome::Keep
+    );
+    // A record read from JSON is spelled compactly; one written is its bytes.
+    let read: RawRecord = serde_json::from_str("{ \"a\" : 1 }").expect("a record");
+    assert_eq!(read.bytes(), r#"{"a":1}"#);
+    let spelled = RawRecord::parse("{ \"a\" : 1 }").expect("a record");
+    assert_eq!(
+        serde_json::to_string(&spelled).expect("JSON"),
+        "{ \"a\" : 1 }"
+    );
+}
