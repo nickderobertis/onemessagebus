@@ -452,3 +452,64 @@ fn append_hooked_appends_nothing_for_a_refused_or_unjudged_offer_whatever_its_li
         "a refused drop was recorded"
     );
 }
+
+#[test]
+fn append_hooked_checks_every_record_before_it_appends_any() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let mut config = Config::local(dir.path(), None);
+    config
+        .queues
+        .insert(queue("reports"), QueueConfig::default());
+    config.queues.insert(
+        queue("typed"),
+        QueueConfig {
+            schema: Some(Report::SCHEMA),
+            ..QueueConfig::default()
+        },
+    );
+    let mut registry = Registry::new();
+    registry.register::<Report>().expect("registers");
+    let bus = config
+        .resolve_with_registry(&Layouts::new(), &TransportKinds::builtin(), &registry)
+        .expect("resolves");
+    let fine = RawRecord::from_value(&json!({"text": "fine"}));
+    let drop = onemessagebus::Dropped {
+        at: 1,
+        queue: queue("reports"),
+        hook: onemessagebus::HookRef {
+            index: 0,
+            command: None,
+        },
+        message: fine.clone(),
+        correlation: None,
+    };
+    for (later, refusal) in [
+        (
+            (queue("nowhere"), fine.clone()),
+            "is not a queue this configuration declares",
+        ),
+        (
+            (queue("reports-dropped"), fine.clone()),
+            "is not a queue this configuration declares",
+        ),
+        (
+            (queue("typed"), RawRecord::from_value(&json!({"text": 3}))),
+            "typed: the record is not a",
+        ),
+    ] {
+        let refused = bus
+            .append_hooked(&onemessagebus::Hooked {
+                outcome: HookedOutcome::Change,
+                records: vec![(queue("reports"), fine.clone()), later],
+                dropped: vec![drop.clone()],
+            })
+            .expect_err("a later record is refused");
+        assert!(refused.to_string().contains(refusal), "{refused}");
+    }
+    for name in ["reports", "typed", "reports-dropped", "nowhere"] {
+        assert!(
+            !dir.path().join(format!("{name}.jsonl")).exists(),
+            "{name} was appended before a later record was refused"
+        );
+    }
+}
