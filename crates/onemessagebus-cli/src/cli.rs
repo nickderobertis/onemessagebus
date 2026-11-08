@@ -1454,6 +1454,14 @@ fn shape(value: &Value) -> &'static str {
 /// directory's schemas beside the layout's.
 fn open_bus(args: &BusArgs, io: &Io) -> Result<Bus, Refusal> {
     let (config, held) = configured(args, io)?;
+    // SPIKE MOCK (bus-message-hook): the deprecation a `validators:` key earns.
+    if !config.validators.is_empty() {
+        eprintln!(
+            "onemessagebus: warning: `validators:` is deprecated; declare {} hook(s) under \
+             `hooks:` instead (each validator is a hook that passes or refuses)",
+            config.validators.len()
+        );
+    }
     let linked = linked(&config, Freshness::Window)?;
     bind(&config, held, &linked, args, io)
 }
@@ -1559,6 +1567,21 @@ fn send(args: SendArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Re
     // Refused before stdin is read, so a mistyped queue costs nothing.
     bus.queue(&queue).map_err(bus_refusal)?;
     let record = read_payload(args.file.as_deref(), io)?;
+    match mock_hook(&record) {
+        MockHook::Drop(reason) => {
+            mock_drop_log(&queue, &reason, &record);
+            return emit_text(
+                out,
+                &json_line(&serde_json::json!({"queue": queue, "dropped": true}))?,
+            );
+        }
+        MockHook::Refuse(reason) => {
+            return Err(failed(format!(
+                "{queue}: refused by hook {MOCK_HOOK}, so it was not sent: {reason}"
+            )));
+        }
+        MockHook::Pass | MockHook::Change(_) => {}
+    }
     let mut text = String::new();
     for (landed_on, pushed) in bus.send(&queue, record).map_err(bus_refusal)? {
         text.push_str(&json_line(&Sent {
@@ -1704,6 +1727,18 @@ fn ask(args: AskArgs, out: &mut impl std::io::Write, io: &Io) -> Result<(), Refu
         }
         None => {
             let question = read_payload(args.file.as_deref(), io)?;
+            if let MockHook::Drop(reason) = mock_hook(&question) {
+                mock_drop_log(&queue, &reason, &question);
+                emit_text(
+                    out,
+                    &json_line(&serde_json::json!({
+                        "answer": "dropped", "queue": queue, "hook": MOCK_HOOK, "reason": reason
+                    }))?,
+                )?;
+                return Err(failed(format!(
+                    "{queue}: hook {MOCK_HOOK} dropped the question, so no reply will come: {reason}"
+                )));
+            }
             let options = AskOptions {
                 blocking: args.blocking,
                 asker,
@@ -1858,13 +1893,14 @@ fn status(args: StatusArgs, out: &mut impl std::io::Write, io: &Io) -> Result<()
                     .map_or_else(|| "-".to_owned(), ToString::to_string);
                 let _ = writeln!(
                     text,
-                    "{} records={} waiting={} pending={} abandoned={} unread={}",
+                    "{} records={} waiting={} pending={} abandoned={} unread={} dropped={}",
                     status.queue,
                     status.records,
                     status.waiting.len(),
                     pending,
                     status.abandoned.len(),
-                    status.unread
+                    status.unread,
+                    mock_dropped(&status.queue.to_string())
                 );
                 for (consumer, cursor) in &status.cursors {
                     let _ = writeln!(
@@ -2083,6 +2119,14 @@ fn validate(args: ValidateArgs, out: &mut impl std::io::Write, io: &Io) -> Resul
     // Refused before stdin is read, so a mistyped queue costs nothing.
     bus.queue(&queue).map_err(bus_refusal)?;
     let record = read_payload(args.file.as_deref(), io)?;
+    if let MockHook::Change(records) = mock_hook(&record) {
+        return emit_text(
+            out,
+            &json_line(&serde_json::json!({
+                "queue": queue, "outcome": "changed", "records": records
+            }))?,
+        );
+    }
     let verdict = bus.validate(&queue, record).map_err(bus_refusal)?;
     let judged = Validated {
         queue: queue.clone(),
@@ -2104,4 +2148,58 @@ fn emit_text(out: &mut impl std::io::Write, text: &str) -> Result<(), Refusal> {
     out.write_all(text.as_bytes())
         .and_then(|()| out.flush())
         .map_err(|failure| failed(format!("cannot write to stdout: {failure}")))
+}
+
+// ---------------------------------------------------------------------------
+// SPIKE MOCK (bus-message-hook): one hard-coded hook, `desk-guard`, standing in
+// for the plan's message hooks so their output can be photographed. Never lands.
+const MOCK_HOOK: &str = "desk-guard";
+
+enum MockHook {
+    Pass,
+    Drop(String),
+    Refuse(String),
+    Change(Vec<Value>),
+}
+
+fn mock_hook(record: &Value) -> MockHook {
+    let source = record.get("source").and_then(Value::as_str).unwrap_or_default();
+    let message = record.get("message").and_then(Value::as_str).unwrap_or_default();
+    if source == "heartbeat" {
+        return MockHook::Drop("heartbeat notes are not kept on this queue".to_owned());
+    }
+    if message.contains("TODO") {
+        return MockHook::Refuse("the message still carries a TODO".to_owned());
+    }
+    if source.chars().any(char::is_uppercase) {
+        let mut changed = record.clone();
+        changed["source"] = Value::String(source.to_lowercase());
+        return MockHook::Change(vec![changed]);
+    }
+    MockHook::Pass
+}
+
+/// The companion log, `<queue>-dropped`, beside the queue's own log (the
+/// fixture's transport directory, `bus/`, relative to where the scenes run).
+fn mock_drop_log(queue: &QueueName, reason: &str, record: &Value) {
+    use std::io::Write as _;
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis());
+    let line = serde_json::json!({
+        "at": at, "queue": queue, "hook": MOCK_HOOK, "reason": reason, "record": record
+    });
+    let _ = std::fs::create_dir_all("bus");
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(format!("bus/{queue}-dropped.ndjson"))
+    {
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+fn mock_dropped(queue: &str) -> usize {
+    std::fs::read_to_string(format!("bus/{queue}-dropped.ndjson"))
+        .map_or(0, |text| text.lines().count())
 }
