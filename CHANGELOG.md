@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/nickderobertis/onemessagebus/compare/v0.9.5...v0.10.0) - 2026-11-08
+
+### Added
+
+- *(hooks)* [**breaking**] let a script hook keep, change, reroute, drop or refuse a message, and deprecate validators ([#204](https://github.com/nickderobertis/onemessagebus/pull/204))
+
 ## [0.9.5](https://github.com/nickderobertis/onemessagebus/compare/v0.9.4...v0.9.5) - 2026-11-01
 
 ### Added
