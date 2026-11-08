@@ -410,3 +410,45 @@ fn registered_hooks_run_after_the_configured_ones_and_receive_their_output() {
         "{ \"first\" : 1 }\n"
     );
 }
+
+#[test]
+fn append_hooked_appends_nothing_for_a_refused_or_unjudged_offer_whatever_its_lists_hold() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let bus = bus(dir.path());
+    let record = RawRecord::from_value(&json!({"text": "never"}));
+    let drop = onemessagebus::Dropped {
+        at: 1,
+        queue: queue("reports"),
+        hook: onemessagebus::HookRef {
+            index: 0,
+            command: None,
+        },
+        message: record.clone(),
+        correlation: None,
+    };
+    for outcome in [
+        HookedOutcome::Refuse {
+            reason: "no".to_owned(),
+        },
+        HookedOutcome::Unjudged {
+            reason: "?".to_owned(),
+        },
+    ] {
+        let appended = bus
+            .append_hooked(&onemessagebus::Hooked {
+                outcome,
+                records: vec![(queue("reports"), record.clone())],
+                dropped: vec![drop.clone()],
+            })
+            .expect("nothing to append");
+        assert!(appended.is_empty());
+    }
+    assert!(
+        !dir.path().join("reports.jsonl").exists(),
+        "a refused record was appended"
+    );
+    assert!(
+        !dir.path().join("reports-dropped.jsonl").exists(),
+        "a refused drop was recorded"
+    );
+}

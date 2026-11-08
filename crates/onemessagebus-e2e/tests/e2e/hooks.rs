@@ -1931,3 +1931,23 @@ fn a_question_the_layout_routes_off_its_queue_is_asked_nowhere_even_beside_a_dro
         );
     }
 }
+
+#[test]
+fn a_drop_beside_a_route_file_naming_a_route_is_a_drop_and_routes_nothing() {
+    let scratch = Scratch::new();
+    let both = scratch.script(
+        "both.sh",
+        "cat > /dev/null\nprintf elsewhere > \"$ONEMESSAGEBUS_HOOK_ROUTE\"",
+    );
+    scratch.configure(&format!(
+        "queues:\n  inbox: {{}}\n  elsewhere: {{}}\nhooks:\n  - {{on: inbox, command: {}, routes: [elsewhere]}}\n",
+        argv(&[&both])
+    ));
+    let sent = scratch.bus(&["send", "inbox"], Some(r#"{"text":"x"}"#));
+    assert_eq!(sent.code, 0, "{}", sent.stderr);
+    assert_eq!(one_line(&sent), json!({"queue": "inbox", "dropped": true}));
+    assert_eq!(scratch.raw("inbox"), "");
+    assert_eq!(scratch.raw("elsewhere"), "", "a dropped message was routed");
+    assert_eq!(scratch.dropped("inbox").len(), 1);
+    assert!(scratch.dropped("elsewhere").is_empty());
+}
