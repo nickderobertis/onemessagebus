@@ -522,6 +522,7 @@ pub struct Validated {
     /// `unjudged` otherwise, with the reason beside a verdict that is not a
     /// pass.
     #[serde(flatten)]
+    #[schemars(with = "VerdictWire")]
     pub verdict: Verdict,
     /// What the offer became.
     pub outcome: OutcomeWord,
@@ -566,6 +567,29 @@ impl Validated {
                 .collect(),
         }
     }
+}
+
+/// `validate`'s verdict on the wire: the deprecated [`Verdict`]'s own shape,
+/// stated here so the `validated` root is not itself marked deprecated.
+#[derive(JsonSchema)]
+#[serde(tag = "verdict", rename_all = "lowercase")]
+#[expect(
+    dead_code,
+    reason = "a schema-only mirror of the deprecated verdict's wire shape"
+)]
+enum VerdictWire {
+    /// The offer may be sent: a keep, a change or a drop.
+    Pass,
+    /// The offer is refused.
+    Refuse {
+        /// Why, in the refusing hook's or validator's own words.
+        reason: String,
+    },
+    /// The offer could not be decided, so it is not sent either.
+    Unjudged {
+        /// Why no decision could be made.
+        reason: String,
+    },
 }
 
 /// What an offer became, as `validate` names it.

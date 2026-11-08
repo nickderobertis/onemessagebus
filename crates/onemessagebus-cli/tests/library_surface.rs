@@ -755,7 +755,7 @@ fn hook_surface() -> Vec<Exercise> {
                     .expect("read")
                     .try_into()
                     .expect("one drop");
-                assert_eq!(offered.dropped, [dropped.clone()]);
+                assert_eq!(offered.dropped, std::slice::from_ref(&dropped));
                 assert_eq!(dropped.queue, queue("typed"));
                 assert_eq!(
                     dropped.hook,
