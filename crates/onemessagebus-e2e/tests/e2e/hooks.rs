@@ -2044,3 +2044,80 @@ fn the_dry_run_checks_the_id_a_numbered_queue_will_give_as_its_send_does() {
     assert_eq!(sent.code, 1, "{}", sent.stdout);
     assert_eq!(scratch.raw_lines("capped").len(), 2);
 }
+
+#[test]
+fn a_drop_after_a_change_records_the_changed_bytes_and_names_the_hook_that_dropped() {
+    let scratch = Scratch::new();
+    let changed = r#"{ "step":2.0 }"#;
+    let change = scratch.script(
+        "change.sh",
+        &format!("cat > /dev/null\nprintf '%s' '{changed}'"),
+    );
+    let drop = scratch.script("drop.sh", &format!("cat > {}", scratch.at("drop-read")));
+    scratch.configure(&format!(
+        "queues:\n  steps: {{}}\nhooks:\n  - {{on: steps, command: {}}}\n  - {{on: steps, command: {}}}\n",
+        argv(&[&change]),
+        argv(&[&drop])
+    ));
+
+    let sent = scratch.bus(&["send", "steps"], Some(r#"{"step":1}"#));
+
+    assert_eq!(sent.code, 0, "{}", sent.stderr);
+    assert_eq!(one_line(&sent), json!({"queue": "steps", "dropped": true}));
+    assert_eq!(scratch.raw("steps"), "", "a dropped record was appended");
+    assert_eq!(
+        std::fs::read_to_string(scratch.path("drop-read")).expect("the second hook ran"),
+        format!("{changed}\n")
+    );
+    let lines = scratch.raw_lines("steps-dropped");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert_eq!(dropped_message_bytes(&lines[0]), changed);
+    assert_drop_shape(&scratch.dropped("steps")[0], "steps", 1, &[&drop]);
+}
+
+#[test]
+fn one_offer_of_two_records_on_a_numbered_queue_checks_each_with_its_own_id() {
+    let scratch = Scratch::new();
+    scratch.configure(&format!(
+        "profile: doubled\nschemas:\n  - {}\n",
+        serde_json::to_string(&format!("{}@1", hooks_bundle().display())).expect("a path")
+    ));
+
+    let sent = scratch.bus(&["send", "inbox"], Some(r#"{"a":1,"b":2}"#));
+    assert_eq!(sent.code, 0, "{}", sent.stderr);
+    let held: Vec<Value> = scratch
+        .raw_lines("capped")
+        .iter()
+        .map(|line| serde_json::from_str(line).expect("a record is JSON"))
+        .collect();
+    assert_eq!(
+        held.iter().map(|record| &record["id"]).collect::<Vec<_>>(),
+        [&json!(0), &json!(1)],
+        "{held:?}"
+    );
+
+    // The schema caps ids at 1: on a queue already holding id 0, this offer's
+    // records would take 1 and 2, so the second refuses the pair before either lands.
+    let refused_whole = Scratch::new();
+    refused_whole.configure(&format!(
+        "profile: doubled\nschemas:\n  - {}\n",
+        serde_json::to_string(&format!("{}@1", hooks_bundle().display())).expect("a path")
+    ));
+    let first = refused_whole.bus(&["send", "capped"], Some("{}"));
+    assert_eq!(first.code, 0, "{}", first.stderr);
+    let before = refused_whole.raw("capped");
+
+    let sent = refused_whole.bus(&["send", "inbox"], Some(r#"{"a":1,"b":2}"#));
+
+    assert_eq!(sent.code, 1, "{}", sent.stdout);
+    assert!(
+        sent.stderr.contains("capped: the record is not a"),
+        "{}",
+        sent.stderr
+    );
+    assert_eq!(
+        refused_whole.raw("capped"),
+        before,
+        "the record under the cap was appended beside the one its offer lost"
+    );
+}

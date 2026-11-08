@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "description": "The layouts the hook journeys link: one whose preparation stamps a record, one that splits an offer onto a plain queue and a typed one, one whose relay queue routes on what it is offered, and one that deflects every question asked of it.",
+  "description": "The layouts the hook journeys link: one whose preparation stamps a record, one that splits an offer onto a plain queue and a typed one, one whose relay queue routes on what it is offered, one that deflects every question asked of it, and one that splits an offer into two records on one numbered queue.",
   "schemas": [
     {
       "id": "hooks.note@1",
@@ -222,6 +222,48 @@
                   "take": [
                     "message",
                     "correlation"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "doubled",
+      "description": "An inbox whose offers become two records on one numbered queue whose schema caps the ids it gives.",
+      "queues": [
+        {
+          "name": "inbox"
+        },
+        {
+          "name": "capped",
+          "schema": "hooks.capped@1",
+          "numbered": true
+        }
+      ],
+      "prepare": {
+        "inbox": [
+          {
+            "route": {
+              "routes": [
+                {
+                  "queue": "capped",
+                  "on": [
+                    "a"
+                  ],
+                  "take": [
+                    "a"
+                  ]
+                },
+                {
+                  "queue": "capped",
+                  "on": [
+                    "b"
+                  ],
+                  "take": [
+                    "b"
                   ]
                 }
               ]
