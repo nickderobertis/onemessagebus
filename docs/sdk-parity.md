@@ -37,6 +37,18 @@ Every capability of the `onemessagebus` binary, and how each consumer surface re
 | `schemasClear` | `onemessagebus schemas clear` | json `schemas_cleared` | `onemessagebus::LinkResolver::clear` | yes, `schemasClear` | yes, `schemas_clear` | yes, `schemasClear` |
 | `schemasFetch` | `onemessagebus schemas fetch` | json `schemas_fetched` | `onemessagebus::LinkResolver::resolve` | yes, `schemasFetch` | yes, `schemas_fetch` | yes, `schemasFetch` |
 
+## Hooks
+
+What each SDK exports for the hook surface `docs/hooks.md` states, read from `npm/onemessagebus-sdk/src/index.ts` and `python/onemessagebus-sdk/src/onemessagebus/__init__.py`, so each name below is one the package exports, and one it stops exporting fails the audit.
+
+| Item | TypeScript | Python |
+| --- | --- | --- |
+| the configuration's `hooks` entry, and writing a typed configuration for the binary | `HookConfig`, `writeConfig` | `HookConfig`, `write_config` |
+| `validate`'s `outcome` and `records` | `Outcome`, `ValidatedRecord` | `ValidatedPass`, `ValidatedRecord` |
+| `send`'s dropped result | `Dropped` | `Dropped`, `SentLine` |
+| `reply`'s dropped result | `Dropped`, `Delivered` | `Dropped`, `ReplyLine` |
+| `ask`'s `dropped` answer | `DroppedQuestion` | `DroppedQuestion` |
+
 ## Options, flag by flag
 
 Each option is spelled camelCase in TypeScript and in a resident request's `args`, and snake_case in Python; each renders the flag beside it. A flag no option renders is listed with the reason it is not one.

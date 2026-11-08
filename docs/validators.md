@@ -1,5 +1,13 @@
 # Validators
 
+> **Deprecated.** Validators are replaced by hooks, stated in `docs/hooks.md`: a
+> validator becomes a hook that prints its input to pass. They keep working
+> exactly as below until a later release removes them. Every validator item
+> carries `#[deprecated]` naming its hook replacement, a configuration declaring
+> `validators:` is said so in one line on stderr, and where both are declared,
+> hooks run first and validators judge the records the hooks made. A hook cache
+> reads a validator's pass records as keeps (`docs/hooks.md`).
+
 A validator is a judgement a queue makes of a message **before anything is
 appended**.
 
@@ -30,8 +38,9 @@ one is; with neither, the message passes.
   another queue by that queue's validators. All of it is judged before any of it
   is appended, so a refusal anywhere leaves every queue as it was — a reply a
   layout splits into a verdict and actions is refused whole, not half-sent.
-- `Bus::validate` (the command line's `validate`) judges an offer exactly as a
-  send would, and appends nothing.
+- `Bus::validate` judges an offer exactly as a send would, and appends nothing.
+  The command line's `validate` now decides an offer by its hooks and its
+  validators both, through `Bus::hooked` (`docs/hooks.md`).
 
 ## Deterministic validators
 

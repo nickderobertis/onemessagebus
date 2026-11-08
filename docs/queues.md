@@ -259,14 +259,18 @@ Reading it is two steps, and the types keep them apart:
    its kind refuses. What it answers, a `Bus`, is the one type that opens a queue
    or authors a record.
 
-Three more blocks sit beside these: `validators`, what a queue judges a message
-by before anything is appended (`docs/validators.md`); `codecs`, what a host
+Four more blocks sit beside these: `hooks`, what a queue makes of a message
+before anything is appended — kept, changed, rerouted, dropped into its
+`<queue>-dropped` log, or refused — stated in `docs/hooks.md`; `validators`, the
+deprecated judgement hooks replace (`docs/validators.md`); `codecs`, what a host
 configures for each codec `serve` runs (`docs/codecs.md`); and `schemas`, links to
 schema bundles another program publishes, each pinned to a version, whose
 documents the command line registers beside the layout's.
 Each refuses an unknown key by name at `Config::load` — `schemas` a malformed
 link, resolving none — and `validators[<index>].on` naming no declared queue is
-refused by `Config::resolve`.
+refused by `Config::resolve`, as `hooks:` keys are by the rules `docs/hooks.md`
+gives. A queue whose name ends in `-dropped` is refused wherever it is declared:
+the suffix is a drop log's.
 
 The binary reads the file from `--config <path>` or `ONEMESSAGEBUS_CONFIG` — a
 queue verb given neither is refused naming `--config` — and `--transport-dir

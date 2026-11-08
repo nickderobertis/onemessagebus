@@ -14,9 +14,16 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { render } from "./parity-audit.mjs";
+import { HOOK_SURFACE, hookGaps, render } from "./parity-audit.mjs";
 import { ROOT } from "../crates/onemessagebus-cli/sdk-bundle.mjs";
-import { CLIENTS, classBody, definedMethods, pythonName } from "./sdk-coverage.mjs";
+import {
+  CLIENTS,
+  classBody,
+  definedMethods,
+  ENTRIES,
+  exportedNames,
+  pythonName,
+} from "./sdk-coverage.mjs";
 
 let scratch;
 before(() => {
@@ -137,5 +144,29 @@ describe("parity/parity-audit.mjs", () => {
     assert.match(text, /\| \*\*missing\*\* \| yes, `schema_list` \|/);
     assert.match(text, /`--x` is not an SDK option: a reason \\\| with a pipe\./);
     assert.ok(definedMethods("typescript", CLIENTS.typescript).size > 0);
+  });
+
+  it("finds every hook item exported by both packages, and names one an entry stops exporting", () => {
+    const exported = {
+      typescript: exportedNames("typescript", ENTRIES.typescript),
+      python: exportedNames("python", ENTRIES.python),
+    };
+    assert.deepEqual(hookGaps(exported), []);
+    const source = readFileSync(join(ROOT, ENTRIES.typescript), "utf8");
+    const copy = source.replace(/^\s*type DroppedQuestion,\n/mu, "");
+    assert.notEqual(copy, source, "the TypeScript entry exports no DroppedQuestion to remove");
+    const path = join(scratch, "index.ts");
+    writeFileSync(path, copy);
+    const gaps = hookGaps({ ...exported, typescript: exportedNames("typescript", path) });
+    assert.deepEqual(gaps, ["typescript: DroppedQuestion (`ask`'s `dropped` answer)"]);
+    const text = render([], new Set(), new Set(), {
+      ...exported,
+      typescript: exportedNames("typescript", path),
+    });
+    assert.match(
+      text,
+      /\| `ask`'s `dropped` answer \| \*\*missing\*\* `DroppedQuestion` \| `DroppedQuestion` \|/,
+    );
+    assert.equal(HOOK_SURFACE.length, 5);
   });
 });

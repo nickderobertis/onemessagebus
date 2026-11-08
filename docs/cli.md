@@ -6,8 +6,9 @@ over NDJSON streams; `deliver` and `inbox carried`, over the inbox
 (`docs/inbox.md`); `send`, `next`, `reply`, `subscribe` and `status` over
 queues kept on a transport, with `transports` listing the transport kinds
 (`docs/queues.md`, `docs/transport.md`); `ask`, a question and the answer that
-echoes its correlation (`docs/ask.md`); `validate`, a record judged by a
-queue's validators (`docs/validators.md`); and `serve`, a member protocol
+echoes its correlation (`docs/ask.md`); `validate`, an offer decided by a
+queue's hooks (`docs/hooks.md`) and its deprecated validators
+(`docs/validators.md`); and `serve`, a member protocol
 over a queue (`docs/codecs.md`). Every verb is a capability in
 `onemessagebus::CAPABILITIES`, which is what the SDK clients are generated from
 and what the clap tree is held to, so a verb or flag here exists nowhere the
@@ -273,7 +274,9 @@ record that is not JSON, or not a JSON object on a queue whose records are
 objects — one that keeps events or numbers its records — is refused with exit 2
 with nothing appended; a record its author may not write, its schema refuses, or a validator refuses or cannot
 judge (`validate`) exits 1 with nothing appended anywhere, the validator's reason
-on stderr unaltered.
+on stderr unaltered. A queue's hooks run on the offer first; what `send` prints
+for a record a hook dropped, and how a hook's refusal or unjudged answer exits,
+is `docs/hooks.md`'s.
 
 ```bash
 $ echo '{"kind":"finding","message":"the base moved","source":"proposal","blocking":true}' | onemessagebus send questions --config onemessagebus.yaml
@@ -306,7 +309,8 @@ correlation; `{"answer": "timeout", "correlation"}` when `--timeout` seconds pas
 without one, `{"answer": "abandoned", "correlation"}` when the question is
 abandoned and nobody re-attended it, and `{"answer": "refused", "reason"}` when
 the bus refused the question or the reply, each exit 1 with the reason on stderr.
-Only a reply carries a `reply` member. Without `--timeout` it waits for as long as
+Only a reply carries a `reply` member. A question a hook drops answers
+`dropped` at once, exit 1 (`docs/hooks.md`). Without `--timeout` it waits for as long as
 it runs. An `ask` that ends without its answer abandons its question — kept, and
 still answerable — for a later listener of its asker to take back.
 
@@ -336,7 +340,8 @@ correlation, and a question held pending is released. It prints `{answered,
 correlation, sent}`: the question answered, its correlation, and every record
 appended. A reply the layout routes only to another queue — under `desk`, one
 carrying only actions — answers nothing: `answered` is `null`, and the ask stays
-pending. A correlation nothing pending holds (unknown,
+pending. A reply a hook drops is printed as `docs/hooks.md` says and answers
+nothing. A correlation nothing pending holds (unknown,
 or already answered) exits 1 naming it, as do a reply naming neither when no ask
 or more than one is pending and a position the pending record was not claimed at,
 each with nothing appended. `--correlation` beside `<position>` is a usage error,
@@ -365,12 +370,13 @@ $ onemessagebus subscribe questions --until '{"field":"event","equals":"answered
 ### `status [<queue>] [--format json|text] [--config PATH] [--transport-dir DIR] [--registry DIR]`
 
 Report `<queue>`, or every declared queue, as a JSON list of `{queue, events,
-records, waiting, pending, pending_position, abandoned, unread, cursors}`: the
-records waiting to be claimed, the record pending an answer and where it was
-claimed, the records nobody is listening for any more, how many waiting records
-are still owed a reading, and each declared consumer's cursor. It is the read a
+records, waiting, pending, pending_position, abandoned, unread, dropped,
+cursors}`: the records waiting to be claimed, the record pending an answer and
+where it was claimed, the records nobody is listening for any more, how many
+waiting records are still owed a reading, how many drops its drop log records
+(`docs/hooks.md`), and each declared consumer's cursor. It is the read a
 wrapper otherwise takes from the queue's projection document by hand. Text is one line per queue,
-`<queue> records=<n> waiting=<n> pending=<id|-> abandoned=<n> unread=<n>`, and one
+`<queue> records=<n> waiting=<n> pending=<id|-> abandoned=<n> unread=<n> dropped=<n>`, and one
 `cursor <consumer>=<position|->` line per consumer.
 
 ```bash
@@ -379,22 +385,24 @@ $ onemessagebus status questions --format text --config onemessagebus.yaml
 
 ### `validate <queue> [--file PATH] [--config PATH] [--transport-dir DIR] [--registry DIR]`
 
-Judge the record on stdin (or in `--file`) exactly as `send` would judge it, and
-append nothing: by the validators the configuration declares for `<queue>`, and
-each record the layout routes to another queue by that queue's
-(`docs/validators.md`). It prints `{queue, verdict, reason}` — `verdict` is
-`pass`, `refuse` or `unjudged`, and `reason`, beside a verdict that is not a
-pass, is the validator's own words, unaltered — and exits 0 for a pass and 1 for
+Decide the record on stdin (or in `--file`) exactly as `send` would, and
+append nothing: by the hooks the configuration declares for `<queue>` and each
+record the layout routes to another queue by that queue's (`docs/hooks.md`),
+then by the deprecated validators (`docs/validators.md`). It prints `{queue,
+verdict, reason, outcome, records}` — `verdict` is `pass`, `refuse` or
+`unjudged`, `reason`, beside a verdict that is not a pass, is the refusing hook's
+or validator's own words, unaltered, and `outcome` and `records` are as
+`docs/hooks.md` states them — and exits 0 for a pass and 1 for
 either other verdict, saying the reason on stderr as well. An unjudged record is
 never a pass. A queue the configuration does not declare is refused with exit 2
 before stdin is read, and a record that is not JSON, or not a JSON object on a
 queue whose records are objects, with exit 2 before any validator judges it; a
-queue with no validators passes every record. A pass a
+queue with no hooks and no validators passes every record. What a hook's or a
 validator's cache records is recorded here as it would be on a send.
 
 ```bash
 $ onemessagebus validate answers --file answer.json --config onemessagebus.yaml
-{"queue":"answers","verdict":"refuse","reason":"an `add` states task prose the bar refuses\n"}
+{"queue":"answers","verdict":"refuse","reason":"an `add` states task prose the bar refuses\n","outcome":"refuse","records":[]}
 ```
 
 ### `serve <queue> --codec NAME [--session-seconds SECONDS] [--asker WORD] [--file PATH] [--config PATH] [--transport-dir DIR] [--registry DIR]`
