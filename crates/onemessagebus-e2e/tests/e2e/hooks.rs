@@ -1601,35 +1601,95 @@ fn a_cache_record_that_is_json_but_not_this_hooks_outcome_is_run_again_and_rewri
     );
 }
 
-#[test]
-fn a_routed_change_its_queue_prepares_onto_another_queue_is_appended_without_that_queues_hooks() {
+/// A scratch configured for the `relay` layout with one hook on each of `relay`
+/// and `sink`.
+fn relayed(turn_body: &str, sink_body: &str) -> (Scratch, String) {
     let scratch = Scratch::new();
-    let turn = scratch.script("turn.sh", "cat > /dev/null\necho '{\"n\":1}'");
-    let sink = scratch.script(
-        "sink.sh",
-        &format!("echo ran >> {}\ncat", scratch.at("sink-ran")),
-    );
+    let turn = scratch.script("turn.sh", turn_body);
+    let sink = scratch.script("sink.sh", sink_body);
     scratch.configure(&format!(
         "profile: relay\nschemas:\n  - {}\nhooks:\n  - {{on: relay, command: {}}}\n  - {{on: sink, command: {}}}\n",
         serde_json::to_string(&format!("{}@1", hooks_bundle().display())).expect("a path"),
         argv(&[&turn]),
         argv(&[&sink])
     ));
+    (scratch, sink)
+}
+
+/// Assert no queue of the `relay` layout, nor its drop log, holds anything.
+fn assert_relay_appended_nothing(scratch: &Scratch) {
+    for queue in ["inbox", "relay", "sink"] {
+        assert_eq!(scratch.raw(queue), "", "{queue} was appended to");
+        assert_eq!(
+            scratch.raw(&format!("{queue}-dropped")),
+            "",
+            "{queue}'s drop log was appended to"
+        );
+    }
+}
+
+#[test]
+fn a_routed_change_its_queue_prepares_onto_another_queue_runs_that_queues_hooks() {
+    let probe = Scratch::new();
+    let (ran, read) = (probe.at("sink-ran"), probe.at("sink-read"));
+    let (scratch, _) = relayed(
+        "cat > /dev/null\necho '{\"n\":1}'",
+        &format!("echo ran >> {ran}\ntee {read}"),
+    );
+
     let sent = scratch.bus(&["send", "inbox"], Some(r#"{"m":1}"#));
+
     assert_eq!(sent.code, 0, "{}", sent.stderr);
     assert_eq!(one_line(&sent)["queue"], json!("sink"));
+    assert_eq!(
+        probe.marker("sink-ran"),
+        1,
+        "the record relay's change was routed onto skipped sink's hooks"
+    );
+    assert_eq!(
+        std::fs::read_to_string(probe.path("sink-read")).expect("sink's hook read it"),
+        "{\"n\":1}\n"
+    );
     assert_eq!(scratch.raw("sink"), "{\"n\":1}\n");
     assert_eq!(scratch.raw("relay"), "");
     assert_eq!(scratch.raw("inbox"), "");
-    assert_eq!(
-        scratch.marker("sink-ran"),
-        0,
-        "a record a routed change was prepared onto ran its queue's hooks again"
+}
+
+#[test]
+fn a_destination_hook_refusing_a_routed_change_appends_nothing_anywhere() {
+    let (scratch, sink) = relayed(
+        "cat > /dev/null\necho '{\"n\":1}'",
+        "cat > /dev/null\nprintf 'not for the sink' >&2\nexit 1",
     );
 
-    // Offered to the sink itself, its hooks run.
-    assert_eq!(scratch.bus(&["send", "sink"], Some(r#"{"n":2}"#)).code, 0);
-    assert_eq!(scratch.marker("sink-ran"), 1);
+    let sent = scratch.bus(&["send", "inbox"], Some(r#"{"m":1}"#));
+
+    assert_eq!(sent.code, 1, "{}", sent.stdout);
+    assert_eq!(sent.stdout, "");
+    assert!(sent.stderr.contains("sink"), "{}", sent.stderr);
+    assert!(sent.stderr.contains(&sink), "{}", sent.stderr);
+    assert!(sent.stderr.contains("not for the sink"), "{}", sent.stderr);
+    assert_relay_appended_nothing(&scratch);
+}
+
+#[test]
+fn a_change_a_layout_routes_back_to_a_queue_it_passed_through_is_unjudged_with_nothing_appended() {
+    let probe = Scratch::new();
+    let ran = probe.at("turn-ran");
+    let (scratch, sink) = relayed(
+        &format!("echo ran >> {ran}\ncat > /dev/null\necho '{{\"n\":1}}'"),
+        "cat > /dev/null\necho '{\"m\":2}'",
+    );
+
+    let sent = scratch.bus(&["send", "inbox"], Some(r#"{"m":1}"#));
+
+    assert_eq!(sent.code, 1, "{}", sent.stdout);
+    assert_eq!(sent.stdout, "");
+    assert!(sent.stderr.contains(&sink), "{}", sent.stderr);
+    assert!(sent.stderr.contains("`relay`"), "{}", sent.stderr);
+    assert!(sent.stderr.contains("already"), "{}", sent.stderr);
+    assert_eq!(probe.marker("turn-ran"), 1, "the loop was run round");
+    assert_relay_appended_nothing(&scratch);
 }
 
 #[test]

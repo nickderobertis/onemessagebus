@@ -83,9 +83,11 @@ unjudged nor a refused message is appended anywhere.
 4. A rerouted message runs its new queue's hooks once; a second reroute is
    unjudged.
 5. Each record the layout routes to another queue then runs that queue's hooks.
-   A record one of them changes is prepared again for that queue; what that
-   preparation routes to yet another queue is appended without running hooks
-   again, so no layout can carry an offer round a loop.
+   A record one of them changes is prepared again for that queue, and what that
+   routes to another queue runs that queue's hooks in turn. A change the layout
+   would route back to a queue the record already passed through in this offer
+   makes the offer unjudged, naming the changing hook and that queue, with nothing
+   appended, so no layout can carry an offer round a loop.
 6. Validators, deprecated, judge last, over the records the hooks produced.
 
 Everything is decided before anything is appended. A refusal or an unjudged

@@ -1386,7 +1386,9 @@ impl Settling<'_> {
         message: RawRecord,
         rerouted: bool,
         top: bool,
+        path: &[QueueName],
     ) -> Result<Result<(), Halt>, BusError> {
+        let through = [path, std::slice::from_ref(queue)].concat();
         let prepared = self.prepared(queue, message.value().clone())?;
         let ran = match self.bus.chain(queue) {
             Some(chain) => chain.run(&message, &self.context(queue)),
@@ -1411,7 +1413,7 @@ impl Settling<'_> {
                 if let Some(why) = self.reroute_target(queue, &ran, &to, rerouted) {
                     return Ok(Err(Self::halted(queue, ran, Ending::Unjudged, why)));
                 }
-                return self.settle(&to, moved, true, top);
+                return self.settle(&to, moved, true, top, &through);
             }
             HookOutcome::Drop => {
                 self.drop_on(queue, ran.by, ran.received);
@@ -1439,20 +1441,24 @@ impl Settling<'_> {
                 self.records.push((target, record));
                 continue;
             }
-            if let Err(halt) = self.routed(&target, record, rerouted)? {
+            if let Err(halt) = self.routed(&target, record, rerouted, &through)? {
                 return Ok(Err(halt));
             }
         }
         Ok(Ok(()))
     }
 
-    /// Run a record the layout routed to `queue` through that queue's chain.
+    /// Run a record the layout routed to `queue` through that queue's chain,
+    /// and what a change there routes on through each destination's. `path` is
+    /// the queues the record has already passed through.
     fn routed(
         &mut self,
         queue: &QueueName,
         record: RawRecord,
         rerouted: bool,
+        path: &[QueueName],
     ) -> Result<Result<(), Halt>, BusError> {
+        let through = [path, std::slice::from_ref(queue)].concat();
         let Some(chain) = self.bus.chain(queue) else {
             self.records.push((queue.clone(), record));
             return Ok(Ok(()));
@@ -1463,16 +1469,28 @@ impl Settling<'_> {
             HookOutcome::Change(changed) => {
                 self.changed = true;
                 // What the hook made is prepared again for the queue it is on,
-                // so that queue's grants, checks and schema apply to it. What
-                // that preparation routes elsewhere is not run through hooks
-                // again, so a layout routing between two queues cannot loop.
+                // so that queue's grants, checks and schema apply to it, and
+                // what that routes elsewhere runs that queue's hooks. Each step
+                // adds a queue to the path, so a layout cannot loop for ever.
                 for (target, value) in self.prepared(queue, changed.value().clone())? {
                     let record = if &value == changed.value() {
                         changed.clone()
                     } else {
                         RawRecord::from_value(&value)
                     };
-                    self.records.push((target, record));
+                    if &target == queue {
+                        self.records.push((target, record));
+                        continue;
+                    }
+                    if through.contains(&target) {
+                        let why = format!(
+                            "its change is routed by the layout back to `{target}`, which this record already passed through"
+                        );
+                        return Ok(Err(Self::halted(queue, ran, Ending::Unjudged, why)));
+                    }
+                    if let Err(halt) = self.routed(&target, record, rerouted, &through)? {
+                        return Ok(Err(halt));
+                    }
                 }
             }
             HookOutcome::Reroute { queue: to, message } => {
@@ -1480,7 +1498,7 @@ impl Settling<'_> {
                 if let Some(why) = self.reroute_target(queue, &ran, &to, rerouted) {
                     return Ok(Err(Self::halted(queue, ran, Ending::Unjudged, why)));
                 }
-                return self.settle(&to, message, true, false);
+                return self.settle(&to, message, true, false, &through);
             }
             HookOutcome::Drop => {
                 self.changed = true;
@@ -1583,7 +1601,7 @@ impl Bus {
                 halt: Some(halt),
             }
         };
-        if let Err(halt) = settling.settle(queue, record, false, true)? {
+        if let Err(halt) = settling.settle(queue, record, false, true, &[])? {
             return Ok(refused(halt));
         }
         if let Some((judged_on, message)) = &settling.judged {

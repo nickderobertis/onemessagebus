@@ -121,7 +121,7 @@
     },
     {
       "name": "relay",
-      "description": "An inbox routing what it carries under `m` to a relay, whose own preparation sends a record carrying `n` on to a sink.",
+      "description": "An inbox routing what it carries under `m` to a relay, whose own preparation sends a record carrying `n` on to a sink, whose own sends a record carrying `m` back to the relay.",
       "queues": [
         {
           "name": "inbox"
@@ -171,6 +171,32 @@
                   ],
                   "take": [
                     "n"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "sink": [
+          {
+            "route": {
+              "routes": [
+                {
+                  "queue": "sink",
+                  "on": [
+                    "n"
+                  ],
+                  "take": [
+                    "n"
+                  ]
+                },
+                {
+                  "queue": "relay",
+                  "on": [
+                    "m"
+                  ],
+                  "take": [
+                    "m"
                   ]
                 }
               ]
