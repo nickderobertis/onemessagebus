@@ -1684,3 +1684,212 @@ fn a_reply_a_hook_refuses_or_cannot_decide_prints_nothing_and_leaves_the_questio
     assert_eq!(answered.code, 0, "{}", answered.stderr);
     assert_eq!(one_line(&answered)["correlation"], json!(correlation));
 }
+
+#[test]
+fn a_hook_writing_more_than_a_pipe_holds_before_reading_or_never_reading_answers_in_full() {
+    let scratch = Scratch::new();
+    // Prints a change longer than any pipe buffer before it reads its input.
+    let loud = scratch.script(
+        "loud.sh",
+        "printf '{\"text\":\"'\nhead -c 300000 /dev/zero | tr '\\0' x\nprintf '\"}\\n'\ncat > /dev/null",
+    );
+    // Answers without reading its input at all.
+    let deaf = scratch.script("deaf.sh", "echo '{\"heard\":false}'");
+    scratch.configure(&format!(
+        "queues:\n  loud: {{}}\n  deaf: {{}}\nhooks:\n  - {{on: loud, command: {}}}\n  - {{on: deaf, command: {}}}\n",
+        argv(&[&loud]),
+        argv(&[&deaf])
+    ));
+    let large = json!({"text": "y".repeat(300_000)}).to_string();
+    let sent = scratch.bus(&["send", "loud"], Some(&large));
+    assert_eq!(sent.code, 0, "{}", sent.stderr);
+    let landed: Value = serde_json::from_str(&scratch.raw_lines("loud")[0]).expect("JSON");
+    assert_eq!(landed["text"].as_str().map(str::len), Some(300_000));
+    assert!(landed["text"]
+        .as_str()
+        .is_some_and(|text| text.starts_with('x')));
+    let sent = scratch.bus(&["send", "deaf"], Some(&large));
+    assert_eq!(sent.code, 0, "{}", sent.stderr);
+    assert_eq!(scratch.raw("deaf"), "{\"heard\":false}\n");
+}
+
+#[test]
+fn output_that_is_not_utf8_or_a_route_file_the_hook_took_away_is_unjudged() {
+    let scratch = Scratch::new();
+    let garbled = scratch.script("garbled.sh", "cat > /dev/null\nprintf '\\377\\376\\n'");
+    let unrouted = scratch.script("unrouted.sh", "cat\nrm \"$ONEMESSAGEBUS_HOOK_ROUTE\"");
+    let misrouted = scratch.script(
+        "misrouted.sh",
+        "cat\nprintf '\\377' > \"$ONEMESSAGEBUS_HOOK_ROUTE\"",
+    );
+    for (command, routes, says) in [
+        (&garbled, "", "not UTF-8"),
+        (
+            &unrouted,
+            ", routes: [elsewhere]",
+            "route file that cannot be read",
+        ),
+        (
+            &misrouted,
+            ", routes: [elsewhere]",
+            "route file that cannot be read",
+        ),
+    ] {
+        scratch.configure(&format!(
+            "queues:\n  inbox: {{}}\n  elsewhere: {{}}\nhooks:\n  - {{on: inbox, command: {}{routes}}}\n",
+            argv(&[command])
+        ));
+        let sent = scratch.bus(&["send", "inbox"], Some(r#"{"text":"x"}"#));
+        assert_eq!(sent.code, 1, "{says}: {}", sent.stdout);
+        assert_eq!(sent.stdout, "", "{says}");
+        assert!(sent.stderr.contains(says), "{says}: {}", sent.stderr);
+    }
+    for queue in ["inbox", "elsewhere", "inbox-dropped"] {
+        assert_eq!(scratch.raw(queue), "", "{queue}");
+    }
+}
+
+#[test]
+fn a_question_a_hook_changes_is_asked_as_changed_and_one_it_reroutes_is_asked_nowhere() {
+    let scratch = Scratch::new();
+    let triage = scratch.script("triage.sh", "sed 's/}$/,\"triaged\":true}/'");
+    let away = scratch.script(
+        "away.sh",
+        "cat\nprintf other > \"$ONEMESSAGEBUS_HOOK_ROUTE\"",
+    );
+    let configure = |command: &str, routes: &str| {
+        scratch.configure(&format!(
+            "queues:\n  questions: {{policy: {{hold_pending: true}}, answers: replies}}\n  replies: {{}}\n  other: {{}}\nhooks:\n  - {{on: questions, command: {}{routes}}}\n",
+            argv(&[command])
+        ));
+    };
+    configure(&triage, "");
+    let asked = scratch.bus(
+        &["ask", "questions", "--timeout", "1"],
+        Some(r#"{"message":"anyone?"}"#),
+    );
+    assert_eq!(asked.code, 1, "{}", asked.stderr);
+    let answer = one_line(&asked);
+    assert_eq!(answer["answer"], json!("timeout"));
+    let queued: Value = serde_json::from_str(&scratch.raw_lines("questions")[0]).expect("JSON");
+    assert_eq!(queued["triaged"], json!(true), "{queued}");
+    assert_eq!(queued["correlation"], answer["correlation"], "{queued}");
+
+    configure(&away, ", routes: [other]");
+    let rerouted = scratch.bus(
+        &["ask", "questions", "--timeout", "1"],
+        Some(r#"{"message":"elsewhere?"}"#),
+    );
+    assert_ne!(rerouted.code, 0, "{}", rerouted.stdout);
+    assert_eq!(rerouted.stdout, "");
+    assert!(
+        rerouted
+            .stderr
+            .contains("no record on the queue it was asked on"),
+        "{}",
+        rerouted.stderr
+    );
+    assert_eq!(
+        scratch.raw("other"),
+        "",
+        "a question asked nowhere was appended"
+    );
+    assert!(scratch
+        .raw_lines("questions")
+        .iter()
+        .all(|line| !line.contains("elsewhere?")));
+}
+
+#[test]
+fn a_reply_a_hook_changes_or_reroutes_is_stamped_and_bound_as_the_queue_holds_it() {
+    let scratch = Scratch::new();
+    let edit = scratch.script(
+        "edit.sh",
+        "cat > /dev/null\necho '{\"message\":\"edited\"}'",
+    );
+    let away = scratch.script(
+        "away.sh",
+        "cat\nprintf other > \"$ONEMESSAGEBUS_HOOK_ROUTE\"",
+    );
+    let configure = |command: &str, routes: &str| {
+        scratch.configure(&format!(
+            "queues:\n  questions: {{policy: {{hold_pending: true}}, answers: replies}}\n  replies: {{}}\n  other: {{}}\nhooks:\n  - {{on: replies, command: {}{routes}}}\n",
+            argv(&[command])
+        ));
+    };
+    configure(&edit, "");
+    let ask = |message: &str| {
+        let asked = scratch.bus(
+            &["ask", "questions", "--timeout", "1"],
+            Some(&json!({"message": message}).to_string()),
+        );
+        one_line(&asked)["correlation"]
+            .as_str()
+            .expect("a correlation")
+            .to_owned()
+    };
+    let first = ask("one?");
+    let replied = scratch.bus(
+        &["reply", "questions", "--correlation", &first],
+        Some(r#"{"message":"me"}"#),
+    );
+    assert_eq!(replied.code, 0, "{}", replied.stderr);
+    assert_eq!(one_line(&replied)["correlation"], json!(first));
+    let landed: Value = serde_json::from_str(&scratch.raw_lines("replies")[0]).expect("JSON");
+    assert_eq!(landed, json!({"message": "edited", "correlation": first}));
+
+    configure(&away, ", routes: [other]");
+    let second = ask("two?");
+    let moved = scratch.bus(
+        &["reply", "questions", "--correlation", &second],
+        Some(r#"{"message":"me"}"#),
+    );
+    assert_eq!(moved.code, 0, "{}", moved.stderr);
+    let printed = one_line(&moved);
+    assert_eq!(printed["answered"], Value::Null, "{printed}");
+    assert_eq!(printed["sent"][0]["queue"], json!("other"), "{printed}");
+    assert_eq!(
+        scratch.raw_lines("replies").len(),
+        1,
+        "a rerouted reply reached the answers queue"
+    );
+    assert_eq!(scratch.raw("other"), "{\"message\":\"me\"}\n");
+}
+
+#[test]
+fn a_split_reply_whose_actions_a_hook_drops_still_answers_with_its_verdict() {
+    let scratch = Scratch::new();
+    let drop = scratch.script("drop.sh", "cat > /dev/null");
+    scratch.configure(&format!(
+        "{}hooks:\n  - {{on: actions, command: {}}}\n",
+        scratch.desk(),
+        argv(&[&drop])
+    ));
+    let asked = scratch.bus(
+        &["ask", "questions", "--timeout", "1"],
+        Some(r#"{"kind":"question","message":"which base?","source":"proposal"}"#),
+    );
+    let correlation = one_line(&asked)["correlation"]
+        .as_str()
+        .expect("a correlation")
+        .to_owned();
+    let replied = scratch.bus(
+        &["reply", "questions", "--correlation", &correlation],
+        Some(ENVELOPE),
+    );
+    assert_eq!(replied.code, 0, "{}", replied.stderr);
+    let printed = one_line(&replied);
+    assert_eq!(printed["correlation"], json!(correlation), "{printed}");
+    assert_eq!(
+        printed["sent"].as_array().map(Vec::len),
+        Some(1),
+        "{printed}"
+    );
+    assert_eq!(printed["sent"][0]["queue"], json!("answers"), "{printed}");
+    let answer: Value = serde_json::from_str(&scratch.raw_lines("answers")[0]).expect("JSON");
+    assert_eq!(answer["correlation"], json!(correlation));
+    assert_eq!(scratch.raw("actions"), "");
+    let dropped = scratch.dropped("actions");
+    assert_eq!(dropped.len(), 1);
+    assert_eq!(dropped[0]["correlation"], json!(correlation));
+}

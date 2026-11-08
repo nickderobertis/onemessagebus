@@ -238,3 +238,63 @@ fn append_hooked_refuses_a_drop_naming_an_undeclared_queue_appending_nothing() {
     );
     assert!(!dir.path().join("nowhere-dropped.jsonl").exists());
 }
+
+/// A [`onemessagebus::Hooked`] change of `records`, recording `dropped`.
+fn made(
+    records: Vec<(QueueName, RawRecord)>,
+    dropped: Vec<onemessagebus::Dropped>,
+) -> onemessagebus::Hooked {
+    onemessagebus::Hooked {
+        outcome: HookedOutcome::Change,
+        records,
+        dropped,
+    }
+}
+
+#[test]
+fn append_hooked_stops_at_the_first_append_that_fails_keeping_what_came_before() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let bus = bus(dir.path());
+    let first = RawRecord::parse("{ \"first\" : 1 }").expect("JSON");
+    let second = RawRecord::from_value(&json!({"second": 2}));
+    // A directory where the manager's log would be: that append fails.
+    std::fs::create_dir(dir.path().join("manager.jsonl")).expect("in the way");
+    let drop = onemessagebus::Dropped {
+        at: 1,
+        queue: queue("reports"),
+        hook: onemessagebus::HookRef {
+            index: 0,
+            command: None,
+        },
+        message: second.clone(),
+        correlation: None,
+    };
+    let failed = bus.append_hooked(&made(
+        vec![
+            (queue("reports"), first.clone()),
+            (queue("manager"), second.clone()),
+        ],
+        vec![drop.clone()],
+    ));
+    assert!(failed.is_err(), "{failed:?}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("reports.jsonl")).expect("the first landed"),
+        "{ \"first\" : 1 }\n"
+    );
+    assert!(
+        !dir.path().join("reports-dropped.jsonl").exists(),
+        "a drop after the failed append was recorded"
+    );
+
+    // A drop log that cannot be written fails after every record landed.
+    std::fs::create_dir(dir.path().join("reports-dropped.jsonl")).expect("in the way");
+    let failed = bus.append_hooked(&made(vec![(queue("reports"), first)], vec![drop]));
+    assert!(failed.is_err(), "{failed:?}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("reports.jsonl"))
+            .expect("read")
+            .lines()
+            .count(),
+        2
+    );
+}

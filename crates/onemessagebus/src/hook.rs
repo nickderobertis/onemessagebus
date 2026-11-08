@@ -1266,8 +1266,10 @@ impl Decision {
         }
     }
 
-    /// The drop that ended the offer on `queue`, when one did.
-    pub(crate) fn dropped_on(&self, queue: &QueueName) -> Option<&Dropped> {
+    /// The drop to name for an offer to `queue` that left nothing there: the
+    /// one recorded on `queue` itself, else — the message having been rerouted
+    /// before it was dropped — the first the offer recorded anywhere.
+    pub(crate) fn ending_drop(&self, queue: &QueueName) -> Option<&Dropped> {
         self.hooked
             .dropped
             .iter()

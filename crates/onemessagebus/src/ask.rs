@@ -766,6 +766,19 @@ impl Bus {
             None,
         )?;
         decision.appendable()?;
+        let lands = decision
+            .hooked
+            .records
+            .iter()
+            .any(|(target, _)| target == queue);
+        if !lands && decision.hooked.dropped.is_empty() {
+            // A question no record of which reaches the queue it was asked on
+            // can never be answered there, so none of it is appended.
+            return Err(BusError::NotAskable {
+                queue: queue.clone(),
+                why: "the layout or a hook routed the question to no record on the queue it was asked on, so nothing was appended".to_owned(),
+            });
+        }
         let mut raised = None;
         for (target, pushed) in self.append_hooked(&decision.hooked)? {
             if &target == queue {
@@ -773,7 +786,7 @@ impl Bus {
             }
         }
         if raised.is_none() {
-            if let Some(dropped) = decision.dropped_on(queue) {
+            if let Some(dropped) = decision.ending_drop(queue) {
                 return Err(BusError::Dropped {
                     queue: dropped.queue.clone(),
                     hook: dropped.hook.clone(),
@@ -1011,7 +1024,7 @@ impl Bus {
         decision.appendable()?;
         let sent = self.append_hooked(&decision.hooked)?;
         if decision.hooked.outcome == crate::hook::HookedOutcome::Drop {
-            if let Some(dropped) = decision.dropped_on(&answer_queue) {
+            if let Some(dropped) = decision.ending_drop(&answer_queue) {
                 return Err(BusError::Dropped {
                     queue: dropped.queue.clone(),
                     hook: dropped.hook.clone(),

@@ -187,7 +187,10 @@ lines, for a consumer that decides an offer and appends it on its own path.
 `Bus::send`, `Bus::reply` and `Bus::ask` run hooks as above. `send` keeps its
 return type and omits dropped records (`Bus::offer` answers them beside it). A
 dropped `ask` or `reply` returns `BusError::Dropped { queue, hook }`, naming the
-queue whose drop log recorded it and the dropping hook. A hook's refusal is
+queue whose drop log recorded it and the dropping hook. A question a hook
+reroutes off the queue it was asked on can never be answered there, so `ask`
+refuses it with `BusError::NotAskable`, appending nothing; a reply rerouted off
+its answers queue is appended where it went and answers nothing. A hook's refusal is
 `BusError::HookRefused { queue, hook, reason }` and its unjudged answer
 `BusError::HookUnjudged { queue, hook, reason }`; `hook` is a `HookRef { index,
 command }`, the drop line's `hook` object.
