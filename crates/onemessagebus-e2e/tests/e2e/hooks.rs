@@ -343,6 +343,14 @@ fn a_change_breaking_the_queues_schema_or_the_authors_grants_is_refused_with_not
         "{}",
         sent.stderr
     );
+    // The dry run refuses it as the send does, rather than passing it.
+    let validated = scratch.bus(&["validate", "typed"], Some(r#"{"text":"hello"}"#));
+    assert_eq!(validated.code, 1, "{}", validated.stdout);
+    assert!(
+        validated.stderr.contains("typed: the record is not a"),
+        "{}",
+        validated.stderr
+    );
     assert_eq!(scratch.raw("typed"), "");
 
     let promoted = scratch.script(
@@ -1892,4 +1900,34 @@ fn a_split_reply_whose_actions_a_hook_drops_still_answers_with_its_verdict() {
     let dropped = scratch.dropped("actions");
     assert_eq!(dropped.len(), 1);
     assert_eq!(dropped[0]["correlation"], json!(correlation));
+}
+
+#[test]
+fn a_question_the_layout_routes_off_its_queue_is_asked_nowhere_even_beside_a_drop() {
+    let scratch = Scratch::new();
+    let drop = scratch.script("drop.sh", "cat > /dev/null");
+    scratch.configure(&format!(
+        "profile: deflecting\nschemas:\n  - {}\nhooks:\n  - {{on: aside, command: {}}}\n",
+        serde_json::to_string(&format!("{}@1", hooks_bundle().display())).expect("a path"),
+        argv(&[&drop])
+    ));
+    let asked = scratch.bus(
+        &["ask", "asks", "--timeout", "1"],
+        Some(r#"{"message":"anyone?"}"#),
+    );
+    assert_ne!(asked.code, 0, "{}", asked.stdout);
+    assert!(
+        asked
+            .stderr
+            .contains("no record on the queue it was asked on"),
+        "{}",
+        asked.stderr
+    );
+    for queue in ["asks", "aside", "other", "aside-dropped"] {
+        assert_eq!(
+            scratch.raw(queue),
+            "",
+            "{queue}: a question asked nowhere left a trace"
+        );
+    }
 }
