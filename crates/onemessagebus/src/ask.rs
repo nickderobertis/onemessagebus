@@ -26,10 +26,10 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::config::{Bus, BusError};
+use crate::hook::RawRecord;
 use crate::queue::{shape_word, Asker, Claimed, Lifetime, Pushed, QueueError, RawQueue};
 use crate::schema::{CheckError, Message, Registry};
 use crate::transport::{Position, QueueName};
-use crate::validate::Verdict;
 
 /// The field a question and a reply carry their correlation in.
 pub const CORRELATION: &str = "correlation";
@@ -617,7 +617,7 @@ fn a_reply_object(answers: &RawQueue, reply: &Value) -> Result<(), QueueError> {
     })
 }
 
-fn stamped(record: Value, correlation: &Correlation) -> Value {
+pub(crate) fn stamped(record: Value, correlation: &Correlation) -> Value {
     match record {
         Value::Object(mut fields) => {
             fields.insert(
@@ -759,16 +759,25 @@ impl Bus {
             Value::String(correlation.as_str().to_owned()),
         );
         let offered = Value::Object(fields);
-        let routed = self.prepare(queue, offered.clone())?;
-        QueueError::of_verdict(
+        let decision = self.decide(
             queue,
-            self.judge(queue, &offered, &routed, Some(&correlation)),
+            RawRecord::from_value(&offered),
+            Some(&correlation),
+            None,
         )?;
+        decision.appendable()?;
         let mut raised = None;
-        for (target, record) in routed {
-            let pushed = self.queue(&target)?.push_judged(record)?;
+        for (target, pushed) in self.append_hooked(&decision.hooked)? {
             if &target == queue {
                 raised = Some(pushed);
+            }
+        }
+        if raised.is_none() {
+            if let Some(dropped) = decision.dropped_on(queue) {
+                return Err(BusError::Dropped {
+                    queue: dropped.queue.clone(),
+                    hook: dropped.hook.clone(),
+                });
             }
         }
         let Some((position, Some(id))) = raised.map(|pushed| (pushed.position, pushed.id)) else {
@@ -993,28 +1002,26 @@ impl Bus {
         reply: Value,
     ) -> Result<(Appended, Option<Position>), BusError> {
         let answer_queue = answers.name().clone();
-        let routed: Vec<(QueueName, Value)> = self
-            .prepare(&answer_queue, reply.clone())?
-            .into_iter()
-            .map(|(target, record)| match correlation {
-                Some(correlation) if target == answer_queue => {
-                    let stamped = stamped(record, correlation);
-                    (target, stamped)
-                }
-                _ => (target, record),
-            })
-            .collect();
-        let verdict: Verdict = self.judge(&answer_queue, &reply, &routed, correlation);
-        QueueError::of_verdict(&answer_queue, verdict)?;
-        let mut sent = Vec::new();
-        let mut at = None;
-        for (target, record) in routed {
-            let pushed = self.queue(&target)?.push_judged(record)?;
-            if target == answer_queue {
-                at = Some(pushed.position);
+        let decision = self.decide(
+            &answer_queue,
+            RawRecord::from_value(&reply),
+            correlation,
+            Some(&answer_queue),
+        )?;
+        decision.appendable()?;
+        let sent = self.append_hooked(&decision.hooked)?;
+        if decision.hooked.outcome == crate::hook::HookedOutcome::Drop {
+            if let Some(dropped) = decision.dropped_on(&answer_queue) {
+                return Err(BusError::Dropped {
+                    queue: dropped.queue.clone(),
+                    hook: dropped.hook.clone(),
+                });
             }
-            sent.push((target, pushed));
         }
+        let at = sent
+            .iter()
+            .find(|(target, _)| *target == answer_queue)
+            .map(|(_, pushed)| pushed.position);
         Ok((sent, at))
     }
 }

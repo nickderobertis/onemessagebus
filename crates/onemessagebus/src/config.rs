@@ -16,6 +16,11 @@
 //!    refuses — each by the key it is at. What it answers, a [`Bus`], is the one
 //!    type that opens a queue or authors a record.
 
+#![expect(
+    deprecated,
+    reason = "the configuration keeps reading the deprecated `validators` block and the bus keeps running its validators after its hooks, until a later release removes them"
+)]
+
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -28,6 +33,7 @@ use serde_json::Value;
 use crate::ask::Correlation;
 use crate::author::{Allowlist, Author, NarrowingRefused, OpWord};
 use crate::codec::{CodecConfig, CodecName};
+use crate::hook::{dropped_from, Chain, CommandHook, HookCache, HookRef, DROPPED_SUFFIX};
 use crate::kinds::{TransportConfig, TransportKinds};
 use crate::layout::LinkedLayout;
 use crate::link::{Freshness, LinkError, LinkResolver, Resolved, SchemaLink};
@@ -74,8 +80,13 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(with = "BTreeMap<ConfiguredAuthor, AuthorConfig>")]
     pub authors: BTreeMap<Author, AuthorConfig>,
+    /// Hooks running on what is offered to a queue before anything is
+    /// appended, in the order each queue runs them (`docs/hooks.md`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<HookConfig>,
     /// Validators judging what is offered to a queue before anything is
-    /// appended, in the order each queue judges by them.
+    /// appended, in the order each queue judges by them — deprecated: declare
+    /// `hooks`, which run first, and these judge the records the hooks made.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub validators: Vec<ValidatorConfig>,
     /// What a host configures for each codec `serve` runs, by the codec's name.
@@ -91,11 +102,65 @@ pub struct Config {
     pub schemas: Vec<SchemaLink>,
 }
 
+/// The line a configuration declaring `validators` is loaded with, on stderr.
+pub const VALIDATORS_DEPRECATED: &str = "validators are deprecated: declare them as `hooks:` instead (a validator becomes a hook that prints its input to pass); where both are declared, hooks run first and validators judge the records the hooks made";
+
+/// One hook of a configuration: a command, which a Rust hook a linking
+/// consumer registers is not — that one is code ([`Bus::with_hook`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HookConfig {
+    /// The queue whose offered messages it runs on.
+    pub on: QueueName,
+    /// Which of them it runs on; every one when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<When>,
+    /// The command's argv, the program first: the message on its stdin as one
+    /// line of JSON, and what it prints the message from then on.
+    pub command: Vec<String>,
+    /// The queues it may reroute a message to; it may reroute nowhere when
+    /// absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routes: Option<Vec<QueueName>>,
+    /// Where its keeps, changes and drops are recorded; nowhere when absent.
+    /// Only for a hook whose outcome depends on nothing but its input and the
+    /// fingerprinted bar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache: Option<CacheConfig>,
+}
+
+impl HookConfig {
+    /// The hook this declares, its routes not yet checked against a layout.
+    ///
+    /// # Errors
+    ///
+    /// The refusal, naming the key under `hooks[index]`.
+    fn build(&self, index: usize) -> Result<CommandHook, String> {
+        let hook = CommandHook::new(self.command.iter().cloned())
+            .map_err(|failure| format!("hooks[{index}].command: {failure}"))?;
+        let hook = match &self.cache {
+            Some(cache) => hook.with_cache(
+                HookCache::new(&cache.dir, cache.bar_fingerprint.iter().cloned()).map_err(
+                    |failure| format!("hooks[{index}].cache.bar_fingerprint: {failure}"),
+                )?,
+            ),
+            None => hook,
+        };
+        Ok(match &self.routes {
+            Some(routes) => hook.with_routes(routes.iter().cloned()),
+            None => hook,
+        })
+    }
+}
+
 /// One validator of a configuration: the external kind, which a Rust
 /// validator a linking consumer registers is not — that one is code
 /// ([`Bus::with_validator`]).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[deprecated(
+    note = "validators are deprecated: declare a `HookConfig` under `hooks:` (`docs/hooks.md`)"
+)]
 pub struct ValidatorConfig {
     /// The queue whose offered messages it judges.
     pub on: QueueName,
@@ -419,6 +484,12 @@ impl Config {
                 found: config.version,
             });
         }
+        for (index, hook) in config.hooks.iter().enumerate() {
+            hook.build(index).map_err(|why| ConfigError::Parse {
+                path: PathBuf::new(),
+                why,
+            })?;
+        }
         for (index, validator) in config.validators.iter().enumerate() {
             validator.build(index).map_err(|why| ConfigError::Parse {
                 path: PathBuf::new(),
@@ -443,6 +514,7 @@ impl Config {
             profile: profile.map(str::to_owned),
             queues: BTreeMap::new(),
             authors: BTreeMap::new(),
+            hooks: Vec::new(),
             validators: Vec::new(),
             codecs: BTreeMap::new(),
             schemas: Vec::new(),
@@ -575,6 +647,24 @@ impl Config {
                 spec.numbered = numbered;
             }
         }
+        for name in specs.keys() {
+            if dropped_from(name).is_some() {
+                let key = if self.queues.contains_key(name) {
+                    format!("queues.{name}")
+                } else {
+                    format!(
+                        "profile: the layout `{}` declares the queue `{name}`, and",
+                        self.profile.as_deref().unwrap_or_default()
+                    )
+                };
+                return Err(ConfigError::Queue {
+                    key,
+                    why: format!(
+                        "`{name}` ends in `{DROPPED_SUFFIX}`, the suffix reserved for a queue's drop log; name the queue otherwise"
+                    ),
+                });
+            }
+        }
         let mut registry = layout.map(|layout| layout.registry()).unwrap_or_default();
         for id in added.ids() {
             if let Some(document) = added.schema(&id) {
@@ -675,6 +765,45 @@ impl Config {
                 allowlist.refuse(author.clone(), &op, reason.as_str());
             }
         }
+        let declared_queues = || {
+            specs
+                .keys()
+                .map(QueueName::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let mut hooks: BTreeMap<QueueName, Chain> = BTreeMap::new();
+        for (index, declared) in self.hooks.iter().enumerate() {
+            if !specs.contains_key(&declared.on) {
+                return Err(ConfigError::Queue {
+                    key: format!("hooks[{index}].on"),
+                    why: format!(
+                        "`{}` is not a queue this configuration declares; it declares: {}",
+                        declared.on,
+                        declared_queues()
+                    ),
+                });
+            }
+            for (route, target) in declared.routes.iter().flatten().enumerate() {
+                if !specs.contains_key(target) {
+                    return Err(ConfigError::Queue {
+                        key: format!("hooks[{index}].routes[{route}]"),
+                        why: format!(
+                            "`{target}` is not a queue this configuration declares, so no message is rerouted there; it declares: {}",
+                            declared_queues()
+                        ),
+                    });
+                }
+            }
+            let hook = declared.build(index).map_err(|why| ConfigError::Queue {
+                key: format!("hooks[{index}]"),
+                why,
+            })?;
+            hooks
+                .entry(declared.on.clone())
+                .or_default()
+                .push_configured(declared.when.clone(), hook);
+        }
         let mut validators: BTreeMap<QueueName, Validators<Value>> = BTreeMap::new();
         for (index, declared) in self.validators.iter().enumerate() {
             if !specs.contains_key(&declared.on) {
@@ -711,6 +840,7 @@ impl Config {
             queues: specs,
             allowlist,
             registry: Arc::new(registry),
+            hooks,
             validators,
         })
     }
@@ -965,6 +1095,37 @@ pub enum BusError {
         /// What was looked for, and what is there instead.
         why: String,
     },
+    /// A hook refused the offer, so nothing was appended anywhere.
+    #[error("{queue}: refused by {hook} before anything was appended: {reason}")]
+    HookRefused {
+        /// The queue the refusing hook ran on.
+        queue: QueueName,
+        /// Which hook.
+        hook: HookRef,
+        /// The reason the hook gave, unaltered.
+        reason: String,
+    },
+    /// A hook could not decide the offer, so nothing was appended anywhere.
+    #[error("{queue}: not appended, because {hook} could not decide it: {reason}")]
+    HookUnjudged {
+        /// The queue the hook ran on.
+        queue: QueueName,
+        /// Which hook.
+        hook: HookRef,
+        /// Why.
+        reason: String,
+    },
+    /// A hook dropped the question or the reply: it is recorded in the drop log
+    /// of `queue`, `<queue>-dropped`, and appended nowhere else.
+    #[error(
+        "{queue}: dropped by {hook}; it is recorded in {queue}-dropped and appended nowhere else"
+    )]
+    Dropped {
+        /// The queue the dropping hook ran on, whose drop log records it.
+        queue: QueueName,
+        /// Which hook.
+        hook: HookRef,
+    },
     /// The queue refused it, or its transport failed.
     #[error(transparent)]
     Queue(#[from] QueueError),
@@ -981,6 +1142,7 @@ pub struct Bus {
     queues: BTreeMap<QueueName, QueueSpec>,
     allowlist: Allowlist<OpWord>,
     registry: Arc<Registry>,
+    hooks: BTreeMap<QueueName, Chain>,
     validators: BTreeMap<QueueName, Validators<Value>>,
 }
 
@@ -1024,24 +1186,49 @@ impl Bus {
         &self.registry
     }
 
-    /// The declared queue `name`.
+    /// The declaration of the queue `name`, one this bus declares.
+    ///
+    /// # Errors
+    ///
+    /// [`BusError::UnknownQueue`], naming every declared queue.
+    pub(crate) fn declared(&self, name: &QueueName) -> Result<&QueueSpec, BusError> {
+        self.queues.get(name).ok_or_else(|| BusError::UnknownQueue {
+            queue: name.clone(),
+            declared: self
+                .queues
+                .keys()
+                .map(QueueName::as_str)
+                .collect::<Vec<_>>()
+                .join(", "),
+        })
+    }
+
+    /// The chain of hooks a message offered to `queue` runs through.
+    pub(crate) fn chain(&self, queue: &QueueName) -> Option<&Chain> {
+        self.hooks.get(queue)
+    }
+
+    /// The chain of `queue`, made when it has none.
+    pub(crate) fn chain_mut(&mut self, queue: &QueueName) -> &mut Chain {
+        self.hooks.entry(queue.clone()).or_default()
+    }
+
+    /// The declared queue `name`, or the drop log `<queue>-dropped` of a
+    /// declared queue: a plain log every drop on `queue` is recorded in.
     ///
     /// # Errors
     ///
     /// [`BusError::UnknownQueue`], naming every declared queue.
     pub fn queue(&self, name: &QueueName) -> Result<RawQueue, BusError> {
-        let spec = self
-            .queues
-            .get(name)
-            .ok_or_else(|| BusError::UnknownQueue {
-                queue: name.clone(),
-                declared: self
-                    .queues
-                    .keys()
-                    .map(QueueName::as_str)
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            })?;
+        if let Some(base) = dropped_from(name).filter(|base| self.queues.contains_key(base)) {
+            let _ = base;
+            return Ok(RawQueue::open(
+                Arc::clone(&self.transport),
+                QueueSpec::new(name.clone(), Policy::default()),
+                Arc::clone(&self.registry),
+            ));
+        }
+        let spec = self.declared(name)?;
         Ok(RawQueue::open(
             Arc::clone(&self.transport),
             spec.clone(),
@@ -1058,6 +1245,9 @@ impl Bus {
     /// # Errors
     ///
     /// [`BusError::UnknownQueue`].
+    #[deprecated(
+        note = "validators are deprecated: register a `Hook<M>` with `Bus::with_hook` (`docs/hooks.md`)"
+    )]
     pub fn with_validator<M: Message + 'static>(
         mut self,
         queue: &QueueName,
@@ -1078,6 +1268,9 @@ impl Bus {
     /// # Errors
     ///
     /// As [`prepare`](Self::prepare): an unknown queue, or the layout's refusal.
+    #[deprecated(
+        note = "validators are deprecated: `Bus::hooked` decides an offer by its hooks and validators both (`docs/hooks.md`)"
+    )]
     pub fn validate(&self, queue: &QueueName, record: Value) -> Result<Verdict, BusError> {
         let routed = self.prepare(queue, record.clone())?;
         Ok(self.judge(queue, &record, &routed, None))
@@ -1148,28 +1341,31 @@ impl Bus {
         }
     }
 
-    /// Offer `record` to `queue`: prepare it, judge it as
-    /// [`validate`](Self::validate) does, then push each record it becomes onto
-    /// its queue, validated against that queue's schema.
+    /// Offer `record` to `queue`: decide it as [`hooked`](Self::hooked) does,
+    /// then append what it became as [`append_hooked`](Self::append_hooked)
+    /// does. A dropped record is recorded in its queue's drop log and is not
+    /// among what this answers.
     ///
     /// # Errors
     ///
-    /// As [`prepare`](Self::prepare); [`QueueError::Refused`] or
-    /// [`QueueError::Unjudged`] for an offer the validators did not pass, with
-    /// nothing appended anywhere; or the first push a queue refused, when what
-    /// was pushed before it stays pushed.
+    /// As [`prepare`](Self::prepare); [`BusError::HookRefused`] or
+    /// [`BusError::HookUnjudged`] for an offer a hook did not let through, and
+    /// [`QueueError::Refused`] or [`QueueError::Unjudged`] for one the
+    /// validators did not pass, with nothing appended anywhere; a record its
+    /// queue's schema refuses, with nothing appended; or the first append that
+    /// failed, when what was appended before it stays appended.
     pub fn send(
         &self,
         queue: &QueueName,
         record: Value,
     ) -> Result<Vec<(QueueName, Pushed<Value>)>, BusError> {
-        let routed = self.prepare(queue, record.clone())?;
-        QueueError::of_verdict(queue, self.judge(queue, &record, &routed, None))?;
-        let mut pushed = Vec::new();
-        for (target, record) in routed {
-            let landed = self.queue(&target)?.push_judged(record)?;
-            pushed.push((target, landed));
-        }
-        Ok(pushed)
+        let decision = self.decide(
+            queue,
+            crate::hook::RawRecord::from_value(&record),
+            None,
+            None,
+        )?;
+        decision.appendable()?;
+        self.append_hooked(&decision.hooked)
     }
 }

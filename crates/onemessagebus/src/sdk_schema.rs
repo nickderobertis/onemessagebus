@@ -7,6 +7,11 @@
 //! the registry holds. Language packages may add client behaviour, but must
 //! not restate these wire shapes by hand.
 
+#![expect(
+    deprecated,
+    reason = "`validate` keeps printing the deprecated verdict beside the hook outcome until a later release removes it"
+)]
+
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::num::NonZeroU64;

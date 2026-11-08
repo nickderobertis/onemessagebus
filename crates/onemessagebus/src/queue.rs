@@ -21,6 +21,11 @@
 //! the record is handed over, so a claimant that crashes afterwards leaves a
 //! record claimed rather than a record the next reader takes again.
 
+#![expect(
+    deprecated,
+    reason = "a queue keeps judging what is pushed onto it by the deprecated validators until a later release removes them"
+)]
+
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fmt;
@@ -33,6 +38,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::hook::RawRecord;
 use crate::schema::{CheckError, Message, Registry, RegistryError, SchemaId, SchemaViolation};
 use crate::transport::{
     Changed, ConsumerName, DocumentName, Fingerprint, Position, QueueName, Transport,
@@ -771,6 +777,8 @@ pub struct QueueStatus {
     pub abandoned: Vec<Value>,
     /// How many waiting records somebody is still owed a reading of.
     pub unread: u64,
+    /// How many drops its drop log, `<queue>-dropped`, records.
+    pub dropped: u64,
     /// Each declared consumer's cursor, `null` for one that has read nothing.
     pub cursors: BTreeMap<ConsumerName, Option<Position>>,
 }
@@ -897,6 +905,20 @@ fn without_key(fields: Map<String, Value>, key: &str) -> (Option<Value>, Map<Str
         })
         .collect();
     (taken, kept)
+}
+
+/// `raw`, a JSON object's bytes, with `fields` — already spelled as JSON
+/// members — in front of its own: `None` for bytes that are not an object.
+fn spliced(fields: &str, raw: &str) -> Option<Vec<u8>> {
+    let rest = raw.trim_start().strip_prefix('{')?;
+    let mut line = String::with_capacity(raw.len() + fields.len() + 2);
+    line.push('{');
+    line.push_str(fields);
+    if !rest.trim_start().starts_with('}') {
+        line.push(',');
+    }
+    line.push_str(rest);
+    Some(line.into_bytes())
 }
 
 fn record_id(record: &Value) -> Option<u64> {
@@ -1337,13 +1359,33 @@ impl RawQueue {
         &self,
         derive: impl FnOnce(&Folded) -> Result<(Vec<(Event, Value)>, T), QueueError>,
     ) -> Result<(T, Vec<(Value, Position)>), QueueError> {
+        self.record_lines(|folded| {
+            let (events, extra) = derive(folded)?;
+            Ok((
+                events
+                    .into_iter()
+                    .map(|(event, record)| {
+                        let line = Self::frame(event, &record);
+                        (event, record, line)
+                    })
+                    .collect(),
+                extra,
+            ))
+        })
+    }
+
+    /// [`record`](Self::record), with each event's line as `derive` spells it.
+    fn record_lines<T>(
+        &self,
+        derive: impl FnOnce(&Folded) -> Result<(Vec<(Event, Value, Vec<u8>)>, T), QueueError>,
+    ) -> Result<(T, Vec<(Value, Position)>), QueueError> {
         let queue = &self.spec.name;
         self.within_section(|inner| {
             let (mut folded, _) = self.current(inner)?;
             let (events, extra) = derive(&folded)?;
             let mut recorded = Vec::new();
-            for (event, record) in events {
-                let position = inner.append(queue, &Self::frame(event, &record))?;
+            for (event, record, line) in events {
+                let position = inner.append(queue, &line)?;
                 self.apply(&mut folded, Some(event), &record);
                 folded.accounted = Some(position.token());
                 recorded.push((record, position));
@@ -1446,6 +1488,95 @@ impl RawQueue {
         let context = ValidationContext::new(self.spec.name.clone());
         QueueError::of_verdict(&self.spec.name, self.validators.judge(&record, &context))?;
         self.push_judged(record)
+    }
+
+    /// Whether this queue keeps `record`, checked as a push would check it —
+    /// against the schema, with an id where the queue gives one — and nothing
+    /// appended: how an offer is checked whole before any of it is.
+    pub(crate) fn admits(&self, record: &Value) -> Result<(), QueueError> {
+        if self.spec.policy.keeps_events() || self.spec.numbered {
+            let numbered = self.reshape(self.with_id(record.clone(), 0)?)?;
+            return self.check(&numbered);
+        }
+        self.check(&self.reshape(record.clone())?)
+    }
+
+    /// Append `record` as its bytes spell it, checked against the schema as
+    /// [`push`](Self::push) checks it and judged by nothing: an event queue's
+    /// `event` and an id the queue gives are spliced in front of its fields, so
+    /// the spelling a hook gave it survives — save for a record already
+    /// carrying the field the queue sets, which is written from its value.
+    pub(crate) fn push_raw(&self, record: &RawRecord) -> Result<Pushed<Value>, QueueError> {
+        let value = record.value().clone();
+        let carries = |key: &str| {
+            value
+                .as_object()
+                .is_some_and(|fields| fields.contains_key(key))
+        };
+        if self.spec.policy.keeps_events() {
+            if carries("id") || carries("event") {
+                return self.push_judged(value);
+            }
+            let ((), mut recorded) = self.record_lines(|folded| {
+                if folded.next_id == u64::MAX {
+                    return Err(QueueError::NoIdLeft {
+                        queue: self.spec.name.clone(),
+                        last: u64::MAX - 1,
+                    });
+                }
+                let numbered = self.reshape(self.with_id(value, folded.next_id)?)?;
+                self.check(&numbered)?;
+                let line = spliced(
+                    &format!(
+                        r#""event":"{}","id":{}"#,
+                        Event::Queued.word(),
+                        folded.next_id
+                    ),
+                    record.bytes(),
+                )
+                .unwrap_or_else(|| Self::frame(Event::Queued, &numbered));
+                Ok((vec![(Event::Queued, numbered, line)], ()))
+            })?;
+            let (record, position) = recorded.pop().ok_or_else(|| QueueError::Shape {
+                queue: self.spec.name.clone(),
+                why: "the push recorded nothing".to_owned(),
+            })?;
+            let id = record_id(&record);
+            return Ok(Pushed {
+                record,
+                position,
+                id,
+            });
+        }
+        if !self.spec.numbered {
+            let value = self.reshape(value)?;
+            self.check(&value)?;
+            let position = self
+                .transport
+                .append(&self.spec.name, record.bytes().as_bytes())?;
+            let id = record_id(&value);
+            return Ok(Pushed {
+                record: value,
+                position,
+                id,
+            });
+        }
+        if carries("id") {
+            return self.push_judged(value);
+        }
+        self.within_section(|inner| {
+            let count = inner.count(&self.spec.name)?;
+            let numbered = self.reshape(self.with_id(value, count)?)?;
+            self.check(&numbered)?;
+            let line = spliced(&format!(r#""id":{count}"#), record.bytes())
+                .unwrap_or_else(|| serde_json::to_vec(&numbered).unwrap_or_default());
+            let position = inner.append(&self.spec.name, &line)?;
+            Ok(Pushed {
+                record: numbered,
+                position,
+                id: Some(count),
+            })
+        })
     }
 
     /// [`push`](Self::push), for a record its validators have already judged.
@@ -2000,6 +2131,9 @@ impl RawQueue {
             pending_position,
             abandoned,
             unread,
+            dropped: self
+                .transport
+                .count(&crate::hook::drop_log(&self.spec.name))?,
             cursors,
         })
     }
