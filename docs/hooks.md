@@ -3,18 +3,16 @@
 A hook is a step a queue runs each offered message through **before anything is
 appended**. Whatever the hook answers is the message from then on: it keeps the
 message, changes it, reroutes it to another queue, drops it, refuses it, or says
-it could not decide. A hook subsumes a validator — a validator is a hook that
-prints its input to pass — and validators are deprecated in its favour
-(`docs/validators.md`).
+it could not decide. Hooks replaced validators, which were removed in 0.11.0
+(see "Validators, removed", below).
 
 This document is the one source of the hook contract. `docs/contract.md`,
-`docs/cli.md`, `docs/queues.md` and `docs/validators.md` point here rather than
-restating it, and `crates/onemessagebus/tests/hooks_doc.rs` drives every fenced
+`docs/cli.md` and `docs/queues.md` point here rather than restating it, and `crates/onemessagebus/tests/hooks_doc.rs` drives every fenced
 block below.
 
 ## The configuration file
 
-A top-level `hooks:` list sits beside `validators:` in `onemessagebus.yaml`:
+A top-level `hooks:` list in `onemessagebus.yaml`:
 
 <!-- fixture: hooks-config -->
 ```yaml
@@ -28,10 +26,10 @@ hooks:
 | key | meaning |
 | --- | --- |
 | `on` | the queue whose offered messages it runs on; one the configuration does not declare is refused by `Config::resolve`, naming `hooks[<i>].on` |
-| `when` | which messages it runs on, in the two forms `validators[].when` takes: `{carries: <field path>}`, or any queue predicate; every message when absent, and a message it does not admit is kept |
+| `when` | which messages it runs on, in two forms: `{carries: <field path>}` — the field is there and holds something other than `null`, `""`, `[]` or `{}`; `carries` stands alone, and a `when` naming it beside another key is refused — or any queue predicate (`docs/queues.md`); every message when absent, and a message it does not admit is kept |
 | `command` | the argv, the program first; an empty one is refused naming `hooks[<i>].command` |
 | `routes` | the queues the hook may reroute to; each must be a queue the configuration declares, or resolution refuses it naming `hooks[<i>].routes[<j>]`; with no `routes` key the hook may not reroute, so a configuration can narrow what a layout allows and never widen it |
-| `cache` | `{dir, bar_fingerprint}`, both required, `dir` relative to the working directory, exactly as on a validator; opt-in per entry (see the cache, below) |
+| `cache` | `{dir, bar_fingerprint}`, both required, `dir` relative to the working directory; opt-in per entry (see the cache, below) |
 
 There is no `kind` key, and an unknown key is refused by name, as on every other
 block. A Rust hook a linking consumer registers is code, not configuration
@@ -39,8 +37,8 @@ block. A Rust hook a linking consumer registers is code, not configuration
 
 ## The command's protocol
 
-The command's stdin is the message as one line of JSON, newline-terminated: the
-same bytes a validator reads. Its environment names:
+The command's stdin is the message as one line of JSON, newline-terminated. Its
+environment names:
 
 - `ONEMESSAGEBUS_HOOK_QUEUE`: the queue it runs on;
 - `ONEMESSAGEBUS_HOOK_CORRELATION`: the question an offer asks or answers, when
@@ -69,8 +67,8 @@ unjudged nor a refused message is appended anywhere.
 
 ## Chaining and order within one offer
 
-1. The layout's preparation of the offered record runs first, exactly as it does
-   before validators. A refusal there returns as it always has, and no hook runs.
+1. The layout's preparation of the offered record runs first. A refusal there
+   returns as it always has, and no hook runs.
 2. The offered queue's hooks run in declaration order, each one's output the next
    one's input, followed by the hooks a linking consumer registered in code
    (`Bus::with_hook`). A drop, refusal, unjudged answer or reroute ends the chain.
@@ -88,7 +86,6 @@ unjudged nor a refused message is appended anywhere.
    would route back to a queue the record already passed through in this offer
    makes the offer unjudged, naming the changing hook and that queue, with nothing
    appended, so no layout can carry an offer round a loop.
-6. Validators, deprecated, judge last, over the records the hooks produced.
 
 Everything is decided before anything is appended. A refusal or an unjudged
 answer anywhere appends nothing anywhere, so a split reply is refused whole, and
@@ -131,9 +128,9 @@ received it, byte for byte.
 
 ## The cache
 
-`HookCache { dir, bar_fingerprint }` is the hook equivalent of the validator's
-`PassCache`, with the same key: the SHA-256 of the input bytes, and the SHA-256 of
-the hook's argv plus what `bar_fingerprint` prints (its stdout, trimmed). It
+`HookCache { dir, bar_fingerprint }` keys a record on the SHA-256 of the input
+bytes and the SHA-256 of the hook's argv plus what `bar_fingerprint` prints (its
+stdout, trimmed). It
 records **keep**, **change** (with the changed output) and **drop**, and never a
 refusal, an unjudged answer or a **reroute**: an outcome whose route file named a
 destination is never cached, so a cached entry runs its command again on every
@@ -152,26 +149,25 @@ A record is one file, `<dir>/<content>.<bar>.pass.json`:
 ```
 
 `outcome` is `keep`, `change` or `drop`, and only a change carries `output`. A
-validator's `schema_version: 1` pass record for the same argv and content is read
+`schema_version: 1` pass record — what a validator's `PassCache` wrote under the
+same key, before validators were removed — for the same argv and content is read
 as **keep**, so the passes a validator recorded survive the swap to a hook. A
 fingerprint that cannot be read keys nothing, and a record that cannot be written
 costs a re-run, never a different outcome.
 
 ## The library surface
 
-Each item is the hook equivalent of a validator item a linking consumer uses:
+The items a linking consumer uses:
 
-| hook | for the validator's |
-| --- | --- |
-| `RawRecord`: one record as one line of JSON, holding the exact bytes and the value parsed from them — `RawRecord::parse(bytes)` (refusing anything that is not exactly one JSON value on one line), `RawRecord::from_value(&Value)` (compact serialization), `bytes()`, `value()` | the `Value` a validator judges |
-| `trait Hook<M: Message>: Send + Sync { fn run(&self, message: &M, context: &HookContext) -> HookOutcome<M>; }` | `Validator<M>` |
-| `enum HookOutcome<M> { Keep, Change(M), Reroute { queue, message }, Drop, Refuse { reason }, Unjudged { reason } }` | `Verdict` |
-| `HookContext { queue, correlation }` | `ValidationContext` |
-| `Hooks<M>`, the ordered chain: `new`, `with`, `push`, `len`, `is_empty`, `run` | `Validators<M>` |
-| `CommandHook`: `new(argv)`, `with_cache(HookCache)`, `with_routes(..)`, `command()`, `cache()`, and a raw-bytes `run(&self, content: &[u8], context) -> HookOutcome<RawRecord>`; it implements `Hook<RawRecord>` | `CommandValidator`, and its `judge` |
-| `HookCache`: `new`, `dir`, `bar_fingerprint`, `fingerprint` | `PassCache` |
-| `Bus::with_hook(self, queue, hook) -> Result<Self, BusError>` | `Bus::with_validator` |
-| `Bus::hooked(&self, queue, record) -> Result<Hooked, BusError>`: what an offer becomes, appending nothing but cache records | `Bus::validate` |
+- `RawRecord`: one record as one line of JSON, holding the exact bytes and the value parsed from them — `RawRecord::parse(bytes)` (refusing anything that is not exactly one JSON value on one line), `RawRecord::from_value(&Value)` (compact serialization), `bytes()`, `value()`
+- `trait Hook<M: Message>: Send + Sync { fn run(&self, message: &M, context: &HookContext) -> HookOutcome<M>; }`
+- `enum HookOutcome<M> { Keep, Change(M), Reroute { queue, message }, Drop, Refuse { reason }, Unjudged { reason } }`
+- `HookContext { queue, correlation }`
+- `Hooks<M>`, the ordered chain: `new`, `with`, `push`, `len`, `is_empty`, `run`
+- `CommandHook`: `new(argv)`, `with_cache(HookCache)`, `with_routes(..)`, `command()`, `cache()`, and a raw-bytes `run(&self, content: &[u8], context) -> HookOutcome<RawRecord>`; it implements `Hook<RawRecord>`
+- `HookCache`: `new`, `dir`, `bar_fingerprint`, `fingerprint`
+- `Bus::with_hook(self, queue, hook) -> Result<Self, BusError>`
+- `Bus::hooked(&self, queue, record) -> Result<Hooked, BusError>`: what an offer becomes, appending nothing but cache records
 
 The bus runs every chain over `RawRecord`. A typed hook (`M` not `RawRecord`) is
 handed the record's value read as an `M` — a record that does not read as one is
@@ -226,12 +222,11 @@ to a file by `write_config` / `writeConfig`), `validate`'s `outcome` and `record
 `send`'s and `reply`'s dropped result (`Dropped`), and `ask`'s `dropped` answer
 (`DroppedQuestion`); `docs/sdk-parity.md` lists them for both.
 
-## Validators, deprecated
+## Validators, removed
 
-Validators keep working exactly as before. Every validator item carries
-`#[deprecated]` naming its hook replacement, and loading a configuration that
-declares `validators:` prints one line on stderr: validators are deprecated, they
-are to be declared as `hooks:` (a validator becomes a hook that prints its input
-to pass), and where both are declared, hooks run first and validators judge the
-records the hooks made. To migrate one, drop its `kind: command` and make its
-command print its stdin back before it exits 0.
+Validators were removed in 0.11.0. A configuration that still declares the
+`validators` key is refused when it is loaded, by every verb that loads one, at
+exit 2, naming the key and the migration: declare each entry under `hooks:` with
+the same `on`, `when`, `command` and `cache`, drop its `kind: command`, and make
+its command print its stdin back before it exits 0. Exit 1 with a reason on
+stderr still refuses.

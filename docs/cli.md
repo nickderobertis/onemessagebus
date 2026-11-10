@@ -7,8 +7,7 @@ over NDJSON streams; `deliver` and `inbox carried`, over the inbox
 queues kept on a transport, with `transports` listing the transport kinds
 (`docs/queues.md`, `docs/transport.md`); `ask`, a question and the answer that
 echoes its correlation (`docs/ask.md`); `validate`, an offer decided by a
-queue's hooks (`docs/hooks.md`) and its deprecated validators
-(`docs/validators.md`); and `serve`, a member protocol
+queue's hooks (`docs/hooks.md`); and `serve`, a member protocol
 over a queue (`docs/codecs.md`). Every verb is a capability in
 `onemessagebus::CAPABILITIES`, which is what the SDK clients are generated from
 and what the clap tree is held to, so a verb or flag here exists nowhere the
@@ -272,10 +271,9 @@ so one send can print two lines. A queue the configuration does not declare is
 refused with exit 2 naming the queues it does, before stdin is read, and a
 record that is not JSON, or not a JSON object on a queue whose records are
 objects — one that keeps events or numbers its records — is refused with exit 2
-with nothing appended; a record its author may not write, its schema refuses, or a validator refuses or cannot
-judge (`validate`) exits 1 with nothing appended anywhere, the validator's reason
-on stderr unaltered. A queue's hooks run on the offer first: a record a hook
-drops prints `{"queue": "<q>", "dropped": true}` in its place, and a hook's
+with nothing appended; a record its author may not write or its schema refuses
+exits 1 with nothing appended anywhere. A queue's hooks run on the offer first: a
+record a hook drops prints `{"queue": "<q>", "dropped": true}` in its place, and a hook's
 refusal or unjudged answer exits 1 with nothing appended anywhere.
 
 ```bash
@@ -387,18 +385,17 @@ $ onemessagebus status questions --format text --config onemessagebus.yaml
 
 Decide the record on stdin (or in `--file`) exactly as `send` would, and
 append nothing: by the hooks the configuration declares for `<queue>` and each
-record the layout routes to another queue by that queue's, then by the
-deprecated validators. It prints `{queue, verdict, reason, outcome, records}` —
+record the layout routes to another queue by that queue's. It prints `{queue, verdict, reason, outcome, records}` —
 `verdict` is `pass`, `refuse` or `unjudged`, `reason`, beside a verdict that is
-not a pass, is the refusing hook's or validator's own words, unaltered,
+not a pass, is the refusing hook's own words, unaltered,
 `outcome` is `keep`, `change`, `drop`, `refuse` or `unjudged`, and `records` are
 the `{queue, record}`s a send would append — and exits 0 for a pass and 1 for
 either other verdict, saying the reason on stderr as well. An unjudged record is
 never a pass. A queue the configuration does not declare is refused with exit 2
 before stdin is read, and a record that is not JSON, or not a JSON object on a
-queue whose records are objects, with exit 2 before any validator judges it; a
-queue with no hooks and no validators passes every record. What a hook's or a
-validator's cache records is recorded here as it would be on a send.
+queue whose records are objects, with exit 2 before any hook runs on it; a
+queue with no hooks passes every record. What a hook's cache records is recorded
+here as it would be on a send.
 
 ```bash
 $ onemessagebus validate answers --file answer.json --config onemessagebus.yaml

@@ -259,19 +259,19 @@ Reading it is two steps, and the types keep them apart:
    its kind refuses. What it answers, a `Bus`, is the one type that opens a queue
    or authors a record.
 
-<!-- llmlint: ignore[no_redundant_instruction_pointers] the hooks node is required to state its contract once, in docs/hooks.md, and to have docs/contract.md, docs/cli.md, docs/queues.md and docs/validators.md point at it rather than restate it; this is this document's one pointer, so a reader here reaches the hook contract without a second copy that could drift. -->
-Four more blocks sit beside these: `hooks`, what a queue makes of a message
+<!-- llmlint: ignore[no_redundant_instruction_pointers] the hooks node is required to state its contract once, in docs/hooks.md, and to have docs/contract.md, docs/cli.md and docs/queues.md point at it rather than restate it; this is this document's one pointer, so a reader here reaches the hook contract without a second copy that could drift. -->
+Three more blocks sit beside these: `hooks`, what a queue makes of a message
 before anything is appended — kept, changed, rerouted, dropped into its
-`<queue>-dropped` log, or refused — stated in `docs/hooks.md`; `validators`, the
-deprecated judgement hooks replace (`docs/validators.md`); `codecs`, what a host
+`<queue>-dropped` log, or refused — stated in `docs/hooks.md`; `codecs`, what a host
 configures for each codec `serve` runs (`docs/codecs.md`); and `schemas`, links to
 schema bundles another program publishes, each pinned to a version, whose
 documents the command line registers beside the layout's.
 Each refuses an unknown key by name at `Config::load` — `schemas` a malformed
-link, resolving none — and `validators[<index>].on` naming no declared queue is
-refused by `Config::resolve`, as `hooks[<index>].on` and
-`hooks[<index>].routes[<j>]` are. A queue whose name ends in `-dropped` is refused
-wherever it is declared: the suffix is a drop log's.
+link, resolving none — and `hooks[<index>].on` and `hooks[<index>].routes[<j>]`
+naming no declared queue are refused by `Config::resolve`. The removed
+`validators` block is refused at `Config::load`, naming the migration to hooks.
+A queue whose name ends in `-dropped` is refused wherever it is declared: the
+suffix is a drop log's.
 
 The binary reads the file from `--config <path>` or `ONEMESSAGEBUS_CONFIG` — a
 queue verb given neither is refused naming `--config` — and `--transport-dir
