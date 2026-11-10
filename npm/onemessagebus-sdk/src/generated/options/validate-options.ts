@@ -7,7 +7,7 @@ import { anyOf, contract, oneOf } from "../runtime.js";
  */
 export interface ValidateOptions {
   /**
-   * The queue whose validators judge the record.
+   * The queue whose hooks the record is offered to.
    */
   queue: string;
   /**

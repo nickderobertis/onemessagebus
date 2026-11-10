@@ -256,10 +256,10 @@ async def test_validate_answers_a_refusal_verdict_as_data(
         "queues:\n"
         "  questions: {policy: {hold_pending: true}, answers: answers}\n"
         "  answers: {numbered: true}\n"
-        "validators:\n"
-        "  - {on: questions, when: {field: message, equals: loud}, kind: command,"
+        "hooks:\n"
+        "  - {on: questions, when: {field: message, equals: loud},"
         " command: [sh, -c, 'echo too loud >&2; exit 1']}\n"
-        "  - {on: questions, when: {field: message, equals: odd}, kind: command,"
+        "  - {on: questions, when: {field: message, equals: odd},"
         " command: [sh, -c, 'echo cannot say >&2; exit 3']}\n",
         encoding="utf-8",
     )

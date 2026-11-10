@@ -51,7 +51,7 @@ export type OpWord = string;
  */
 export type RefusalReason = string;
 /**
- * When a validator judges a message: `{carries: <field path>}`, or any queue predicate.
+ * When a hook runs on a message: `{carries: <field path>}`, or any queue predicate.
  */
 export type When =
   | {
@@ -172,12 +172,6 @@ export interface Config {
    * appended, in the order each queue runs them (`docs/hooks.md`).
    */
   hooks?: HookConfig[] | undefined;
-  /**
-   * Validators judging what is offered to a queue before anything is
-   * appended, in the order each queue judges by them — deprecated: declare
-   * `hooks`, which run first, and these judge the records the hooks made.
-   */
-  validators?: ValidatorConfig[] | undefined;
   /**
    * What a host configures for each codec `serve` runs, by the codec's name.
    * Which names there are is the binary's: one no linked codec answers to is
@@ -406,7 +400,7 @@ export interface HookConfig {
   cache?: CacheConfig | null | undefined;
 }
 /**
- * Where a command validator records its passes.
+ * Where a command hook records its keeps, changes and drops.
  */
 export interface CacheConfig {
   /**
@@ -419,37 +413,6 @@ export interface CacheConfig {
    * fingerprint is not a pass under another.
    */
   bar_fingerprint: string[];
-}
-/**
- * @deprecated
- * One validator of a configuration: the external kind, which a Rust
- * validator a linking consumer registers is not — that one is code
- * ([`Bus::with_validator`]).
- */
-export interface ValidatorConfig {
-  /**
-   * A queue's name: a non-empty run of ASCII letters, digits, `-` and `_`,
-   * starting with a letter or digit — `questions`, `action-outcomes`.
-   */
-  on: string;
-  /**
-   * Which of them it judges; every one when absent.
-   */
-  when?: When | null | undefined;
-  /**
-   * Which kind of validator it is.
-   */
-  kind: "command";
-  /**
-   * The command's argv, the program first: the message on its stdin, exit 0
-   * a pass, 1 a refusal with its stderr as the reason, anything else
-   * unjudged.
-   */
-  command: string[];
-  /**
-   * Where its passes are recorded; nowhere when absent.
-   */
-  cache?: CacheConfig | null | undefined;
 }
 /**
  * What a host configures for one codec, under its name in the configuration's
@@ -620,16 +583,6 @@ const $CacheConfig: z.ZodType = z.strictObject({
   bar_fingerprint: z.array(z.string()),
 });
 
-const $ValidatorConfig: z.ZodType = z.strictObject({
-  on: z.lazy(() => $QueueName),
-  when: anyOf([z.lazy(() => $When), z.null()]).optional(),
-  kind: z.lazy(() => $ValidatorKind),
-  command: z.array(z.string()),
-  cache: anyOf([z.lazy(() => $CacheConfig), z.null()]).optional(),
-});
-
-const $ValidatorKind: z.ZodType = oneOf([z.literal("command")]);
-
 const $CodecConfig: z.ZodType = z.strictObject({
   queue: anyOf([z.lazy(() => $QueueName), z.null()]).optional(),
   reply_window_seconds: anyOf([z.int().gte(1), z.null()]).optional(),
@@ -701,7 +654,6 @@ export const ConfigSchema = contract<Config>(
       )
       .optional(),
     hooks: z.array(z.lazy(() => $HookConfig)).optional(),
-    validators: z.array(z.lazy(() => $ValidatorConfig)).optional(),
     codecs: z
       .record(
         z.string().regex(new RegExp("^[a-z][a-z0-9-]{0,63}$", "u")),

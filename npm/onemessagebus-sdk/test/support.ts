@@ -130,13 +130,14 @@ export const HELLO = {
  * A configuration over a local transport in `dir/bus`: `questions`, an event
  * queue whose asks are answered on `answers`; `actions`, numbered and empty;
  * `greetings`, typed `demo.greeting@1`; `hellos`, typed by the core's own
- * `onemessagebus.transport-hello@1`; `judged`, whose validator refuses a record
- * that does not say `quiet`; and one configured example codec whose frames are
+ * `onemessagebus.transport-hello@1`; `judged`, whose hook keeps a record saying
+ * `quiet` and refuses any other; and one configured example codec whose frames are
  * findings.
  */
 export function writeConfig(dir: string): string {
   const path = join(dir, "onemessagebus.yaml");
-  const judge = "grep -q quiet || { echo 'too loud' >&2; exit 1; }";
+  const judge =
+    "input=$(cat); case \"$input\" in *quiet*) printf '%s' \"$input\" ;; *) echo 'too loud' >&2; exit 1 ;; esac";
   writeFileSync(
     path,
     [
@@ -149,8 +150,8 @@ export function writeConfig(dir: string): string {
       "  greetings: {schema: demo.greeting@1}",
       "  hellos: {schema: onemessagebus.transport-hello@1}",
       "  judged: {}",
-      "validators:",
-      `  - {on: judged, kind: command, command: [sh, -c, ${JSON.stringify(judge)}]}`,
+      "hooks:",
+      `  - {on: judged, command: [sh, -c, ${JSON.stringify(judge)}]}`,
       "codecs:",
       "  example:",
       "    reply_window_seconds: 1",

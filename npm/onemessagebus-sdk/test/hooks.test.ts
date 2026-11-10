@@ -92,7 +92,7 @@ function isDropped(line: unknown): line is Dropped {
 test("writeConfig refuses a configuration the generated schema refuses, writing nothing", async () => {
   const dir = scratch("hooks-config");
   const path = join(dir, "onemessagebus.yaml");
-  // A hook entry with the deprecated validator's `kind`, arriving as JSON from outside
+  // A hook entry carrying a `kind`, which no hook entry has, arriving as JSON from outside
   // TypeScript's view: the refusal is what is under test.
   const config: Config = JSON.parse(
     JSON.stringify({

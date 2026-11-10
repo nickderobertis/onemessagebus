@@ -29,7 +29,7 @@ export type Validated = {
     }
   | {
       /**
-       * Why, in the refusing hook's or validator's own words.
+       * Why, in the refusing hook's own words.
        */
       reason: string;
       verdict: "refuse";
