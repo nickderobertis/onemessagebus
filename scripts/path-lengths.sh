@@ -22,10 +22,25 @@ root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 }
 cd "$root"
 
-too_long="$(git ls-files -z | tr '\0' '\n' | awk -v limit="$LIMIT" 'length($0) > limit { print length($0) "\t" $0 }')"
+# NUL-delimited end to end, so a name with a newline in it is measured whole. In
+# the C locale a length is bytes, never fewer than the characters Windows counts.
+export LC_ALL=C
+listing="$(mktemp)"
+trap 'rm -f "$listing"' EXIT
+git ls-files -z >"$listing" || {
+  echo "path-lengths: git could not list the tracked paths, so none was checked" >&2
+  echo "ACTION: fix the git error above (a corrupt or locked index: run 'git status') and rerun 'just path-lengths'" >&2
+  exit 2
+}
+too_long=""
+while IFS= read -r -d '' path; do
+  if [ "${#path}" -gt "$LIMIT" ]; then
+    too_long+="${#path}"$'\t'"$path"$'\n'
+  fi
+done <"$listing"
 if [ -n "$too_long" ]; then
   echo "path-lengths: tracked paths longer than $LIMIT characters fail a Windows cargo install --git checkout:" >&2
-  printf '%s\n' "$too_long" >&2
+  printf '%s' "$too_long" >&2
   echo "ACTION: shorten each path named above (a fixture whose name is long can be stored short and renamed at run time)" >&2
   exit 1
 fi

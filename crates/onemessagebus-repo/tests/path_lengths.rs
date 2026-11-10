@@ -83,6 +83,39 @@ fn a_path_past_the_limit_is_refused_by_name_and_length() {
 }
 
 #[test]
+fn a_name_with_a_newline_is_measured_whole() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    git(dir.path(), &["init", "--quiet"]);
+    // Two halves, each well inside the limit, that are one path past it.
+    let name = format!("{}\n{}", "a".repeat(LIMIT / 2), "b".repeat(LIMIT / 2));
+    std::fs::write(dir.path().join(&name), "{}\n").expect("the file is written");
+    git(dir.path(), &["add", "--all"]);
+    let ran = guard(dir.path());
+    assert_eq!(
+        ran.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&ran.stderr);
+    assert!(
+        stderr.contains(&format!("{}\t{name}", LIMIT + 1)),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn an_index_git_cannot_read_is_never_a_pass() {
+    let (dir, _) = repository_tracking(LIMIT + 1);
+    std::fs::write(dir.path().join(".git/index"), "not an index").expect("the index is corrupted");
+    let ran = guard(dir.path());
+    assert_eq!(ran.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&ran.stderr);
+    assert!(stderr.contains("none was checked"), "{stderr}");
+    assert!(stderr.contains("ACTION:"), "{stderr}");
+}
+
+#[test]
 fn a_directory_outside_any_checkout_is_refused_as_input() {
     let dir = tempfile::tempdir().expect("a scratch directory");
     let ran = Command::new("bash")
