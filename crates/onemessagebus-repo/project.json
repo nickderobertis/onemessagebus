@@ -17,6 +17,7 @@
         "crateSource",
         "{workspaceRoot}/release-targets.toml",
         "{workspaceRoot}/scripts/release-probe.sh",
+        "{workspaceRoot}/scripts/path-lengths.sh",
         "{workspaceRoot}/clippy.toml",
         "{workspaceRoot}/rustfmt.toml",
         "{workspaceRoot}/rust-toolchain.toml",
