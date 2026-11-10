@@ -790,8 +790,11 @@ fn a_carried_message_is_answered_carried_and_adopted_exactly_once() {
             "{{\"schema_version\":{CARRY_SCHEMA_VERSION},\"kind\":\"onemessagebus-carry-store\"}}\n"
         )
     );
-    // A store nothing was ever carried into is an empty one.
-    assert_eq!(later.adopt_carried(dir.path().join("never")), Ok(0));
+    // A store nothing was ever carried into is an empty one. Passed as every
+    // other drain here passes its store, so this is the same code the drain
+    // racing concurrent carriers runs, which finds no store only when it wins.
+    let never = dir.path().join("never");
+    assert_eq!(later.adopt_carried(&never), Ok(0));
 }
 
 #[test]
