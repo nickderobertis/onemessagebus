@@ -1124,6 +1124,7 @@ version = "0.11.1"
 dependencies = [
  "clap",
  "onemessagebus 0.11.1",
+ "rustix",
  "schemars",
  "serde",
  "serde_json",

@@ -988,8 +988,8 @@ fn a_resident_holds_the_transport_it_opened_across_requests() {
 }
 
 /// A socket path the resident cannot use is refused before it listens, naming
-/// what went wrong: a path beneath a file, a pid it cannot record, a directory it
-/// may not bind in, and a stale socket it may not remove.
+/// what went wrong: a path beneath a file, a pid it cannot record, a lock that is
+/// not a plain file, a path too long to bind, a directory it may not bind in, and a stale socket it may not remove.
 #[test]
 fn a_resident_refuses_a_socket_path_it_cannot_inspect_bind_or_record_a_pid_beside() {
     use std::os::unix::fs::PermissionsExt as _;
@@ -1018,6 +1018,47 @@ fn a_resident_refuses_a_socket_path_it_cannot_inspect_bind_or_record_a_pid_besid
     assert_eq!(code, Some(1), "{stderr}");
     assert!(
         stderr.contains("cannot record this resident's pid in"),
+        "{stderr}"
+    );
+
+    // A FIFO where the lock goes, with nothing reading it, is refused at once
+    // rather than holding the resident up; and a device that opens is no lock.
+    let fifo_locked = scratch.path("fifo.sock");
+    let lock = scratch.path("fifo.sock.lock");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&lock)
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success(), "the lock is made a FIFO");
+    let (code, stderr) = said(&fifo_locked);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains(&format!("cannot open its lock {}", lock.display())),
+        "{stderr}"
+    );
+    let device_locked = scratch.path("device.sock");
+    let lock = scratch.path("device.sock.lock");
+    std::os::unix::fs::symlink("/dev/null", &lock).expect("the lock names a device");
+    let (code, stderr) = said(&device_locked);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "cannot open its lock {}: it is not a plain file",
+            lock.display()
+        )),
+        "{stderr}"
+    );
+
+    // A path longer than a unix socket's address can hold: its lock is an
+    // ordinary file and is taken, and binding the socket itself is refused.
+    let long = scratch.path(&format!("{}.sock", "l".repeat(120)));
+    let (code, stderr) = said(&long);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "serve --resident: cannot listen on {}",
+            long.display()
+        )),
         "{stderr}"
     );
 
@@ -1076,6 +1117,218 @@ fn a_live_resident_whose_pid_file_is_gone_is_still_refused_as_live() {
         "{said}"
     );
     first.stop();
+}
+
+/// A resident answers on its socket only once its pid is recorded, so whoever
+/// sees it answer — an SDK, or the journey above — can rely on the pid file.
+/// The pid file is a FIFO here, so the resident's write of it blocks until this
+/// journey reads it: the resident is held between claiming its socket and
+/// recording its pid for as long as the journey likes, and must not answer there.
+#[test]
+fn a_resident_answers_only_once_its_pid_is_recorded() {
+    use std::io::Read as _;
+    let scratch = Scratch::new();
+    let socket = scratch.socket();
+    let recorded = scratch.path("bus.sock.pid");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&recorded)
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success(), "the pid file is made a FIFO");
+    let child = resident_command(&scratch, &socket)
+        .spawn()
+        .expect("the resident spawns");
+    let resident = Resident {
+        child,
+        socket: socket.clone(),
+    };
+
+    // The socket is claimed, and the resident is blocked recording its pid.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !socket.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the resident never claimed {}",
+            socket.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        UnixStream::connect(&socket).is_err(),
+        "the resident answers before its pid is recorded"
+    );
+
+    let mut pid = String::new();
+    std::fs::File::open(&recorded)
+        .expect("the pid file opens for reading")
+        .read_to_string(&mut pid)
+        .expect("the pid is read");
+    assert_eq!(pid, format!("{}\n", resident.child.id()));
+    std::fs::remove_file(&recorded).expect("the FIFO is removed");
+
+    // Its pid recorded, the resident goes on to listen, and answers.
+    listening(&socket);
+    let mut client = resident.client();
+    let list = client.call(1, "schemaList", json!({}), None);
+    ok(&list);
+    resident.stop();
+}
+
+/// A second resident started on the socket of one still starting — bound, but
+/// not yet answering — is refused as live, naming the first's pid, and leaves the
+/// first its socket. The first's pid file is a FIFO, which holds it between
+/// claiming the socket and recording its pid until the second reads it.
+#[test]
+fn a_second_resident_is_refused_by_one_still_starting_on_its_socket() {
+    use std::os::unix::fs::MetadataExt as _;
+    let scratch = Scratch::new();
+    let socket = scratch.socket();
+    let recorded = scratch.path("bus.sock.pid");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&recorded)
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success(), "the pid file is made a FIFO");
+    let child = resident_command(&scratch, &socket)
+        .spawn()
+        .expect("the first resident spawns");
+    let first = Resident {
+        child,
+        socket: socket.clone(),
+    };
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !socket.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the first resident never claimed {}",
+            socket.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let identity = |path: &Path| {
+        let metadata = std::fs::symlink_metadata(path).expect("the socket is there");
+        (metadata.dev(), metadata.ino())
+    };
+    let claimed = identity(&socket);
+    // The claim is held on `PATH.lock`, as docs/cli.md says.
+    assert!(
+        scratch.path("bus.sock.lock").is_file(),
+        "the first resident holds its claim on bus.sock.lock"
+    );
+
+    let mut second = resident_command(&scratch, &socket)
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("the second resident spawns");
+    let ended = wait(&mut second, Duration::from_secs(20));
+    if ended.is_none() {
+        let _ = second.kill();
+        let _ = second.wait();
+        let taken = std::fs::symlink_metadata(&socket)
+            .map_or(true, |metadata| (metadata.dev(), metadata.ino()) != claimed);
+        panic!("the second resident never ended; it took the first's socket over: {taken}");
+    }
+    let mut said = String::new();
+    if let Some(mut stderr) = second.stderr.take() {
+        use std::io::Read as _;
+        let _ = stderr.read_to_string(&mut said);
+    }
+    assert_eq!(
+        ended,
+        Some(1),
+        "the second resident is refused while the first starts: {said}"
+    );
+    assert!(
+        said.contains(&format!(
+            "{} is held by the live resident pid {}",
+            socket.display(),
+            first.child.id()
+        )),
+        "{said}"
+    );
+
+    // The first keeps its socket, answers on it, and stops cleanly from it.
+    assert_eq!(
+        identity(&socket),
+        claimed,
+        "the first resident's socket is kept"
+    );
+    std::fs::remove_file(&recorded).expect("the FIFO is removed");
+    listening(&socket);
+    let mut client = first.client();
+    ok(&client.call(1, "schemaList", json!({}), None));
+    drop(client);
+    first.stop();
+}
+
+/// A resident whose socket is replaced while it is still starting — after it
+/// bound, before it recorded its pid — stops cleanly once it starts, leaving
+/// the replacement alone: it watches the socket it bound, not whatever is at the
+/// path when it is done starting. The pid file is a FIFO, which holds the
+/// resident there until the journey reads it, and stays one, which a stopping
+/// resident leaves alone rather than waiting on.
+#[test]
+fn a_resident_whose_socket_is_replaced_while_it_starts_stops_and_leaves_the_replacement() {
+    use std::io::Read as _;
+    use std::os::unix::fs::MetadataExt as _;
+    let scratch = Scratch::new();
+    let socket = scratch.socket();
+    let recorded = scratch.path("bus.sock.pid");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&recorded)
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success(), "the pid file is made a FIFO");
+    let mut child = resident_command(&scratch, &socket)
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("the resident spawns");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !socket.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the resident never claimed {}",
+            socket.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    std::fs::remove_file(&socket).expect("the resident's socket is removed");
+    let replacement =
+        std::os::unix::net::UnixListener::bind(&socket).expect("a replacement socket is bound");
+    let replaced = std::fs::symlink_metadata(&socket).expect("the replacement is there");
+    let mut pid = String::new();
+    std::fs::File::open(&recorded)
+        .expect("the pid file opens for reading")
+        .read_to_string(&mut pid)
+        .expect("the pid is read");
+    assert_eq!(pid, format!("{}\n", child.id()));
+
+    let ended = wait(&mut child, Duration::from_secs(20));
+    if ended.is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let mut said = String::new();
+    if let Some(mut stderr) = child.stderr.take() {
+        let _ = stderr.read_to_string(&mut said);
+    }
+    assert_eq!(
+        ended,
+        Some(0),
+        "the resident stops once its socket is replaced: {said}"
+    );
+    assert!(
+        said.contains(&format!(
+            "the resident core's socket {} was removed; stopping",
+            socket.display()
+        )),
+        "{said}"
+    );
+    let kept = std::fs::symlink_metadata(&socket).expect("the replacement is kept");
+    assert_eq!((kept.dev(), kept.ino()), (replaced.dev(), replaced.ino()));
+    UnixStream::connect(&socket).expect("the replacement still answers");
+    drop(replacement);
 }
 
 /// One connection's lines: a blank one is nothing, a second request under an id

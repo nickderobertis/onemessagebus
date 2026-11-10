@@ -62,8 +62,14 @@ pub(super) fn serve(socket: &Path, args: &ServeArgs, layouts: &Layouts) -> Resul
         registry: args.bus.registry.clone(),
         bound,
     });
-    let listener = claim(socket)?;
-    watch(socket)?;
+    // The claim's lock is held for as long as the process runs: it is what tells
+    // a second resident this socket is taken, even before it answers.
+    let Claimed {
+        listener,
+        lock: _lock,
+        identity,
+    } = claim(socket)?;
+    watch(socket, identity);
     eprintln!(
         "onemessagebus: the resident core (pid {}) is listening on {}",
         std::process::id(),
@@ -91,64 +97,135 @@ fn pid_file(socket: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// The listener on `socket`, refused when a live resident answers there, and
-/// taking over the socket a resident that is gone left behind.
-fn claim(socket: &Path) -> Result<UnixListener, Refusal> {
-    match std::fs::symlink_metadata(socket) {
-        Ok(metadata) => {
-            if !metadata.file_type().is_socket() {
-                return Err(invalid(format!(
-                    "serve --resident: {} is not a socket; --socket names the path the resident \
-                     core binds, and nothing else may be there",
-                    socket.display()
-                )));
-            }
-            if UnixStream::connect(socket).is_ok() {
-                return Err(held_by(socket));
-            }
-            // Nothing answers: the socket of a resident that is gone.
-            std::fs::remove_file(socket).map_err(|failure| {
-                failed(format!(
-                    "serve --resident: cannot remove the stale socket {}: {failure}",
-                    socket.display()
-                ))
-            })?;
+/// Where a resident holds the lock that claims `socket` for as long as it runs.
+fn lock_file(socket: &Path) -> PathBuf {
+    let mut name = socket.as_os_str().to_owned();
+    name.push(".lock");
+    PathBuf::from(name)
+}
+
+/// A socket this resident has claimed: listening, its pid recorded.
+struct Claimed {
+    listener: UnixListener,
+    /// Locked for the life of the process; the operating system releases it
+    /// when the process ends, however it ends.
+    lock: std::fs::File,
+    /// The device and inode of the socket this resident bound.
+    identity: (u64, u64),
+}
+
+/// The listener on `socket`, refused when a live resident holds it — answering
+/// or still starting — and taking over the socket a resident that is gone left
+/// behind.
+///
+/// A resident claims a socket by locking `PATH.lock` and holds the lock until it
+/// ends. So while one is between binding and listening, when nothing can connect
+/// to its socket yet, a second is refused on the lock rather than taking that
+/// socket for a stale one; and the lock of a resident that is gone is free, which
+/// is what lets its socket be taken over.
+fn claim(socket: &Path) -> Result<Claimed, Refusal> {
+    // Refused as it is before anything is created beside it.
+    inspect(socket)?;
+    let lock = take_lock(socket)?;
+    if inspect(socket)? {
+        // A resident that holds no lock still answers; one that is gone does not.
+        if UnixStream::connect(socket).is_ok() {
+            return Err(held_by(socket));
         }
-        Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => {}
-        Err(failure) => {
-            return Err(invalid(format!(
-                "serve --resident: cannot inspect {}: {failure}",
+        std::fs::remove_file(socket).map_err(|failure| {
+            failed(format!(
+                "serve --resident: cannot remove the stale socket {}: {failure}",
                 socket.display()
-            )))
-        }
+            ))
+        })?;
     }
-    let listener = UnixListener::bind(socket).map_err(|failure| {
+    // Bound, the path is this resident's, but nothing can connect until it
+    // listens. The pid is recorded in between, so a resident that answers has
+    // always recorded it.
+    let bound = bind(socket).map_err(|failure| {
         if failure.kind() == std::io::ErrorKind::AddrInUse {
             held_by(socket)
         } else {
-            invalid(format!(
-                "serve --resident: cannot listen on {}: {failure}",
-                socket.display()
-            ))
+            cannot_listen(socket, &failure)
         }
     })?;
+    let identity = identity(socket)?;
     std::fs::write(pid_file(socket), format!("{}\n", std::process::id())).map_err(|failure| {
         failed(format!(
             "serve --resident: cannot record this resident's pid in {}: {failure}",
             pid_file(socket).display()
         ))
     })?;
-    Ok(listener)
+    // llmlint: ignore[changed_behavior_has_e2e] listen on a unix stream socket this resident has just bound cannot fail through anything a caller controls — the path is already bound and the backlog is fixed — so no journey can drive it; the map turns an impossible-in-practice failure into the bind failure's own refusal rather than a panic.
+    rustix::net::listen(&bound, LISTEN_BACKLOG)
+        .map_err(|failure| cannot_listen(socket, &std::io::Error::from(failure)))?;
+    Ok(Claimed {
+        listener: UnixListener::from(bound),
+        lock,
+        identity,
+    })
 }
 
-/// How often the resident looks for the socket it bound.
-const WATCH_EVERY: std::time::Duration = std::time::Duration::from_millis(100);
+/// Whether a socket is at `socket`, refusing anything else there and a path
+/// that cannot be inspected.
+fn inspect(socket: &Path) -> Result<bool, Refusal> {
+    match std::fs::symlink_metadata(socket) {
+        Ok(metadata) if metadata.file_type().is_socket() => Ok(true),
+        Ok(_) => Err(invalid(format!(
+            "serve --resident: {} is not a socket; --socket names the path the resident \
+             core binds, and nothing else may be there",
+            socket.display()
+        ))),
+        Err(missing) if missing.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(failure) => Err(invalid(format!(
+            "serve --resident: cannot inspect {}: {failure}",
+            socket.display()
+        ))),
+    }
+}
 
-/// Stop the process, exiting 0, once the socket this resident bound is removed
-/// or replaced: removing the socket is how a resident is stopped cleanly — its
-/// pid file removed, and the process ending as a process that returns ends
-/// rather than being killed where it stood.
-fn watch(socket: &Path) -> Result<(), Refusal> {
+/// The lock claiming `socket`, refused when another resident holds it.
+fn take_lock(socket: &Path) -> Result<std::fs::File, Refusal> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let path = lock_file(socket);
+    let cannot_open = |failure: &dyn std::fmt::Display| {
+        invalid(format!(
+            "serve --resident: cannot listen on {}: cannot open its lock {}: {failure}",
+            socket.display(),
+            path.display()
+        ))
+    };
+    // Opened without blocking, so a FIFO put where the lock goes is refused at
+    // once rather than holding the resident until something reads it.
+    let nonblocking = i32::try_from(rustix::fs::OFlags::NONBLOCK.bits())
+        .map_err(|failure| cannot_open(&failure))?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .custom_flags(nonblocking)
+        .open(&path)
+        .map_err(|failure| cannot_open(&failure))?;
+    if !file
+        .metadata()
+        .map_err(|failure| cannot_open(&failure))?
+        .is_file()
+    {
+        return Err(cannot_open(&"it is not a plain file"));
+    }
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(std::fs::TryLockError::WouldBlock) => Err(held_by(socket)),
+        // llmlint: ignore[changed_behavior_has_e2e] flock on a file this resident just opened for writing fails, apart from contention (the WouldBlock arm, driven by the journeys), only for kernel lock exhaustion or an unsupported filesystem, which no journey can arrange; the arm turns such a failure into a refusal naming the lock rather than a panic.
+        Err(std::fs::TryLockError::Error(failure)) => Err(failed(format!(
+            "serve --resident: cannot lock {}: {failure}",
+            path.display()
+        ))),
+    }
+}
+
+/// The device and inode of the socket this resident just bound.
+fn identity(socket: &Path) -> Result<(u64, u64), Refusal> {
     use std::os::unix::fs::MetadataExt as _;
     let bound = std::fs::symlink_metadata(socket).map_err(|failure| {
         failed(format!(
@@ -156,7 +233,39 @@ fn watch(socket: &Path) -> Result<(), Refusal> {
             socket.display()
         ))
     })?;
-    let identity = (bound.dev(), bound.ino());
+    Ok((bound.dev(), bound.ino()))
+}
+
+/// The backlog std's `UnixListener::bind` asks for.
+const LISTEN_BACKLOG: i32 = 128;
+
+/// A unix stream socket bound to `socket`, not yet listening: a connection to it
+/// is refused until it does.
+fn bind(socket: &Path) -> std::io::Result<std::os::fd::OwnedFd> {
+    use rustix::net::{AddressFamily, SocketAddrUnix, SocketType};
+    let fd = rustix::net::socket(AddressFamily::UNIX, SocketType::STREAM, None)?;
+    // Not inherited by what the resident spawns, as std's own sockets are not.
+    rustix::io::fcntl_setfd(&fd, rustix::io::FdFlags::CLOEXEC)?;
+    rustix::net::bind(&fd, &SocketAddrUnix::new(socket)?)?;
+    Ok(fd)
+}
+
+fn cannot_listen(socket: &Path, failure: &std::io::Error) -> Refusal {
+    invalid(format!(
+        "serve --resident: cannot listen on {}: {failure}",
+        socket.display()
+    ))
+}
+
+/// How often the resident looks for the socket it bound.
+const WATCH_EVERY: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Stop the process, exiting 0, once the socket this resident bound — `identity`,
+/// read as it was bound — is removed or replaced: removing the socket is how a resident is stopped cleanly — its
+/// pid file removed, and the process ending as a process that returns ends
+/// rather than being killed where it stood.
+fn watch(socket: &Path, identity: (u64, u64)) {
+    use std::os::unix::fs::MetadataExt as _;
     let socket = socket.to_path_buf();
     std::thread::spawn(move || loop {
         std::thread::sleep(WATCH_EVERY);
@@ -165,8 +274,11 @@ fn watch(socket: &Path) -> Result<(), Refusal> {
             .map(|metadata| (metadata.dev(), metadata.ino()));
         if current != Some(identity) {
             let recorded = pid_file(&socket);
-            let ours = std::fs::read_to_string(&recorded)
-                .is_ok_and(|text| text.trim() == std::process::id().to_string());
+            // Only a plain file is read: whatever else is there — a FIFO among
+            // them — is not this resident's record, and must not hold it up.
+            let ours = std::fs::symlink_metadata(&recorded).is_ok_and(|kind| kind.is_file())
+                && std::fs::read_to_string(&recorded)
+                    .is_ok_and(|text| text.trim() == std::process::id().to_string());
             if ours {
                 let _ = std::fs::remove_file(&recorded);
             }
@@ -177,7 +289,6 @@ fn watch(socket: &Path) -> Result<(), Refusal> {
             std::process::exit(i32::from(crate::EXIT_OK));
         }
     });
-    Ok(())
 }
 
 /// The refusal of a socket a live resident holds, naming its pid.
