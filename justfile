@@ -55,6 +55,13 @@ _crate-bootstrap:
     @just _ensure-tool cargo-llvm-cov
     @cargo fetch --locked --quiet
 
+# Over the whole tree on every tier, not the affected projects: a path anywhere in
+# the repository breaks the Windows `cargo install --git` checkout, and it costs
+# one `git ls-files`. The limit and its arithmetic are in the script.
+# Fail when a tracked path is too long for a Windows cargo git checkout.
+path-lengths:
+    @bash scripts/path-lengths.sh
+
 # These are test runners, not rules: their version cannot change the gate's
 # verdict, so both here and CI take the latest rather than keeping two pins that
 # drift apart.
@@ -65,7 +72,7 @@ _ensure-tool tool:
 # The tiers run in fail-fast order as dependencies, each fanned across every
 # project by Nx, then the aggregate coverage floor over every project's run.
 # Deterministic quality gate, every project.
-check: fmt-check lint typecheck test doc coverage
+check: path-lengths fmt-check lint typecheck test doc coverage
     @bash scripts/nx run-many -t budgets
     @echo "check: ok"
 
@@ -88,7 +95,7 @@ gate base="origin/main": check (lint-llm-diff base)
 # no `--projects` filter; it hands an unknown flag to every target's command.) Fails
 # closed — with no derivable merge base it runs everything.
 # Deterministic quality gate, affected projects only.
-check-affected:
+check-affected: path-lengths
     @bash scripts/nx-affected.sh -t format-check lint typecheck doc build
     @rm -f {{profraw-root}}/*.profraw
     @if [ "$(just affected-crate)" = "true" ]; then bash scripts/nx run workspace:coverage \

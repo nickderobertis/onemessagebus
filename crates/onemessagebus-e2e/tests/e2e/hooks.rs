@@ -848,7 +848,12 @@ fn a_cached_keep_change_and_drop_are_not_run_again_until_the_bar_moves() {
     let _ = &cached.refuse;
 }
 
-/// The file name of the pass record `fixtures/validator-pass` holds.
+/// The file name the released validator gave the pass record
+/// `fixtures/validator-pass.json` holds: `<content>.<bar>.pass.json`, the two
+/// digests the record carries. Stored short in the tree and given this name in
+/// the cache at run time, because at 135 characters it puts the tracked path past
+/// what a Windows `cargo install --git` checkout can create
+/// (`scripts/path-lengths.sh`).
 const VALIDATOR_PASS: &str = "c49eb660edcfda585675ffb25595293e8b8ddb0d2c4901a6e3ed7dd28f0571c3.977c8982d864dba4e0f17216b98d627e9f8a82455cee562f04e9b7d1a6486b82.pass.json";
 
 /// A pass record the released onemessagebus 0.10.0 binary's validator wrote,
@@ -858,9 +863,7 @@ const VALIDATOR_PASS: &str = "c49eb660edcfda585675ffb25595293e8b8ddb0d2c4901a6e3
 /// [sh, bar.sh]}}]`, `bar.sh` printing `bar-1`. Its argv names no absolute
 /// path, so its key holds in any scratch directory the journey runs from.
 fn validator_pass() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/validator-pass")
-        .join(VALIDATOR_PASS)
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/validator-pass.json")
 }
 
 #[test]
@@ -874,6 +877,18 @@ fn a_pass_a_validator_recorded_for_the_same_argv_and_content_is_read_as_a_keep()
     std::fs::write(scratch.path("bar.sh"), "echo bar-1\n").expect("the bar is written");
     std::fs::create_dir(scratch.path("passes")).expect("the cache directory");
     let pass = std::fs::read(validator_pass()).expect("the released validator's pass");
+    // The legacy layout names the record by the digests it carries; a fixture
+    // whose fields drifted from the name would no longer be that layout.
+    let fields: Value = serde_json::from_slice(&pass).expect("the pass is JSON");
+    assert_eq!(
+        VALIDATOR_PASS,
+        format!(
+            "{}.{}.pass.json",
+            fields["content"].as_str().expect("a content digest"),
+            fields["bar"].as_str().expect("a bar digest")
+        ),
+        "the fixture is not the pass its legacy file name names"
+    );
     std::fs::write(scratch.path("passes").join(VALIDATOR_PASS), &pass)
         .expect("the pass is in the cache");
     // The validator's entry, declared as the refusal of `validators:` says.

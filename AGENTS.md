@@ -255,6 +255,10 @@ values live in the secret store, never in the tree.
   envelope leaves the emitter.
 - **Exit codes are a contract**: `0` did it, `1` a well-formed no, `2` refused
   input.
+- **No tracked path exceeds 150 characters** (`just path-lengths`, in both check
+  tiers): `cargo install --git` on Windows checks out under an ~81-character
+  directory and fails past MAX_PATH. A fixture whose real name is long is stored
+  short and given that name at run time.
 
 ## Scripts and output are context
 
