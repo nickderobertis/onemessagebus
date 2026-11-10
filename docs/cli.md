@@ -435,10 +435,11 @@ before it claims the socket. A request naming no `config`, `transportDir` or
 `registry` takes the resident's own, and runs over the transport the resident
 holds open; one naming its own `config` runs over that. The registry directory
 is read again for every request, so a schema registered after the core started is
-one the next `send` validates by. A socket another live resident answers on is
-refused with exit 1, naming that resident's pid, which each resident records in
-`PATH.pid`; a socket nobody answers on is a stale one, and is taken over. The
-resident listens on a unix socket, and a platform without one refuses
+one the next `send` validates by. A resident claims its socket by locking
+`PATH.lock` for as long as it runs, and records its pid in `PATH.pid` before it
+answers. A socket another live resident holds — answering, or still starting —
+is refused with exit 1, naming that resident's pid; a socket nobody holds is a
+stale one, and is taken over. The resident listens on a unix socket, and a platform without one refuses
 `--resident` with exit 2. `schema gen --lang json bus.resident-protocol@1` prints
 the protocol's schema.
 
