@@ -1182,6 +1182,11 @@ fn a_second_resident_is_refused_by_one_still_starting_on_its_socket() {
         (metadata.dev(), metadata.ino())
     };
     let claimed = identity(&socket);
+    // The claim is held on `PATH.lock`, as docs/cli.md says.
+    assert!(
+        scratch.path("bus.sock.lock").is_file(),
+        "the first resident holds its claim on bus.sock.lock"
+    );
 
     let mut second = resident_command(&scratch, &socket)
         .stdout(Stdio::null())

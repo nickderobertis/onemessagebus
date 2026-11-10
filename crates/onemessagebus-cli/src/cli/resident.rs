@@ -156,6 +156,7 @@ fn claim(socket: &Path) -> Result<Claimed, Refusal> {
             pid_file(socket).display()
         ))
     })?;
+    // llmlint: ignore[changed_behavior_has_e2e] listen on a unix stream socket this resident has just bound cannot fail through anything a caller controls — the path is already bound and the backlog is fixed — so no journey can drive it; the map turns an impossible-in-practice failure into the bind failure's own refusal rather than a panic.
     rustix::net::listen(&bound, LISTEN_BACKLOG)
         .map_err(|failure| cannot_listen(socket, &std::io::Error::from(failure)))?;
     Ok(Claimed {
@@ -201,6 +202,7 @@ fn take_lock(socket: &Path) -> Result<std::fs::File, Refusal> {
     match file.try_lock() {
         Ok(()) => Ok(file),
         Err(std::fs::TryLockError::WouldBlock) => Err(held_by(socket)),
+        // llmlint: ignore[changed_behavior_has_e2e] flock on a file this resident just opened for writing fails, apart from contention (the WouldBlock arm, driven by the journeys), only for kernel lock exhaustion or an unsupported filesystem, which no journey can arrange; the arm turns such a failure into a refusal naming the lock rather than a panic.
         Err(std::fs::TryLockError::Error(failure)) => Err(failed(format!(
             "serve --resident: cannot lock {}: {failure}",
             path.display()
