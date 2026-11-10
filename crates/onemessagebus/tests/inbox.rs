@@ -914,6 +914,31 @@ fn a_path_that_is_no_carry_store_is_refused_by_name() {
     ));
 }
 
+/// A store path that is a link to a store no longer there — on a volume since
+/// unmounted, say — is nothing to carry into: nothing is created at either end,
+/// and the sender is told it could not open the store.
+#[cfg(unix)]
+#[test]
+fn carrying_into_a_link_to_a_store_that_is_gone_is_refused_naming_the_store() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let gone = dir.path().join("unmounted").join("carried.ndjson");
+    let store = dir.path().join("carried.ndjson");
+    std::os::unix::fs::symlink(&gone, &store).expect("linked");
+
+    match Carry::sender::<Order, Receipt>(&store).send(order("x")) {
+        Err(Undelivered::Backend(BackendError::Io { action, path, .. })) => {
+            assert_eq!((action, path), ("open", store.clone()));
+        }
+        other => panic!("carrying through a dangling link was {other:?}"),
+    }
+    assert!(!gone.exists(), "a store was created at the link's target");
+    assert_eq!(
+        files_in(dir.path()),
+        vec!["carried.ndjson".to_owned()],
+        "something besides the link was left beside it"
+    );
+}
+
 #[test]
 fn concurrent_carriers_lose_nothing_and_a_drain_racing_them_takes_each_message_exactly_once() {
     let dir = tempfile::tempdir().expect("a temp dir");
