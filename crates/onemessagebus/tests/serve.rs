@@ -255,6 +255,110 @@ fn a_session_bound_reached_with_the_stream_open_leaves_what_it_asked_counted() {
 }
 
 #[test]
+fn a_stream_that_ends_before_the_session_bound_abandons_what_the_session_asked() {
+    let rig = Rig::new();
+    let bus = rig.bus();
+    let mut output = Vec::new();
+    let started = Instant::now();
+    let served = bus
+        .serve(
+            &queue("questions"),
+            &mut Scripted,
+            &ServeOptions {
+                session: Some(Duration::from_secs(60)),
+                ..options(Duration::from_millis(50))
+            },
+            frames("{\"do\":\"ask\",\"message\":\"anyone?\"}\n"),
+            &mut output,
+        )
+        .expect("served");
+    // The member went away well inside the bound: the session ends with the
+    // stream, not at the bound, and nothing is listening for the answer.
+    assert_eq!(served, Served::StreamEnded { abandoned: 1 });
+    assert!(
+        started.elapsed() < Duration::from_secs(30),
+        "the session waited out its bound after the stream ended"
+    );
+    assert_eq!(lines(&output)[0]["answer"], json!("timeout"));
+    assert_eq!(
+        rig.questions().last().expect("a line")["event"],
+        json!("abandoned")
+    );
+}
+
+/// A frame stream a member keeps open: it hands over `first`, then each frame
+/// the test sends it later, and never ends on its own. Says when the server
+/// lets go of it.
+struct Member {
+    pending: std::io::Cursor<Vec<u8>>,
+    later: mpsc::Receiver<Vec<u8>>,
+    let_go: mpsc::Sender<()>,
+}
+
+impl Read for Member {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            let read = self.pending.read(buf)?;
+            if read > 0 {
+                return Ok(read);
+            }
+            match self.later.recv() {
+                Ok(frame) => self.pending = std::io::Cursor::new(frame),
+                Err(_) => return Ok(0),
+            }
+        }
+    }
+}
+
+impl Drop for Member {
+    fn drop(&mut self) {
+        let _ = self.let_go.send(());
+    }
+}
+
+#[test]
+fn a_session_bound_passed_during_an_exchange_ends_the_session_and_reads_no_frame_after_it() {
+    let rig = Rig::new();
+    let bus = rig.bus();
+    let (send_later, later) = mpsc::channel();
+    let (let_go, released) = mpsc::channel();
+    let member = Member {
+        pending: std::io::Cursor::new(b"{\"do\":\"ask\",\"message\":\"still there?\"}\n".to_vec()),
+        later,
+        let_go,
+    };
+    let mut output = Vec::new();
+    // The question waits out a reply window longer than the whole session, so
+    // the bound has passed by the time the next frame would be looked for.
+    let served = bus
+        .serve(
+            &queue("questions"),
+            &mut Scripted,
+            &ServeOptions {
+                session: Some(Duration::from_millis(50)),
+                ..options(Duration::from_millis(500))
+            },
+            Box::new(BufReader::new(member)),
+            &mut output,
+        )
+        .expect("served");
+    assert_eq!(served, Served::SessionOver { standing: 1 });
+    assert_eq!(lines(&output).len(), 1);
+    assert_eq!(lines(&output)[0]["answer"], json!("timeout"));
+
+    // The member, still there, sends another frame after the session is over:
+    // nothing reads on for a session that has ended, so the stream is let go
+    // of while the member still holds it open.
+    send_later
+        .send(b"{\"do\":\"echo\",\"text\":\"too late\"}\n".to_vec())
+        .expect("the reader is still listening for the frame");
+    released
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the frame stream was read on after its session ended");
+    drop(send_later);
+}
+
+#[test]
 fn an_answered_question_is_not_abandoned_when_the_stream_ends() {
     let rig = Rig::new();
     let bus = rig.bus();
