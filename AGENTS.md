@@ -165,7 +165,9 @@ you:
   `test` targets are uncached on purpose — a replayed profile would be
   attributed to binaries that no longer exist — and `check-affected` runs the
   whole test set whenever the diff reaches a crate, because the floor is over
-  the union.
+  the union. A line only a thread race reaches makes the floor vary from run to
+  run: pin it with a journey that forces the race, as `tests/offer.rs` does
+  with a FIFO.
 - **A new verb reaches every surface along one path:** a capability in
   `crates/onemessagebus/src/capability.rs`, then a method in both SDK clients
   (`just sdk-coverage` fails until both exist), then `just node-sdk-generate`,
