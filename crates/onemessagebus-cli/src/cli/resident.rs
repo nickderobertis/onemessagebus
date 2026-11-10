@@ -260,8 +260,11 @@ fn watch(socket: &Path, identity: (u64, u64)) {
             .map(|metadata| (metadata.dev(), metadata.ino()));
         if current != Some(identity) {
             let recorded = pid_file(&socket);
-            let ours = std::fs::read_to_string(&recorded)
-                .is_ok_and(|text| text.trim() == std::process::id().to_string());
+            // Only a plain file is read: whatever else is there — a FIFO among
+            // them — is not this resident's record, and must not hold it up.
+            let ours = std::fs::symlink_metadata(&recorded).is_ok_and(|kind| kind.is_file())
+                && std::fs::read_to_string(&recorded)
+                    .is_ok_and(|text| text.trim() == std::process::id().to_string());
             if ours {
                 let _ = std::fs::remove_file(&recorded);
             }

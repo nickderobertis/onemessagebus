@@ -1233,6 +1233,76 @@ fn a_second_resident_is_refused_by_one_still_starting_on_its_socket() {
     first.stop();
 }
 
+/// A resident whose socket is replaced while it is still starting — after it
+/// bound, before it recorded its pid — stops cleanly once it starts, leaving
+/// the replacement alone: it watches the socket it bound, not whatever is at the
+/// path when it is done starting. The pid file is a FIFO, which holds the
+/// resident there until the journey reads it, and stays one, which a stopping
+/// resident leaves alone rather than waiting on.
+#[test]
+fn a_resident_whose_socket_is_replaced_while_it_starts_stops_and_leaves_the_replacement() {
+    use std::io::Read as _;
+    use std::os::unix::fs::MetadataExt as _;
+    let scratch = Scratch::new();
+    let socket = scratch.socket();
+    let recorded = scratch.path("bus.sock.pid");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&recorded)
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success(), "the pid file is made a FIFO");
+    let mut child = resident_command(&scratch, &socket)
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("the resident spawns");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !socket.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the resident never claimed {}",
+            socket.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    std::fs::remove_file(&socket).expect("the resident's socket is removed");
+    let replacement =
+        std::os::unix::net::UnixListener::bind(&socket).expect("a replacement socket is bound");
+    let replaced = std::fs::symlink_metadata(&socket).expect("the replacement is there");
+    let mut pid = String::new();
+    std::fs::File::open(&recorded)
+        .expect("the pid file opens for reading")
+        .read_to_string(&mut pid)
+        .expect("the pid is read");
+    assert_eq!(pid, format!("{}\n", child.id()));
+
+    let ended = wait(&mut child, Duration::from_secs(20));
+    if ended.is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let mut said = String::new();
+    if let Some(mut stderr) = child.stderr.take() {
+        let _ = stderr.read_to_string(&mut said);
+    }
+    assert_eq!(
+        ended,
+        Some(0),
+        "the resident stops once its socket is replaced: {said}"
+    );
+    assert!(
+        said.contains(&format!(
+            "the resident core's socket {} was removed; stopping",
+            socket.display()
+        )),
+        "{said}"
+    );
+    let kept = std::fs::symlink_metadata(&socket).expect("the replacement is kept");
+    assert_eq!((kept.dev(), kept.ino()), (replaced.dev(), replaced.ino()));
+    UnixStream::connect(&socket).expect("the replacement still answers");
+    drop(replacement);
+}
+
 /// One connection's lines: a blank one is nothing, a second request under an id
 /// still running is refused, a switch and a boolean reach the verb as its flags
 /// take them, and a line that is not UTF-8 ends the connection — cancelling what
