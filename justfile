@@ -30,8 +30,9 @@ export CARGO_TERM_QUIET := "true"
 export RUSTFLAGS := "-D warnings"
 
 # Where cargo-llvm-cov keeps the instrumented build and every project's raw
-# profiles; the aggregate report reads them all. Cleared before a test sweep so
-# a profile from a binary that no longer exists is never merged in.
+# profiles; the aggregate report reads them all. Cleared before a test sweep
+# (`_coverage-clean`) so neither a profile nor a binary from another build is
+# ever merged in.
 profraw-root := "target/llvm-cov-target"
 
 # List available recipes.
@@ -97,7 +98,7 @@ gate base="origin/main": check (lint-llm-diff base)
 # Deterministic quality gate, affected projects only.
 check-affected: path-lengths
     @bash scripts/nx-affected.sh -t format-check lint typecheck doc build
-    @rm -f {{profraw-root}}/*.profraw
+    @just _coverage-clean
     @if [ "$(just affected-crate)" = "true" ]; then bash scripts/nx run workspace:coverage \
         && bash scripts/nx run onemessagebus-cross-language-e2e:test; \
       else bash scripts/nx-affected.sh -t test --exclude=onemessagebus-sdk-install-e2e; fi
@@ -152,7 +153,7 @@ typecheck:
 
 # Every project's test suite, each writing its coverage profile for `coverage`.
 test:
-    @rm -f {{profraw-root}}/*.profraw
+    @just _coverage-clean
     @bash scripts/nx run-many -t test
 
 # Build every project that has a build target (the binary).
@@ -166,7 +167,7 @@ doc:
 # 95% line coverage over the union of every project's run; lower it only with a
 # documented reason in AGENTS.md.
 # The aggregate coverage floor over every project's test run.
-coverage:
+coverage: _coverage-clean
     @bash scripts/nx run workspace:coverage
 
 # Verify one crate's formatting without modifying files.
@@ -312,6 +313,18 @@ _cross-language-test:
     @cargo llvm-cov --no-report run -p onemessagebus-cli --bin onemessagebus --locked -- --version >/dev/null
     @cargo llvm-cov --no-report nextest -p onemessagebus-e2e --locked --test cross_language --status-level fail --final-status-level fail \
       || { echo "onemessagebus-cross-language-e2e: the journey failed — fix the failures named above (it needs uv and bun on PATH, and both SDKs bootstrapped)" >&2; exit 1; }
+
+# Every workspace crate's instrumented build and every raw profile under
+# {{profraw-root}}, so the next sweep's report reads only what that sweep built.
+# `cargo llvm-cov report` hands llvm-cov every executable of a workspace target
+# it finds there, each as an `-object`; a binary another build left behind (an
+# older version or tree, another feature set — what a restored CI cache holds)
+# is measured beside this tree's at its own source lines, all missed, and the
+# floor falls on a tree it passes clean. cargo-llvm-cov does this clean itself
+# before a run that reports; every run here is `--no-report`, so the sweep owes
+# it. Dependencies' builds stay, so a warm cache still saves their compile.
+_coverage-clean:
+    @cargo llvm-cov clean --workspace
 
 # The aggregate report over every project's profiles, enforced once. The
 # conformance table is test support published for vocabulary crates, exercised by

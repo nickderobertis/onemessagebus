@@ -523,6 +523,117 @@ fn a_spool_offer_a_courier_renamed_but_never_queued_is_not_admitted_and_is_withd
     );
 }
 
+/// Put a FIFO where message `id`'s acknowledgement goes, for a stand-in courier
+/// to act between two of its sender's looks. A sender looking for the
+/// acknowledgement blocks opening it until the test opens it to write, so once
+/// that open returns the sender is past its look for an answer and past the
+/// receiver's advertisement; what the test does before it closes the FIFO
+/// happens before the sender's next look. Closed unwritten, it reads as no
+/// acknowledgement.
+#[cfg(unix)]
+fn acknowledgement_held_open(address: &Path, id: &str) -> PathBuf {
+    let path = address.join(format!("{id}.admitted.json"));
+    let status = forking(|| Command::new("mkfifo").arg(&path).status()).expect("mkfifo runs");
+    assert!(status.success(), "mkfifo {} failed", path.display());
+    path
+}
+
+/// A sender offering into a bound receiver whose courier is stopped, so the
+/// test does each of the courier's steps itself: the offer renamed to taken,
+/// and the sender caught looking for the acknowledgement. Answers the open
+/// FIFO the sender is blocked on, the message's id, and the offer's thread.
+#[cfg(unix)]
+fn caught_between_looks(
+    address: &Path,
+    sku: &str,
+) -> (
+    std::fs::File,
+    String,
+    std::thread::JoinHandle<Result<Receipt, Undelivered>>,
+) {
+    let offering = {
+        let address = address.to_path_buf();
+        let order = order(sku);
+        std::thread::spawn(move || {
+            Spool::connect::<Order, Receipt>(&address)
+                .offer(order)
+                .and_then(Offer::wait)
+        })
+    };
+    let offered = waiting_offer(address);
+    let id = offered.trim_end_matches(".offer.json").to_owned();
+    let acknowledgement = acknowledgement_held_open(address, &id);
+    std::fs::rename(
+        address.join(&offered),
+        address.join(format!("{id}.taken.json")),
+    )
+    .expect("taken by the stand-in");
+    let looking = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&acknowledgement)
+        .expect("the sender looks for the acknowledgement");
+    (looking, id, offering)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_spool_receiver_that_answers_between_its_senders_looks_has_its_answer_read() {
+    let (_dir, address) = spool_dir();
+    let mut receiver = Receiver::bind(&address);
+    receiver.signal("-STOP");
+    let (looking, id, offering) = caught_between_looks(&address, "between");
+    // Between the sender's look for the acknowledgement and its next, the
+    // receiver queues the message, takes it, answers it and lets it go — the
+    // order its courier settles in: the answer written, then the taken file
+    // removed.
+    let answer = address.join(format!("{id}.answer.json"));
+    std::fs::write(
+        &answer,
+        json!({
+            "schema_version": SPOOL_SCHEMA_VERSION,
+            "answer": {"disposition": {"filled": {"by": "stock-room"}}},
+        })
+        .to_string(),
+    )
+    .expect("answered by the stand-in");
+    std::fs::remove_file(address.join(format!("{id}.taken.json"))).expect("let go by the stand-in");
+    drop(looking);
+    // The receiver no longer holds it, and the sender reads what it said
+    // rather than reporting it lost.
+    assert_eq!(
+        offering.join().expect("the offer finishes"),
+        Ok(filled("stock-room"))
+    );
+    assert!(!answer.exists(), "the answer was left unread");
+    receiver.signal("-CONT");
+    assert_eq!(receiver.answered(), "answered []");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_spool_receiver_that_dies_between_its_senders_looks_has_the_message_reported_abandoned() {
+    let (_dir, address) = spool_dir();
+    let receiver = Receiver::bind(&address);
+    receiver.signal("-STOP");
+    let (looking, id, offering) = caught_between_looks(&address, "orphan");
+    let taken = address.join(format!("{id}.taken.json"));
+    // Between the sender's look for the acknowledgement and its next, the
+    // receiver holding the message dies unanswered.
+    receiver.kill();
+    drop(looking);
+    assert_eq!(
+        offering.join().expect("the offer finishes"),
+        Err(Undelivered::Backend(BackendError::Abandoned {
+            spool: address.clone(),
+            file: taken.clone(),
+        }))
+    );
+    assert!(
+        !taken.exists(),
+        "the abandoned message's taken file was left"
+    );
+}
+
 #[test]
 fn an_in_process_withdrawal_before_a_take_keeps_it_from_the_receiver_and_after_one_is_refused() {
     let (sender, inbox) = Sender::<Order, Receipt>::channel();

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1](https://github.com/nickderobertis/onemessagebus/compare/v0.11.0...v0.11.1) - 2026-11-10
+
+### Fixed
+
+- the coverage floor reports the same coverage for the same tree ([#213](https://github.com/nickderobertis/onemessagebus/pull/213))
+
 ## [0.11.0](https://github.com/nickderobertis/onemessagebus/compare/v0.10.0...v0.11.0) - 2026-11-10
 
 ### Added
