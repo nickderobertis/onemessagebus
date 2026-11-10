@@ -16,11 +16,6 @@
 //!    refuses — each by the key it is at. What it answers, a [`Bus`], is the one
 //!    type that opens a queue or authors a record.
 
-#![expect(
-    deprecated,
-    reason = "the configuration keeps reading the deprecated `validators` block and the bus keeps running its validators after its hooks, until a later release removes them"
-)]
-
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -30,7 +25,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::ask::Correlation;
 use crate::author::{Allowlist, Author, NarrowingRefused, OpWord};
 use crate::codec::{CodecConfig, CodecName};
 use crate::hook::{dropped_from, Chain, CommandHook, HookCache, HookRef, DROPPED_SUFFIX};
@@ -41,12 +35,9 @@ use crate::queue::{
     shape_word, Delivery, Ordering, Policy, Predicate, Pushed, QueueError, QueueSpec, RawQueue,
     Retention, Supersede,
 };
-use crate::schema::{Message, Registry, SchemaId};
+use crate::schema::{Registry, SchemaId};
 use crate::transport::{ConsumerName, DocumentName, QueueName, Transport, TransportError};
-use crate::validate::{
-    combined, CommandValidator, OnRecords, PassCache, ValidationContext, Validator, Validators,
-    Verdict, When,
-};
+use crate::when::When;
 
 /// The configuration version this build reads and writes.
 pub const CONFIG_VERSION: u32 = 1;
@@ -84,11 +75,6 @@ pub struct Config {
     /// appended, in the order each queue runs them (`docs/hooks.md`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<HookConfig>,
-    /// Validators judging what is offered to a queue before anything is
-    /// appended, in the order each queue judges by them — deprecated: declare
-    /// `hooks`, which run first, and these judge the records the hooks made.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub validators: Vec<ValidatorConfig>,
     /// What a host configures for each codec `serve` runs, by the codec's name.
     /// Which names there are is the binary's: one no linked codec answers to is
     /// refused where `serve` resolves it.
@@ -102,8 +88,9 @@ pub struct Config {
     pub schemas: Vec<SchemaLink>,
 }
 
-/// The line a configuration declaring `validators` is loaded with, on stderr.
-pub const VALIDATORS_DEPRECATED: &str = "validators are deprecated: declare them as `hooks:` instead (a validator becomes a hook that prints its input to pass); where both are declared, hooks run first and validators judge the records the hooks made";
+/// Why a configuration declaring the removed `validators` key is refused, and
+/// how to declare each entry as a hook instead.
+const VALIDATORS_REMOVED: &str = "validators: validators were removed in onemessagebus 0.11.0; declare each entry under `hooks:` instead, with the same `on`, `when`, `command` and `cache` and no `kind`, and have its command print its input back unchanged and exit 0 to pass — exit 1 with a reason on stderr still refuses (docs/hooks.md)";
 
 /// One hook of a configuration: a command, which a Rust hook a linking
 /// consumer registers is not — that one is code ([`Bus::with_hook`]).
@@ -153,40 +140,7 @@ impl HookConfig {
     }
 }
 
-/// One validator of a configuration: the external kind, which a Rust
-/// validator a linking consumer registers is not — that one is code
-/// ([`Bus::with_validator`]).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-#[deprecated(
-    note = "validators are deprecated: declare a `HookConfig` under `hooks:` (`docs/hooks.md`)"
-)]
-pub struct ValidatorConfig {
-    /// The queue whose offered messages it judges.
-    pub on: QueueName,
-    /// Which of them it judges; every one when absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub when: Option<When>,
-    /// Which kind of validator it is.
-    pub kind: ValidatorKind,
-    /// The command's argv, the program first: the message on its stdin, exit 0
-    /// a pass, 1 a refusal with its stderr as the reason, anything else
-    /// unjudged.
-    pub command: Vec<String>,
-    /// Where its passes are recorded; nowhere when absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache: Option<CacheConfig>,
-}
-
-/// The kinds of validator a configuration declares.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum ValidatorKind {
-    /// [`CommandValidator`]: an external command.
-    Command,
-}
-
-/// Where a command validator records its passes.
+/// Where a command hook records its keeps, changes and drops.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CacheConfig {
@@ -196,43 +150,6 @@ pub struct CacheConfig {
     /// The argv whose output fingerprints the bar: a pass recorded under one
     /// fingerprint is not a pass under another.
     pub bar_fingerprint: Vec<String>,
-}
-
-impl ValidatorConfig {
-    /// The validator this declares.
-    ///
-    /// # Errors
-    ///
-    /// The refusal, naming the key under `validators[index]`.
-    fn build(&self, index: usize) -> Result<CommandValidator, String> {
-        let ValidatorKind::Command = self.kind;
-        let validator = CommandValidator::new(self.command.iter().cloned())
-            .map_err(|failure| format!("validators[{index}].command: {failure}"))?;
-        Ok(match &self.cache {
-            Some(cache) => validator.with_cache(
-                PassCache::new(&cache.dir, cache.bar_fingerprint.iter().cloned()).map_err(
-                    |failure| format!("validators[{index}].cache.bar_fingerprint: {failure}"),
-                )?,
-            ),
-            None => validator,
-        })
-    }
-}
-
-/// A configured validator: judged only for the messages its `when` admits.
-struct Gated {
-    when: Option<When>,
-    validator: CommandValidator,
-}
-
-impl Validator<Value> for Gated {
-    fn validate(&self, message: &Value, context: &ValidationContext) -> Verdict {
-        if self.when.as_ref().is_none_or(|when| when.admits(message)) {
-            Validator::<Value>::validate(&self.validator, message, context)
-        } else {
-            Verdict::Pass
-        }
-    }
 }
 
 /// One queue of a configuration: an addition, or an override of a layout's
@@ -464,6 +381,15 @@ impl Config {
                     why: failure.to_string(),
                 }
             })?;
+        if raw
+            .as_object()
+            .is_some_and(|keys| keys.contains_key("validators"))
+        {
+            return Err(ConfigError::Parse {
+                path: PathBuf::new(),
+                why: VALIDATORS_REMOVED.to_owned(),
+            });
+        }
         validate_codec_keys(&raw).map_err(|why| ConfigError::Parse {
             path: PathBuf::new(),
             why,
@@ -490,12 +416,6 @@ impl Config {
                 why,
             })?;
         }
-        for (index, validator) in config.validators.iter().enumerate() {
-            validator.build(index).map_err(|why| ConfigError::Parse {
-                path: PathBuf::new(),
-                why,
-            })?;
-        }
         for (name, codec) in &config.codecs {
             crate::codec::validate_codec(name, codec).map_err(|why| ConfigError::Parse {
                 path: PathBuf::new(),
@@ -515,7 +435,6 @@ impl Config {
             queues: BTreeMap::new(),
             authors: BTreeMap::new(),
             hooks: Vec::new(),
-            validators: Vec::new(),
             codecs: BTreeMap::new(),
             schemas: Vec::new(),
         }
@@ -804,34 +723,6 @@ impl Config {
                 .or_default()
                 .push_configured(declared.when.clone(), hook);
         }
-        let mut validators: BTreeMap<QueueName, Validators<Value>> = BTreeMap::new();
-        for (index, declared) in self.validators.iter().enumerate() {
-            if !specs.contains_key(&declared.on) {
-                return Err(ConfigError::Queue {
-                    key: format!("validators[{index}].on"),
-                    why: format!(
-                        "`{}` is not a queue this configuration declares; it declares: {}",
-                        declared.on,
-                        specs
-                            .keys()
-                            .map(QueueName::as_str)
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
-                });
-            }
-            let validator = declared.build(index).map_err(|why| ConfigError::Queue {
-                key: format!("validators[{index}]"),
-                why,
-            })?;
-            validators
-                .entry(declared.on.clone())
-                .or_default()
-                .push(Arc::new(Gated {
-                    when: declared.when.clone(),
-                    validator,
-                }));
-        }
         let transport = open()?;
         Ok(Bus {
             transport,
@@ -841,7 +732,6 @@ impl Config {
             allowlist,
             registry: Arc::new(registry),
             hooks,
-            validators,
         })
     }
 }
@@ -1150,7 +1040,6 @@ pub struct Bus {
     allowlist: Allowlist<OpWord>,
     registry: Arc<Registry>,
     hooks: BTreeMap<QueueName, Chain>,
-    validators: BTreeMap<QueueName, Validators<Value>>,
 }
 
 impl fmt::Debug for Bus {
@@ -1240,79 +1129,7 @@ impl Bus {
             Arc::clone(&self.transport),
             spec.clone(),
             Arc::clone(&self.registry),
-        )
-        .with_validators(self.validators.get(name).cloned().unwrap_or_default()))
-    }
-
-    /// The same bus, judging every message offered to `queue` by `validator`
-    /// as well, after every validator the configuration declares for it. A Rust
-    /// validator is code, so it is registered here rather than in the file; a
-    /// record that does not read as an `M` is refused naming why.
-    ///
-    /// # Errors
-    ///
-    /// [`BusError::UnknownQueue`].
-    #[deprecated(
-        note = "validators are deprecated: register a `Hook<M>` with `Bus::with_hook` (`docs/hooks.md`)"
-    )]
-    pub fn with_validator<M: Message + 'static>(
-        mut self,
-        queue: &QueueName,
-        validator: impl Validator<M> + 'static,
-    ) -> Result<Self, BusError> {
-        self.queue(queue)?;
-        self.validators
-            .entry(queue.clone())
-            .or_default()
-            .push(Arc::new(OnRecords::new(validator)));
-        Ok(self)
-    }
-
-    /// Judge what offering `record` to `queue` would append, appending nothing:
-    /// the offer by `queue`'s validators, and each record the layout routes to
-    /// another queue by that queue's.
-    ///
-    /// # Errors
-    ///
-    /// As [`prepare`](Self::prepare): an unknown queue, or the layout's refusal.
-    #[deprecated(
-        note = "validators are deprecated: `Bus::hooked` decides an offer by its hooks and validators both (`docs/hooks.md`)"
-    )]
-    pub fn validate(&self, queue: &QueueName, record: Value) -> Result<Verdict, BusError> {
-        let routed = self.prepare(queue, record.clone())?;
-        Ok(self.judge(queue, &record, &routed, None))
-    }
-
-    /// The verdict on an offer and the records it was routed into, each judged
-    /// in a context naming `correlation` when the offer asks or answers the
-    /// question it names.
-    pub(crate) fn judge(
-        &self,
-        queue: &QueueName,
-        offered: &Value,
-        routed: &[(QueueName, Value)],
-        correlation: Option<&Correlation>,
-    ) -> Verdict {
-        let judged_by = |target: &QueueName, record: &Value| {
-            self.validators.get(target).map_or(Verdict::Pass, |each| {
-                let context = ValidationContext::new(target.clone());
-                let context = match correlation {
-                    Some(correlation) => context.with_correlation(correlation.clone()),
-                    None => context,
-                };
-                each.judge(record, &context)
-            })
-        };
-        combined(
-            std::iter::once(judged_by(queue, offered))
-                .chain(
-                    routed
-                        .iter()
-                        .filter(|(target, _)| target != queue)
-                        .map(|(target, record)| judged_by(target, record)),
-                )
-                .collect::<Vec<_>>(),
-        )
+        ))
     }
 
     /// What offering `record` to `queue` pushes, in order: the layout's
@@ -1356,9 +1173,8 @@ impl Bus {
     /// # Errors
     ///
     /// As [`prepare`](Self::prepare); [`BusError::HookRefused`] or
-    /// [`BusError::HookUnjudged`] for an offer a hook did not let through, and
-    /// [`QueueError::Refused`] or [`QueueError::Unjudged`] for one the
-    /// validators did not pass, with nothing appended anywhere; a record its
+    /// [`BusError::HookUnjudged`] for an offer a hook did not let through, with
+    /// nothing appended anywhere; a record its
     /// queue's schema refuses, with nothing appended; or the first append that
     /// failed, when what was appended before it stays appended.
     pub fn send(

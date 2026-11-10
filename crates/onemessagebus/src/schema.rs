@@ -254,7 +254,7 @@ pub trait Message: Serialize + DeserializeOwned + JsonSchema {
 }
 
 /// Any JSON record, as a queue a configuration declares holds one: what a
-/// validator of such a queue judges.
+/// hook of such a queue runs on.
 impl Message for Value {
     const SCHEMA: SchemaId = SchemaId::literal("onemessagebus", "json-value", 1);
 }

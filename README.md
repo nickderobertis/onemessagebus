@@ -48,8 +48,8 @@ appends, `next` claims, `subscribe` tails as it grows — the GIF above is
 `subscribe` on this queue — `status` reports, `validate` decides without appending
 and `transports` lists the kinds this build can open. A queue's hooks keep,
 change, reroute, drop or refuse each offered message before anything is
-appended. `docs/queues.md`, `docs/hooks.md`, `docs/validators.md` (deprecated in
-favour of hooks) and `docs/transport.md` are those stories.
+appended. `docs/queues.md`, `docs/hooks.md` and `docs/transport.md` are those
+stories.
 
 ![A send printing the queue, byte position and id its record landed at; a claim printing that record back; then one counts line per queue — records, waiting, pending, abandoned, unread, dropped — each with its consumers' cursors indented beneath it](docs/screenshots/queues.svg)
 

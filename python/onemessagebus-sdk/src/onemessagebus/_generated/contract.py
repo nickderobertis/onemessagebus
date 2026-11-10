@@ -46,7 +46,7 @@ class ArtifactRef(BaseModel):
 
 class CacheConfig(BaseModel):
     """
-    Where a command validator records its passes.
+    Where a command hook records its keeps, changes and drops.
     """
 
     model_config = ConfigDict(
@@ -706,7 +706,7 @@ class ValidateOptions(BaseModel):
     """
     queue: str
     """
-    The queue whose validators judge the record.
+    The queue whose hooks the record is offered to.
     """
     registry: str | None = None
     """
@@ -753,7 +753,7 @@ class ValidatedRefuse(BaseModel):
     """
     reason: str
     """
-    Why, in the refusing hook's or validator's own words.
+    Why, in the refusing hook's own words.
     """
     records: list[ValidatedRecord]
     """
@@ -796,7 +796,7 @@ class Read(RootModel[int]):
 
 class When1(BaseModel):
     """
-    When a validator judges a message: `{carries: <field path>}`, or any queue predicate.
+    When a hook runs on a message: `{carries: <field path>}`, or any queue predicate.
     """
 
     model_config = ConfigDict(
@@ -2296,40 +2296,6 @@ class Validated(RootModel[ValidatedPass | ValidatedRefuse | ValidatedUnjudged]):
     """
 
 
-class ValidatorConfig(BaseModel):
-    """
-    One validator of a configuration: the external kind, which a Rust
-    validator a linking consumer registers is not — that one is code
-    ([`Bus::with_validator`]).
-    """
-
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    cache: CacheConfig | None = None
-    """
-    Where its passes are recorded; nowhere when absent.
-    """
-    command: list[str]
-    """
-    The command's argv, the program first: the message on its stdin, exit 0
-    a pass, 1 a refusal with its stderr as the reason, anything else
-    unjudged.
-    """
-    kind: Literal["command"]
-    """
-    Which kind of validator it is.
-    """
-    on: str
-    """
-    The queue whose offered messages it judges.
-    """
-    when: When1 | Predicate | None = None
-    """
-    Which of them it judges; every one when absent.
-    """
-
-
 class FrameConfig(BaseModel):
     """
     One selected frame in a configured codec.
@@ -2525,12 +2491,6 @@ class Config(BaseModel):
     transport: TransportConfig
     """
     The transport the queues are kept on.
-    """
-    validators: list[ValidatorConfig] | None = None
-    """
-    Validators judging what is offered to a queue before anything is
-    appended, in the order each queue judges by them — deprecated: declare
-    `hooks`, which run first, and these judge the records the hooks made.
     """
     version: int = Field(..., ge=0)
     """

@@ -32,8 +32,8 @@ fn fixture(name: &str) -> String {
 /// Every fixture this test drives: the wire's `envelope` and `filter`, the
 /// registry's `read-sets`, the inbox's `spool-documents` and `carry-store`, the
 /// transport's `transport-layout`, `transport-kinds` and `plugin-protocol`, the
-/// queue `policy`, the `config` file, the `layout-document`, the validators'
-/// `verdicts` and `validators-config`, the ask's `asked` and the command line's
+/// queue `policy`, the `config` file, the `layout-document`, the removed
+/// `validators-config`, the ask's `asked` and the command line's
 /// `verbs`. The configured codec fixture lives in `docs/codecs.md` and is driven
 /// by `tests/serve.rs`.
 /// A fixture added to the document is added here beside the test that drives
@@ -53,7 +53,6 @@ const DRIVEN_FIXTURES: &[&str] = &[
     "transport-layout",
     "validators-config",
     "verbs",
-    "verdicts",
 ];
 
 #[test]
@@ -1196,84 +1195,61 @@ fn the_documented_configuration_loads_and_an_unknown_key_in_it_is_refused_by_nam
 }
 
 #[test]
-#[expect(
-    deprecated,
-    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
-)]
-fn the_documented_verdicts_are_the_verdict_type_on_the_wire() {
-    use onemessagebus::Verdict;
-    let documented: Value = serde_json::from_str(&fixture("verdicts")).expect("JSON");
-    let read: Vec<Verdict> =
-        serde_json::from_value(documented.clone()).expect("the documented verdicts read");
-    assert!(
-        matches!(
-            read.as_slice(),
-            [
-                Verdict::Pass,
-                Verdict::Refuse { .. },
-                Verdict::Unjudged { .. }
-            ]
-        ),
-        "{read:?}"
-    );
-    assert_eq!(serde_json::to_value(&read).expect("JSON"), documented);
-    assert_eq!(
-        read.iter().map(Verdict::passes).collect::<Vec<_>>(),
-        [true, false, false],
-        "an unjudged verdict passed"
-    );
-}
-
-#[test]
-#[expect(
-    deprecated,
-    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
-)]
-fn the_documented_validators_block_loads_into_the_config_and_an_unknown_key_in_it_is_refused_by_name(
+fn the_documented_validators_block_is_refused_naming_the_migration_and_loads_once_declared_as_hooks(
 ) {
-    use onemessagebus::{Config, ValidatorKind, When};
+    use onemessagebus::{Config, When};
     let text = format!(
         "version: 1\ntransport: {{kind: local, dir: runs/r1/channel}}\n{}",
         fixture("validators-config")
     );
-    let config = Config::parse(&text).expect("the documented validators block loads");
-    let [validator] = config.validators.as_slice() else {
-        panic!("the documented block declares one validator: {config:?}");
+    let refused = Config::parse(&text)
+        .expect_err("a configuration declaring validators is refused")
+        .to_string();
+    for named in [
+        "validators: validators were removed in onemessagebus 0.11.0",
+        "under `hooks:`",
+        "the same `on`, `when`, `command` and `cache` and no `kind`",
+        "print its input back unchanged and exit 0 to pass",
+    ] {
+        assert!(refused.contains(named), "{named}: {refused}");
+    }
+    // An empty block is refused as well: the key itself is what was removed.
+    let empty = Config::parse("version: 1\ntransport: {kind: local, dir: d}\nvalidators: []\n")
+        .expect_err("an empty validators block is refused")
+        .to_string();
+    assert!(empty.contains("validators were removed"), "{empty}");
+
+    let migrated = text
+        .replace("validators:", "hooks:")
+        .replace("kind: command, ", "");
+    let config = Config::parse(&migrated).expect("the same entry loads as a hook");
+    let [hook] = config.hooks.as_slice() else {
+        panic!("the migrated block declares one hook: {config:?}");
     };
-    assert_eq!(validator.on.as_str(), "answers");
+    assert_eq!(hook.on.as_str(), "answers");
     assert_eq!(
-        validator.when,
+        hook.when,
         Some(When::Carries("actions".parse().expect("a field path")))
     );
-    assert_eq!(validator.kind, ValidatorKind::Command);
     assert_eq!(
-        validator.command,
+        hook.command,
         ["python3", "-m", "review_actions", "--envelope"]
     );
-    let cache = validator.cache.as_ref().expect("the documented cache");
+    let cache = hook.cache.as_ref().expect("the documented cache");
     assert_eq!(cache.dir, std::path::Path::new(".validator-passes"));
     assert_eq!(cache.bar_fingerprint, ["scripts/bar-fingerprint.sh"]);
-    for (from, to, named) in [
-        ("bar_fingerprint:", "bar:", "unknown field `bar`"),
-        (
-            "kind: command",
-            "kind: command, retries: 2",
-            "unknown field `retries`",
-        ),
-        (
-            "{carries: actions}",
-            "{carries: actions, and: x}",
-            "`carries` stands alone",
-        ),
-    ] {
-        let refused = Config::parse(&text.replace(from, to)).expect_err(to);
-        assert!(refused.to_string().contains(named), "{to}: {refused}");
-    }
+    let refused =
+        Config::parse(&migrated.replace("{carries: actions}", "{carries: actions, and: x}"))
+            .expect_err("`carries` beside another key");
+    assert!(
+        refused.to_string().contains("`carries` stands alone"),
+        "{refused}"
+    );
     let bundle = sdk_schema::bundle::<Open>(&Registry::new());
     let document: Value = serde_json::from_str(&bundle.to_json()).expect("the bundle is JSON");
     assert!(
-        document["config"]["properties"]["validators"].is_object(),
-        "the SDK bundle's config root has no validators block"
+        document["config"]["properties"]["validators"].is_null(),
+        "the SDK bundle's config root still has a validators block"
     );
 }
 

@@ -21,11 +21,6 @@
 //! the record is handed over, so a claimant that crashes afterwards leaves a
 //! record claimed rather than a record the next reader takes again.
 
-#![expect(
-    deprecated,
-    reason = "a queue keeps judging what is pushed onto it by the deprecated validators until a later release removes them"
-)]
-
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fmt;
@@ -44,7 +39,6 @@ use crate::transport::{
     Changed, ConsumerName, DocumentName, Fingerprint, Position, QueueName, Transport,
     TransportError,
 };
-use crate::validate::{ValidationContext, Validators, Verdict};
 
 /// What a queue promises about delivery.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -690,45 +684,6 @@ pub enum QueueError {
         /// Why the position names no reply.
         why: String,
     },
-    /// A validator refused the record, so nothing was appended.
-    #[error("{queue}: refused before anything was appended: {reason}")]
-    Refused {
-        /// The queue it was offered to.
-        queue: QueueName,
-        /// The reason the validator gave, unaltered.
-        reason: String,
-    },
-    /// A validator could not judge the record, so nothing was appended.
-    #[error("{queue}: not appended, because it could not be judged: {reason}")]
-    Unjudged {
-        /// The queue it was offered to.
-        queue: QueueName,
-        /// Why it could not be judged.
-        reason: String,
-    },
-}
-
-impl QueueError {
-    /// `Ok` for a pass, and the refusal a verdict that is not one makes on
-    /// `queue`.
-    ///
-    /// # Errors
-    ///
-    /// [`QueueError::Refused`] or [`QueueError::Unjudged`], carrying the
-    /// verdict's reason unaltered.
-    pub fn of_verdict(queue: &QueueName, verdict: Verdict) -> Result<(), Self> {
-        match verdict {
-            Verdict::Pass => Ok(()),
-            Verdict::Refuse { reason } => Err(Self::Refused {
-                queue: queue.clone(),
-                reason,
-            }),
-            Verdict::Unjudged { reason } => Err(Self::Unjudged {
-                queue: queue.clone(),
-                reason,
-            }),
-        }
-    }
 }
 
 /// A record a push appended.
@@ -982,7 +937,6 @@ pub struct RawQueue {
     spec: QueueSpec,
     registry: Arc<Registry>,
     shape: Shape,
-    validators: Validators<Value>,
 }
 
 impl fmt::Debug for RawQueue {
@@ -1003,22 +957,7 @@ impl RawQueue {
             spec,
             registry,
             shape: as_it_is(),
-            validators: Validators::new(),
         }
-    }
-
-    /// The same queue, judging every record pushed onto it by `validators`
-    /// before anything is appended.
-    #[must_use]
-    pub fn with_validators(mut self, validators: Validators<Value>) -> Self {
-        self.validators = validators;
-        self
-    }
-
-    /// The validators a record pushed onto this queue is judged by.
-    #[must_use]
-    pub fn validators(&self) -> &Validators<Value> {
-        &self.validators
     }
 
     /// The declaration this queue was opened with.
@@ -1467,29 +1406,6 @@ impl RawQueue {
             .is_none_or(|claims| claims.matches(record))
     }
 
-    /// Judge `record` by the queue's validators, validate it against the queue's
-    /// schema, and append it.
-    ///
-    /// The validators judge the record as it was offered, before anything else
-    /// happens to it. On an event queue the record is given the next id — one
-    /// past the highest the log has queued — superseding what its policy says it
-    /// supersedes; on a numbered plain queue it is given the number of records
-    /// before it. Both are allocated under the queue's exclusive section, so two
-    /// writers never take one id. The record is validated against the schema as
-    /// it will be written, id included.
-    ///
-    /// # Errors
-    ///
-    /// [`QueueError::Refused`] or [`QueueError::Unjudged`] for a record the
-    /// validators did not pass, a record the schema refuses, a record an id
-    /// cannot be set on, the last id already taken, or a transport failure.
-    /// Nothing is appended.
-    pub fn push(&self, record: Value) -> Result<Pushed<Value>, QueueError> {
-        let context = ValidationContext::new(self.spec.name.clone());
-        QueueError::of_verdict(&self.spec.name, self.validators.judge(&record, &context))?;
-        self.push_judged(record)
-    }
-
     /// The id the next record pushed onto this queue is given, on a queue
     /// that gives one: one past the highest an event queue has queued, or the
     /// number of records before it on a numbered one.
@@ -1517,7 +1433,7 @@ impl RawQueue {
     }
 
     /// Append `record` as its bytes spell it, checked against the schema as
-    /// [`push`](Self::push) checks it and judged by nothing: an event queue's
+    /// [`push`](Self::push) checks it and run through no hook: an event queue's
     /// `event` and an id the queue gives are spliced in front of its fields, so
     /// the spelling a hook gave it survives — save for a record already
     /// carrying the field the queue sets, which is written from its value.
@@ -1530,7 +1446,7 @@ impl RawQueue {
         };
         if self.spec.policy.keeps_events() {
             if carries("id") || carries("event") {
-                return self.push_judged(value);
+                return self.push(value);
             }
             let ((), mut recorded) = self.record_lines(|folded| {
                 if folded.next_id == u64::MAX {
@@ -1577,7 +1493,7 @@ impl RawQueue {
             });
         }
         if carries("id") {
-            return self.push_judged(value);
+            return self.push(value);
         }
         self.within_section(|inner| {
             let count = inner.count(&self.spec.name)?;
@@ -1594,8 +1510,21 @@ impl RawQueue {
         })
     }
 
-    /// [`push`](Self::push), for a record its validators have already judged.
-    pub(crate) fn push_judged(&self, record: Value) -> Result<Pushed<Value>, QueueError> {
+    /// Validate `record` against the queue's schema, and append it.
+    ///
+    /// On an event queue the record is given the next id — one
+    /// past the highest the log has queued — superseding what its policy says it
+    /// supersedes; on a numbered plain queue it is given the number of records
+    /// before it. Both are allocated under the queue's exclusive section, so two
+    /// writers never take one id. The record is validated against the schema as
+    /// it will be written, id included.
+    ///
+    /// # Errors
+    ///
+    /// A record the schema refuses, a record an id
+    /// cannot be set on, the last id already taken, or a transport failure.
+    /// Nothing is appended.
+    pub fn push(&self, record: Value) -> Result<Pushed<Value>, QueueError> {
         if self.spec.policy.keeps_events() {
             let ((), mut recorded) = self.record(|folded| {
                 if folded.next_id == u64::MAX {
@@ -2158,7 +2087,6 @@ impl RawQueue {
 /// appended, and written in `M`'s own field order.
 pub struct Queue<M: Message> {
     raw: RawQueue,
-    validators: Validators<M>,
     record: PhantomData<fn() -> M>,
 }
 
@@ -2166,7 +2094,6 @@ impl<M: Message> Clone for Queue<M> {
     fn clone(&self) -> Self {
         Self {
             raw: self.raw.clone(),
-            validators: self.validators.clone(),
             record: PhantomData,
         }
     }
@@ -2208,17 +2135,8 @@ impl<M: Message + 'static> Queue<M> {
         raw.shape = shape_of::<M>();
         Ok(Self {
             raw,
-            validators: Validators::new(),
             record: PhantomData,
         })
-    }
-
-    /// The same queue, judging every record pushed onto it by `validators`
-    /// before anything is appended.
-    #[must_use]
-    pub fn with_validators(mut self, validators: Validators<M>) -> Self {
-        self.validators = validators;
-        self
     }
 
     /// The untyped queue underneath.
@@ -2242,16 +2160,12 @@ impl<M: Message + 'static> Queue<M> {
         })
     }
 
-    /// Judge `record` by the queue's validators, validate it against
-    /// `M::SCHEMA` and append it; see [`RawQueue::push`].
+    /// Validate `record` against `M::SCHEMA` and append it; see [`RawQueue::push`].
     ///
     /// # Errors
     ///
     /// As [`RawQueue::push`].
     pub fn push(&self, record: &M) -> Result<Pushed<M>, QueueError> {
-        let queue = &self.raw.spec.name;
-        let context = ValidationContext::new(queue.clone());
-        QueueError::of_verdict(queue, self.validators.judge(record, &context))?;
         let pushed = self.raw.push(self.value(record)?)?;
         Ok(Pushed {
             record: typed(&self.raw.spec.name, pushed.record)?,
