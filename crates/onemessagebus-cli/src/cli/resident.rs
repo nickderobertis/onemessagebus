@@ -186,19 +186,33 @@ fn inspect(socket: &Path) -> Result<bool, Refusal> {
 
 /// The lock claiming `socket`, refused when another resident holds it.
 fn take_lock(socket: &Path) -> Result<std::fs::File, Refusal> {
+    use std::os::unix::fs::OpenOptionsExt as _;
     let path = lock_file(socket);
+    let cannot_open = |failure: &dyn std::fmt::Display| {
+        invalid(format!(
+            "serve --resident: cannot listen on {}: cannot open its lock {}: {failure}",
+            socket.display(),
+            path.display()
+        ))
+    };
+    // Opened without blocking, so a FIFO put where the lock goes is refused at
+    // once rather than holding the resident until something reads it.
+    let nonblocking = i32::try_from(rustix::fs::OFlags::NONBLOCK.bits())
+        .map_err(|failure| cannot_open(&failure))?;
     let file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .write(true)
+        .custom_flags(nonblocking)
         .open(&path)
-        .map_err(|failure| {
-            invalid(format!(
-                "serve --resident: cannot listen on {}: cannot open its lock {}: {failure}",
-                socket.display(),
-                path.display()
-            ))
-        })?;
+        .map_err(|failure| cannot_open(&failure))?;
+    if !file
+        .metadata()
+        .map_err(|failure| cannot_open(&failure))?
+        .is_file()
+    {
+        return Err(cannot_open(&"it is not a plain file"));
+    }
     match file.try_lock() {
         Ok(()) => Ok(file),
         Err(std::fs::TryLockError::WouldBlock) => Err(held_by(socket)),

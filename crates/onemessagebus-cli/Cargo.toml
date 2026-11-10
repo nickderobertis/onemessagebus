@@ -33,9 +33,10 @@ thiserror = { workspace = true }
 # The resident core binds its socket, records its pid, and only then listens, so
 # a client that sees it answer can rely on the pid file. std's `UnixListener::bind`
 # binds and listens in one call and this crate forbids unsafe code, so the
-# separate calls are rustix's safe ones.
+# separate calls are rustix's safe ones. `fs` names `O_NONBLOCK` for the open of
+# the lock file the resident claims its socket with, which differs by platform.
 [target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["net"] }
+rustix = { workspace = true, features = ["fs", "net"] }
 
 [dev-dependencies]
 schemars = { workspace = true }

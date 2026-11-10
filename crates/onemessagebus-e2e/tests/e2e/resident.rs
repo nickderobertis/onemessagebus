@@ -988,8 +988,8 @@ fn a_resident_holds_the_transport_it_opened_across_requests() {
 }
 
 /// A socket path the resident cannot use is refused before it listens, naming
-/// what went wrong: a path beneath a file, a pid it cannot record, a path too long
-/// to bind, a directory it may not bind in, and a stale socket it may not remove.
+/// what went wrong: a path beneath a file, a pid it cannot record, a lock that is
+/// not a plain file, a path too long to bind, a directory it may not bind in, and a stale socket it may not remove.
 #[test]
 fn a_resident_refuses_a_socket_path_it_cannot_inspect_bind_or_record_a_pid_beside() {
     use std::os::unix::fs::PermissionsExt as _;
@@ -1018,6 +1018,34 @@ fn a_resident_refuses_a_socket_path_it_cannot_inspect_bind_or_record_a_pid_besid
     assert_eq!(code, Some(1), "{stderr}");
     assert!(
         stderr.contains("cannot record this resident's pid in"),
+        "{stderr}"
+    );
+
+    // A FIFO where the lock goes, with nothing reading it, is refused at once
+    // rather than holding the resident up; and a device that opens is no lock.
+    let fifo_locked = scratch.path("fifo.sock");
+    let lock = scratch.path("fifo.sock.lock");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&lock)
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success(), "the lock is made a FIFO");
+    let (code, stderr) = said(&fifo_locked);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains(&format!("cannot open its lock {}", lock.display())),
+        "{stderr}"
+    );
+    let device_locked = scratch.path("device.sock");
+    let lock = scratch.path("device.sock.lock");
+    std::os::unix::fs::symlink("/dev/null", &lock).expect("the lock names a device");
+    let (code, stderr) = said(&device_locked);
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "cannot open its lock {}: it is not a plain file",
+            lock.display()
+        )),
         "{stderr}"
     );
 
