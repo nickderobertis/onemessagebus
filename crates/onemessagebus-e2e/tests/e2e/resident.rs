@@ -1078,6 +1078,61 @@ fn a_live_resident_whose_pid_file_is_gone_is_still_refused_as_live() {
     first.stop();
 }
 
+/// A resident answers on its socket only once its pid is recorded, so whoever
+/// sees it answer — an SDK, or the journey above — can rely on the pid file.
+/// The pid file is a FIFO here, so the resident's write of it blocks until this
+/// journey reads it: the resident is held between claiming its socket and
+/// recording its pid for as long as the journey likes, and must not answer there.
+#[test]
+fn a_resident_answers_only_once_its_pid_is_recorded() {
+    use std::io::Read as _;
+    let scratch = Scratch::new();
+    let socket = scratch.socket();
+    let recorded = scratch.path("bus.sock.pid");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&recorded)
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success(), "the pid file is made a FIFO");
+    let child = resident_command(&scratch, &socket)
+        .spawn()
+        .expect("the resident spawns");
+    let resident = Resident {
+        child,
+        socket: socket.clone(),
+    };
+
+    // The socket is claimed, and the resident is blocked recording its pid.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !socket.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the resident never claimed {}",
+            socket.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        UnixStream::connect(&socket).is_err(),
+        "the resident answers before its pid is recorded"
+    );
+
+    let mut pid = String::new();
+    std::fs::File::open(&recorded)
+        .expect("the pid file opens for reading")
+        .read_to_string(&mut pid)
+        .expect("the pid is read");
+    assert_eq!(pid, format!("{}\n", resident.child.id()));
+    std::fs::remove_file(&recorded).expect("the FIFO is removed");
+
+    // Its pid recorded, the resident goes on to listen, and answers.
+    listening(&socket);
+    let mut client = resident.client();
+    let list = client.call(1, "schemaList", json!({}), None);
+    ok(&list);
+    resident.stop();
+}
+
 /// One connection's lines: a blank one is nothing, a second request under an id
 /// still running is refused, a switch and a boolean reach the verb as its flags
 /// take them, and a line that is not UTF-8 ends the connection — cancelling what

@@ -122,14 +122,14 @@ fn claim(socket: &Path) -> Result<UnixListener, Refusal> {
             )))
         }
     }
-    let listener = UnixListener::bind(socket).map_err(|failure| {
+    // Bound, the path is this resident's — a second resident binding it is told
+    // it is in use — but nothing can connect until it listens. The pid is
+    // recorded in between, so a resident that answers has always recorded it.
+    let bound = bind(socket).map_err(|failure| {
         if failure.kind() == std::io::ErrorKind::AddrInUse {
             held_by(socket)
         } else {
-            invalid(format!(
-                "serve --resident: cannot listen on {}: {failure}",
-                socket.display()
-            ))
+            cannot_listen(socket, &failure)
         }
     })?;
     std::fs::write(pid_file(socket), format!("{}\n", std::process::id())).map_err(|failure| {
@@ -138,7 +138,30 @@ fn claim(socket: &Path) -> Result<UnixListener, Refusal> {
             pid_file(socket).display()
         ))
     })?;
-    Ok(listener)
+    rustix::net::listen(&bound, LISTEN_BACKLOG)
+        .map_err(|failure| cannot_listen(socket, &std::io::Error::from(failure)))?;
+    Ok(UnixListener::from(bound))
+}
+
+/// The backlog std's `UnixListener::bind` asks for.
+const LISTEN_BACKLOG: i32 = 128;
+
+/// A unix stream socket bound to `socket`, not yet listening: a connection to it
+/// is refused until it does.
+fn bind(socket: &Path) -> std::io::Result<std::os::fd::OwnedFd> {
+    use rustix::net::{AddressFamily, SocketAddrUnix, SocketType};
+    let fd = rustix::net::socket(AddressFamily::UNIX, SocketType::STREAM, None)?;
+    // Not inherited by what the resident spawns, as std's own sockets are not.
+    rustix::io::fcntl_setfd(&fd, rustix::io::FdFlags::CLOEXEC)?;
+    rustix::net::bind(&fd, &SocketAddrUnix::new(socket)?)?;
+    Ok(fd)
+}
+
+fn cannot_listen(socket: &Path, failure: &std::io::Error) -> Refusal {
+    invalid(format!(
+        "serve --resident: cannot listen on {}: {failure}",
+        socket.display()
+    ))
 }
 
 /// How often the resident looks for the socket it bound.
