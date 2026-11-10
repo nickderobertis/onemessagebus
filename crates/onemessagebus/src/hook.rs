@@ -9,9 +9,9 @@
 //! [`CommandHook`] is the external one: the message as one line of JSON on its
 //! stdin, and whatever it prints back is the message from then on. A
 //! [`HookCache`] beside it records a keep, change or drop under the message's
-//! content digest and the bar's fingerprint, the key a validator's
-//! [`PassCache`](crate::PassCache) uses, so an unchanged message under an
-//! unchanged bar is not run twice. A [`RawRecord`] is how a message travels
+//! content digest and the bar's fingerprint, so an unchanged message under an
+//! unchanged bar is not run twice, and reads a pass the removed validators
+//! recorded under the same key as a keep. A [`RawRecord`] is how a message travels
 //! through a chain and into an append without losing the spelling a hook gave
 //! it. Every drop is recorded in the queue's drop log, `<queue>-dropped`, as a
 //! [`Dropped`] line. `docs/hooks.md` states the contract.
@@ -31,19 +31,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::ask::Correlation;
 use crate::config::{Bus, BusError};
 use crate::queue::{Pushed, QueueError};
 use crate::schema::{Message, SchemaId};
 use crate::transport::QueueName;
-#[expect(
-    deprecated,
-    reason = "a hook cache reads the pass records a deprecated validator's cache wrote, so a swap from a validator to a hook keeps them"
-)]
-use crate::validate::{
-    bar_digest, content_digest, read_fingerprint, PassRecord, Verdict, When, PASS_RECORD_VERSION,
-};
+use crate::when::When;
 
 /// The environment variable a command hook is told the queue in.
 pub const HOOK_QUEUE_ENV: &str = "ONEMESSAGEBUS_HOOK_QUEUE";
@@ -58,6 +53,10 @@ pub const HOOK_ROUTE_ENV: &str = "ONEMESSAGEBUS_HOOK_ROUTE";
 
 /// The version of the record a [`HookCache`] writes.
 pub const HOOK_RECORD_VERSION: u32 = 2;
+
+/// The version of the pass record the validators removed in 0.11.0 wrote,
+/// which a [`HookCache`] still reads as a keep.
+pub const PASS_RECORD_VERSION: u32 = 1;
 
 /// The version of each line a drop log holds.
 pub const DROP_LOG_VERSION: u32 = 1;
@@ -777,9 +776,9 @@ impl Hook<RawRecord> for CommandHook {
 
 /// Where a command hook records its keeps, changes and drops.
 ///
-/// A record is keyed exactly as a validator's pass is: on the digest of the
-/// message's content and on the bar — the hook's command and the fingerprint
-/// `bar_fingerprint` prints when it is run. A message offered again under the
+/// A record is keyed on the digest of the message's content and on the bar —
+/// the hook's command and the fingerprint `bar_fingerprint` prints when it is
+/// run. A message offered again under the
 /// same bar takes its recorded outcome without running the command; a moved
 /// bar prints another fingerprint, so every record made under the old one
 /// misses. A fingerprint that cannot be read keys nothing. Only a hook whose
@@ -859,6 +858,74 @@ impl HookRecord {
     }
 }
 
+/// A pass a validator recorded before validators were removed,
+/// `<dir>/<content>.<bar>.pass.json` at [`PASS_RECORD_VERSION`]: read as a keep.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PassRecord {
+    schema_version: u32,
+    content: String,
+    bar: String,
+    fingerprint: String,
+    command: Vec<String>,
+}
+
+impl PassRecord {
+    /// Whether this is a pass of this version under exactly `key`.
+    fn keyed(&self, key: &HookKey) -> bool {
+        self.schema_version == PASS_RECORD_VERSION
+            && self.content == key.content
+            && self.bar == key.bar
+            && self.fingerprint == key.fingerprint
+            && self.command == key.command
+    }
+}
+
+/// The content half of a cache key: the SHA-256 of the message's bytes.
+fn content_digest(content: &[u8]) -> String {
+    hex(&Sha256::digest(content))
+}
+
+/// The bar half of a cache key: the SHA-256 of the command's argv and the
+/// fingerprint its bar printed.
+fn bar_digest(command: &[String], fingerprint: &str) -> String {
+    let mut bar = Sha256::new();
+    for word in command {
+        bar.update(word.as_bytes());
+        bar.update([0]);
+    }
+    bar.update([0xff]);
+    bar.update(fingerprint.as_bytes());
+    hex(&bar.finalize())
+}
+
+/// What `argv` prints as a bar's fingerprint: its stdout with surrounding
+/// whitespace removed, when it exits 0 having printed something.
+fn read_fingerprint(argv: &[String]) -> Option<String> {
+    let (program, arguments) = argv.split_first()?;
+    let output = Command::new(program)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let printed = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (!printed.is_empty()).then_some(printed)
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
+            use std::fmt::Write as _;
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
+}
+
 impl HookCache {
     /// A cache in `dir`, keyed on the fingerprint `bar_fingerprint` prints.
     ///
@@ -917,16 +984,15 @@ impl HookCache {
     }
 
     /// The outcome recorded under `key`: a hook's record of either version
-    /// this build writes, or a validator's pass, read as a keep.
+    /// this build writes, or a pass the removed validators recorded, read as
+    /// a keep.
     fn holds(&self, key: &HookKey) -> Option<HookOutcome<RawRecord>> {
         let bytes = std::fs::read(self.path(key)).ok()?;
         let document: Value = serde_json::from_slice(&bytes).ok()?;
         let version = document.get("schema_version").and_then(Value::as_u64)?;
         if version == u64::from(PASS_RECORD_VERSION) {
             let pass: PassRecord = serde_json::from_value(document).ok()?;
-            return pass
-                .keys(&key.content, &key.bar, &key.fingerprint, &key.command)
-                .then_some(HookOutcome::Keep);
+            return pass.keyed(key).then_some(HookOutcome::Keep);
         }
         let record: HookRecord = serde_json::from_value(document).ok()?;
         if !record.keyed(key) {
@@ -1164,9 +1230,9 @@ pub enum HookedOutcome {
     Change,
     /// The whole offer was dropped: nothing is appended but the drop.
     Drop,
-    /// A hook or a validator refused it: nothing is appended anywhere.
+    /// A hook refused it: nothing is appended anywhere.
     Refuse {
-        /// Why, in the refusing hook's or validator's own words.
+        /// Why, in the refusing hook's own words.
         reason: String,
     },
     /// It could not be decided: nothing is appended anywhere.
@@ -1213,17 +1279,6 @@ pub(crate) enum Halt {
         /// Why.
         reason: String,
     },
-    /// A validator refused or could not judge.
-    #[expect(
-        deprecated,
-        reason = "validators judge after hooks until they are removed"
-    )]
-    Validator {
-        /// The queue the offer was made to.
-        queue: QueueName,
-        /// The verdict.
-        verdict: Verdict,
-    },
 }
 
 /// An offer decided: what [`Bus::hooked`] answers, and what ended it when
@@ -1260,10 +1315,6 @@ impl Decision {
                 hook: hook.clone(),
                 reason: reason.clone(),
             }),
-            Some(Halt::Validator { queue, verdict }) => {
-                let refused = QueueError::of_verdict(queue, verdict.clone());
-                refused.map_err(BusError::from)
-            }
         }
     }
 
@@ -1292,9 +1343,6 @@ struct Settling<'a> {
     records: Vec<(QueueName, RawRecord)>,
     dropped: Vec<Dropped>,
     changed: bool,
-    /// The message as the queue it was finally offered to holds it: what that
-    /// queue's validators judge.
-    judged: Option<(QueueName, RawRecord)>,
 }
 
 impl Settling<'_> {
@@ -1385,7 +1433,6 @@ impl Settling<'_> {
         queue: &QueueName,
         message: RawRecord,
         rerouted: bool,
-        top: bool,
         path: &[QueueName],
     ) -> Result<Result<(), Halt>, BusError> {
         let through = [path, std::slice::from_ref(queue)].concat();
@@ -1413,7 +1460,7 @@ impl Settling<'_> {
                 if let Some(why) = self.reroute_target(queue, &ran, &to, rerouted) {
                     return Ok(Err(Self::halted(queue, ran, Ending::Unjudged, why)));
                 }
-                return self.settle(&to, moved, true, top, &through);
+                return self.settle(&to, moved, true, &through);
             }
             HookOutcome::Drop => {
                 self.drop_on(queue, ran.by, ran.received);
@@ -1426,9 +1473,6 @@ impl Settling<'_> {
                 return Ok(Err(Self::halted(queue, ran, Ending::Unjudged, reason)))
             }
         };
-        if top {
-            self.judged = Some((queue.clone(), last.clone()));
-        }
         for (target, value) in prepared {
             // Where no step rewrote the record, the bytes are the ones the
             // message arrived in; where one did, it is written from its value.
@@ -1498,7 +1542,7 @@ impl Settling<'_> {
                 if let Some(why) = self.reroute_target(queue, &ran, &to, rerouted) {
                     return Ok(Err(Self::halted(queue, ran, Ending::Unjudged, why)));
                 }
-                return self.settle(&to, message, true, false, &through);
+                return self.settle(&to, message, true, &through);
             }
             HookOutcome::Drop => {
                 self.changed = true;
@@ -1537,8 +1581,7 @@ impl Bus {
 
     /// What offering `record` to `queue` would become, appending nothing but
     /// the records a hook cache writes: the layout's preparation, then the
-    /// queue's hooks, then each routed record's queue's hooks, then the
-    /// deprecated validators over the records the hooks made.
+    /// queue's hooks, then each routed record's queue's hooks.
     ///
     /// # Errors
     ///
@@ -1549,7 +1592,7 @@ impl Bus {
         Ok(self.decide(queue, record, None, None)?.hooked)
     }
 
-    /// Decide an offer: every hook and validator run, nothing appended.
+    /// Decide an offer: every hook run, nothing appended.
     pub(crate) fn decide(
         &self,
         queue: &QueueName,
@@ -1564,7 +1607,6 @@ impl Bus {
             records: Vec::new(),
             dropped: Vec::new(),
             changed: false,
-            judged: None,
         };
         let refused = |halt: Halt| {
             let outcome = match &halt {
@@ -1578,19 +1620,6 @@ impl Bus {
                 Halt::Hook { reason, .. } => HookedOutcome::Unjudged {
                     reason: reason.clone(),
                 },
-                #[expect(
-                    deprecated,
-                    reason = "validators judge after hooks until they are removed"
-                )]
-                Halt::Validator { verdict, .. } => match verdict {
-                    Verdict::Refuse { reason } => HookedOutcome::Refuse {
-                        reason: reason.clone(),
-                    },
-                    Verdict::Unjudged { reason } => HookedOutcome::Unjudged {
-                        reason: reason.clone(),
-                    },
-                    Verdict::Pass => HookedOutcome::Keep,
-                },
             };
             Decision {
                 hooked: Hooked {
@@ -1601,22 +1630,8 @@ impl Bus {
                 halt: Some(halt),
             }
         };
-        if let Err(halt) = settling.settle(queue, record, false, true, &[])? {
+        if let Err(halt) = settling.settle(queue, record, false, &[])? {
             return Ok(refused(halt));
-        }
-        if let Some((judged_on, message)) = &settling.judged {
-            let routed: Vec<(QueueName, Value)> = settling
-                .records
-                .iter()
-                .map(|(target, record)| (target.clone(), record.value().clone()))
-                .collect();
-            let verdict = self.judge(judged_on, message.value(), &routed, correlation);
-            if !verdict.passes() {
-                return Ok(refused(Halt::Validator {
-                    queue: queue.clone(),
-                    verdict,
-                }));
-            }
         }
         // Every record is checked against its queue's schema as a send checks
         // it, so a dry run never answers a record its send would refuse.

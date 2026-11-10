@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use crate::support::{desk_bundle, run_in, Run};
+use crate::support::{assert_usage_refused, desk_bundle, run_in, Run};
 
 /// The bundle the journeys link for a layout whose preparation stamps a record.
 fn hooks_bundle() -> PathBuf {
@@ -848,6 +848,28 @@ fn a_cached_keep_change_and_drop_are_not_run_again_until_the_bar_moves() {
     let _ = &cached.refuse;
 }
 
+/// A pass a validator recorded before validators were removed, at
+/// `schema_version: 1`, keyed exactly as a hook's record is: the document
+/// `PassCache` wrote, field for field, in its order, pretty-printed.
+fn validator_pass(key: &Value) -> String {
+    #[derive(serde::Serialize)]
+    struct PassRecord<'a> {
+        schema_version: u32,
+        content: &'a Value,
+        bar: &'a Value,
+        fingerprint: &'a Value,
+        command: &'a Value,
+    }
+    serde_json::to_string_pretty(&PassRecord {
+        schema_version: 1,
+        content: &key["content"],
+        bar: &key["bar"],
+        fingerprint: &key["fingerprint"],
+        command: &key["command"],
+    })
+    .expect("a pass record")
+}
+
 #[test]
 fn a_pass_a_validator_recorded_for_the_same_argv_and_content_is_read_as_a_keep() {
     let scratch = Scratch::new();
@@ -863,29 +885,47 @@ fn a_pass_a_validator_recorded_for_the_same_argv_and_content_is_read_as_a_keep()
     );
     let record = r#"{"text":"judged once"}"#;
     scratch.configure(&format!(
-        "queues:\n  inbox: {{}}\nvalidators:\n  - {{on: inbox, kind: command, command: {}, {cache}}}\n",
-        hook(&counted)
-    ));
-    assert_eq!(scratch.bus(&["send", "inbox"], Some(record)).code, 0);
-    assert_eq!(scratch.marker("ran"), 1);
-    let passes: Vec<Value> = std::fs::read_dir(scratch.path("passes"))
-        .expect("the pass cache")
-        .map(|entry| {
-            serde_json::from_slice(&std::fs::read(entry.expect("an entry").path()).expect("read"))
-                .expect("JSON")
-        })
-        .collect();
-    assert_eq!(passes.len(), 1);
-    assert_eq!(passes[0]["schema_version"], json!(1));
-
-    scratch.configure(&format!(
         "queues:\n  inbox: {{}}\nhooks:\n  - {{on: inbox, command: {}, {cache}}}\n",
         hook(&counted)
     ));
+    // The hook's own keep names the file and the key a validator's pass of the
+    // same argv and content was written under; that pass replaces it.
+    assert_eq!(scratch.bus(&["send", "inbox"], Some(record)).code, 0);
+    assert_eq!(scratch.marker("ran"), 1);
+    let records: Vec<PathBuf> = std::fs::read_dir(scratch.path("passes"))
+        .expect("the hook cache")
+        .map(|entry| entry.expect("an entry").path())
+        .collect();
+    let [path] = records.as_slice() else {
+        panic!("one record: {records:?}");
+    };
+    let keep: Value = serde_json::from_slice(&std::fs::read(path).expect("read")).expect("JSON");
+    assert_eq!(keep["outcome"], json!("keep"), "{keep}");
+    let pass = validator_pass(&keep);
+    std::fs::write(path, &pass).expect("the validator's pass is written");
+
     let sent = scratch.bus(&["send", "inbox"], Some(record));
     assert_eq!(sent.code, 0, "{}", sent.stderr);
     assert_eq!(scratch.marker("ran"), 1, "a recorded pass ran the hook");
     assert_eq!(scratch.raw("inbox"), format!("{record}\n{record}\n"));
+    assert_eq!(
+        std::fs::read_to_string(path).expect("read"),
+        pass,
+        "a pass read as a keep was rewritten"
+    );
+
+    // A pass of another version is no keep: the hook runs again.
+    std::fs::write(
+        path,
+        pass.replace(r#""schema_version": 1"#, r#""schema_version": 0"#),
+    )
+    .expect("the pass is rewritten");
+    assert_eq!(scratch.bus(&["send", "inbox"], Some(record)).code, 0);
+    assert_eq!(
+        scratch.marker("ran"),
+        2,
+        "a pass of another version was read as a keep"
+    );
 }
 
 #[test]
@@ -1127,60 +1167,76 @@ fn a_queue_whose_name_ends_in_dropped_is_refused_naming_it() {
 }
 
 #[test]
-fn validators_are_deprecated_on_stderr_and_judge_the_record_a_hook_changed() {
+fn validate_refuses_a_record_that_is_not_json_or_not_an_object_with_exit_two_running_no_hook() {
     let scratch = Scratch::new();
-    let judge = scratch.script("judge.sh", &format!("cat > {}", scratch.at("judged")));
-    scratch.configure(&format!(
-        "queues:\n  inbox: {{}}\nvalidators:\n  - {{on: inbox, kind: command, command: {}}}\n",
-        hook(&judge)
-    ));
-    let sent = scratch.bus(&["send", "inbox"], Some(r#"{"text":"x"}"#));
-    assert_eq!(sent.code, 0, "{}", sent.stderr);
-    assert_eq!(sent.stderr.lines().count(), 1, "{}", sent.stderr);
-    let warning = sent.stderr.trim_end();
-    assert!(
-        warning.starts_with("onemessagebus: validators are deprecated")
-            && warning.contains("`hooks:`")
-            && warning.contains("prints its input to pass")
-            && warning.contains("hooks run first and validators judge the records the hooks made"),
-        "{warning}"
+    // Were it reached, it would refuse, and the verb would exit 1.
+    let refuse = scratch.script(
+        "refuse.sh",
+        &format!(
+            "echo ran >> {}\ncat > /dev/null\necho 'handed what it should never have been' >&2\nexit 1",
+            scratch.at("ran")
+        ),
     );
+    scratch.configure(&format!(
+        "{desk}hooks:\n  - {{on: answers, command: {command}}}\n  - {{on: questions, command: {command}}}\n",
+        desk = scratch.desk(),
+        command = hook(&refuse)
+    ));
+    for (queue, stdin, problem) in [
+        (
+            "answers",
+            "[3]",
+            "onemessagebus: answers: a record on this queue is a JSON object, and this is an array",
+        ),
+        (
+            "questions",
+            r#""the base moved""#,
+            "onemessagebus: questions: a record on this queue is a JSON object, and this is a string",
+        ),
+        (
+            "answers",
+            r#"{"version": 3,"#,
+            "onemessagebus: the payload is not JSON",
+        ),
+    ] {
+        let refused = scratch.bus(&["validate", queue], Some(stdin));
+        assert_eq!(refused.code, 2, "{problem}: {}", refused.stderr);
+        assert_eq!(refused.stdout, "", "{problem}");
+        assert!(refused.stderr.contains(problem), "{problem}: {}", refused.stderr);
+    }
+    assert_eq!(scratch.marker("ran"), 0, "a hook ran on refused input");
+    assert!(scratch.raw("answers").is_empty() && scratch.raw("questions").is_empty());
+}
 
-    let tag = scratch.script(
-        "tag.sh",
-        "cat > /dev/null\necho '{\"text\":\"x\",\"hooked\":true}'",
+#[test]
+fn validate_refuses_a_usage_error_on_one_line_with_exit_two_running_no_hook() {
+    let scratch = Scratch::new();
+    let refuse = scratch.script(
+        "refuse.sh",
+        &format!(
+            "echo ran >> {}\ncat > /dev/null\necho 'ran on a command line that was never valid' >&2\nexit 1",
+            scratch.at("ran")
+        ),
     );
     scratch.configure(&format!(
-        "queues:\n  inbox: {{}}\nhooks:\n  - {{on: inbox, command: {}}}\nvalidators:\n  - {{on: inbox, kind: command, command: {}}}\n",
-        hook(&tag),
-        hook(&judge)
+        "{}hooks:\n  - {{on: answers, command: {}}}\n",
+        scratch.desk(),
+        hook(&refuse)
     ));
-    let both = scratch.bus(&["send", "inbox"], Some(r#"{"text":"x"}"#));
-    assert_eq!(both.code, 0, "{}", both.stderr);
-    let judged: Value = serde_json::from_str(
-        &std::fs::read_to_string(scratch.path("judged")).expect("the validator ran"),
-    )
-    .expect("JSON");
-    assert_eq!(
-        judged,
-        json!({"text": "x", "hooked": true}),
-        "the validator did not judge the record the hook changed"
-    );
-    assert_eq!(
-        scratch.raw_lines("inbox")[1],
-        r#"{"text":"x","hooked":true}"#
-    );
-
-    scratch.configure(&format!(
-        "queues:\n  inbox: {{}}\nhooks:\n  - {{on: inbox, command: {}}}\n",
-        hook(&tag)
-    ));
-    assert_eq!(
-        scratch
-            .bus(&["send", "inbox"], Some(r#"{"text":"x"}"#))
-            .stderr,
-        ""
-    );
+    let record = json!({"version": 3, "completion": true, "reason": "main"}).to_string();
+    for (args, what) in [
+        (
+            vec!["validate", "answers", "--verdict", "pass"],
+            "unexpected argument '--verdict' found",
+        ),
+        (
+            vec!["validate"],
+            "the following required arguments were not provided: <QUEUE>",
+        ),
+    ] {
+        assert_usage_refused(&scratch.bus(&args, Some(&record)), "validate", what);
+    }
+    assert_eq!(scratch.marker("ran"), 0, "a hook ran on a usage error");
 }
 
 #[test]

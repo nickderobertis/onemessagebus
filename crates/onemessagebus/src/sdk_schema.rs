@@ -7,11 +7,6 @@
 //! the registry holds. Language packages may add client behaviour, but must
 //! not restate these wire shapes by hand.
 
-#![expect(
-    deprecated,
-    reason = "`validate` keeps printing the deprecated verdict beside the hook outcome until a later release removes it"
-)]
-
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::num::NonZeroU64;
@@ -34,7 +29,6 @@ use crate::link::{BundleVersion, CachedBundle, SchemaBundle, SchemaLink};
 use crate::queue::{Asker, QueueStatus};
 use crate::schema::{Registry, SchemaId};
 use crate::transport::{ConsumerName, Position, QueueName};
-use crate::validate::Verdict;
 use crate::vocabulary::{Reserved, Vocabulary};
 
 /// How a reading verb renders what it read.
@@ -389,7 +383,7 @@ pub struct SchemasFetchOptions {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ValidateOptions {
-    /// The queue whose validators judge the record.
+    /// The queue whose hooks the record is offered to.
     pub queue: QueueName,
     /// The record file; stdin when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -523,8 +517,7 @@ pub struct Validated {
     /// `unjudged` otherwise, with the reason beside a verdict that is not a
     /// pass.
     #[serde(flatten)]
-    #[schemars(with = "VerdictWire")]
-    pub verdict: Verdict,
+    pub verdict: ValidatedVerdict,
     /// What the offer became.
     pub outcome: OutcomeWord,
     /// Each record a send would append, in order, its bytes as a send would
@@ -538,17 +531,17 @@ impl Validated {
     #[must_use]
     pub fn of(queue: QueueName, hooked: &Hooked) -> Self {
         let (verdict, outcome) = match &hooked.outcome {
-            HookedOutcome::Keep => (Verdict::Pass, OutcomeWord::Keep),
-            HookedOutcome::Change => (Verdict::Pass, OutcomeWord::Change),
-            HookedOutcome::Drop => (Verdict::Pass, OutcomeWord::Drop),
+            HookedOutcome::Keep => (ValidatedVerdict::Pass, OutcomeWord::Keep),
+            HookedOutcome::Change => (ValidatedVerdict::Pass, OutcomeWord::Change),
+            HookedOutcome::Drop => (ValidatedVerdict::Pass, OutcomeWord::Drop),
             HookedOutcome::Refuse { reason } => (
-                Verdict::Refuse {
+                ValidatedVerdict::Refuse {
                     reason: reason.clone(),
                 },
                 OutcomeWord::Refuse,
             ),
             HookedOutcome::Unjudged { reason } => (
-                Verdict::Unjudged {
+                ValidatedVerdict::Unjudged {
                     reason: reason.clone(),
                 },
                 OutcomeWord::Unjudged,
@@ -570,21 +563,17 @@ impl Validated {
     }
 }
 
-/// `validate`'s verdict on the wire: the deprecated [`Verdict`]'s own shape,
-/// stated here so the `validated` root is not itself marked deprecated. The
-/// unit test below holds the two schemas to one shape.
-#[derive(JsonSchema)]
+/// `validate`'s verdict: on the wire `{"verdict": "pass"}`,
+/// `{"verdict": "refuse", "reason": ...}` or `{"verdict": "unjudged", "reason": ...}`,
+/// beside the [`OutcomeWord`] it summarises.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "verdict", rename_all = "lowercase")]
-#[expect(
-    dead_code,
-    reason = "a schema-only mirror of the deprecated verdict's wire shape"
-)]
-enum VerdictWire {
+pub enum ValidatedVerdict {
     /// The offer may be sent: a keep, a change or a drop.
     Pass,
     /// The offer is refused.
     Refuse {
-        /// Why, in the refusing hook's or validator's own words.
+        /// Why, in the refusing hook's own words.
         reason: String,
     },
     /// The offer could not be decided, so it is not sent either.
@@ -604,7 +593,7 @@ pub enum OutcomeWord {
     Change,
     /// The whole offer dropped.
     Drop,
-    /// Refused by a hook or a validator.
+    /// Refused by a hook.
     Refuse,
     /// Not decided.
     Unjudged,
@@ -944,7 +933,7 @@ pub struct Bundle {
     pub queue_statuses: Schema,
     /// The output of `transports`: every kind this build can open.
     pub transport_kinds: Schema,
-    /// The output of `validate`: the verdict a queue's validators reached.
+    /// The output of `validate`: what a queue's hooks made of an offer.
     pub validated: Schema,
     /// The output of `ask`: the answer, named.
     pub asked: Schema,
@@ -1615,41 +1604,5 @@ impl Bundle {
         let mut out = serde_json::to_string_pretty(self).unwrap_or_default();
         let _ = writeln!(out);
         out
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A schema with what does not decide its shape removed: prose, titles and
-    /// the deprecation annotation.
-    fn shape(value: Value) -> Value {
-        match value {
-            Value::Object(fields) => Value::Object(
-                fields
-                    .into_iter()
-                    .filter(|(key, _)| {
-                        !matches!(
-                            key.as_str(),
-                            "description" | "title" | "deprecated" | "$schema"
-                        )
-                    })
-                    .map(|(key, value)| (key, shape(value)))
-                    .collect(),
-            ),
-            Value::Array(items) => Value::Array(items.into_iter().map(shape).collect()),
-            other => other,
-        }
-    }
-
-    #[test]
-    fn the_validated_verdicts_mirror_is_the_deprecated_verdicts_shape() {
-        let verdict = schemars::schema_for!(Verdict).to_value();
-        assert_eq!(verdict["deprecated"], Value::Bool(true));
-        assert_eq!(
-            shape(schemars::schema_for!(VerdictWire).to_value()),
-            shape(verdict)
-        );
     }
 }

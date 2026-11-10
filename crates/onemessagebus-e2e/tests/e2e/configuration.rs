@@ -186,6 +186,141 @@ fn a_queue_verb_given_no_configuration_is_refused_naming_config_and_creates_noth
     a_configured_resident_answers_requests_and_one_naming_its_own_configuration();
 }
 
+/// The refusal a configuration declaring the removed `validators` key is
+/// given, after `onemessagebus: <path>: `.
+const VALIDATORS_REMOVED: &str = "validators: validators were removed in onemessagebus 0.11.0; declare each entry under `hooks:` instead, with the same `on`, `when`, `command` and `cache` and no `kind`, and have its command print its input back unchanged and exit 0 to pass — exit 1 with a reason on stderr still refuses (docs/hooks.md)";
+
+#[test]
+fn a_configuration_declaring_validators_is_refused_by_every_verb_that_loads_one_and_appends_nothing(
+) {
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let dir = scratch.path();
+    let judged = dir.join("judged");
+    std::fs::write(
+        dir.join("judge.sh"),
+        format!(
+            "cat > {}\nexit 1\n",
+            judged.to_str().expect("a UTF-8 path").replace('\\', "/")
+        ),
+    )
+    .expect("the validator script is written");
+    std::fs::write(dir.join("greeting.json"), r#"{"type": "object"}"#)
+        .expect("a schema document is written");
+    let judge = dir.join("judge.sh");
+    let judge = judge.to_str().expect("a UTF-8 path").replace('\\', "/");
+    let config = desk_config(
+        dir,
+        &format!(
+            "validators:\n  - {{on: questions, when: {{carries: message}}, kind: command, command: [sh, {judge:?}], cache: {{dir: passes, bar_fingerprint: [echo, bar-1]}}}}\n"
+        ),
+    );
+    let config = config.to_str().expect("a UTF-8 path");
+    let registry = dir.join("registry");
+    let registry = registry.to_str().expect("a UTF-8 path");
+    let cache = dir.join("schema-cache");
+    let cache = cache.to_str().expect("a UTF-8 path");
+    let socket = dir.join("bus.sock");
+    let socket = socket.to_str().expect("a UTF-8 path");
+    let before = entries(dir);
+
+    let mut verbs: Vec<(Vec<&str>, Option<&str>)> = queue_verbs()
+        .into_iter()
+        .map(|(mut args, stdin)| {
+            args.extend(["--config", config]);
+            (args, stdin)
+        })
+        .collect();
+    if cfg!(unix) {
+        verbs.push((
+            vec![
+                "serve",
+                "--resident",
+                "--socket",
+                socket,
+                "--config",
+                config,
+            ],
+            None,
+        ));
+    }
+    verbs.extend([
+        (vec!["schema", "list", "--config", config], None),
+        (
+            vec!["schema", "check", "demo.greeting@1", "--config", config],
+            Some("{}"),
+        ),
+        (
+            vec![
+                "schema",
+                "gen",
+                "--lang",
+                "json",
+                "demo.greeting@1",
+                "--config",
+                config,
+            ],
+            None,
+        ),
+        (
+            vec![
+                "schema",
+                "register",
+                "demo.greeting@1",
+                "--file",
+                "greeting.json",
+                "--registry",
+                registry,
+                "--config",
+                config,
+            ],
+            None,
+        ),
+        (vec!["schemas", "fetch", "--config", config], None),
+    ]);
+    for (args, stdin) in &verbs {
+        let refused = run(
+            dir,
+            args,
+            *stdin,
+            &[("ONEMESSAGEBUS_SCHEMA_CACHE_DIR", cache)],
+        );
+        let what = format!("`{}`", args.join(" "));
+        assert_eq!(refused.code, 2, "{what}: {}", refused.stderr);
+        assert_eq!(refused.stdout, "", "{what}");
+        assert_eq!(
+            refused.stderr,
+            format!("onemessagebus: {config}: {VALIDATORS_REMOVED}\n"),
+            "{what}"
+        );
+        assert_eq!(entries(dir), before, "{what} created something");
+    }
+    assert!(!judged.exists(), "a validator ran");
+
+    // The same entry declared as the refusal says — under `hooks:`, `kind`
+    // gone — loads, runs, and refuses in the script's own words.
+    std::fs::write(
+        dir.join("judge.sh"),
+        "cat > /dev/null\necho 'names no base' >&2\nexit 1\n",
+    )
+    .expect("the hook script is written");
+    desk_config(
+        dir,
+        &format!(
+            "hooks:\n  - {{on: questions, when: {{carries: message}}, command: [sh, {judge:?}], cache: {{dir: passes, bar_fingerprint: [echo, bar-1]}}}}\n"
+        ),
+    );
+    let question =
+        r#"{"kind": "question", "message": "which base?", "source": "proposal", "blocking": true}"#;
+    let hooked = run(
+        dir,
+        &["send", "questions", "--config", config],
+        Some(question),
+        &[],
+    );
+    assert_eq!(hooked.code, 1, "{}", hooked.stderr);
+    assert!(hooked.stderr.contains("names no base"), "{}", hooked.stderr);
+}
+
 /// A resident started with a configuration listens, answers a queue request
 /// over it, and answers one naming a configuration of its own over that one.
 #[cfg(unix)]

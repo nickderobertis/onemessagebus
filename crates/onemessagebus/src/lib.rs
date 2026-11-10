@@ -54,8 +54,8 @@ pub mod sdk_schema;
 mod shared_clock;
 mod spool;
 pub mod transport;
-mod validate;
 mod vocabulary;
+mod when;
 
 #[doc(hidden)]
 pub use ask::AskOffered;
@@ -81,15 +81,9 @@ pub use codec::{
     FieldEquals, FrameConfig, NameRefused, ServeError, ServeOptions, ServeSession, Served,
     DEFAULT_REPLY_WINDOW,
 };
-#[expect(
-    deprecated,
-    reason = "the deprecated validator items stay exported until a later release removes them"
-)]
-pub use config::ValidatorConfig;
 pub use config::{
     AuthorConfig, Bus, BusError, CacheConfig, Config, ConfigError, HookConfig, Layout, Layouts,
-    Offered, PolicyConfig, QueueConfig, RefusalReason, Router, ValidatorKind, CONFIG_VERSION,
-    NARROWED, VALIDATORS_DEPRECATED,
+    Offered, PolicyConfig, QueueConfig, RefusalReason, Router, CONFIG_VERSION, NARROWED,
 };
 pub use emit::{Emitter, EmitterError, Unrecorded};
 pub use envelope::{ArtifactRef, Envelope, Kind, Labels, NoDimensions, Source};
@@ -98,6 +92,7 @@ pub use hook::{
     drop_log, dropped_from, CommandHook, Dropped, Hook, HookCache, HookContext, HookError,
     HookOutcome, HookRef, Hooked, HookedOutcome, Hooks, RawRecord, RawRecordError, DROPPED_SUFFIX,
     DROP_LOG_VERSION, HOOK_CORRELATION_ENV, HOOK_QUEUE_ENV, HOOK_RECORD_VERSION, HOOK_ROUTE_ENV,
+    PASS_RECORD_VERSION,
 };
 pub use inbox::{
     Answered, BackendError, Carried, Closed, Delivered, Disposition, InProcess, Inbox,
@@ -134,15 +129,8 @@ pub use transport::{
     NameError, Position, ProcessTransport, QueueName, Reads, Stored, TornRecord, Transport,
     TransportError,
 };
-#[expect(
-    deprecated,
-    reason = "the deprecated validator items stay exported until a later release removes them"
-)]
-pub use validate::{
-    CommandValidator, OnRecords, PassCache, ValidationContext, Validator, ValidatorError,
-    Validators, Verdict, When, PASS_RECORD_VERSION, VALIDATE_CORRELATION_ENV, VALIDATE_QUEUE_ENV,
-};
 pub use vocabulary::{Admits, Open, Reserved, Vocabulary, Wire};
+pub use when::When;
 
 /// The README's sample, compiled by `cargo test --doc` so a sample naming an
 /// item this crate no longer has fails rather than reaching crates.io.

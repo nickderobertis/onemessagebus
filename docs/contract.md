@@ -504,7 +504,7 @@ recorded here so the adopting nodes read them where they read the contract:
 - `enum Answer<R> { Reply(R), Timeout, Abandoned, Refused(Refusal) }`: a reply
   echoing this ask's correlation; the wait elapsed and the question stands; the
   listener was abandoned and nobody re-attended; the bus refused the question or
-  the reply (validator, capability, schema).
+  the reply (capability, schema, queue).
 - `Bus::reply(queue, correlation: Option<&Correlation>, reply)` binds a reply to
   the pending ask whose correlation it echoes. A reply echoing a correlation
   nothing pending holds is refused naming it — the misrouted-reply guard
@@ -536,7 +536,7 @@ recorded here so the adopting nodes read them where they read the contract:
 
 ### Contract H — hooks
 
-<!-- llmlint: ignore[no_redundant_instruction_pointers] the hooks node is required to state its contract once, in docs/hooks.md, and to have docs/contract.md, docs/cli.md, docs/queues.md and docs/validators.md point at it rather than restate it; this is this document's one pointer, so a reader here reaches the hook contract without a second copy that could drift. -->
+<!-- llmlint: ignore[no_redundant_instruction_pointers] the hooks node is required to state its contract once, in docs/hooks.md, and to have docs/contract.md, docs/cli.md and docs/queues.md point at it rather than restate it; this is this document's one pointer, so a reader here reaches the hook contract without a second copy that could drift. -->
 A hook is a configured command — or a Rust `Hook<M>` a linking consumer registers
 with `Bus::with_hook` — that receives each offered message before anything is
 appended, and whose answer keeps, changes, reroutes, drops or refuses it; every
@@ -548,37 +548,14 @@ one offer, the drop log, the cache, the library surface (`RawRecord`, `Hook`,
 `Bus::append_hooked`, `Bus::dropped`, `BusError::Dropped`), the command line and
 the SDKs — and nothing of it is restated here.
 
-### Contract V — validators
+### Contract V — validators, removed
 
-Deprecated in favour of Contract H's hooks, and still working exactly as stated
-below: every validator item carries `#[deprecated]` naming its hook replacement,
-a configuration declaring `validators:` is said so on stderr, and where both are
-declared, hooks run first and validators judge the records the hooks made.
-
-- `trait Validator<M: Message>: Send + Sync { fn validate(&self, message: &M,
-  context: &ValidationContext) -> Verdict; }` and `enum Verdict { Pass, Refuse {
-  reason }, Unjudged { reason } }`; **an `Unjudged` verdict never passes**. On the
-  wire:
-
-<!-- fixture: verdicts -->
-```json
-[{"verdict": "pass"}, {"verdict": "refuse", "reason": "the criterion names no observable outcome"}, {"verdict": "unjudged", "reason": "the validator `review` exited 3, which is neither a pass (0) nor a refusal (1)"}]
-```
-
-- `Validators<M>` is ordered: every one runs, the first `Refuse` wins, and
-  otherwise an `Unjudged` makes the send `Unjudged`.
-- `CommandValidator { command, cache: Option<PassCache> }` is the external
-  validator: the message on stdin, exit 0 a pass, exit 1 a refusal with its
-  stderr as the reason, any other exit unjudged.
-- `PassCache { dir, bar_fingerprint }` records a `Pass` keyed on the content
-  digest and the bar fingerprint; only a pass is recorded, so a changed bar
-  re-runs the command.
-- `Queue::push` and `Bus::reply` — and `Bus::send` and `Bus::ask` — run the
-  queue's configured validators **before** anything is appended; a refused or
-  unjudged message is appended nowhere, and the caller gets the reason verbatim.
-  An offer the layout routes to several queues is judged whole: by the offered
-  queue's validators, and each routed record by its own queue's.
-- Configuration, extending `onemessagebus.yaml`:
+Validators were removed in 0.11.0; Contract H's hooks replace them. A
+configuration that still declares the `validators` key is refused when it is
+parsed, so every verb that loads one exits 2 naming the key and appending
+nothing. Each entry is declared as a hook instead: the same `on`, `when`,
+`command` and `cache`, with no `kind`, and a command that prints its input back
+unchanged to pass. A refused configuration such as
 
 <!-- fixture: validators-config -->
 ```yaml
@@ -587,10 +564,9 @@ validators:
      cache: {dir: .validator-passes, bar_fingerprint: [scripts/bar-fingerprint.sh]}}
 ```
 
-  `on` names a queue, `when` an optional predicate over the envelope, `kind:
-  command` the external form; a Rust validator a linking consumer registers
-  (`Bus::with_validator`, `Queue::with_validators`) is not configurable from the
-  file, because it is code. Every key is refused by name when unknown.
+loads once the key reads `hooks` and `kind: command` is gone, and a hook cache
+reads the `schema_version: 1` pass records a validator wrote as keeps
+(`docs/hooks.md`).
 
 ### Contract K — configured codecs behind `serve`
 

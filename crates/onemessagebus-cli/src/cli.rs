@@ -33,7 +33,7 @@ use onemessagebus::{
     Filter, Freshness, Layouts, Lifetime, LinkError, LinkResolver, Merge, Open, Outcome, Pending,
     Position, Predicate, QueueError, QueueName, QueueStatus, RawRecord, Redactor, Resolved,
     SchemaId, SchemaLink, ServeError, ServeOptions, Served, Spool, Subscription, TransportKinds,
-    Undelivered, Vocabulary, DEFAULT_REPLY_WINDOW, SPOOL_WAIT, VALIDATORS_DEPRECATED,
+    Undelivered, Vocabulary, DEFAULT_REPLY_WINDOW, SPOOL_WAIT,
 };
 use serde_json::{Map, Value};
 
@@ -101,8 +101,8 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
         format: OutputFormat,
     },
-    /// Judge a record by a queue's validators, appending nothing, and print the
-    /// verdict.
+    /// Run a record through a queue's hooks, appending nothing, and print what
+    /// the offer became.
     Validate(ValidateArgs),
     /// Serve a member protocol: frames of a codec's protocol in, one
     /// response per frame out, over a queue — or, with `--resident`, hold the
@@ -182,7 +182,7 @@ impl ServeArgs {
 /// What `validate` takes.
 #[derive(Debug, Args)]
 struct ValidateArgs {
-    /// The queue whose validators judge the record.
+    /// The queue whose hooks the record is offered to.
     #[arg(value_name = "QUEUE")]
     queue: String,
     /// The record file; stdin when absent.
@@ -1513,14 +1513,9 @@ fn configuration(args: &BusArgs) -> Result<Config, Refusal> {
     })
 }
 
-/// The configuration file at `path`, loaded and checked: one declaring
-/// `validators` is said so on stderr, in one line naming `hooks`.
+/// The configuration file at `path`, loaded and checked.
 fn load_config(path: &Path) -> Result<Config, Refusal> {
-    let config = Config::load(path).map_err(|failure| invalid(failure.to_string()))?;
-    if !config.validators.is_empty() {
-        eprintln!("onemessagebus: {VALIDATORS_DEPRECATED}");
-    }
-    Ok(config)
+    Config::load(path).map_err(|failure| invalid(failure.to_string()))
 }
 
 fn parse_queue(text: &str) -> Result<QueueName, Refusal> {

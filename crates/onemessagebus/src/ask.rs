@@ -273,8 +273,6 @@ pub struct AskOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum RefusalKind {
-    /// A validator refused it, or could not judge it.
-    Validator,
     /// The layout or its allowlist refused it.
     Capability,
     /// It does not satisfy the schema it is read as.
@@ -708,8 +706,8 @@ impl Bus {
     ///
     /// The question is checked against `Q`'s schema, stamped with a minted
     /// [`Correlation`], its `blocking` flag, its `asker` and what it is `about`,
-    /// shaped by the layout, judged by the validators, validated against the
-    /// queue's schema and appended. Only a reply echoing the correlation answers
+    /// shaped by the layout, run through the queue's hooks, validated against
+    /// the queue's schema and appended. Only a reply echoing the correlation answers
     /// it.
     ///
     /// # Errors
@@ -717,7 +715,7 @@ impl Bus {
     /// An undeclared queue; one that keeps no events or declares no answer
     /// queue ([`BusError::NotAskable`]); a question that is not a JSON object
     /// or does not satisfy `Q`'s schema or the queue's; the layout's refusal; a
-    /// validator's refusal or an unjudged verdict. Nothing is appended.
+    /// hook's refusal or an unjudged outcome. Nothing is appended.
     /// [`BusError::Dropped`] when a hook drops the question: only its drop is
     /// recorded.
     pub fn ask<Q: Message, R: Message>(
@@ -898,16 +896,16 @@ impl Bus {
     /// An ask is pending from when it is queued until a reply echoing its
     /// correlation is on the answer queue, abandoned or not. The reply is
     /// shaped by the layout as an offer to the answer queue, the record that
-    /// lands there stamped with the correlation, judged by the validators,
-    /// and appended; a question holding the queue's pending slot is released.
+    /// lands there stamped with the correlation, run through the hooks, and
+    /// appended; a question holding the queue's pending slot is released.
     ///
     /// # Errors
     ///
     /// [`QueueError::NotAnObject`] for a reply that is not a JSON object, before
     /// it is bound; [`BusError::Unbound`] for a correlation nothing pending
     /// holds, naming it, or — naming none — for a queue with no pending ask or
-    /// more than one; an unaskable queue; the layout's refusal; a validator's
-    /// refusal or an unjudged verdict. Nothing is appended.
+    /// more than one; an unaskable queue; the layout's refusal; a hook's
+    /// refusal or an unjudged outcome. Nothing is appended.
     pub fn reply(
         &self,
         queue: &QueueName,

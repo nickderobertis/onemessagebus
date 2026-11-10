@@ -399,32 +399,6 @@ impl Hook<serde_json::Value> for RefusesSilence {
     }
 }
 
-/// A deterministic validator: a finding says what it found.
-struct SaysSomething;
-
-#[expect(
-    deprecated,
-    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
-)]
-impl onemessagebus::Validator<serde_json::Value> for SaysSomething {
-    fn validate(
-        &self,
-        message: &serde_json::Value,
-        _: &onemessagebus::ValidationContext,
-    ) -> onemessagebus::Verdict {
-        if message["what"]
-            .as_str()
-            .is_some_and(|what| !what.is_empty())
-        {
-            onemessagebus::Verdict::Pass
-        } else {
-            onemessagebus::Verdict::Refuse {
-                reason: "a finding says what it found".to_owned(),
-            }
-        }
-    }
-}
-
 /// A bus over a local transport with a queue questions are asked on and the
 /// queue its answers land on.
 fn asking_bus() -> (tempfile::TempDir, onemessagebus::Bus) {
@@ -478,36 +452,6 @@ fn every_named_library_entry_is_exercised_and_every_exercised_entry_is_named() {
             "{entry} is not a path into the core"
         );
     }
-}
-
-#[test]
-#[expect(
-    deprecated,
-    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
-)]
-fn the_deprecated_validate_entry_still_judges_by_a_registered_validator() {
-    let dir = tempfile::tempdir().expect("a temp dir");
-    let mut config = Config::local(dir.path(), None);
-    config
-        .queues
-        .insert(queue("findings"), QueueConfig::default());
-    let bus = config
-        .resolve(&Layouts::new(), &TransportKinds::builtin())
-        .expect("resolves")
-        .with_validator(&queue("findings"), SaysSomething)
-        .expect("a declared queue");
-    assert!(bus
-        .validate(&queue("findings"), json!({ "what": "the base moved" }))
-        .expect("judged")
-        .passes());
-    let refused = bus
-        .validate(&queue("findings"), json!({ "what": "" }))
-        .expect("judged");
-    assert_eq!(refused.reason(), Some("a finding says what it found"));
-    assert!(
-        !dir.path().join("findings.jsonl").exists(),
-        "validate appended"
-    );
 }
 
 /// A note on a typed queue, as a Rust consumer declares it.
@@ -902,8 +846,8 @@ fn hook_surface() -> Vec<Exercise> {
                 assert_eq!(hook.routes, Some(vec![queue("b")]));
                 assert_eq!(hook.command, ["cat"]);
                 assert!(hook.when.is_some() && hook.cache.is_some());
-                assert!(onemessagebus::VALIDATORS_DEPRECATED.contains("`hooks:`"));
                 assert_eq!(onemessagebus::HOOK_RECORD_VERSION, 2);
+                assert_eq!(onemessagebus::PASS_RECORD_VERSION, 1);
                 assert_eq!(onemessagebus::DROP_LOG_VERSION, 1);
                 assert_eq!(
                     [
@@ -934,34 +878,26 @@ fn every_entry_of_the_hook_surface_is_exercised() {
 }
 
 #[test]
-fn every_deprecated_validator_item_names_its_hook_replacement() {
-    let validate = include_str!("../../onemessagebus/src/validate.rs");
-    let config = include_str!("../../onemessagebus/src/config.rs");
-    for (source, declaration, replacement) in [
-        (validate, "pub enum Verdict {", "`HookOutcome`"),
-        (validate, "pub trait Validator<M: Message>", "`Hook<M>`"),
-        (validate, "pub struct Validators<M> {", "`Hooks<M>`"),
-        (validate, "pub struct CommandValidator {", "`CommandHook`"),
-        (validate, "pub struct PassCache {", "`HookCache`"),
-        (config, "pub struct ValidatorConfig {", "`HookConfig`"),
-        (config, "pub fn with_validator<", "`Bus::with_hook`"),
-        (config, "pub fn validate(&self", "`Bus::hooked`"),
+fn the_library_exports_no_validator_item() {
+    let lib = include_str!("../../onemessagebus/src/lib.rs");
+    let words: BTreeSet<&str> = lib
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .collect();
+    for removed in [
+        "Validator",
+        "Validators",
+        "OnRecords",
+        "CommandValidator",
+        "PassCache",
+        "Verdict",
+        "ValidationContext",
+        "ValidatorConfig",
+        "ValidatorKind",
+        "ValidatorError",
+        "VALIDATORS_DEPRECATED",
+        "VALIDATE_QUEUE_ENV",
+        "VALIDATE_CORRELATION_ENV",
     ] {
-        let at = source
-            .find(declaration)
-            .unwrap_or_else(|| panic!("{declaration} is not declared"));
-        let before = &source[..at];
-        let attribute = &before[before
-            .rfind("#[deprecated(")
-            .unwrap_or_else(|| panic!("{declaration} carries no #[deprecated]"))..];
-        let note = &attribute[..attribute.find(")]").expect("the attribute closes")];
-        assert!(
-            note.contains(replacement),
-            "{declaration}'s deprecation does not name {replacement}: {note}"
-        );
-        assert!(
-            !attribute[note.len()..].contains("pub "),
-            "{declaration}'s nearest #[deprecated] belongs to another item"
-        );
+        assert!(!words.contains(removed), "lib.rs still names {removed}");
     }
 }

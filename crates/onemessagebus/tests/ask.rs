@@ -9,14 +9,10 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-#[expect(
-    deprecated,
-    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
-)]
 use onemessagebus::{
-    Answer, AskOptions, Asker, Bus, BusError, Config, Correlation, Layouts, Lifetime, Message,
-    Position, QueueError, QueueName, RefusalKind, SchemaId, TransportKinds, ValidationContext,
-    Validator, Verdict,
+    Answer, AskOptions, Asker, Bus, BusError, Config, Correlation, Hook, HookContext, HookOutcome,
+    HookedOutcome, Layouts, Lifetime, Message, Position, QueueError, QueueName, RawRecord,
+    RefusalKind, SchemaId, TransportKinds,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -445,11 +441,7 @@ fn a_reply_binds_by_correlation_is_refused_unbound_and_binds_the_one_pending_ask
 }
 
 #[test]
-#[expect(
-    deprecated,
-    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
-)]
-fn a_record_that_is_not_an_object_is_refused_before_it_is_bound_judged_or_appended() {
+fn a_record_that_is_not_an_object_is_refused_before_it_is_bound_hooked_or_appended() {
     let rig = Rig::new();
     let bus = rig.bus();
     let not_an_object =
@@ -486,7 +478,7 @@ fn a_record_that_is_not_an_object_is_refused_before_it_is_bound_judged_or_append
         .expect_err("not an object");
     assert!(not_an_object(&at), "{at}");
     for refused in [
-        bus.validate(&queue("questions"), json!(["one"]))
+        bus.hooked(&queue("questions"), RawRecord::from_value(&json!(["one"])))
             .expect_err("not an object"),
         bus.send(&queue("questions"), json!(1))
             .expect_err("not an object"),
@@ -498,9 +490,10 @@ fn a_record_that_is_not_an_object_is_refused_before_it_is_bound_judged_or_append
     }
     // A plain log keeps whatever JSON it is given.
     assert_eq!(
-        bus.validate(&queue("notes"), json!(["one"]))
-            .expect("judged"),
-        Verdict::Pass
+        bus.hooked(&queue("notes"), RawRecord::from_value(&json!(["one"])))
+            .expect("decided")
+            .outcome,
+        HookedOutcome::Keep
     );
 
     assert!(
@@ -687,47 +680,38 @@ fn a_queue_that_keeps_no_events_or_answers_nowhere_is_not_asked_on() {
     );
 }
 
-/// Each judgement a validator made: the queue it judged for, and the
-/// correlation it was told.
+/// Each run of a hook: the queue it ran on, and the correlation it was told.
 type Seen = Arc<Mutex<Vec<(String, Option<Correlation>)>>>;
 
-/// A validator recording the correlation each judgement was told, refusing a
-/// question whose message is `refuse me`.
+/// A hook recording the correlation each run was told, refusing a question
+/// whose message is `refuse me`.
 struct Recording(Seen);
 
-#[expect(
-    deprecated,
-    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
-)]
-impl Validator<Value> for Recording {
-    fn validate(&self, message: &Value, context: &ValidationContext) -> Verdict {
+impl Hook<Value> for Recording {
+    fn run(&self, message: &Value, context: &HookContext) -> HookOutcome<Value> {
         self.0
             .lock()
             .expect("the record")
             .push((context.queue.to_string(), context.correlation.clone()));
         if message["message"] == json!("refuse me") {
-            Verdict::Refuse {
+            HookOutcome::Refuse {
                 reason: "not this question".to_owned(),
             }
         } else {
-            Verdict::Pass
+            HookOutcome::Keep
         }
     }
 }
 
 #[test]
-#[expect(
-    deprecated,
-    reason = "the deprecated validators keep working until a later release removes them, and this exercises them"
-)]
-fn validators_judge_a_question_and_a_reply_before_anything_is_appended_knowing_the_correlation() {
+fn hooks_run_on_a_question_and_a_reply_before_anything_is_appended_knowing_the_correlation() {
     let rig = Rig::new();
     let seen = Arc::new(Mutex::new(Vec::new()));
     let bus = rig
         .bus()
-        .with_validator(&queue("questions"), Recording(Arc::clone(&seen)))
+        .with_hook(&queue("questions"), Recording(Arc::clone(&seen)))
         .expect("a declared queue")
-        .with_validator(&queue("replies"), Recording(Arc::clone(&seen)))
+        .with_hook(&queue("replies"), Recording(Arc::clone(&seen)))
         .expect("a declared queue");
     let refused = bus
         .ask::<Question, Ruling>(
@@ -737,7 +721,7 @@ fn validators_judge_a_question_and_a_reply_before_anything_is_appended_knowing_t
         )
         .expect_err("refused");
     assert!(
-        matches!(&refused, BusError::Queue(QueueError::Refused { reason, .. }) if reason == "not this question"),
+        matches!(&refused, BusError::HookRefused { reason, .. } if reason == "not this question"),
         "{refused}"
     );
     assert!(
@@ -757,7 +741,7 @@ fn validators_judge_a_question_and_a_reply_before_anything_is_appended_knowing_t
     assert_eq!(seen.len(), 3, "{seen:?}");
     assert!(
         seen[0].1.is_some(),
-        "the refused question's judgement had no correlation"
+        "the refused question's hook run had no correlation"
     );
     assert_eq!(
         seen[1],

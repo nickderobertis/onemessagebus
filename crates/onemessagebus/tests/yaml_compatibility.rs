@@ -29,6 +29,21 @@ fn real_configurations_load_with_the_base_meaning() {
             continue;
         }
         std::fs::write(&path, &case.text).expect("write real configuration");
+        // A capture declaring the removed `validators` key, empty or not, is
+        // now refused naming the migration to hooks rather than loaded.
+        if case
+            .text
+            .lines()
+            .any(|line| line.starts_with("validators:"))
+        {
+            let refused = Config::load(&path).expect_err(&case.label).to_string();
+            assert!(
+                refused.contains("validators were removed") && refused.contains("`hooks:`"),
+                "{}: {refused}",
+                case.label
+            );
+            continue;
+        }
         let actual = Config::load(&path).unwrap_or_else(|error| panic!("{}: {error}", case.label));
         let mut expected: Config = serde_json::from_value(case.expected).expect("base Config");
         expected.schemas = expected
@@ -51,7 +66,6 @@ fn documentation_and_production_fixture_are_in_the_corpus() {
             include_str!("../../../docs/schema-links.md"),
         ),
         ("codecs", include_str!("../../../docs/codecs.md")),
-        ("validators", include_str!("../../../docs/validators.md")),
     ] {
         for block in document.split("```yaml\n").skip(1) {
             let block = block.split("```").next().expect("closing fence");
