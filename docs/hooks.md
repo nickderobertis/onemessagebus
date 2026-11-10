@@ -26,7 +26,7 @@ hooks:
 | key | meaning |
 | --- | --- |
 | `on` | the queue whose offered messages it runs on; one the configuration does not declare is refused by `Config::resolve`, naming `hooks[<i>].on` |
-| `when` | which messages it runs on, in two forms: `{carries: <field path>}` — the field is there and holds something other than `null`, `""`, `[]` or `{}`; `carries` stands alone, and a `when` naming it beside another key is refused — or any queue predicate (`docs/queues.md`); every message when absent, and a message it does not admit is kept |
+| `when` | which messages it runs on, in two forms: `{carries: <field path>}` — the field is there and holds something other than `null`, `""`, `[]` or `{}`; `carries` stands alone, and a `when` naming it beside another key is refused — or any queue predicate; every message when absent, and a message it does not admit is kept |
 | `command` | the argv, the program first; an empty one is refused naming `hooks[<i>].command` |
 | `routes` | the queues the hook may reroute to; each must be a queue the configuration declares, or resolution refuses it naming `hooks[<i>].routes[<j>]`; with no `routes` key the hook may not reroute, so a configuration can narrow what a layout allows and never widen it |
 | `cache` | `{dir, bar_fingerprint}`, both required, `dir` relative to the working directory; opt-in per entry (see the cache, below) |

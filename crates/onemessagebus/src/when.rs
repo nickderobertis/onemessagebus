@@ -34,7 +34,6 @@ impl When {
     }
 }
 
-/// The key naming the `carries` form.
 const CARRIES: &str = "carries";
 
 impl Serialize for When {

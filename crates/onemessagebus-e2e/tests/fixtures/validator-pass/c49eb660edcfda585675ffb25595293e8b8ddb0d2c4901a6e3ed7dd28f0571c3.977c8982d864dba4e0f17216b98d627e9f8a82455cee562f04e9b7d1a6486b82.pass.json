@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "content": "c49eb660edcfda585675ffb25595293e8b8ddb0d2c4901a6e3ed7dd28f0571c3",
+  "bar": "977c8982d864dba4e0f17216b98d627e9f8a82455cee562f04e9b7d1a6486b82",
+  "fingerprint": "bar-1",
+  "command": [
+    "sh",
+    "counted.sh"
+  ]
+}

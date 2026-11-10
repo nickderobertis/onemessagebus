@@ -565,8 +565,7 @@ validators:
 ```
 
 loads once the key reads `hooks` and `kind: command` is gone, and a hook cache
-reads the `schema_version: 1` pass records a validator wrote as keeps
-(`docs/hooks.md`).
+reads the `schema_version: 1` pass records a validator wrote as keeps.
 
 ### Contract K — configured codecs behind `serve`
 

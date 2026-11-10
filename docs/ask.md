@@ -26,8 +26,8 @@ bus owns:
 | `asker` | who asks, when an asker is named: a later listener of the same asker takes the question back |
 | `about` | what the question is about, when named; a layout may move it to a member of its own (the `desk` fixture's `rename` step carries it as `subject`) |
 
-Then it is shaped by the layout, run through the queue's hooks
-(`docs/hooks.md`), validated against the queue's schema and appended. A refusal at any step appends nothing.
+Then it is shaped by the layout, run through the queue's hooks,
+validated against the queue's schema and appended. A refusal at any step appends nothing.
 
 A `Correlation` is `c-` and 32 hex digits of the operating system's randomness,
 checked against every question the queue already holds; text from outside — a

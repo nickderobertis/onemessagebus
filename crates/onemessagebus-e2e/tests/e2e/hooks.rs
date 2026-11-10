@@ -848,84 +848,54 @@ fn a_cached_keep_change_and_drop_are_not_run_again_until_the_bar_moves() {
     let _ = &cached.refuse;
 }
 
-/// A pass a validator recorded before validators were removed, at
-/// `schema_version: 1`, keyed exactly as a hook's record is: the document
-/// `PassCache` wrote, field for field, in its order, pretty-printed.
-fn validator_pass(key: &Value) -> String {
-    #[derive(serde::Serialize)]
-    struct PassRecord<'a> {
-        schema_version: u32,
-        content: &'a Value,
-        bar: &'a Value,
-        fingerprint: &'a Value,
-        command: &'a Value,
-    }
-    serde_json::to_string_pretty(&PassRecord {
-        schema_version: 1,
-        content: &key["content"],
-        bar: &key["bar"],
-        fingerprint: &key["fingerprint"],
-        command: &key["command"],
-    })
-    .expect("a pass record")
+/// The file name of the pass record `fixtures/validator-pass` holds.
+const VALIDATOR_PASS: &str = "c49eb660edcfda585675ffb25595293e8b8ddb0d2c4901a6e3ed7dd28f0571c3.977c8982d864dba4e0f17216b98d627e9f8a82455cee562f04e9b7d1a6486b82.pass.json";
+
+/// A pass record the released onemessagebus 0.10.0 binary's validator wrote,
+/// byte for byte: `printf '%s' '{"text":"judged once"}' | onemessagebus send
+/// inbox` over a configuration declaring `validators: [{on: inbox, kind:
+/// command, command: [sh, counted.sh], cache: {dir: passes, bar_fingerprint:
+/// [sh, bar.sh]}}]`, `bar.sh` printing `bar-1`. Its argv names no absolute
+/// path, so its key holds in any scratch directory the journey runs from.
+fn validator_pass() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/validator-pass")
+        .join(VALIDATOR_PASS)
 }
 
 #[test]
 fn a_pass_a_validator_recorded_for_the_same_argv_and_content_is_read_as_a_keep() {
     let scratch = Scratch::new();
-    std::fs::write(scratch.path("bar"), "bar-1\n").expect("the bar is written");
-    let counted = scratch.script(
-        "counted.sh",
-        &format!("echo ran >> {}\ncat", scratch.at("ran")),
-    );
-    let cache = format!(
-        "cache: {{dir: {}, bar_fingerprint: {}}}",
-        serde_json::to_string(&scratch.path("passes")).expect("a path"),
-        argv(&["cat", &scratch.at("bar")])
+    std::fs::write(
+        scratch.path("counted.sh"),
+        format!("echo ran >> {}\ncat\n", scratch.at("ran")),
+    )
+    .expect("the hook is written");
+    std::fs::write(scratch.path("bar.sh"), "echo bar-1\n").expect("the bar is written");
+    std::fs::create_dir(scratch.path("passes")).expect("the cache directory");
+    let pass = std::fs::read(validator_pass()).expect("the released validator's pass");
+    std::fs::write(scratch.path("passes").join(VALIDATOR_PASS), &pass)
+        .expect("the pass is in the cache");
+    // The validator's entry, declared as the refusal of `validators:` says.
+    scratch.configure(
+        "queues:\n  inbox: {}\nhooks:\n  - {on: inbox, command: [sh, counted.sh], cache: {dir: passes, bar_fingerprint: [sh, bar.sh]}}\n",
     );
     let record = r#"{"text":"judged once"}"#;
-    scratch.configure(&format!(
-        "queues:\n  inbox: {{}}\nhooks:\n  - {{on: inbox, command: {}, {cache}}}\n",
-        hook(&counted)
-    ));
-    // The hook's own keep names the file and the key a validator's pass of the
-    // same argv and content was written under; that pass replaces it.
-    assert_eq!(scratch.bus(&["send", "inbox"], Some(record)).code, 0);
-    assert_eq!(scratch.marker("ran"), 1);
-    let records: Vec<PathBuf> = std::fs::read_dir(scratch.path("passes"))
-        .expect("the hook cache")
-        .map(|entry| entry.expect("an entry").path())
-        .collect();
-    let [path] = records.as_slice() else {
-        panic!("one record: {records:?}");
-    };
-    let keep: Value = serde_json::from_slice(&std::fs::read(path).expect("read")).expect("JSON");
-    assert_eq!(keep["outcome"], json!("keep"), "{keep}");
-    let pass = validator_pass(&keep);
-    std::fs::write(path, &pass).expect("the validator's pass is written");
-
     let sent = scratch.bus(&["send", "inbox"], Some(record));
     assert_eq!(sent.code, 0, "{}", sent.stderr);
-    assert_eq!(scratch.marker("ran"), 1, "a recorded pass ran the hook");
-    assert_eq!(scratch.raw("inbox"), format!("{record}\n{record}\n"));
+    assert_eq!(scratch.marker("ran"), 0, "a recorded pass ran the hook");
+    assert_eq!(scratch.raw("inbox"), format!("{record}\n"));
     assert_eq!(
-        std::fs::read_to_string(path).expect("read"),
+        std::fs::read(scratch.path("passes").join(VALIDATOR_PASS)).expect("read"),
         pass,
         "a pass read as a keep was rewritten"
     );
 
-    // A pass of another version is no keep: the hook runs again.
-    std::fs::write(
-        path,
-        pass.replace(r#""schema_version": 1"#, r#""schema_version": 0"#),
-    )
-    .expect("the pass is rewritten");
-    assert_eq!(scratch.bus(&["send", "inbox"], Some(record)).code, 0);
-    assert_eq!(
-        scratch.marker("ran"),
-        2,
-        "a pass of another version was read as a keep"
-    );
+    // Another message has no pass: the hook runs, and records its own keep.
+    let other = r#"{"text":"judged twice"}"#;
+    assert_eq!(scratch.bus(&["send", "inbox"], Some(other)).code, 0);
+    assert_eq!(scratch.marker("ran"), 1);
+    assert_eq!(scratch.raw("inbox"), format!("{record}\n{other}\n"));
 }
 
 #[test]
