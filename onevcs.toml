@@ -9,8 +9,15 @@
 # than 2 days, and keeps each unit's newest build and every build modified within
 # those 2 days, so a rebuild stays warm. pool-maintenance/budgets.yaml holds how
 # long one pass takes.
-schema_version = 1
+schema_version = 2
 
 [pool.maintain]
 command = ["just", "pool-maintenance"]
 timeout = "30m"
+
+[policy]
+publication = "change-auto"
+approvals = "none"
+
+[policy.checks]
+wait_seconds = 6000  # recorded max 4788 s (run 39142284001) + 25% margin
