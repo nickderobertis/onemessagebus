@@ -530,7 +530,10 @@ impl Registry {
     /// `$schema`, and every `$ref` either `#` or a top-level `$defs` (2019-09
     /// on) or `definitions` entry. Any other document is compiled here, once,
     /// because only compiling it says whether it is refused; its checks then
-    /// reuse that validator.
+    /// reuse that validator. Of the 80 schemas onepipeline registers, 76 are
+    /// of the lazy shape; the four carrying a `pattern` —
+    /// `agent.pipeline.scratch-removed@2`, `agent.pipeline.scratch-retained@2`,
+    /// `agent.planner-surface@1` and `agent.queued-reply@1` — compile here.
     pub fn register_schema(&mut self, id: SchemaId, schema: Value) -> Result<(), RegistryError> {
         if let Some(held) = self.schemas.get(&id) {
             if held.document == schema {
