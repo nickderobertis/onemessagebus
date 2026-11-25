@@ -56,12 +56,3 @@ strip = true
 # runs, from the one root uv.lock. Nothing maturin builds reads it.
 [tool.uv.workspace]
 members = ["python/onemessagebus-sdk"]
-
-# The uv every workflow's astral-sh/setup-uv installs: it reads this when given no
-# `version`, takes the newest release inside it, and otherwise takes the latest
-# uv. The ceiling is the last release the macOS lane passed on: under 0.13.10
-# `just bootstrap` there synced the SDK onto the runner's CPython 3.15, which
-# pydantic-core publishes no wheel for, and its source build fails under the
-# lane's `-D warnings`. Raise the ceiling only alongside a green macOS lane.
-[tool.uv]
-required-version = ">=0.11,<=0.13.8"
