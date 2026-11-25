@@ -522,6 +522,7 @@ impl Registry {
     /// [`RegistryError::Conflict`] for a different document under a held id,
     /// [`RegistryError::NotASchema`] for one the validator cannot compile.
     ///
+    // llmlint: ignore[comments_earn_their_place] manager ruling c22.0 requires the crate docs to state this exception with onepipeline's census (76 of 80 lazy, the four that compile here); it is pinned to the onepipeline commit it was counted at, so it reads as a dated measurement rather than a claim that silently drifts.
     /// A document of the shape `schemars` generates is not compiled here: its
     /// validator is compiled the first time [`Registry::check`] reads it, and
     /// kept. That shape is a meta-valid document with no `pattern` or
@@ -530,8 +531,8 @@ impl Registry {
     /// `$schema`, and every `$ref` either `#` or a top-level `$defs` (2019-09
     /// on) or `definitions` entry. Any other document is compiled here, once,
     /// because only compiling it says whether it is refused; its checks then
-    /// reuse that validator. Of the 80 schemas onepipeline registers, 76 are
-    /// of the lazy shape; the four carrying a `pattern` —
+    /// reuse that validator. Of the 80 schemas onepipeline registered at its
+    /// commit `34edb56e`, 76 are of the lazy shape; the four carrying a `pattern` —
     /// `agent.pipeline.scratch-removed@2`, `agent.pipeline.scratch-retained@2`,
     /// `agent.planner-surface@1` and `agent.queued-reply@1` — compile here.
     pub fn register_schema(&mut self, id: SchemaId, schema: Value) -> Result<(), RegistryError> {
