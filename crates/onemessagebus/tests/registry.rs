@@ -215,3 +215,134 @@ fn a_family_reads_every_registered_version_and_carries_each_forward() {
         Some(&document(2))
     );
 }
+
+/// Documents compiling a validator refuses, each beside why — the meta-schema
+/// alone accepts every one marked *compile*.
+fn refused_documents() -> Vec<(&'static str, serde_json::Value)> {
+    let draft_07 = "http://json-schema.org/draft-07/schema#";
+    vec![
+        ("meta: an unknown type", json!({ "type": "nonsense" })),
+        ("meta: not an object", json!(3)),
+        ("meta: a negative bound", json!({ "minLength": -1 })),
+        (
+            "meta: an unknown dialect",
+            json!({ "$schema": "https://example.com/dialect" }),
+        ),
+        (
+            "meta: a bad definition",
+            json!({ "definitions": { "a": { "type": "nonsense" } } }),
+        ),
+        (
+            "compile: an invalid pattern",
+            json!({ "type": "string", "pattern": "(" }),
+        ),
+        (
+            "compile: an empty range",
+            json!({ "properties": { "a": { "pattern": "[z-a]" } } }),
+        ),
+        (
+            "compile: an invalid key pattern",
+            json!({ "patternProperties": { "(": {} } }),
+        ),
+        (
+            "compile: a referenced bad pattern",
+            json!({ "$ref": "#/$defs/a", "$defs": { "a": { "pattern": "(" } } }),
+        ),
+        (
+            "compile: an unresolvable pointer",
+            json!({ "$ref": "#/$defs/missing" }),
+        ),
+        (
+            "compile: a nested unresolvable pointer",
+            json!({ "not": { "$ref": "#/nope" } }),
+        ),
+        ("compile: an unknown anchor", json!({ "$ref": "#nope" })),
+        (
+            "compile: an unknown dynamic anchor",
+            json!({ "$dynamicRef": "#nope" }),
+        ),
+        (
+            "compile: an http reference",
+            json!({ "$ref": "http://example.com/x" }),
+        ),
+        (
+            "compile: a relative reference",
+            json!({ "$ref": "other.json" }),
+        ),
+        (
+            "compile: a reference under an id",
+            json!({ "$id": "http://x.example/y", "$ref": "other" }),
+        ),
+        (
+            "compile: a draft-07 $defs target",
+            json!({ "$schema": draft_07, "$defs": { "a": { "type": "nonsense" } }, "$ref": "#/$defs/a" }),
+        ),
+        (
+            "compile: a meta-schema reference",
+            json!({ "$ref": draft_07 }),
+        ),
+    ]
+}
+
+#[test]
+fn registration_refuses_every_document_compilation_refuses_with_its_reason() {
+    for (why, document) in refused_documents() {
+        let compiled = jsonschema::validator_for(&document)
+            .err()
+            .map(|failure| failure.to_string())
+            .unwrap_or_else(|| panic!("{why}: compilation refuses {document}"));
+        if why.starts_with("compile") {
+            assert!(
+                jsonschema::meta::validate(&document).is_ok(),
+                "{why}: only compiling refuses {document}"
+            );
+        }
+        let mut registry = Registry::new();
+        match registry.register_schema(SchemaId::literal("test", "refused", 1), document.clone()) {
+            Err(RegistryError::NotASchema { id, why: said }) => {
+                assert_eq!(id.to_string(), "test.refused@1", "{why}");
+                assert_eq!(said, compiled, "{why}: {document}");
+            }
+            other => panic!("{why}: {document} gave {other:?}"),
+        }
+        assert!(registry.ids().is_empty(), "{why}: nothing is held");
+    }
+}
+
+#[test]
+fn registration_accepts_every_document_compilation_accepts_and_checks_against_it() {
+    let draft_04 = "http://json-schema.org/draft-04/schema#";
+    let draft_07 = "http://json-schema.org/draft-07/schema#";
+    let accepted = [
+        json!(true),
+        json!({}),
+        json!({ "$ref": "#", "properties": { "next": { "$ref": "#" } } }),
+        json!({ "$ref": "#/$defs/a", "$defs": { "a": { "$ref": "#/$defs/a" } } }),
+        json!({ "$ref": "#/definitions/a", "definitions": { "a": { "type": "string" } } }),
+        json!({ "$schema": draft_07, "$ref": "#/definitions/a", "definitions": { "a": {} } }),
+        json!({ "$schema": draft_04, "id": "http://x.example/s", "maxLength": 3 }),
+        json!({ "$defs": { "unused": { "pattern": "(" } } }),
+        json!({ "$defs": { "unused": { "$ref": "#/nope" } } }),
+        json!({ "x-unknown": { "pattern": "(", "$ref": "#/nope" } }),
+        json!({ "if": { "pattern": "(" } }),
+        json!({ "format": "nonsense", "contentMediaType": "application/x-nope" }),
+        json!({ "$anchor": "a", "items": { "$ref": "#a" } }),
+        json!({ "$id": "urn:example:s", "$defs": { "a/b": {} }, "$ref": "#/$defs/a~1b" }),
+        json!({ "dependencies": { "a": ["b"], "c": { "required": ["d"] } }, "prefixItems": [true] }),
+    ];
+    for document in accepted {
+        assert!(
+            jsonschema::validator_for(&document).is_ok(),
+            "compilation accepts {document}"
+        );
+        let mut registry = Registry::new();
+        let id = SchemaId::literal("test", "accepted", 1);
+        registry
+            .register_schema(id.clone(), document.clone())
+            .unwrap_or_else(|failure| panic!("{document}: {failure}"));
+        match registry.check(&id, &json!({})) {
+            Ok(()) | Err(CheckError::Violation(_)) => {}
+            Err(CheckError::Registry(failure)) => panic!("{document}: {failure}"),
+        }
+    }
+}

@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::num::NonZeroU32;
 use std::str::FromStr;
+use std::sync::OnceLock;
 
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
@@ -334,10 +335,151 @@ fn read_set_text(read_set: &[u32]) -> String {
     format!("[{}]", versions.join(", "))
 }
 
-/// One registered document and the validator compiled from it.
+/// One registered document, and the validator compiled from it the first time
+/// a payload is checked against it — or at registration, for a document
+/// [`compiles_once_meta_valid`] cannot vouch for. Compiling every document up
+/// front is what made every short process pay for every schema it registers.
 struct Registered {
     document: Value,
-    validator: jsonschema::Validator,
+    validator: OnceLock<Result<jsonschema::Validator, String>>,
+}
+
+fn compile(document: &Value) -> Result<jsonschema::Validator, String> {
+    #[cfg(test)]
+    tests::COMPILATIONS.with(|count| count.set(count.get() + 1));
+    jsonschema::validator_for(document).map_err(|failure| failure.to_string())
+}
+
+/// Whether compiling `document` certainly succeeds, decided without compiling
+/// it. `false` means *not known*, never *refused*: such a document is compiled
+/// at registration, so registration refuses exactly what compilation refuses.
+///
+/// The meta-schema check catches most refusals but not all — an invalid
+/// `pattern`, an unresolvable `$ref` — so it vouches only for documents whose
+/// every compiled keyword cannot fail once the document is meta-valid: no
+/// regex, no `$id` or anchor, no dynamic or recursive reference, no
+/// `unevaluated*` or `content*` keyword, and every `$ref` either `#` or a
+/// top-level `$defs` (2019-09 on) or `definitions` entry the meta-schema
+/// validated as a schema. That is the shape `schemars` generates.
+fn compiles_once_meta_valid(document: &Value) -> bool {
+    let Some(object) = document.as_object() else {
+        return document.is_boolean();
+    };
+    let dialect = match object.get("$schema") {
+        None => Dialect::Current,
+        Some(Value::String(uri)) => match uri.trim_end_matches('#') {
+            "https://json-schema.org/draft/2020-12/schema"
+            | "https://json-schema.org/draft/2019-09/schema" => Dialect::Current,
+            "http://json-schema.org/draft-07/schema"
+            | "http://json-schema.org/draft-06/schema"
+            | "http://json-schema.org/draft-04/schema" => Dialect::Legacy,
+            _ => return false,
+        },
+        Some(_) => return false,
+    };
+    jsonschema::meta::validate(document).is_ok()
+        && object.iter().all(|(keyword, value)| {
+            keyword == "$schema" || keyword_compiles(keyword, value, document, dialect)
+        })
+}
+
+/// Whether `$defs` is a keyword, and so a container the meta-schema validates.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Dialect {
+    /// Draft 2019-09 and 2020-12.
+    Current,
+    /// Drafts 4, 6 and 7, where only `definitions` is.
+    Legacy,
+}
+
+fn subschema_compiles(schema: &Value, root: &Value, dialect: Dialect) -> bool {
+    match schema {
+        Value::Bool(_) => true,
+        Value::Object(object) => object
+            .iter()
+            .all(|(keyword, value)| keyword_compiles(keyword, value, root, dialect)),
+        _ => false,
+    }
+}
+
+fn keyword_compiles(keyword: &str, value: &Value, root: &Value, dialect: Dialect) -> bool {
+    let each = |schemas: &Value| match schemas {
+        Value::Array(items) => items
+            .iter()
+            .all(|item| subschema_compiles(item, root, dialect)),
+        Value::Object(map) => map
+            .values()
+            .all(|item| subschema_compiles(item, root, dialect)),
+        _ => false,
+    };
+    match keyword {
+        "$ref" => value
+            .as_str()
+            .is_some_and(|reference| reference_resolves(reference, root, dialect)),
+        "properties" | "$defs" | "definitions" | "dependentSchemas" | "allOf" | "anyOf"
+        | "oneOf" | "prefixItems" => each(value),
+        "items" if value.is_array() => each(value),
+        "dependencies" => value.as_object().is_some_and(|map| {
+            map.values()
+                .all(|item| item.is_array() || subschema_compiles(item, root, dialect))
+        }),
+        "items"
+        | "additionalItems"
+        | "additionalProperties"
+        | "not"
+        | "if"
+        | "then"
+        | "else"
+        | "contains"
+        | "propertyNames" => subschema_compiles(value, root, dialect),
+        "id" => !value.is_string(),
+        "$schema"
+        | "$id"
+        | "$anchor"
+        | "$dynamicAnchor"
+        | "$recursiveAnchor"
+        | "$dynamicRef"
+        | "$recursiveRef"
+        | "$vocabulary"
+        | "pattern"
+        | "patternProperties"
+        | "unevaluatedProperties"
+        | "unevaluatedItems"
+        | "contentEncoding"
+        | "contentMediaType"
+        | "contentSchema" => false,
+        // Every other keyword the compiler reads takes a value the meta-schema
+        // has already typed, and the compiler ignores the rest.
+        _ => true,
+    }
+}
+
+fn reference_resolves(reference: &str, root: &Value, dialect: Dialect) -> bool {
+    if reference == "#" {
+        return true;
+    }
+    let target = reference
+        .strip_prefix("#/definitions/")
+        .map(|name| ("definitions", name))
+        .or_else(|| {
+            (dialect == Dialect::Current)
+                .then(|| {
+                    reference
+                        .strip_prefix("#/$defs/")
+                        .map(|name| ("$defs", name))
+                })
+                .flatten()
+        });
+    target.is_some_and(|(container, name)| {
+        !name.is_empty()
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+            && root
+                .get(container)
+                .and_then(|defs| defs.get(name))
+                .is_some()
+    })
 }
 
 /// The schemas this build knows, by id.
@@ -379,6 +521,21 @@ impl Registry {
     ///
     /// [`RegistryError::Conflict`] for a different document under a held id,
     /// [`RegistryError::NotASchema`] for one the validator cannot compile.
+    ///
+    // llmlint: ignore-block[comments_earn_their_place] manager ruling c22.0 requires the crate docs to state this exception with onepipeline's census (76 of 80 lazy, the four that compile here); it is pinned to the onepipeline commit it was counted at, so it reads as a dated measurement rather than a claim that silently drifts.
+    /// A document of the shape `schemars` generates is not compiled here: its
+    /// validator is compiled the first time [`Registry::check`] reads it, and
+    /// kept. That shape is a meta-valid document with no `pattern` or
+    /// `patternProperties`, no `$id`, `id` or anchor, no `$dynamicRef` or
+    /// `$recursiveRef`, no `unevaluated*` or `content*` keyword, no nested
+    /// `$schema`, and every `$ref` either `#` or a top-level `$defs` (2019-09
+    /// on) or `definitions` entry. Any other document is compiled here, once,
+    /// because only compiling it says whether it is refused; its checks then
+    /// reuse that validator. Of the 80 schemas onepipeline registered at its
+    /// commit `34edb56e`, 76 are of the lazy shape; the four carrying a `pattern` —
+    /// `agent.pipeline.scratch-removed@2`, `agent.pipeline.scratch-retained@2`,
+    /// `agent.planner-surface@1` and `agent.queued-reply@1` — compile here.
+    // llmlint: ignore-end[comments_earn_their_place]
     pub fn register_schema(&mut self, id: SchemaId, schema: Value) -> Result<(), RegistryError> {
         if let Some(held) = self.schemas.get(&id) {
             if held.document == schema {
@@ -386,11 +543,15 @@ impl Registry {
             }
             return Err(RegistryError::Conflict { id });
         }
-        let validator =
-            jsonschema::validator_for(&schema).map_err(|failure| RegistryError::NotASchema {
+        let validator = if compiles_once_meta_valid(&schema) {
+            OnceLock::new()
+        } else {
+            let compiled = compile(&schema).map_err(|why| RegistryError::NotASchema {
                 id: id.clone(),
-                why: failure.to_string(),
+                why,
             })?;
+            OnceLock::from(Ok(compiled))
+        };
         self.schemas.insert(
             id,
             Registered {
@@ -425,7 +586,21 @@ impl Registry {
             id: id.clone(),
             known: self.known(),
         })?;
-        match held.validator.iter_errors(payload).next() {
+        // `compiles_once_meta_valid` vouched for this document, so the `Err`
+        // arm is reached only if that reasoning is wrong for some document;
+        // no document is known to reach it, so no test can, and the refusal
+        // corpus in `tests/registry.rs` holds the reasoning to the eager
+        // compiler instead. Refusing names the fault rather than panicking.
+        let validator = match held.validator.get_or_init(|| compile(&held.document)) {
+            Ok(validator) => validator,
+            Err(why) => {
+                return Err(CheckError::Registry(RegistryError::NotASchema {
+                    id: id.clone(),
+                    why: why.clone(),
+                }))
+            }
+        };
+        match validator.iter_errors(payload).next() {
             None => Ok(()),
             Some(violation) => Err(CheckError::Violation(SchemaViolation {
                 id: id.clone(),
@@ -492,4 +667,230 @@ pub enum CheckError {
     /// The payload does not conform.
     #[error(transparent)]
     Violation(#[from] SchemaViolation),
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use serde_json::{json, Value};
+
+    use super::{CheckError, Registry, SchemaId, SchemaViolation};
+
+    thread_local! {
+        /// Validators compiled on this thread; a check compiles on its caller's.
+        pub(super) static COMPILATIONS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    fn compilations() -> usize {
+        COMPILATIONS.with(Cell::get)
+    }
+
+    /// What the registry answered when it compiled every document as it was
+    /// registered.
+    fn eager_check(id: &SchemaId, document: &Value, payload: &Value) -> Result<(), CheckError> {
+        let validator =
+            jsonschema::validator_for(document).expect("the eager registry compiled it");
+        let answer = match validator.iter_errors(payload).next() {
+            None => Ok(()),
+            Some(violation) => Err(CheckError::Violation(SchemaViolation {
+                id: id.clone(),
+                pointer: violation.instance_path().to_string(),
+                message: violation.to_string(),
+            })),
+        };
+        answer
+    }
+
+    #[derive(serde::Deserialize, schemars::JsonSchema)]
+    #[allow(dead_code, reason = "only the generated schema is read")]
+    struct Notice {
+        level: Level,
+        lines: Vec<Line>,
+        note: Option<String>,
+    }
+
+    #[derive(serde::Deserialize, schemars::JsonSchema)]
+    #[allow(dead_code, reason = "only the generated schema is read")]
+    enum Level {
+        Info,
+        Warn,
+    }
+
+    #[derive(serde::Deserialize, schemars::JsonSchema)]
+    #[allow(dead_code, reason = "only the generated schema is read")]
+    struct Line {
+        number: u32,
+        text: String,
+    }
+
+    #[test]
+    fn a_validator_is_compiled_at_its_first_check_and_never_again() {
+        let notice = SchemaId::literal("test", "notice", 1);
+        let flat = SchemaId::literal("test", "flat", 1);
+        let flat_document = json!({
+            "type": "object",
+            "required": ["n"],
+            "properties": { "n": { "type": "integer", "minimum": 0 } }
+        });
+        let mut registry = Registry::new();
+        let before = compilations();
+        registry
+            .register_schema(notice.clone(), schemars::schema_for!(Notice).to_value())
+            .expect("registers");
+        registry
+            .register_schema(flat.clone(), flat_document.clone())
+            .expect("registers");
+        assert_eq!(compilations() - before, 0, "registering compiles nothing");
+
+        let notice_document = registry.schema(&notice).expect("held").clone();
+        let notice_payloads = [
+            json!({ "level": "Info", "lines": [{ "number": 1, "text": "a" }], "note": null }),
+            json!({ "level": "Loud", "lines": [] }),
+            json!({ "level": "Warn", "lines": [{ "number": -1, "text": "a" }] }),
+            json!({ "lines": [] }),
+        ];
+        for (index, payload) in notice_payloads.iter().enumerate() {
+            assert_eq!(
+                registry.check(&notice, payload),
+                eager_check(&notice, &notice_document, payload),
+                "{payload}"
+            );
+            assert_eq!(compilations() - before, 1, "after check {index}");
+        }
+        for payload in [json!({ "n": 3 }), json!({ "n": -3 }), json!({}), json!([])] {
+            assert_eq!(
+                registry.check(&flat, &payload),
+                eager_check(&flat, &flat_document, &payload),
+                "{payload}"
+            );
+            assert_eq!(compilations() - before, 2, "{payload}");
+        }
+    }
+
+    /// Every keyword onepipeline's committed schema bundles use, in the shape
+    /// schemars writes them, apart from `pattern`, which the next document
+    /// carries.
+    fn onepipeline_shaped() -> Value {
+        json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "Shaped",
+            "description": "One of every keyword the vocabulary's bundles carry.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "kind", "path"],
+            "properties": {
+                "id": { "type": "integer", "format": "uint64", "minimum": 0, "maximum": 99 },
+                "kind": { "$ref": "#/$defs/Kind" },
+                "path": { "$ref": "#/$defs/Path" },
+                "labels": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "default": ["a"] },
+                "source": { "anyOf": [{ "$ref": "#/$defs/Source" }, { "type": "null" }] },
+                "step": { "oneOf": [
+                    { "type": "object", "properties": { "op": { "const": "run" } }, "required": ["op"] },
+                    { "type": "object", "properties": { "op": { "const": "stop" }, "reason": { "type": "string" } }, "required": ["op", "reason"] }
+                ] }
+            },
+            "allOf": [{
+                "if": { "properties": { "kind": { "const": "gone" } }, "required": ["kind"] },
+                "then": { "required": ["source"] }
+            }],
+            "$defs": {
+                "Kind": { "type": "string", "enum": ["present", "gone"] },
+                "Path": { "type": "string", "minLength": 1 },
+                "Source": { "type": "object", "properties": { "word": { "type": "string" } }, "required": ["word"] }
+            }
+        })
+    }
+
+    /// The `$defs` entry onepipeline's correlation and path types carry, as
+    /// four of its eighty documents carry one.
+    fn onepipeline_patterned() -> Value {
+        json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "required": ["correlation"],
+            "properties": { "correlation": { "$ref": "#/$defs/Correlation" } },
+            "$defs": { "Correlation": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" } }
+        })
+    }
+
+    #[test]
+    fn every_onepipeline_shape_is_compiled_once_and_only_a_pattern_at_registration() {
+        let shaped = SchemaId::literal("test", "shaped", 1);
+        let patterned = SchemaId::literal("test", "patterned", 2);
+        let mut registry = Registry::new();
+        let before = compilations();
+        registry
+            .register_schema(shaped.clone(), onepipeline_shaped())
+            .expect("registers");
+        assert_eq!(
+            compilations() - before,
+            0,
+            "a vouchable document compiles nothing"
+        );
+        registry
+            .register_schema(patterned.clone(), onepipeline_patterned())
+            .expect("registers");
+        assert_eq!(
+            compilations() - before,
+            1,
+            "a pattern is decided by compiling"
+        );
+
+        let shaped_payloads = [
+            json!({ "id": 1, "kind": "present", "path": "/a" }),
+            json!({ "id": 1, "kind": "gone", "path": "/a", "source": { "word": "w" } }),
+            json!({ "id": 1, "kind": "gone", "path": "/a" }),
+            json!({ "id": 100, "kind": "present", "path": "/a" }),
+            json!({ "id": 1, "kind": "lost", "path": "" }),
+            json!({ "id": 1, "kind": "present", "path": "/a", "labels": [] }),
+            json!({ "id": 1, "kind": "present", "path": "/a", "step": { "op": "stop" } }),
+            json!({ "id": 1, "kind": "present", "path": "/a", "extra": true }),
+        ];
+        for (index, payload) in shaped_payloads.iter().enumerate() {
+            assert_eq!(
+                registry.check(&shaped, payload),
+                eager_check(&shaped, &onepipeline_shaped(), payload),
+                "{payload}"
+            );
+            assert_eq!(compilations() - before, 2, "after check {index}");
+        }
+        for payload in [
+            json!({ "correlation": "run-1" }),
+            json!({ "correlation": "-bad" }),
+            json!({}),
+        ] {
+            assert_eq!(
+                registry.check(&patterned, &payload),
+                eager_check(&patterned, &onepipeline_patterned(), &payload),
+                "{payload}"
+            );
+            assert_eq!(compilations() - before, 2, "{payload}");
+        }
+    }
+
+    #[test]
+    fn a_document_the_registry_cannot_vouch_for_is_compiled_once_at_registration() {
+        let id = SchemaId::literal("test", "patterned", 1);
+        let document = json!({ "type": "string", "pattern": "^[a-z]+$" });
+        let mut registry = Registry::new();
+        let before = compilations();
+        registry
+            .register_schema(id.clone(), document.clone())
+            .expect("registers");
+        assert_eq!(compilations() - before, 1, "decided by compiling it");
+        for payload in [json!("abc"), json!("ABC"), json!(3)] {
+            assert_eq!(
+                registry.check(&id, &payload),
+                eager_check(&id, &document, &payload)
+            );
+        }
+        assert_eq!(compilations() - before, 1, "and never compiled again");
+    }
+
+    #[test]
+    fn a_registry_can_be_shared_across_threads() {
+        fn shared<T: Send + Sync>() {}
+        shared::<Registry>();
+    }
 }
