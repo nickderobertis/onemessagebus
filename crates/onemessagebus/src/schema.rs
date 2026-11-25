@@ -521,8 +521,16 @@ impl Registry {
     ///
     /// [`RegistryError::Conflict`] for a different document under a held id,
     /// [`RegistryError::NotASchema`] for one the validator cannot compile.
-    /// The validator itself is compiled the first time [`Registry::check`]
-    /// reads the document, not here.
+    ///
+    /// A document of the shape `schemars` generates is not compiled here: its
+    /// validator is compiled the first time [`Registry::check`] reads it, and
+    /// kept. That shape is a meta-valid document with no `pattern` or
+    /// `patternProperties`, no `$id`, `id` or anchor, no `$dynamicRef` or
+    /// `$recursiveRef`, no `unevaluated*` or `content*` keyword, no nested
+    /// `$schema`, and every `$ref` either `#` or a top-level `$defs` (2019-09
+    /// on) or `definitions` entry. Any other document is compiled here, once,
+    /// because only compiling it says whether it is refused; its checks then
+    /// reuse that validator.
     pub fn register_schema(&mut self, id: SchemaId, schema: Value) -> Result<(), RegistryError> {
         if let Some(held) = self.schemas.get(&id) {
             if held.document == schema {
@@ -749,6 +757,107 @@ mod tests {
             assert_eq!(
                 registry.check(&flat, &payload),
                 eager_check(&flat, &flat_document, &payload),
+                "{payload}"
+            );
+            assert_eq!(compilations() - before, 2, "{payload}");
+        }
+    }
+
+    /// Every keyword onepipeline's committed schema bundles use, in the shape
+    /// schemars writes them, apart from `pattern`, which the next document
+    /// carries.
+    fn onepipeline_shaped() -> Value {
+        json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "Shaped",
+            "description": "One of every keyword the vocabulary's bundles carry.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "kind", "path"],
+            "properties": {
+                "id": { "type": "integer", "format": "uint64", "minimum": 0, "maximum": 99 },
+                "kind": { "$ref": "#/$defs/Kind" },
+                "path": { "$ref": "#/$defs/Path" },
+                "labels": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "default": ["a"] },
+                "source": { "anyOf": [{ "$ref": "#/$defs/Source" }, { "type": "null" }] },
+                "step": { "oneOf": [
+                    { "type": "object", "properties": { "op": { "const": "run" } }, "required": ["op"] },
+                    { "type": "object", "properties": { "op": { "const": "stop" }, "reason": { "type": "string" } }, "required": ["op", "reason"] }
+                ] }
+            },
+            "allOf": [{
+                "if": { "properties": { "kind": { "const": "gone" } }, "required": ["kind"] },
+                "then": { "required": ["source"] }
+            }],
+            "$defs": {
+                "Kind": { "type": "string", "enum": ["present", "gone"] },
+                "Path": { "type": "string", "minLength": 1 },
+                "Source": { "type": "object", "properties": { "word": { "type": "string" } }, "required": ["word"] }
+            }
+        })
+    }
+
+    /// The `$defs` entry onepipeline's correlation and path types carry, as
+    /// four of its eighty documents carry one.
+    fn onepipeline_patterned() -> Value {
+        json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "required": ["correlation"],
+            "properties": { "correlation": { "$ref": "#/$defs/Correlation" } },
+            "$defs": { "Correlation": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" } }
+        })
+    }
+
+    #[test]
+    fn every_onepipeline_shape_is_compiled_once_and_only_a_pattern_at_registration() {
+        let shaped = SchemaId::literal("test", "shaped", 1);
+        let patterned = SchemaId::literal("test", "patterned", 2);
+        let mut registry = Registry::new();
+        let before = compilations();
+        registry
+            .register_schema(shaped.clone(), onepipeline_shaped())
+            .expect("registers");
+        assert_eq!(
+            compilations() - before,
+            0,
+            "a vouchable document compiles nothing"
+        );
+        registry
+            .register_schema(patterned.clone(), onepipeline_patterned())
+            .expect("registers");
+        assert_eq!(
+            compilations() - before,
+            1,
+            "a pattern is decided by compiling"
+        );
+
+        let shaped_payloads = [
+            json!({ "id": 1, "kind": "present", "path": "/a" }),
+            json!({ "id": 1, "kind": "gone", "path": "/a", "source": { "word": "w" } }),
+            json!({ "id": 1, "kind": "gone", "path": "/a" }),
+            json!({ "id": 100, "kind": "present", "path": "/a" }),
+            json!({ "id": 1, "kind": "lost", "path": "" }),
+            json!({ "id": 1, "kind": "present", "path": "/a", "labels": [] }),
+            json!({ "id": 1, "kind": "present", "path": "/a", "step": { "op": "stop" } }),
+            json!({ "id": 1, "kind": "present", "path": "/a", "extra": true }),
+        ];
+        for (index, payload) in shaped_payloads.iter().enumerate() {
+            assert_eq!(
+                registry.check(&shaped, payload),
+                eager_check(&shaped, &onepipeline_shaped(), payload),
+                "{payload}"
+            );
+            assert_eq!(compilations() - before, 2, "after check {index}");
+        }
+        for payload in [
+            json!({ "correlation": "run-1" }),
+            json!({ "correlation": "-bad" }),
+            json!({}),
+        ] {
+            assert_eq!(
+                registry.check(&patterned, &payload),
+                eager_check(&patterned, &onepipeline_patterned(), &payload),
                 "{payload}"
             );
             assert_eq!(compilations() - before, 2, "{payload}");
