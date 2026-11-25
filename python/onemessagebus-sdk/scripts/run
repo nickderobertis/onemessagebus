@@ -4,7 +4,8 @@
 #
 # The environment is the uv workspace's root .venv, synced on every run from the
 # root uv.lock (a no-op when nothing moved, and refused rather than re-resolved
-# when the lock is stale) over the Python .python-version names, with this package
+# when the lock is stale) over the Python the root .python-version names (uv reads
+# a workspace's pin from its root, never from a member), with this package
 # installed editable beside its dev group. Its onemessagebus-cli dependency is the
 # workspace's own distribution and is left uninstalled: building it compiles the
 # binary, and the tests drive the debug build in Cargo's effective target directory
